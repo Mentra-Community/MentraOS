@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
+import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
 import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
@@ -286,6 +287,10 @@ export default function DebugSettingsScreen() {
           </Group>
 
           <BackendUrl />
+
+          <Group title="Cloud V2 (core + runtime)">
+            <CloudUrl />
+          </Group>
 
           <StoreUrl />
 

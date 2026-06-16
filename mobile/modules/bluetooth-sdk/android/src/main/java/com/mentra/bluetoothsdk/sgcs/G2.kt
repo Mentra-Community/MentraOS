@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.PhotoRequest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -2697,19 +2698,7 @@ class G2 : SGCManager() {
     }
 
     // Camera & Media - G2 has no camera
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    ) {
+    override fun requestPhoto(request: PhotoRequest) {
         Bridge.log("G2: requestPhoto - not supported (no camera)")
     }
 

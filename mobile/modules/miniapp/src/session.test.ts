@@ -2,6 +2,7 @@
 import {describe, expect, test} from "bun:test"
 
 import {parseEnvelope, serializeEnvelope} from "./envelope"
+import {CLOUD_STATUS_STREAM} from "./modules/cloud"
 import {MiniappRequestType, MiniappResponseType} from "./protocol"
 import {MiniappSession} from "./session"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./transport/types"
@@ -156,10 +157,7 @@ describe("MiniappSession request correlation", () => {
     expect(outbound!.requestId).toBeDefined()
     const reqId = outbound!.requestId!
 
-    transport.deliverFromPhone(
-      {type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}},
-      reqId,
-    )
+    transport.deliverFromPhone({type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}}, reqId)
     const value = await resultPromise
     expect(value).toBe("hello")
   })
@@ -223,6 +221,36 @@ describe("MiniappSession event fan-out", () => {
 
     expect(received.length).toBe(1)
     expect((received[0] as {buttonId: string}).buttonId).toBe("primary")
+
+    unsub()
+  })
+
+  test("cloud status pushes update session.cloud without sending SUBSCRIBE", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.cloud",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const values: string[] = []
+    const unsub = session.cloud.onStatusChanged((s) => values.push(`${s.status}:${s.audioTransport}`))
+    const sentBefore = transport.sent.length
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.EVENT,
+      streamType: CLOUD_STATUS_STREAM,
+      data: {status: "connected", audioTransport: "udp"},
+    })
+
+    expect(session.cloud.status).toEqual({status: "connected", audioTransport: "udp"})
+    expect(session.cloud.connected).toBe(true)
+    expect(values).toEqual(["disconnected:none", "connected:udp"])
+    expect(transport.sent.length).toBe(sentBefore)
 
     unsub()
   })

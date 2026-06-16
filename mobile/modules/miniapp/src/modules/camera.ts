@@ -30,7 +30,7 @@ export interface CameraFovResult {
 }
 
 export interface TakePhotoOptions {
-  size?: "small" | "medium" | "large" | "full"
+  size?: "low" | "medium" | "high" | "max"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean

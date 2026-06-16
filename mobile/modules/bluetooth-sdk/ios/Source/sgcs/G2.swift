@@ -3233,11 +3233,7 @@ class G2: NSObject, SGCManager {
 
     // MARK: - SGCManager: Camera & Media (not supported on G2)
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?,
-        iso _: Int?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}

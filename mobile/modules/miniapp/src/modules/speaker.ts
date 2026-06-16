@@ -7,9 +7,9 @@
  * Imperative surface:
  *   speaker.play({audioUrl})   — play an arbitrary URL via the phone's
  *                                AudioPlaybackService.
- *   speaker.speak(text)        — send a SPEAK request. Phone uses the local
- *                                offline TTS model when available; otherwise
- *                                it falls back to cloud TTS and plays it.
+ *   speaker.speak(text)        — send a SPEAK request. Phone streams cloud
+ *                                TTS when connected and falls back to local
+ *                                offline TTS when cloud is unavailable.
  *                                Resolves when playback completes; rejects
  *                                with a TTS_* error code on cloud failure.
  *   speaker.stop()             — stop any audio this miniapp is playing.
@@ -88,8 +88,8 @@ export class SpeakerModule {
   }
 
   /**
-   * Speak text through the phone. The host prefers local offline TTS when its
-   * model is available, then falls back to cloud TTS.
+   * Speak text through the phone. The host streams cloud TTS when connected,
+   * then falls back to local offline TTS.
    *
    * Rejects with a MiniappRequestError containing a `code` field on cloud-side
    * TTS failures: `TTS_TEXT_TOO_LONG`, `TTS_INVALID_VOICE`, `TTS_UPSTREAM_ERROR`.

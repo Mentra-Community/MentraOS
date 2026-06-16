@@ -192,15 +192,48 @@ type UIInboundEnvelope =
   | {type: "UI_CLOSE"}
   | {type: "UI_CANCEL"; requestId: string}
 
-function rpcErrorFromUnknown(e: unknown): {message: string; code?: string} {
+function rpcErrorFromUnknown(e: unknown): RpcErrorEnvelope {
   if (e instanceof Error) {
     // `cause` is ES2022; this package's lib targets ES2020 where Error
-    // has no `cause` field. Read it via a structural cast.
-    const cause = (e as Error & {cause?: unknown}).cause as {code?: string} | undefined
-    const code = cause?.code
-    return code ? {message: e.message, code} : {message: e.message}
+    // has no `cause` field. Read it via a structural cast. Diagnostic fields
+    // (code/stage/transport) may live as own props (PhotoError-style) or on
+    // the cause — own props win.
+    const own = e as Error & {code?: string; stage?: string; transport?: string; cause?: unknown}
+    const cause = own.cause as {code?: string} | undefined
+    return compactEnvelope({
+      message: e.message,
+      code: own.code ?? cause?.code,
+      stage: own.stage,
+      transport: own.transport,
+    })
+  }
+  if (e && typeof e === "object") {
+    // Hosts reject RPCs with plain structured objects ({code, message, stage,
+    // transport}); stringifying them produced the infamous "[object Object]".
+    const o = e as {message?: unknown; code?: unknown; stage?: unknown; transport?: unknown}
+    return compactEnvelope({
+      message: typeof o.message === "string" ? o.message : JSON.stringify(e),
+      code: typeof o.code === "string" ? o.code : undefined,
+      stage: typeof o.stage === "string" ? o.stage : undefined,
+      transport: typeof o.transport === "string" ? o.transport : undefined,
+    })
   }
   return {message: String(e)}
+}
+
+export interface RpcErrorEnvelope {
+  message: string
+  code?: string
+  stage?: string
+  transport?: string
+}
+
+function compactEnvelope(env: RpcErrorEnvelope): RpcErrorEnvelope {
+  const out: RpcErrorEnvelope = {message: env.message}
+  if (env.code) out.code = env.code
+  if (env.stage) out.stage = env.stage
+  if (env.transport) out.transport = env.transport
+  return out
 }
 
 export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
@@ -423,7 +456,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     const finish = (
       envelope:
         | {ok: true; result: unknown}
-        | {ok: false; error: {message: string; code?: string}},
+        | {ok: false; error: RpcErrorEnvelope},
     ): void => {
       this.inflightRpc.delete(requestId)
       // If the controller already aborted (UI cancelled), drop the
@@ -455,7 +488,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     requestId: string,
     payload:
       | {ok: true; result: unknown}
-      | {ok: false; error: {message: string; code?: string}},
+      | {ok: false; error: RpcErrorEnvelope},
   ): void {
     if (!this.bound) return
     const seq = this.nextSeq++

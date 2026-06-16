@@ -13,7 +13,7 @@ export interface _V2PhotoRequestOptions {
   saveToGallery?: boolean;
   customWebhookUrl?: string;
   authToken?: string;
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
   compress?: "none" | "medium" | "heavy";
   sound?: boolean;
   /** Sensor exposure time for this request only (nanoseconds). Not persisted. */

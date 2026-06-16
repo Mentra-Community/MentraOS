@@ -168,12 +168,17 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     return 'r' + rpcCounter + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
-  function MentraRpcError(message, code) {
+  function MentraRpcError(message, code, stage, transport) {
     var e = new Error(message);
     e.name = 'MentraRpcError';
     if (code) {
       try { e.cause = {code: code}; } catch (_) { /* old runtimes */ }
+      e.code = code;
     }
+    // Diagnostic fields ride as own props so a miniapp can show exactly which
+    // pipeline stage and transport failed, not just a message string.
+    if (stage) e.stage = stage;
+    if (transport) e.transport = transport;
     return e;
   }
 
@@ -219,7 +224,7 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
         if (envelope && envelope.ok === true) {
           resolve(envelope.result);
         } else if (envelope && envelope.ok === false) {
-          reject(MentraRpcError(envelope.error && envelope.error.message || 'RPC failed', envelope.error && envelope.error.code));
+          reject(MentraRpcError(envelope.error && envelope.error.message || 'RPC failed', envelope.error && envelope.error.code, envelope.error && envelope.error.stage, envelope.error && envelope.error.transport));
         } else {
           reject(MentraRpcError('malformed RPC reply'));
         }

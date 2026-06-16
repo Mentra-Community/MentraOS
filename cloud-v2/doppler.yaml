@@ -1,0 +1,12 @@
+# Repo-level Doppler defaults.
+#
+# When a team member runs `doppler setup` from this directory, the CLI
+# reads this file and auto-configures the project + config without
+# prompting. They can override their local config later via
+# `doppler setup --config dev_<name>` after creating their own branch.
+#
+# This file is checked in. It contains NO secrets — only project pointer.
+
+setup:
+  - project: cloud-v2
+    config: dev
