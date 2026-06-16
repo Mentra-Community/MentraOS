@@ -693,20 +693,23 @@ private struct ScanModeSettingsCard: View {
                     .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
             if model.scanMode {
-                Text("Pushes max-size preset to glasses button via setButtonPhotoSettings. AE÷\(model.scanAeDivisor) and ISO cap \(model.scanIsoCap) ship on every capture via requestPhoto (available in SDK ≥0.1.13 locally; button preset covers 0.1.12).")
+                Text("Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                Text("AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.")
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundColor(AppColor.muted)
                 HStack(spacing: 8) {
                     CameraOptionChip(value: "AE ÷3", highlight: model.scanAeDivisor == 3)
-                        .onTapGesture { model.setScanAeDivisor(3) }
+                        .opacity(0.5)
                     CameraOptionChip(value: "AE ÷5", highlight: model.scanAeDivisor == 5)
-                        .onTapGesture { model.setScanAeDivisor(5) }
+                        .opacity(0.5)
                 }
                 HStack(spacing: 8) {
                     CameraOptionChip(value: "ISO 800", highlight: model.scanIsoCap == 800)
-                        .onTapGesture { model.setScanIsoCap(800) }
+                        .opacity(0.5)
                     CameraOptionChip(value: "ISO 400", highlight: model.scanIsoCap == 400)
-                        .onTapGesture { model.setScanIsoCap(400) }
+                        .opacity(0.5)
                 }
             }
         }

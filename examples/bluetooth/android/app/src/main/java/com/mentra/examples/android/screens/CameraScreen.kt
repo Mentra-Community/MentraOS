@@ -584,18 +584,24 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
         }
         if (state.scanMode) {
             Text(
-                "Pushes max-size preset to glasses button via setButtonPhotoSettings. AE÷${state.scanAeDivisor} and ISO cap ${state.scanIsoCap} ship on every capture via requestPhoto (available in SDK ≥0.1.13 locally; button preset covers 0.1.12).",
+                "Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.",
                 color = AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
             )
+            Text(
+                "AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.",
+                color = AppColor.muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+            )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("AE ÷3", state.scanAeDivisor == 3) { controller.setScanAeDivisor(3) }
-                OptionChip("AE ÷5", state.scanAeDivisor == 5) { controller.setScanAeDivisor(5) }
+                OptionChip("AE ÷3", state.scanAeDivisor == 3, enabled = false) { controller.setScanAeDivisor(3) }
+                OptionChip("AE ÷5", state.scanAeDivisor == 5, enabled = false) { controller.setScanAeDivisor(5) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("ISO 800", state.scanIsoCap == 800) { controller.setScanIsoCap(800) }
-                OptionChip("ISO 400", state.scanIsoCap == 400) { controller.setScanIsoCap(400) }
+                OptionChip("ISO 800", state.scanIsoCap == 800, enabled = false) { controller.setScanIsoCap(800) }
+                OptionChip("ISO 400", state.scanIsoCap == 400, enabled = false) { controller.setScanIsoCap(400) }
             }
         }
     }
