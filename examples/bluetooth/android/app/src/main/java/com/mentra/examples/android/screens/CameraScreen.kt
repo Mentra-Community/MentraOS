@@ -153,22 +153,32 @@ fun CameraScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Eyebrow("PHOTO")
-                    Text(
-                        if (!connected) {
-                            "Connect glasses first"
-                        } else if (!glassesWifiConnected) {
-                            "Connect glasses to Wi-Fi"
-                        } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
-                            "Capturing..."
-                        } else if (state.scanMode) {
-                            "Capture scan photo"
-                        } else {
-                            "Capture photo"
-                        },
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            if (!connected) {
+                                "Connect glasses first"
+                            } else if (!glassesWifiConnected) {
+                                "Connect glasses to Wi-Fi"
+                            } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
+                                "Capturing..."
+                            } else if (state.scanMode) {
+                                "Capture scan photo"
+                            } else {
+                                "Capture photo"
+                            },
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (state.photoPreviewUrl != null || state.photoPreviewDetails?.state == "error" || state.photoPreviewDetails?.state == "acknowledged") {
+                            Text(
+                                photoStateLabel(state.photoPreviewUrl, state.photoPreviewDetails),
+                                color = AppColor.greenAccent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                 }
                 Box(
                     modifier = Modifier
