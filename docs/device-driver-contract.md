@@ -263,3 +263,20 @@ real G2). Concretely:
 
 This validates the contract against a real driver + real hardware before any of
 the wider migration (registry, capabilities-from-registration, asset resolver).
+
+### Status (2026-06-15): implemented + e2e-validated at the transport/command layer
+
+Done on Android: `drivers/DeviceContract.kt` (GlassesDriver/DeviceHost/
+DeviceCapabilities), `DeviceHostImpl`, `GlassesDriverSgcAdapter`,
+`RemoteHarnessDriver`; `initSGC` routes REMOTE_HARNESS through
+`GlassesDriverSgcAdapter(RemoteHarnessDriver(), DeviceHostImpl(...))`. Legacy
+`sgcs/RemoteHarness.kt` left in place (unreferenced) as rollback.
+`compileDebugKotlin` + full `installDebug` succeeded; app runs the new code.
+
+E2E on the emulator (app → harness daemon): pairing "Remote Glasses (Harness)"
+instantiated the NEW driver via the adapter, it opened the socket to the daemon
+(`remote-sgc client connected`), and the app's on-connect display commands flowed
+through the new path (`remote-sgc cmd: text` / `clear`) — confirming app →
+`GlassesDriverSgcAdapter` → `RemoteHarnessDriver` → `DeviceHost`/socket → daemon
+works end to end. The physical glasses-render + mic→captions legs still need the
+G2 awake (it was asleep during this run); those exercise the same proven path.
