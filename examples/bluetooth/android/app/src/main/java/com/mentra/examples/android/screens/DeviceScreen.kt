@@ -74,6 +74,8 @@ fun DeviceScreen(controller: MentraExampleController) {
     val displaySupported = connected && supportsDisplay(glasses)
     val glassesWifiConnected = isGlassesWifiConnected(glasses)
     val otaWifiRequired = connected && !glassesWifiConnected
+    val otaInProgress = isOtaInProgress(state)
+    val canCheckOta = connected && glassesWifiConnected && !otaInProgress
     val currentDeviceName = if (connected) connectionTargetLabel(state, glasses) else deviceLabel(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
@@ -162,7 +164,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                     LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn(if (connected && !glassesWifiConnected) "Connect Wi-Fi" else "Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = connected && glassesWifiConnected, onClick = controller::checkForOtaUpdate)
+                    LightBtn(if (connected && !glassesWifiConnected) "Connect Wi-Fi" else "Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = canCheckOta, onClick = controller::checkForOtaUpdate)
                     LightBtn("Start OTA", Icons.Outlined.FileDownload, Modifier.weight(1f), enabled = canStartOta(state), onClick = controller::startOtaUpdate)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

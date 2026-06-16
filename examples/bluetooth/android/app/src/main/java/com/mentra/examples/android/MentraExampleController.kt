@@ -526,9 +526,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         runAction(if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses") {
             requireConnected("sync photo capture settings")
-            // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan tuning
-            // (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains/resetCaptureTuning) ships in
-            // 0.1.13; bump the Maven pin and restore the full preset once published.
+            // Keep hardware-button captures at max detail while scan mode is enabled.
             val settings =
                 if (enabled) {
                     ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
@@ -559,9 +557,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
-        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor and
-        // ISO-cap chips only drive on-device UI state until the 0.1.13 preset ships. Re-assert the
-        // max-size scan button preset so the hardware button stays in sync.
+        // Re-assert the max-size scan button preset so the hardware button stays in sync.
         runAction("Apply scan preset on glasses") {
             requireConnected("sync photo capture settings")
             withContext(Dispatchers.IO) {
@@ -716,13 +712,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun buildPhotoRequest(requestId: String, appId: String, webhookUrl: String): PhotoRequest {
         if (state.scanMode) {
-            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
-            // isoCap/mfnr/...); those ship in 0.1.13. The scan preset still reaches the glasses via
-            // the `ButtonPhotoSettings` sync above (Maven 0.1.12 supports it). Capture at max detail.
+            // Hardware-button scan settings are synced separately.
+            // App-triggered captures use max detail to match the scan preset's output tier.
             return PhotoRequest(
                 requestId = requestId,
                 appId = appId,
-                size = PhotoSize.FULL,
+                size = PhotoSize.MAX,
                 webhookUrl = webhookUrl,
                 compress = PhotoCompression.NONE,
                 sound = false,
@@ -1905,6 +1900,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun handleOtaCheckResult(updateAvailable: Boolean): Boolean {
+        if (isOtaInProgress()) {
+            addEvent("LIVE", "OTA check result ignored while update is in progress")
+            return updateAvailable
+        }
         if (updateAvailable) {
             state = state.copy(
                 otaStatus = null,
@@ -1971,6 +1970,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun checkForOtaUpdate() = runAction("Check OTA") {
         requireConnected("check OTA")
         requireGlassesWifi("check for OTA updates")
+        if (isOtaInProgress()) {
+            addEvent("TX", "OTA check skipped while update is in progress")
+            return@runAction
+        }
         handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
     }
 
@@ -1990,15 +1993,28 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
 
-        autoOtaCheckedConnectionKey = autoCheckKey
         autoOtaCheckInProgress = true
         runAction("Auto-check OTA") {
+            var checkSucceeded = false
             try {
                 requireConnected("check OTA")
                 requireGlassesWifi("check for OTA updates")
                 handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+                checkSucceeded = true
             } finally {
                 autoOtaCheckInProgress = false
+                if (checkSucceeded) {
+                    autoOtaCheckedConnectionKey = autoCheckKey
+                    val currentKey = otaAutoCheckKey(state.glassesStatus, latestOtaVersionInfoSignature)
+                    if (
+                        autoOtaCheckedConnectionKey != currentKey &&
+                        isGlassesConnected(state.glassesStatus) &&
+                        isGlassesWifiConnected(state.glassesStatus) &&
+                        !isOtaInProgress()
+                    ) {
+                        maybeAutoCheckOta()
+                    }
+                }
             }
         }
     }
@@ -2913,18 +2929,16 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
     status?.let { GlassesRuntimeState.Disconnected() }
 
-// UI tier names match the 0.1.13 SDK (LOW/MEDIUM/HIGH/MAX).
-// This helper maps them to 0.1.12 Maven enum values (SMALL/MEDIUM/LARGE/FULL).
 fun photoSizeToSdk(size: String): PhotoSize = when (size) {
-    "low" -> PhotoSize.SMALL
-    "high" -> PhotoSize.LARGE
-    "max", "full" -> PhotoSize.FULL
+    "low" -> PhotoSize.LOW
+    "high" -> PhotoSize.HIGH
+    "max", "full" -> PhotoSize.MAX
     else -> PhotoSize.MEDIUM
 }
 
 fun buttonPhotoSizeToSdk(size: String): ButtonPhotoSize = when (size) {
-    "low" -> ButtonPhotoSize.SMALL
-    "high" -> ButtonPhotoSize.LARGE
+    "low" -> ButtonPhotoSize.LOW
+    "high" -> ButtonPhotoSize.HIGH
     "max", "full" -> ButtonPhotoSize.MAX
     else -> ButtonPhotoSize.MEDIUM
 }
@@ -2998,7 +3012,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
       appId = "com.mentra.bluetoothsdk.example.android",
-      size = PhotoSize.${when(size) { "low" -> "SMALL"; "high" -> "LARGE"; "max" -> "FULL"; else -> "MEDIUM" }},
+      size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,

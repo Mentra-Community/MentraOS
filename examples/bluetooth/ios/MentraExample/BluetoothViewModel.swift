@@ -282,7 +282,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var videoPreviewUrl: URL?
     @Published private(set) var videoRecording = false
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: PhotoSize = .full
+    @Published private(set) var photoSize: PhotoSize = .max
     @Published private(set) var scanMode = false
     @Published private(set) var scanAeDivisor = 3
     @Published private(set) var scanIsoCap = 800
@@ -564,6 +564,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
+            if isOtaInProgress() {
+                append(tag: "TX", text: "OTA check skipped while update is in progress")
+                return
+            }
             _ = try await checkForOtaUpdateResult()
         }
     }
@@ -619,9 +623,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         Task {
             do {
                 if enabled {
-                    // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan
-                    // tuning (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains) ships in
-                    // 0.1.13; bump the SwiftPM pin and restore the full preset once published.
+                    // Keep hardware-button captures at max detail while scan mode is enabled.
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
                         ButtonPhotoSettings(size: .max)
                     )
@@ -655,9 +657,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
         guard glassesConnected else { return }
-        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor
-        // and ISO-cap chips only affect on-device UI state until the 0.1.13 preset ships. We
-        // still re-assert the max-size scan button preset so the hardware button stays in sync.
+        // Re-assert the max-size scan button preset so the hardware button stays in sync.
         Task {
             do {
                 _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
@@ -797,15 +797,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
         if scanMode {
-            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
-            // isoCap/mfnr/...); those arrive in 0.1.13. Capture at max resolution with no
-            // compression so the scan still favors detail; the rest applies once the pin is bumped.
+            // Hardware-button scan settings are synced separately.
+            // App-triggered captures use max detail to match the scan preset's output tier.
             return PhotoRequest(
                 requestId: requestId,
                 appId: appId,
-                size: .full,
+                size: .max,
                 webhookUrl: webhookUrl,
-                compress: .none,
+                compress: PhotoCompression.none,
                 sound: false
             )
         }
@@ -1667,6 +1666,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func handleOtaCheckResult(_ updateAvailable: Bool) -> Bool {
+        if isOtaInProgress() {
+            append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
+            return updateAvailable
+        }
         if updateAvailable {
             otaStatus = nil
             otaStatusMessage = nil
@@ -1722,13 +1725,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let autoCheckKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
         guard autoOtaCheckedConnectionKey != autoCheckKey else { return }
 
-        autoOtaCheckedConnectionKey = autoCheckKey
         autoOtaCheckInProgress = true
         runAsyncAction("Auto-check OTA") { [self] in
-            defer { autoOtaCheckInProgress = false }
+            var checkSucceeded = false
+            defer {
+                autoOtaCheckInProgress = false
+                if checkSucceeded {
+                    autoOtaCheckedConnectionKey = autoCheckKey
+                    let currentKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+                    if autoOtaCheckedConnectionKey != currentKey,
+                       glassesConnected,
+                       glassesWifiConnected,
+                       !isOtaInProgress() {
+                        maybeAutoCheckOta()
+                    }
+                }
+            }
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
             _ = try await checkForOtaUpdateResult()
+            checkSucceeded = true
         }
     }
 

@@ -118,6 +118,8 @@ struct DeviceScreen: View {
         let hasDefaultTarget = hasSavedConnectionTarget(model.bluetoothValues)
         let displaySupported = connected && supportsDisplay(model.glassesValues)
         let otaWifiRequired = connected && !model.glassesWifiConnected
+        let otaInProgress = isOtaInProgress(model: model)
+        let canCheckOta = connected && model.glassesWifiConnected && !otaInProgress
         return GlassCard {
             HStack {
                 Text(connected ? "Quick actions" : "Connect glasses")
@@ -147,7 +149,7 @@ struct DeviceScreen: View {
                     LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: connected && model.glassesWifiConnected, action: model.checkForOtaUpdate)
+                    LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: canCheckOta, action: model.checkForOtaUpdate)
                     LightActionButton(icon: "arrow.down.to.line", title: "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
                 }
                 HStack(spacing: 8) {

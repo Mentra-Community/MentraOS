@@ -4,10 +4,8 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-// Map new-tier display names (low|medium|high|max) to SDK 0.1.12 enum values
-// (small/medium/large/full). Remove this mapping when the SwiftPM pin moves to 0.1.13.
 private let photoSizeOptions: [(display: String, size: PhotoSize)] = [
-    ("low", .small), ("medium", .medium), ("high", .large), ("max", .full),
+    ("low", .low), ("medium", .medium), ("high", .high), ("max", .max),
 ]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
@@ -31,15 +29,15 @@ private func cameraSdkCall(
 ) -> String {
     if scanMode {
         return """
-    // Scan tuning (aeExposureDivisor \(scanAeDivisor), isoCap \(scanIsoCap), mfnr/edge off)
-    // ships in SDK 0.1.13's PhotoRequest. On 0.1.12 we capture at max detail:
+    // Scan tuning is synced through button photo settings.
+    // App-triggered captures use max detail:
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
           appId: "com.mentra.bluetoothsdk.example.ios",
-          size: .full,
+          size: .max,
           webhookUrl: uploadUrl,
-          compress: .none,
+          compress: PhotoCompression.none,
           sound: false
         )
     )

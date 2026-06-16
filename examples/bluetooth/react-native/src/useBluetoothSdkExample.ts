@@ -80,6 +80,10 @@ function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
 
+function isOtaEventInProgress(payload: OtaStatusEvent | null) {
+  return payload?.status === 'in_progress' || payload?.status === 'step_complete';
+}
+
 function otaVersionSignature(glasses: GlassesRuntimeState) {
   if (!glasses.connected) {
     return 'disconnected';
@@ -585,6 +589,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const wasConnectedRef = useRef(false);
   const autoOtaCheckedConnectionRef = useRef<string | null>(null);
   const autoOtaCheckInProgressRef = useRef(false);
+  const latestAutoOtaCheckKeyRef = useRef<string | null>(null);
+  const otaStatusRef = useRef<OtaStatusEvent | null>(null);
+  const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
 
   const bluetooth = useMentraBluetooth({
@@ -611,6 +618,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const autoOtaCheckKey = connectedDeviceKey
     ? `${connectedDeviceKey}|${latestVersionInfoSignature ?? otaVersionSignature(glasses)}`
     : null;
+  const otaInProgress = isOtaEventInProgress(otaStatus);
   const phone = bluetooth.sdk;
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
@@ -619,6 +627,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
   galleryModeEnabledRef.current = galleryModeEnabled;
+  latestAutoOtaCheckKeyRef.current = autoOtaCheckKey;
+  otaStatusRef.current = otaStatus;
 
   useEffect(() => {
     let cancelled = false;
@@ -667,6 +677,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (!glassesConnected) {
       autoOtaCheckedConnectionRef.current = null;
       autoOtaCheckInProgressRef.current = false;
+      latestAutoOtaCheckKeyRef.current = null;
       setLatestVersionInfoSignature(null);
       return;
     }
@@ -674,21 +685,35 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       !autoOtaCheckKey ||
       !glassesWifiConnected ||
       autoOtaCheckedConnectionRef.current === autoOtaCheckKey ||
-      autoOtaCheckInProgressRef.current
+      autoOtaCheckInProgressRef.current ||
+      otaInProgress
     ) {
       return;
     }
 
-    autoOtaCheckedConnectionRef.current = autoOtaCheckKey;
+    const checkedKey = autoOtaCheckKey;
     autoOtaCheckInProgressRef.current = true;
     void runAction('Auto-check OTA', async () => {
+      let checkSucceeded = false;
       try {
         await checkForOtaUpdateResult();
+        checkSucceeded = true;
       } finally {
         autoOtaCheckInProgressRef.current = false;
+        if (!checkSucceeded) {
+          return;
+        }
+        autoOtaCheckedConnectionRef.current = checkedKey;
+        if (
+          latestAutoOtaCheckKeyRef.current &&
+          latestAutoOtaCheckKeyRef.current !== checkedKey &&
+          !isOtaEventInProgress(otaStatusRef.current)
+        ) {
+          setAutoOtaCheckRetryTick((tick) => tick + 1);
+        }
       }
     });
-  }, [autoOtaCheckKey, glassesConnected, glassesWifiConnected]);
+  }, [autoOtaCheckKey, autoOtaCheckRetryTick, glassesConnected, glassesWifiConnected, otaInProgress]);
 
   useEffect(() => {
     const subscriptions = [
@@ -973,12 +998,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('check for OTA updates');
+      if (isOtaEventInProgress(otaStatusRef.current)) {
+        addEvent('TX', 'OTA check skipped while update is in progress');
+        return;
+      }
       await checkForOtaUpdateResult();
     });
   }
 
   async function checkForOtaUpdateResult(): Promise<boolean> {
     const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
+    if (isOtaEventInProgress(otaStatusRef.current)) {
+      addEvent('LIVE', 'OTA check result ignored while update is in progress');
+      return updateAvailable;
+    }
     if (updateAvailable) {
       setOtaStatus(null);
       setOtaStatusMessage(null);
