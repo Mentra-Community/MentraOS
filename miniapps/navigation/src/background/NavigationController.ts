@@ -845,8 +845,8 @@ export class NavigationController {
   // OSM-roads minimap: street network around the user's live position, with the
   // active route drawn on top. Roads are cached and only re-fetched from Overpass
   // when the user moves past a threshold (PoC: fetch-on-move, ~1s lag accepted).
-  private readonly OSM_MINIMAP_SIZE = 75 // matches the bottom-right container
-  private readonly OSM_MINIMAP_RADIUS_M = 200
+  private readonly OSM_MINIMAP_SIZE = 87 // matches the bottom-right container
+  private readonly OSM_MINIMAP_RADIUS_M = 133
   private readonly OSM_REFETCH_THRESHOLD_M = 120
 
   private refreshMinimap(): void {
@@ -882,7 +882,7 @@ export class NavigationController {
       width: this.OSM_MINIMAP_SIZE,
       height: this.OSM_MINIMAP_SIZE,
       viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
-      lineWidthPx: 1,
+      lineWidthPx: 2,
       route: this.trip.routePoints,
     })
     if (!png || png === this.lastMinimapPng) return

@@ -16,7 +16,8 @@ import {encodeBmpBase64} from "./bmp"
 import type {LatLng} from "./geometry"
 
 const BLACK = 0 // background
-const ROAD = 255 // road centerline (white-hot)
+const ROAD = 77 // road centerline (70% dimmer ≈ 30% brightness, barely visible so the route dominates)
+const ROUTE = 255 // active route overlay (white-hot)
 
 /** Equirectangular projection to local meters, origin-centered. */
 function toLocalMeters(p: LatLng, origin: LatLng): {x: number; y: number} {
@@ -189,7 +190,7 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
     for (let i = 0; i < route.length - 1; i++) {
       const a = project(route[i]!)
       const b = project(route[i + 1]!)
-      raster.line(a.x, a.y, b.x, b.y, ROAD, routeWidth * ss)
+      raster.line(a.x, a.y, b.x, b.y, ROUTE, routeWidth * ss)
     }
   }
 
