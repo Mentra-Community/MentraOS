@@ -322,6 +322,9 @@ public final class PhotoSession {
      */
     private void activateQueuedRequest(QueuedPhotoRequest queued) {
         resetCaptureMetadataState();
+        // Clear stale AE metering so scan-exposure path re-meters for this capture
+        mLastMeteredExposureNs = null;
+        mLastMeteredIso = null;
         activeCapture = ActivePhotoCapture.fromQueued(queued);
         rememberConfiguredCamera(queued);
     }
@@ -1326,9 +1329,13 @@ public final class PhotoSession {
                             || hooks.cameraSettings().mAsgSettings.isMfnrEnabled()) {
                         hooks.cameraSettings().configureCaptureBuilder(stillBuilder);
                     }
-                } else if (requestMfnr != null && !requestMfnr) {
+                } else if ((requestMfnr != null && !requestMfnr)
+                        || (requestZsl != null && !requestZsl)) {
                     hooks.cameraSettings()
-                            .configureCaptureBuilder(stillBuilder, false, false);
+                            .configureCaptureBuilder(
+                                    stillBuilder,
+                                    requestMfnr != null ? requestMfnr : false,
+                                    requestZsl != null ? requestZsl : false);
                 }
             }
 

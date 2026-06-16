@@ -441,12 +441,8 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("setButtonPhotoSettings") { size: String ->
-            requireSdk().setButtonPhotoSettings(ButtonPhotoSize.fromValue(size)).values
-        }
-
         AsyncFunction("setButtonPhotoCaptureSettings") { params: Map<String, Any?> ->
-            val size = ButtonPhotoSize.fromValue(params["size"] as? String)
+            val size = (params["size"] as? String)?.let { ButtonPhotoSize.fromValue(it) }
             val mfnr = params["mfnr"] as? Boolean
             val zsl = params["zsl"] as? Boolean
             val noiseReduction = params["noiseReduction"] as? Boolean

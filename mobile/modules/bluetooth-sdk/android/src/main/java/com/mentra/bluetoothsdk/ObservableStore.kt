@@ -54,6 +54,11 @@ class ObservableStore {
     }
 
     @Synchronized
+    fun remove(category: String, key: String) {
+        values.remove("${normalizeCategory(category)}.$key")
+    }
+
+    @Synchronized
     fun get(category: String, key: String): Any? = values["${normalizeCategory(category)}.$key"]
 
     @Synchronized

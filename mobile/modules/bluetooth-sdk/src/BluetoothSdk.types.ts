@@ -947,7 +947,7 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(sizeOrSettings: ButtonPhotoSize | ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
+  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>

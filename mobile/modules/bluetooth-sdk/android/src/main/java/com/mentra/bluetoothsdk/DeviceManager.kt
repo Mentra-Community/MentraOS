@@ -1403,7 +1403,7 @@ class DeviceManager {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonPhotoSettings(
             requestId,
-            settings.size.value,
+            settings.size?.value,
             settings.mfnr,
             settings.zsl,
             settings.noiseReduction,

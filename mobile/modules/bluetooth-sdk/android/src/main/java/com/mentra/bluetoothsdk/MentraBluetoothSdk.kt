@@ -470,14 +470,29 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
-    fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
-        setButtonPhotoSettings(ButtonPhotoSettings(size = size))
-
     fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",
             updateStore = { _ ->
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", settings.size.value)
+                if (settings.resetCaptureTuning) {
+                    // Clear all stored scan-tuning keys from phone cache
+                    listOf(
+                        "button_photo_mfnr",
+                        "button_photo_zsl",
+                        "button_photo_noise_reduction",
+                        "button_photo_edge_enhancement",
+                        "button_photo_isp_digital_gain",
+                        "button_photo_isp_analog_gain",
+                        "button_photo_ae_exposure_divisor",
+                        "button_photo_iso_cap",
+                        "button_photo_compress",
+                        "button_photo_sound",
+                    ).forEach { key ->
+                        DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, key)
+                    }
+                }
+                // Only update size if explicitly provided; omitted size = leave stored value unchanged
+                settings.size?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", it.value) }
                 settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
                 settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
                 settings.noiseReduction?.let {

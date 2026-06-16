@@ -86,7 +86,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
             if (asgSettings != null) {
                 captureSettings =
-                        PhotoCaptureSettings.mergeWithStoredDefaults(
+                        PhotoCaptureSettings.mergeForSdkRequest(
                                 requestCaptureSettings, asgSettings);
             }
             PhotoCaptureSettings.logMergeDiagnostics(
@@ -135,13 +135,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
-            // upload cannot be picked up by gallery_status or AsgCameraServer between capture and
-            // post-upload delete. Permanent (save=true) captures keep their original layout.
-            String photoFilePath =
-                    save
-                            ? generateCaptureFilePath(packageName, "IMG_", ".jpg")
-                            : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
+            // Always use the permanent gallery path so photos are retained after upload.
+            String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 captureService.sendPhotoErrorResponse(

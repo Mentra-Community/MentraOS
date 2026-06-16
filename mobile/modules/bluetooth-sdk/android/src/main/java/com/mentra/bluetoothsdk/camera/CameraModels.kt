@@ -57,7 +57,7 @@ enum class PhotoCompression(val value: String) {
 }
 
 data class ButtonPhotoSettings(
-    val size: ButtonPhotoSize,
+    val size: ButtonPhotoSize? = null,
     val mfnr: Boolean? = null,
     val zsl: Boolean? = null,
     val noiseReduction: Boolean? = null,

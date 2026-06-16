@@ -4,6 +4,7 @@ import type {
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
   ButtonPhotoSettings,
+  ButtonPhotoSize,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
@@ -82,14 +83,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: ((
-    sizeOrSettings: import("./BluetoothSdk.types").ButtonPhotoSize | ButtonPhotoSettings,
-  ) => {
-    if (typeof sizeOrSettings === "string") {
-      return PrivateBluetoothSdkModule.setButtonPhotoSettings(sizeOrSettings)
-    }
-    return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(sizeOrSettings)
-  }) as BluetoothSdkPublicModule["setButtonPhotoSettings"],
+  setButtonPhotoSettings: (settings: ButtonPhotoSettings) =>
+    PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings),
   setButtonVideoRecordingSettings:
     PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
   setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),

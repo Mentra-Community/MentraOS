@@ -94,6 +94,46 @@ public final class PhotoCaptureSettings {
      * Fills per-request fields missing from {@code take_photo} with values previously stored via
      * {@code button_photo_setting}.
      */
+    /**
+     * Merge a remote SDK take_photo request with stored device-level settings.
+     *
+     * <p>Unlike {@link #mergeWithStoredDefaults(PhotoCaptureSettings, AsgSettings)} this variant
+     * does NOT inherit stored button-photo scan presets (aeExposureDivisor, isoCap,
+     * edgeEnhancement, etc.). Those presets are for the hardware-button capture path only. Remote
+     * app requests use only their explicitly supplied fields; MFNR/ZSL fall back to the global
+     * device setting, not to scan-mode button presets.
+     */
+    public static PhotoCaptureSettings mergeForSdkRequest(
+            PhotoCaptureSettings request, AsgSettings stored) {
+        if (request == null) {
+            return EMPTY;
+        }
+        if (stored == null) {
+            return request;
+        }
+        Builder builder = new Builder();
+        // Scan-specific fields: only from the explicit request, never from stored button presets
+        builder.aeExposureDivisor(request.aeExposureDivisor);
+        builder.isoCap(request.isoCap);
+        builder.noiseReduction(request.noiseReduction);
+        builder.edgeEnhancement(request.edgeEnhancement);
+        builder.ispDigitalGain(request.ispDigitalGain);
+        builder.ispAnalogGain(request.ispAnalogGain);
+        // MFNR/ZSL: use request value, else global device setting
+        // If this request carries a scan AE divisor and mfnr/zsl are not specified, default off
+        boolean hasScanDivisor = request.aeExposureDivisor != null && request.aeExposureDivisor > 1;
+        builder.mfnr(request.mfnr != null ? request.mfnr
+                : hasScanDivisor ? Boolean.FALSE : stored.isMfnrEnabled());
+        builder.zsl(request.zsl != null ? request.zsl
+                : hasScanDivisor ? Boolean.FALSE : stored.isZslEnabled());
+        applyUnimplementedWarnings(builder);
+        return builder.build();
+    }
+
+    /**
+     * Merge a button/local capture request with stored button-photo presets and device settings.
+     * Only use this for the hardware-button capture path, not for remote SDK take_photo requests.
+     */
     public static PhotoCaptureSettings mergeWithStoredDefaults(
             PhotoCaptureSettings request, AsgSettings stored) {
         if (request == null) {
@@ -119,22 +159,21 @@ public final class PhotoCaptureSettings {
                         : stored.getButtonPhotoEdgeEnhancement());
         Boolean storedMfnr = stored.getButtonPhotoMfnr();
         if (storedMfnr == null && stored.getButtonPhotoAeExposureDivisor() != null) {
-            // Legacy: scan tuning stored before button_photo_mfnr key existed
             storedMfnr = false;
         }
-        builder.mfnr(
-                request.mfnr != null
-                        ? request.mfnr
-                        : storedMfnr != null ? storedMfnr : stored.isMfnrEnabled());
+        // If this button preset has a scan AE divisor and mfnr not explicitly set, default off
+        boolean hasScanDivisor = (request.aeExposureDivisor != null && request.aeExposureDivisor > 1)
+                || (storedMfnr == null && stored.getButtonPhotoAeExposureDivisor() != null);
+        builder.mfnr(request.mfnr != null ? request.mfnr
+                : storedMfnr != null ? storedMfnr
+                : hasScanDivisor ? Boolean.FALSE : stored.isMfnrEnabled());
         Boolean storedZsl = stored.getButtonPhotoZsl();
         if (storedZsl == null && stored.getButtonPhotoAeExposureDivisor() != null) {
-            // Legacy: scan tuning stored before button_photo_zsl key existed
             storedZsl = false;
         }
-        builder.zsl(
-                request.zsl != null
-                        ? request.zsl
-                        : storedZsl != null ? storedZsl : stored.isZslEnabled());
+        builder.zsl(request.zsl != null ? request.zsl
+                : storedZsl != null ? storedZsl
+                : hasScanDivisor ? Boolean.FALSE : stored.isZslEnabled());
         builder.ispDigitalGain(
                 request.ispDigitalGain != null
                         ? request.ispDigitalGain
