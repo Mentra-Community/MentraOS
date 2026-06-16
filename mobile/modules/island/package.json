@@ -53,8 +53,8 @@
     "expo-location": "*",
     "react-native-share": "*",
     "@dr.pogodin/react-native-fs": "*",
-    "@mentra/bluetooth-sdk": "*",
-    "@mentra/cloud-client": "*",
-    "@mentra/miniapp": "*"
+    "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
+    "@mentra/miniapp": "workspace:*"
   }
 }

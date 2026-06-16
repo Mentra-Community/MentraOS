@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / runtime / proxy).",
-  "workspaces": ["packages/*", "test/*"],
   "engines": {
     "bun": ">=1.3.0"
   },

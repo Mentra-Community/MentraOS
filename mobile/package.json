@@ -3,11 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "main": "expo-router/entry",
-  "workspaces": [
-    "modules/*"
-  ],
   "scripts": {
-    "preinstall": "zx ./scripts/preinstall.mjs",
     "postinstall": "zx ./scripts/postinstall.mjs",
     "start": "zx ./scripts/start.mjs",
     "android": "zx ./scripts/android.mjs",
@@ -63,9 +59,6 @@
     "@expo/ui": "~55.0.16",
     "@gorhom/bottom-sheet": "^5.2.8",
     "@gorhom/portal": "^1.0.14",
-    "@livekit/react-native": "^2.9.6",
-    "@livekit/react-native-expo-plugin": "^1.0.1",
-    "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/island": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
@@ -83,7 +76,7 @@
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
-    "crust": "workspace:*",
+    "@mentra/crust": "workspace:*",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "~55.0.24",
@@ -200,13 +193,6 @@
     "autolinking": {
       "nativeModulesDir": "modules"
     }
-  },
-  "patchedDependencies": {
-    "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
-    "react-native-executorch@0.7.2": "patches/react-native-executorch@0.7.2.patch",
-    "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
-    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
-    "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

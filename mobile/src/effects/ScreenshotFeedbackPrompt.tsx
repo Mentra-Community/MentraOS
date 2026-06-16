@@ -1,6 +1,6 @@
 import {useEffect} from "react"
 import {Platform} from "react-native"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import * as ScreenCapture from "expo-screen-capture"
 
 import {useNavigationStore} from "@/stores/navigation"

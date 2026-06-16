@@ -1,4 +1,4 @@
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {useEffect, useState} from "react"
 import {AppState, Platform, ScrollView} from "react-native"
 
