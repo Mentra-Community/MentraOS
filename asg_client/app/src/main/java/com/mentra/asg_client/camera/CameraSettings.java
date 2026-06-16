@@ -237,6 +237,15 @@ public class CameraSettings {
       }
     } else if (zslEnabled) {
       Log.d(TAG, "ZSL enabled in settings but vendor keys not available");
+    } else {
+      // zslEnabled=false but mfnrEnabled=true path: explicitly disable ZSL so it isn't
+      // inherited from the preview request (which always enables it for the ZSL buffer).
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      if (mKeyZslMode != null) {
+        builder.set(mKeyZslMode, new byte[]{0});
+        Log.d(TAG, "Capture: ZSL disabled (MFNR-only path), ZSL_MODE vendor key set to OFF");
+      }
+      Log.d(TAG, "Set CONTROL_ENABLE_ZSL = false in capture builder (ZSL off, MFNR on)");
     }
 
     if (mfnrEnabled && isMfnrSupported()) {

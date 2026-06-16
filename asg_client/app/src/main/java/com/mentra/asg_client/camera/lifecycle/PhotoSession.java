@@ -300,14 +300,14 @@ public final class PhotoSession {
                 : PhotoCaptureSettings.EMPTY;
     }
 
-    /** Explicit {@code zsl} on the request wins; otherwise MFNR-off implies ZSL-off. */
-    private static Boolean resolveRequestZsl(
-            PhotoCaptureSettings captureSettings, Boolean requestMfnr) {
+    /**
+     * Explicit {@code zsl} on the request wins; otherwise let the global device setting apply.
+     * ZSL and MFNR are independent capabilities — ZSL being off should not be implied by MFNR
+     * being off, as ZSL reduces shutter lag regardless of multi-frame processing.
+     */
+    private static Boolean resolveRequestZsl(PhotoCaptureSettings captureSettings) {
         if (captureSettings != null && captureSettings.zsl != null) {
             return captureSettings.zsl;
-        }
-        if (requestMfnr != null && !requestMfnr) {
-            return Boolean.FALSE;
         }
         return null;
     }
@@ -1323,7 +1323,7 @@ public final class PhotoSession {
             if (hooks.cameraSettings() != null) {
                 Boolean requestMfnr =
                         captureSettings.mfnr != null ? captureSettings.mfnr : null;
-                Boolean requestZsl = resolveRequestZsl(captureSettings, requestMfnr);
+                Boolean requestZsl = resolveRequestZsl(captureSettings);
                 if (!useManual) {
                     if (requestMfnr != null || requestZsl != null) {
                         hooks.cameraSettings()
@@ -1357,7 +1357,7 @@ public final class PhotoSession {
 
             Boolean requestMfnrForLog =
                     captureSettings.mfnr != null ? captureSettings.mfnr : null;
-            Boolean requestZslForLog = resolveRequestZsl(captureSettings, requestMfnrForLog);
+            Boolean requestZslForLog = resolveRequestZsl(captureSettings);
             boolean globalMfnr =
                     hooks.cameraSettings() != null
                             && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
