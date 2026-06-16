@@ -30,13 +30,9 @@ jobs:
       PORTER_APP_NAME: cloud-debug
       PORTER_REPO_NAME: ${{ github.event.repository.name }}
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ZONE_NAME: mentraglass.com
       CORE_HOSTNAME: core.debug.us-west-2.dev.mentraglass.com
       RUNTIME_HOSTNAME: runtime.debug.us-west-2.dev.mentraglass.com
       UDP_HOSTNAME: audio-udp.debug.us-west-2.dev.mentraglass.com
-      DEBUG_HTTP_INGRESS: k8s-ingressn-ingressn-4836336368-5211ddb0c36e7723.elb.us-west-2.amazonaws.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,55 +62,6 @@ jobs:
             --variables AUDIO_WORKERS=1 \
             --variables CLOUD_RUNTIME_AUTH_AUDIENCE=cloud-runtime \
             --variables 'CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"cloud-core","publicKeyEnv":"MENTRA_JWT_PUBLIC_KEY","userIdClaim":"sub","oemIdClaim":"oem_id"}]'
-
-      - name: Discover deployed load balancers
-        id: endpoints
-        run: |
-          set -euo pipefail
-
-          echo "core_ingress=${DEBUG_HTTP_INGRESS}" >> "$GITHUB_OUTPUT"
-          echo "runtime_ingress=${DEBUG_HTTP_INGRESS}" >> "$GITHUB_OUTPUT"
-          echo "udp_nlb=" >> "$GITHUB_OUTPUT"
-          echo "Debug UDP NLB is not available from this workflow yet; skipping UDP DNS record." >&2
-
-      - name: Upsert Cloudflare DNS
-        working-directory: cloud-v2
-        env:
-          CORE_INGRESS: ${{ steps.endpoints.outputs.core_ingress }}
-          RUNTIME_INGRESS: ${{ steps.endpoints.outputs.runtime_ingress }}
-          UDP_NLB: ${{ steps.endpoints.outputs.udp_nlb }}
-        run: |
-          set -euo pipefail
-          CF_DNS_RECORDS=$(bun -e '
-            const records = [
-              {
-                type: "CNAME",
-                name: process.env.CORE_HOSTNAME,
-                content: process.env.CORE_INGRESS,
-                proxied: false,
-                comment: "cloud-v2 debug core HTTP/REST"
-              },
-              {
-                type: "CNAME",
-                name: process.env.RUNTIME_HOSTNAME,
-                content: process.env.RUNTIME_INGRESS,
-                proxied: false,
-                comment: "cloud-v2 debug runtime WS/HTTP"
-              }
-            ];
-            if (process.env.UDP_NLB) {
-              records.push({
-                type: "CNAME",
-                name: process.env.UDP_HOSTNAME,
-                content: process.env.UDP_NLB,
-                proxied: false,
-                comment: "cloud-v2 debug UDP audio - DNS only; do not proxy"
-              });
-            }
-            process.stdout.write(JSON.stringify(records));
-          ')
-          export CF_DNS_RECORDS
-          bun scripts/cloudflare-upsert-dns.ts
 
       - name: Verify debug health
         run: |
