@@ -63,6 +63,12 @@ internal object OtaManifestChecker {
             hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
+    fun hasMtkPatches(manifest: JSONObject): Boolean =
+        (manifest.optJSONArray("mtk_patches")?.length() ?: 0) > 0
+
+    fun hasBesFirmware(manifest: JSONObject): Boolean =
+        manifest.optJSONObject("bes_firmware") != null
+
     private fun latestAppInfo(manifest: JSONObject): JSONObject {
         val apps = manifest.optJSONObject("apps")
         val app = apps?.optJSONObject(ASG_CLIENT_PACKAGE)
@@ -90,12 +96,7 @@ internal object OtaManifestChecker {
 
     private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
         if (patches == null || patches.length() == 0) return false
-        if (currentVersion.isBlank()) {
-            throw BluetoothException(
-                "missing_mtk_version",
-                "Cannot check OTA update because MTK firmware version is unavailable.",
-            )
-        }
+        if (currentVersion.isBlank()) return false
 
         for (index in 0 until patches.length()) {
             val patch = patches.optJSONObject(index) ?: continue

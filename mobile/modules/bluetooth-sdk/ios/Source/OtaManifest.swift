@@ -83,6 +83,14 @@ enum OtaManifestChecker {
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
 
+    static func hasMtkPatches(_ manifest: OtaManifest) -> Bool {
+        !(manifest.mtkPatches?.isEmpty ?? true)
+    }
+
+    static func hasBesFirmware(_ manifest: OtaManifest) -> Bool {
+        manifest.besFirmware != nil
+    }
+
     private static func latestAppInfo(_ manifest: OtaManifest) throws -> OtaManifestApp {
         if let app = manifest.apps?[asgClientPackage], app.versionCode != nil {
             return app
@@ -108,12 +116,7 @@ enum OtaManifestChecker {
 
     private static func hasMtkUpdate(patches: [MtkPatch]?, currentVersion: String) throws -> Bool {
         guard let patches, !patches.isEmpty else { return false }
-        guard !currentVersion.isEmpty else {
-            throw BluetoothError(
-                code: "missing_mtk_version",
-                message: "Cannot check OTA update because MTK firmware version is unavailable."
-            )
-        }
+        guard !currentVersion.isEmpty else { return false }
 
         return patches.contains { patch in
             if patch.startFirmware == currentVersion {

@@ -69,6 +69,9 @@ class MentraBluetoothSdk private constructor(
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
+        private const val OTA_BES_VERSION_WAIT_MS = 5_000L
+        private const val OTA_MTK_VERSION_WAIT_MS = 2_000L
+        private const val OTA_VERSION_POLL_MS = 100L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
@@ -896,10 +899,11 @@ class MentraBluetoothSdk private constructor(
 
         val manifestUrl = resolveOtaVersionUrl(status)
         val manifest = OtaManifestChecker.fetch(manifestUrl)
+        val otaStatus = waitForOtaManifestStatus(status, manifest)
         return OtaManifestChecker.hasUpdate(
-            status.buildNumber,
-            status.mtkFirmwareVersion,
-            status.besFirmwareVersion,
+            otaStatus.buildNumber,
+            otaStatus.mtkFirmwareVersion,
+            otaStatus.besFirmwareVersion,
             manifest,
         )
     }
@@ -998,6 +1002,49 @@ class MentraBluetoothSdk private constructor(
         } catch (_: Throwable) {
             status
         }
+    }
+
+    private fun waitForOtaManifestStatus(
+        initialStatus: GlassesStatus,
+        manifest: org.json.JSONObject,
+    ): GlassesStatus {
+        var status = initialStatus
+        if (OtaManifestChecker.hasBesFirmware(manifest) && status.besFirmwareVersion.isBlank()) {
+            status = waitForGlassesStatus(status, OTA_BES_VERSION_WAIT_MS) {
+                !it.connected || it.besFirmwareVersion.isNotBlank()
+            }
+        }
+
+        if (OtaManifestChecker.hasMtkPatches(manifest) && status.mtkFirmwareVersion.isBlank()) {
+            status = waitForGlassesStatus(status, OTA_MTK_VERSION_WAIT_MS) {
+                !it.connected || it.mtkFirmwareVersion.isNotBlank()
+            }
+        }
+
+        if (!status.connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot check OTA update because glasses disconnected.",
+            )
+        }
+        return status
+    }
+
+    private fun waitForGlassesStatus(
+        initialStatus: GlassesStatus,
+        timeoutMs: Long,
+        isReady: (GlassesStatus) -> Boolean,
+    ): GlassesStatus {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var status = initialStatus
+        while (System.currentTimeMillis() < deadline) {
+            status = getRawGlassesStatus()
+            if (isReady(status)) return status
+            val remainingMs = deadline - System.currentTimeMillis()
+            if (remainingMs <= 0L) break
+            Thread.sleep(minOf(OTA_VERSION_POLL_MS, remainingMs))
+        }
+        return getRawGlassesStatus()
     }
 
     private fun resolveOtaVersionUrl(status: GlassesStatus): String {

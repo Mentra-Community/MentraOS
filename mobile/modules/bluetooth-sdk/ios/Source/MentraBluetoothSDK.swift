@@ -147,6 +147,10 @@ private final class PendingResponse<T> {
 
 @MainActor
 public final class MentraBluetoothSDK {
+    private static let otaBesVersionWaitMs = 5_000
+    private static let otaMtkVersionWaitMs = 2_000
+    private static let otaVersionPollMs = 100
+
     public weak var delegate: MentraBluetoothSDKDelegate?
 
     private let configuration: MentraBluetoothSDKConfiguration
@@ -953,10 +957,11 @@ public final class MentraBluetoothSDK {
 
         let manifestUrl = resolveOtaVersionUrl(status: status)
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)
+        let otaStatus = try await waitForOtaManifestStatus(status, manifest: manifest)
         return try OtaManifestChecker.hasUpdate(
-            currentBuildNumber: status.buildNumber,
-            currentMtkVersion: status.mtkFirmwareVersion,
-            currentBesVersion: status.besFirmwareVersion,
+            currentBuildNumber: otaStatus.buildNumber,
+            currentMtkVersion: otaStatus.mtkFirmwareVersion,
+            currentBesVersion: otaStatus.besFirmwareVersion,
             manifest: manifest
         )
     }
@@ -1051,6 +1056,52 @@ public final class MentraBluetoothSDK {
         } catch {
             return status
         }
+    }
+
+    private func waitForOtaManifestStatus(_ initialStatus: GlassesStatus, manifest: OtaManifest) async throws -> GlassesStatus {
+        var status = initialStatus
+        if OtaManifestChecker.hasBesFirmware(manifest), status.besFirmwareVersion.isEmpty {
+            status = await waitForGlassesStatus(status, timeoutMs: Self.otaBesVersionWaitMs) {
+                !$0.connected || !$0.besFirmwareVersion.isEmpty
+            }
+        }
+
+        if OtaManifestChecker.hasMtkPatches(manifest), status.mtkFirmwareVersion.isEmpty {
+            status = await waitForGlassesStatus(status, timeoutMs: Self.otaMtkVersionWaitMs) {
+                !$0.connected || !$0.mtkFirmwareVersion.isEmpty
+            }
+        }
+
+        guard status.connected else {
+            throw BluetoothError(
+                code: "glasses_not_connected",
+                message: "Cannot check OTA update because glasses disconnected."
+            )
+        }
+        return status
+    }
+
+    private func waitForGlassesStatus(
+        _ initialStatus: GlassesStatus,
+        timeoutMs: Int,
+        isReady: (GlassesStatus) -> Bool
+    ) async -> GlassesStatus {
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1_000)
+        var status = initialStatus
+        while Date() < deadline {
+            status = glassesStatus
+            if isReady(status) {
+                return status
+            }
+
+            let remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMs = min(Self.otaVersionPollMs, remainingMs)
+            if sleepMs <= 0 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
+        }
+        return glassesStatus
     }
 
     private func resolveOtaVersionUrl(status: GlassesStatus) -> String {
