@@ -2,6 +2,7 @@
 
 import {spawn, spawnSync} from "node:child_process"
 import {setTimeout as delay} from "node:timers/promises"
+import {expoDeviceName, resolveAndroidPhoneTarget} from "./resolve-android-phone.mjs"
 
 const port = Number(process.env.EXPO_DEV_SERVER_PORT || process.env.RCT_METRO_PORT || 8081)
 const metroHost = process.env.EXPO_DEV_SERVER_HOST || "localhost"
@@ -18,15 +19,17 @@ if (args.has("-h") || args.has("--help")) {
 Usage:
   bun run android:dev
 
-Starts Metro first, installs/runs the Android development build without
-spawning a second bundler, then explicitly opens the Expo dev-client URL.
+Starts Metro first, installs/runs the Android development build on a connected
+phone (never Mentra Live glasses), without spawning a second bundler, then
+explicitly opens the Expo dev-client URL.
 
 Environment overrides:
   EXPO_DEV_SERVER_PORT       Metro port. Defaults to 8081.
   EXPO_DEV_SERVER_HOST       Metro host in the dev-client URL. Defaults to localhost.
   EXPO_DEV_CLIENT_SCHEME     Dev-client scheme. Defaults to exp+mentra-sdk-rn-example.
   EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdk.example.reactnative.
-  ANDROID_SERIAL             Required when multiple Android devices are connected.
+  ANDROID_SERIAL             Force a specific phone serial when multiple phones are connected.
+  ALLOW_MENTRA_LIVE=1        Allow targeting Mentra Live (not recommended for this example).
 `)
   process.exit(0)
 }
@@ -45,65 +48,6 @@ function run(command, commandArgs, options = {}) {
   if (result.status !== 0) {
     throw new Error(`${command} ${commandArgs.join(" ")} failed with exit code ${result.status}`)
   }
-}
-
-function output(command, commandArgs) {
-  const result = spawnSync(command, commandArgs, {
-    encoding: "utf8",
-  })
-
-  if (result.error) {
-    throw result.error
-  }
-
-  if (result.status !== 0) {
-    throw new Error(result.stderr || `${command} ${commandArgs.join(" ")} failed`)
-  }
-
-  return result.stdout
-}
-
-function resolveAndroidSerial() {
-  const requestedSerial = process.env.ANDROID_SERIAL?.trim()
-  const lines = output("adb", ["devices"])
-    .split(/\r?\n/)
-    .slice(1)
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  const devices = lines
-    .map((line) => {
-      const [serial, state] = line.split(/\s+/)
-      return {serial, state}
-    })
-    .filter((device) => device.state === "device")
-
-  if (requestedSerial) {
-    if (!devices.some((device) => device.serial === requestedSerial)) {
-      throw new Error(`ANDROID_SERIAL=${requestedSerial} is not an attached, authorized Android device.`)
-    }
-    return requestedSerial
-  }
-
-  if (devices.length === 0) {
-    throw new Error("No authorized Android device found. Connect a phone and accept the USB debugging prompt.")
-  }
-
-  if (devices.length > 1) {
-    const list = devices.map((device) => `  - ${device.serial}`).join("\n")
-    throw new Error(`Multiple Android devices are connected. Set ANDROID_SERIAL to one of:\n${list}`)
-  }
-
-  return devices[0].serial
-}
-
-function resolveExpoDeviceName(serial) {
-  const line = output("adb", ["devices", "-l"])
-    .split(/\r?\n/)
-    .find((deviceLine) => deviceLine.trim().startsWith(`${serial} `))
-
-  const model = line?.match(/\bmodel:(\S+)/)?.[1]
-  return model || serial
 }
 
 async function isMetroRunning() {
@@ -135,9 +79,12 @@ async function waitForMetro() {
 }
 
 async function main() {
-  const serial = resolveAndroidSerial()
-  const expoDeviceName = resolveExpoDeviceName(serial)
+  const target = resolveAndroidPhoneTarget()
+  const serial = target.serial
+  const deviceName = expoDeviceName(target)
   let metroProcess = null
+
+  console.log(`Using Android phone: ${deviceName} (serial ${serial})`)
 
   if (await isMetroRunning()) {
     console.log(`Metro is already running at ${metroUrl}`)
@@ -166,7 +113,7 @@ async function main() {
   run("adb", ["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`])
 
   console.log("Installing and launching the Android development build")
-  run("bunx", ["expo", "run:android", "--no-bundler", "--device", expoDeviceName])
+  run("bunx", ["expo", "run:android", "--no-bundler", "--device", deviceName])
 
   console.log(`Opening Expo dev-client URL: ${devClientUrl}`)
   run("adb", ["-s", serial, "shell", "am", "force-stop", appId])

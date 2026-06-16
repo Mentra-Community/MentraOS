@@ -30,6 +30,9 @@ examples/android/local.properties
 examples/android/.gstreamer/
 examples/android/app/gst-android-build/
 examples/react-native/.gstreamer/
+# Local Bluetooth SDK checkout for MENTRA_BLUETOOTH_SDK_PACKAGE_PATH (not committed).
+examples/react-native/modules/bluetooth-sdk/
+
 examples/react-native/modules/**/android/.gradle/
 examples/react-native/modules/**/android/build/
 examples/react-native/modules/**/android/gst-android-build/

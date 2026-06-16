@@ -8,7 +8,7 @@
     "start": "expo start --dev-client",
     "ios": "bun run ios:setup && expo run:ios",
     "ios:setup": "bash ./modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh",
-    "android": "expo run:android",
+    "android": "node ./scripts/android-run.mjs",
     "android:dev": "node ./scripts/android-dev.mjs",
     "web": "expo start --web"
   },
@@ -22,6 +22,7 @@
     "expo-dev-client": "~55.0.34",
     "expo-file-system": "~55.0.20",
     "expo-linear-gradient": "~55.0.14",
+    "expo-splash-screen": "~55.0.21",
     "expo-video": "~55.0.17",
     "react": "19.2.0",
     "react-native": "0.83.6",

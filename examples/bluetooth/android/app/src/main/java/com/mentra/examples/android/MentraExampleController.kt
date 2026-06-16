@@ -46,6 +46,8 @@ import com.mentra.bluetoothsdk.HotspotErrorEvent
 import com.mentra.bluetoothsdk.HotspotStatus
 import com.mentra.bluetoothsdk.HotspotStatusEvent
 import com.mentra.bluetoothsdk.PhoneSdkRuntimeState
+import com.mentra.bluetoothsdk.ButtonPhotoSettings
+import com.mentra.bluetoothsdk.ButtonPhotoSize
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoResponse
@@ -234,7 +236,10 @@ data class MentraExampleState(
     val videoPreviewUrl: String? = null,
     val videoRecording: Boolean = false,
     val photoCompression: String = "none",
-    val photoSize: String = "full",
+    val photoSize: String = "max",
+    val scanMode: Boolean = false,
+    val scanAeDivisor: Int = 3,
+    val scanIsoCap: Int = 800,
     val photoExposureManual: Boolean = false,
     val photoExposureTimeNs: Int = PHOTO_EXPOSURE_DEFAULT_NS,
     val photoIso: Int = PHOTO_ISO_DEFAULT,
@@ -512,6 +517,59 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(photoCompression = compression)
     }
 
+    fun setScanMode(enabled: Boolean) {
+        state = state.copy(scanMode = enabled)
+        if (!isGlassesConnected()) {
+            return
+        }
+        runAction(if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses") {
+            requireConnected("sync photo capture settings")
+            // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan tuning
+            // (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains/resetCaptureTuning) ships in
+            // 0.1.13; bump the Maven pin and restore the full preset once published.
+            val settings =
+                if (enabled) {
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
+                } else {
+                    ButtonPhotoSettings(size = buttonPhotoSizeToSdk(state.photoSize))
+                }
+            withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
+        }
+    }
+
+    fun setScanAeDivisor(divisor: Int) {
+        val nextDivisor = if (divisor > 3) 5 else 3
+        state = state.copy(scanAeDivisor = nextDivisor)
+        if (state.scanMode) {
+            pushScanButtonPreset(nextDivisor, state.scanIsoCap)
+        }
+    }
+
+    fun setScanIsoCap(isoCap: Int) {
+        val nextIsoCap = if (isoCap <= 400) 400 else 800
+        state = state.copy(scanIsoCap = nextIsoCap)
+        if (state.scanMode) {
+            pushScanButtonPreset(state.scanAeDivisor, nextIsoCap)
+        }
+    }
+
+    private fun pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
+        if (!isGlassesConnected()) {
+            return
+        }
+        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor and
+        // ISO-cap chips only drive on-device UI state until the 0.1.13 preset ships. Re-assert the
+        // max-size scan button preset so the hardware button stays in sync.
+        runAction("Apply scan preset on glasses") {
+            requireConnected("sync photo capture settings")
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.setButtonPhotoSettings(
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX),
+                )
+            }
+        }
+    }
+
     fun setPhotoExposureManual(enabled: Boolean) {
         state = state.copy(photoExposureManual = enabled)
     }
@@ -596,15 +654,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val responseEvent = try {
             withContext(Dispatchers.IO) {
                 mentraBluetoothSdk.requestPhoto(
-                    PhotoRequest(
+                    buildPhotoRequest(
                         requestId = requestId,
                         appId = "com.mentra.bluetoothsdk.example.android",
-                        size = PhotoSize.fromValue(state.photoSize),
                         webhookUrl = uploadUrl,
-                        compress = PhotoCompression.fromValue(state.photoCompression),
-                        sound = true,
-                        exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                        iso = if (state.photoExposureManual) state.photoIso else null,
                     )
                 )
             }
@@ -640,15 +693,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val responseEvent = try {
             withContext(Dispatchers.IO) {
                 mentraBluetoothSdk.requestPhoto(
-                    PhotoRequest(
+                    buildPhotoRequest(
                         requestId = requestId,
                         appId = "com.mentra.bluetoothsdk.example.android",
-                        size = PhotoSize.fromValue(state.photoSize),
                         webhookUrl = uploadUrl,
-                        compress = PhotoCompression.fromValue(state.photoCompression),
-                        sound = true,
-                        exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                        iso = if (state.photoExposureManual) state.photoIso else null,
                     )
                 )
             }
@@ -662,6 +710,32 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         handlePhotoResponse(responseEvent)
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
+    }
+
+    private fun buildPhotoRequest(requestId: String, appId: String, webhookUrl: String): PhotoRequest {
+        if (state.scanMode) {
+            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
+            // isoCap/mfnr/...); those ship in 0.1.13. The scan preset still reaches the glasses via
+            // the `ButtonPhotoSettings` sync above (Maven 0.1.12 supports it). Capture at max detail.
+            return PhotoRequest(
+                requestId = requestId,
+                appId = appId,
+                size = PhotoSize.FULL,
+                webhookUrl = webhookUrl,
+                compress = PhotoCompression.NONE,
+                sound = false,
+            )
+        }
+        return PhotoRequest(
+            requestId = requestId,
+            appId = appId,
+            size = photoSizeToSdk(state.photoSize),
+            webhookUrl = webhookUrl,
+            compress = PhotoCompression.fromValue(state.photoCompression),
+            sound = true,
+            exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+            iso = if (state.photoExposureManual) state.photoIso else null,
+        )
     }
 
     fun toggleVideoRecording() {
@@ -1551,6 +1625,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
+            // Re-apply scan preset after reconnect so button captures stay in sync.
+            if (state.scanMode) {
+                pushScanButtonPreset(state.scanAeDivisor, state.scanIsoCap)
+            }
         }
         addEvent("STORE", summarize(glasses))
     }
@@ -2811,7 +2889,23 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
     status?.let { GlassesRuntimeState.Disconnected() }
 
-val photoSizeOptions = listOf("small", "medium", "large", "full")
+// UI tier names match the 0.1.13 SDK (LOW/MEDIUM/HIGH/MAX).
+// This helper maps them to 0.1.12 Maven enum values (SMALL/MEDIUM/LARGE/FULL).
+fun photoSizeToSdk(size: String): PhotoSize = when (size) {
+    "low" -> PhotoSize.SMALL
+    "high" -> PhotoSize.LARGE
+    "max", "full" -> PhotoSize.FULL
+    else -> PhotoSize.MEDIUM
+}
+
+fun buttonPhotoSizeToSdk(size: String): ButtonPhotoSize = when (size) {
+    "low" -> ButtonPhotoSize.SMALL
+    "high" -> ButtonPhotoSize.LARGE
+    "max", "full" -> ButtonPhotoSize.MAX
+    else -> ButtonPhotoSize.MEDIUM
+}
+
+val photoSizeOptions = listOf("low", "medium", "high", "max")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
 
 fun roiPositionLabel(roiPosition: Int): String =
@@ -2826,6 +2920,9 @@ fun cameraSdkCall(
     iso: Int,
     cameraFov: Int,
     cameraRoiPosition: Int,
+    scanMode: Boolean,
+    scanAeDivisor: Int,
+    scanIsoCap: Int,
 ): String {
     val prefix = """
 val cameraFovResult = mentraBluetoothSdk.setCameraFov(
@@ -2850,13 +2947,34 @@ val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
 println("Video stopped: ${'$'}{stopped.status}")
 """.trimIndent()
     }
+    if (scanMode) {
+        return """
+$prefix
+val photo = mentraBluetoothSdk.requestPhoto(
+    PhotoRequest(
+      requestId = requestId,
+      appId = "com.mentra.bluetoothsdk.example.android",
+      size = PhotoSize.MAX,
+      webhookUrl = uploadUrl,
+      compress = PhotoCompression.NONE,
+      sound = false,
+      aeExposureDivisor = $scanAeDivisor,
+      isoCap = $scanIsoCap,
+      noiseReduction = false,
+      edgeEnhancement = false,
+      mfnr = false,
+    )
+)
+println("Scan photo delivered: ${'$'}{photo.response.requestId}")
+""".trimIndent()
+    }
     return """
 $prefix
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
       appId = "com.mentra.bluetoothsdk.example.android",
-      size = PhotoSize.${size.uppercase(Locale.US)},
+      size = PhotoSize.${when(size) { "low" -> "SMALL"; "high" -> "LARGE"; "max" -> "FULL"; else -> "MEDIUM" }},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,

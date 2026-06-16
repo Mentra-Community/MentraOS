@@ -109,6 +109,9 @@ fun CameraScreen(controller: MentraExampleController) {
         state.photoIso,
         state.cameraFov,
         state.cameraRoiPosition,
+        state.scanMode,
+        state.scanAeDivisor,
+        state.scanIsoCap,
     )
     val clipboardManager = LocalClipboardManager.current
     var photoDetailsExpanded by remember { mutableStateOf(false) }
@@ -150,12 +153,32 @@ fun CameraScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Eyebrow("PHOTO")
-                    Text(
-                        photoStateLabel(state.photoPreviewUrl, state.photoPreviewDetails),
-                        color = AppColor.greenAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            if (!connected) {
+                                "Connect glasses first"
+                            } else if (!glassesWifiConnected) {
+                                "Connect glasses to Wi-Fi"
+                            } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
+                                "Capturing..."
+                            } else if (state.scanMode) {
+                                "Capture scan photo"
+                            } else {
+                                "Capture photo"
+                            },
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (state.photoPreviewUrl != null || state.photoPreviewDetails?.state == "error" || state.photoPreviewDetails?.state == "acknowledged") {
+                            Text(
+                                photoStateLabel(state.photoPreviewUrl, state.photoPreviewDetails),
+                                color = AppColor.greenAccent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -205,8 +228,10 @@ fun CameraScreen(controller: MentraExampleController) {
                                 "Connect glasses first"
                             } else if (!glassesWifiConnected) {
                                 "Connect glasses to Wi-Fi"
-                            } else if (state.activeAction == "Capture & upload") {
+                            } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
                                 "Capturing..."
+                            } else if (state.scanMode) {
+                                "Capture scan photo"
                             } else {
                                 "Capture photo"
                             },
@@ -216,6 +241,8 @@ fun CameraScreen(controller: MentraExampleController) {
                         )
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                ScanModeSettingsCard(controller)
                 Spacer(Modifier.height(12.dp))
                 PhotoDetailsCard(
                     details = state.photoPreviewDetails,
@@ -516,7 +543,11 @@ fun CameraScreen(controller: MentraExampleController) {
                 if (captureMode == CameraCaptureMode.PHOTO) {
                     CameraOptionGroup("photo size") {
                         photoSizeOptions.forEach { size ->
-                            OptionChip(size, state.photoSize == size) { controller.setPhotoSize(size) }
+                            OptionChip(
+                                size,
+                                !state.scanMode && state.photoSize == size,
+                                enabled = !state.scanMode,
+                            ) { controller.setPhotoSize(size) }
                         }
                     }
                     CameraOptionGroup("photo compress") {
@@ -533,6 +564,54 @@ fun CameraScreen(controller: MentraExampleController) {
         }
 
         Spacer(Modifier.height(scrollBottomPadding()))
+    }
+}
+
+@Composable
+private fun ScanModeSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("SCAN MODE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(
+                    if (state.scanMode) "Document / barcode capture preset" else "Standard photo capture",
+                    color = AppColor.greenAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Switch(checked = state.scanMode, onCheckedChange = controller::setScanMode)
+        }
+        if (state.scanMode) {
+            Text(
+                "Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.",
+                color = AppColor.muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                "AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.",
+                color = AppColor.muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("AE ÷3", state.scanAeDivisor == 3, enabled = false) { controller.setScanAeDivisor(3) }
+                OptionChip("AE ÷5", state.scanAeDivisor == 5, enabled = false) { controller.setScanAeDivisor(5) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("ISO 800", state.scanIsoCap == 800, enabled = false) { controller.setScanIsoCap(800) }
+                OptionChip("ISO 400", state.scanIsoCap == 400, enabled = false) { controller.setScanIsoCap(400) }
+            }
+        }
     }
 }
 

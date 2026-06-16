@@ -4,7 +4,11 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
+// Map new-tier display names (low|medium|high|max) to SDK 0.1.12 enum values
+// (small/medium/large/full). Remove this mapping when the SwiftPM pin moves to 0.1.13.
+private let photoSizeOptions: [(display: String, size: PhotoSize)] = [
+    ("low", .small), ("medium", .medium), ("high", .large), ("max", .full),
+]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
 private enum CameraCaptureMode {
@@ -20,8 +24,28 @@ private func cameraSdkCall(
     exposureTimeNs: Int,
     iso: Int,
     cameraFov: Int,
-    cameraRoiPosition: Int
+    cameraRoiPosition: Int,
+    scanMode: Bool,
+    scanAeDivisor: Int,
+    scanIsoCap: Int
 ) -> String {
+    if scanMode {
+        return """
+    // Scan tuning (aeExposureDivisor \(scanAeDivisor), isoCap \(scanIsoCap), mfnr/edge off)
+    // ships in SDK 0.1.13's PhotoRequest. On 0.1.12 we capture at max detail:
+    let photo = try await mentraBluetoothSdk.requestPhoto(
+        PhotoRequest(
+          requestId: requestId,
+          appId: "com.mentra.bluetoothsdk.example.ios",
+          size: .full,
+          webhookUrl: uploadUrl,
+          compress: .none,
+          sound: false
+        )
+    )
+    print("Scan photo delivered: \\(photo.requestId)")
+    """
+    }
     let exposureLine = exposureManual
         ? "      exposureTimeNs: \(exposureTimeNs),"
         : "      exposureTimeNs: nil, // auto exposure"
@@ -211,7 +235,7 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : model.scanMode ? "Capture scan photo" : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
@@ -221,6 +245,7 @@ struct CameraScreen: View {
             .opacity(model.glassesConnected && model.glassesWifiConnected ? 1 : 0.55)
             .padding(.horizontal, 6).padding(.top, 14)
 
+            ScanModeSettingsCard(model: model)
             photoDetailsCard(embedded: true)
                 .padding(.horizontal, 6)
                 .padding(.top, 12)
@@ -368,7 +393,10 @@ struct CameraScreen: View {
             exposureTimeNs: model.photoExposureTimeNs,
             iso: model.photoIso,
             cameraFov: model.cameraFov,
-            cameraRoiPosition: model.cameraRoiPosition
+            cameraRoiPosition: model.cameraRoiPosition,
+            scanMode: model.scanMode,
+            scanAeDivisor: model.scanAeDivisor,
+            scanIsoCap: model.scanIsoCap
         )
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
@@ -526,9 +554,16 @@ struct CameraScreen: View {
             VStack(alignment: .leading, spacing: 10) {
                 if captureMode == .photo {
                     CameraOptionGroup(label: "photo size") {
-                        ForEach(photoSizeOptions, id: \.rawValue) { size in
-                            CameraOptionChip(value: size.rawValue, highlight: model.photoSize == size)
-                                .onTapGesture { model.setPhotoSize(size) }
+                        ForEach(photoSizeOptions, id: \.display) { option in
+                            CameraOptionChip(
+                                value: option.display,
+                                highlight: !model.scanMode && model.photoSize == option.size
+                            )
+                            .opacity(model.scanMode ? 0.45 : 1)
+                            .onTapGesture {
+                                guard !model.scanMode else { return }
+                                model.setPhotoSize(option.size)
+                            }
                         }
                     }
 
@@ -636,6 +671,53 @@ struct CameraScreen: View {
             return directPhone ? "Photo preview loaded from phone receiver" : "Photo preview loaded from cloud server"
         }
         return "Waiting for camera capture"
+    }
+}
+
+private struct ScanModeSettingsCard: View {
+    @ObservedObject var model: BluetoothViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SCAN MODE")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundColor(AppColor.muted)
+                    Text(model.scanMode ? "Document / barcode capture preset" : "Standard photo capture")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { model.scanMode }, set: model.setScanMode))
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+            }
+            if model.scanMode {
+                Text("Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                Text("AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(AppColor.muted)
+                HStack(spacing: 8) {
+                    CameraOptionChip(value: "AE ÷3", highlight: model.scanAeDivisor == 3)
+                        .opacity(0.5)
+                    CameraOptionChip(value: "AE ÷5", highlight: model.scanAeDivisor == 5)
+                        .opacity(0.5)
+                }
+                HStack(spacing: 8) {
+                    CameraOptionChip(value: "ISO 800", highlight: model.scanIsoCap == 800)
+                        .opacity(0.5)
+                    CameraOptionChip(value: "ISO 400", highlight: model.scanIsoCap == 400)
+                        .opacity(0.5)
+                }
+            }
+        }
+        .padding(14)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 

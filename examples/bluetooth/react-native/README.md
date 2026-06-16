@@ -68,11 +68,15 @@ Run on a physical Android phone for Bluetooth testing. Some Android devices requ
 
 `bun run android:dev` starts Metro first, waits for `localhost:8081`, installs the development build without starting a second bundler, forwards the Android device's `localhost:8081` to your computer, and explicitly opens the Expo dev-client URL. This avoids the first-run blank launcher state where you have to manually tap the `localhost:8081` session.
 
-If multiple Android devices are connected, set `ANDROID_SERIAL` before running the command:
+Android install scripts (`bun run android`, `bun run android:dev`) **never target Mentra Live glasses** — only a USB-connected phone. If glasses and a phone are both attached, the scripts pick the phone automatically.
+
+If multiple phones are connected, set `ANDROID_SERIAL` before running:
 
 ```bash
-ANDROID_SERIAL=<device-serial> bun run android:dev
+ANDROID_SERIAL=<phone-serial> bun run android:dev
 ```
+
+Do not use `expo run:android` directly; it may install on whatever device Expo picks (including Mentra Live).
 
 ## SDK Plugin Configuration
 
@@ -128,7 +132,7 @@ the published package, remove the symlink and run `bun install`.
 The example has five tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
-- **Camera**: request photo upload to the local demo cloud or directly to this phone, record and upload videos to the media webhook, tune manual exposure and ISO, preview received media, and scan photo previews for barcodes. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
+- **Camera**: request photo upload to the local demo cloud or directly to this phone, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Scan Mode** for document/barcode capture presets (max resolution, AE divisor, ISO cap, edge/MFNR off), preview received media, and scan photo previews for barcodes. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, video upload, microphone, and SDK diagnostic events.

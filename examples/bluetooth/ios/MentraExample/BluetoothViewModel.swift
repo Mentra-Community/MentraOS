@@ -283,6 +283,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var videoRecording = false
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
     @Published private(set) var photoSize: PhotoSize = .full
+    @Published private(set) var scanMode = false
+    @Published private(set) var scanAeDivisor = 3
+    @Published private(set) var scanIsoCap = 800
     @Published private(set) var photoCompression: PhotoCompression = .none
     @Published private(set) var photoExposureManual = false
     @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
@@ -607,6 +610,62 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoCompression = compression
     }
 
+    func setScanMode(_ enabled: Bool) {
+        scanMode = enabled
+        guard glassesConnected else { return }
+        Task {
+            do {
+                if enabled {
+                    // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan
+                    // tuning (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains) ships in
+                    // 0.1.13; bump the SwiftPM pin and restore the full preset once published.
+                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                        ButtonPhotoSettings(size: .max)
+                    )
+                } else {
+                    let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
+                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                        ButtonPhotoSettings(size: size)
+                    )
+                }
+            } catch {
+                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setScanAeDivisor(_ divisor: Int) {
+        let nextDivisor = divisor > 3 ? 5 : 3
+        scanAeDivisor = nextDivisor
+        if scanMode {
+            pushScanButtonPreset(aeDivisor: nextDivisor, isoCap: scanIsoCap)
+        }
+    }
+
+    func setScanIsoCap(_ isoCap: Int) {
+        let nextIsoCap = isoCap <= 400 ? 400 : 800
+        scanIsoCap = nextIsoCap
+        if scanMode {
+            pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: nextIsoCap)
+        }
+    }
+
+    private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
+        guard glassesConnected else { return }
+        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor
+        // and ISO-cap chips only affect on-device UI state until the 0.1.13 preset ships. We
+        // still re-assert the max-size scan button preset so the hardware button stays in sync.
+        Task {
+            do {
+                _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                    ButtonPhotoSettings(size: .max)
+                )
+            } catch {
+                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+            }
+        }
+    }
+
     func setPhotoExposureManual(_ enabled: Bool) {
         photoExposureManual = enabled
     }
@@ -684,16 +743,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let responseEvent: PhotoResponseEvent
             do {
                 responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                    PhotoRequest(
-                        requestId: requestId,
-                        appId: "com.mentra.bluetoothsdk.example.ios",
-                        size: photoSize,
-                        webhookUrl: uploadUrl,
-                        compress: photoCompression,
-                        sound: true,
-                        exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                        iso: photoExposureManual ? photoIso : nil
-                    )
+                    buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
                 )
             } catch {
                 if activePhotoRequestId == requestId {
@@ -728,16 +778,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let responseEvent: PhotoResponseEvent
         do {
             responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId: requestId,
-                    appId: "com.mentra.bluetoothsdk.example.ios",
-                    size: photoSize,
-                    webhookUrl: uploadUrl,
-                    compress: photoCompression,
-                    sound: true,
-                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                    iso: photoExposureManual ? photoIso : nil
-                )
+                buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
             )
         } catch {
             directPhotoTimeoutTask?.cancel()
@@ -749,6 +790,32 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         handlePhotoResponse(responseEvent.response)
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
+    }
+
+    private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
+        if scanMode {
+            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
+            // isoCap/mfnr/...); those arrive in 0.1.13. Capture at max resolution with no
+            // compression so the scan still favors detail; the rest applies once the pin is bumped.
+            return PhotoRequest(
+                requestId: requestId,
+                appId: appId,
+                size: .full,
+                webhookUrl: webhookUrl,
+                compress: .none,
+                sound: false
+            )
+        }
+        return PhotoRequest(
+            requestId: requestId,
+            appId: appId,
+            size: photoSize,
+            webhookUrl: webhookUrl,
+            compress: photoCompression,
+            sound: true,
+            exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+            iso: photoExposureManual ? photoIso : nil
+        )
     }
 
     func toggleVideoRecording() {
@@ -1516,10 +1583,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        let wasConnected = glassesConnected
         glassesValues = glasses
         hotspotEnabled = enabledHotspotStatus(glasses) != nil
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
+        } else if !wasConnected {
+            // Re-apply scan preset on reconnect so button captures stay in sync.
+            if scanMode {
+                pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: scanIsoCap)
+            }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
         append(tag: "STORE", text: summarize(glasses))

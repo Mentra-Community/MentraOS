@@ -21,10 +21,13 @@ import {
   PHOTO_ISO_MAX,
   PHOTO_ISO_MIN,
   PHOTO_SIZES,
+  SCAN_AE_DIVISOR_OPTIONS,
+  SCAN_ISO_CAP_OPTIONS,
   type BluetoothSdkExampleModel,
   type PhotoCompression,
   type PhotoPreviewDetails,
   type PhotoSize,
+  type ScanAeDivisor,
   type VideoPreviewDetails,
 } from '../useBluetoothSdkExample';
 
@@ -42,25 +45,40 @@ function photoSdkCall(
   iso: number,
   cameraFov: number,
   cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
+  scanMode: boolean,
+  scanAeDivisor: ScanAeDivisor,
+  scanIsoCap: number,
 ) {
-  const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
-  const isoLine = exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO';
   const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
 console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
+  const requestFields = scanMode
+    ? `  size: "max",
+  compress: "none",
+  sound: false,
+  aeExposureDivisor: ${scanAeDivisor},
+  isoCap: ${scanIsoCap},
+  noiseReduction: false,
+  edgeEnhancement: false,
+  mfnr: false,
+  ispDigitalGain: 0,
+  ispAnalogGain: "low",`
+    : [
+        `  size: "${size}",`,
+        `  compress: "${compression}",`,
+        '  sound: true,',
+        exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
+        exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO',
+      ].join('\n');
   if (!useCloudServer) {
     return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
 const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 const photo = await BluetoothSdk.requestPhoto({
   requestId: photoRequestId,
   appId: PHOTO_APP_ID,
-  size: "${size}",
   webhookUrl: uploadUrl,
   authToken: null,
-  compress: "${compression}",
-  sound: true,
-${exposureLine}
-${isoLine}
+${requestFields}
 })
 console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   }
@@ -68,13 +86,9 @@ console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
 const photo = await BluetoothSdk.requestPhoto({
   requestId: photoRequestId,
   appId: PHOTO_APP_ID,
-  size: "${size}",
   webhookUrl,
   authToken: null,
-  compress: "${compression}",
-  sound: true,
-${exposureLine}
-${isoLine}
+${requestFields}
 })
 console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
 }
@@ -140,6 +154,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         sdk.photoIso,
         sdk.cameraFov,
         sdk.cameraRoiPosition,
+        sdk.scanMode,
+        sdk.scanAeDivisor,
+        sdk.scanIsoCap,
       );
 
   React.useEffect(() => {
@@ -149,7 +166,10 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       sdk.activeAction === 'Stop & upload video'
     ) {
       setCaptureMode('video');
-    } else if (sdk.activeAction === 'Capture & upload') {
+    } else if (
+      sdk.activeAction === 'Capture & upload' ||
+      sdk.activeAction === 'Capture scan photo'
+    ) {
       setCaptureMode('photo');
     }
   }, [sdk.activeAction, sdk.videoRecording]);
@@ -266,12 +286,24 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 ? 'Connect glasses first'
                 : !glassesWifiConnected
                   ? 'Connect glasses to Wi-Fi'
-                : sdk.activeAction === 'Capture & upload'
+                : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture scan photo'
                   ? 'Capturing…'
-                  : 'Capture photo'}
+                  : sdk.scanMode
+                    ? 'Capture scan photo'
+                    : 'Capture photo'}
             </Text>
           </LinearGradient>
         </Pressable>
+        <View style={styles.scanModeBelowCapture}>
+          <ScanModeSettingsCard
+            aeDivisor={sdk.scanAeDivisor}
+            enabled={sdk.scanMode}
+            isoCap={sdk.scanIsoCap}
+            onAeDivisorChange={sdk.setScanAeDivisor}
+            onEnabledChange={sdk.setScanMode}
+            onIsoCapChange={sdk.setScanIsoCap}
+          />
+        </View>
         <PhotoDetailsCard
           details={sdk.photoPreviewDetails}
           embedded
@@ -461,7 +493,13 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         )}
         <OptionGroup label="photo size">
           {PHOTO_SIZES.map((size) => (
-            <Chip key={size} active={sdk.photoSize === size} value={size} onPress={() => sdk.setPhotoSize(size)} />
+            <Chip
+              key={size}
+              active={!sdk.scanMode && sdk.photoSize === size}
+              disabled={sdk.scanMode}
+              value={size}
+              onPress={() => sdk.setPhotoSize(size)}
+            />
           ))}
         </OptionGroup>
         <OptionGroup label="photo compress">
@@ -469,12 +507,14 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Chip
               key={compression}
               active={sdk.photoCompression === compression}
+              disabled={sdk.scanMode}
               value={compression}
               onPress={() => sdk.setPhotoCompression(compression)}
             />
           ))}
         </OptionGroup>
         <ExposureControl
+          disabled={sdk.scanMode}
           enabled={sdk.photoExposureManual}
           onEnabledChange={sdk.setPhotoExposureManual}
           onIsoChange={sdk.setPhotoIso}
@@ -948,7 +988,75 @@ function photoCaptureMetadataDetail(config: PhotoStatusExtras['captureMetadata']
   return values.length > 0 ? values.join(' · ') : null;
 }
 
+function ScanModeSettingsCard({
+  aeDivisor,
+  enabled,
+  isoCap,
+  onAeDivisorChange,
+  onEnabledChange,
+  onIsoCapChange,
+}: {
+  aeDivisor: ScanAeDivisor;
+  enabled: boolean;
+  isoCap: number;
+  onAeDivisorChange: (divisor: ScanAeDivisor) => void;
+  onEnabledChange: (enabled: boolean) => void;
+  onIsoCapChange: (isoCap: number) => void;
+}) {
+  return (
+    <View style={styles.settingCard}>
+      <View style={styles.settingHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.settingLabel}>SCAN MODE</Text>
+          <Text style={styles.settingHint}>
+            {enabled ? `Max res · AE÷${aeDivisor} · ISO cap ${isoCap}` : 'Document / barcode capture preset'}
+          </Text>
+        </View>
+        <Switch
+          ios_backgroundColor="rgba(15,42,29,0.18)"
+          onValueChange={onEnabledChange}
+          thumbColor="#fff"
+          trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
+          value={enabled}
+        />
+      </View>
+      {enabled ? (
+        <>
+          <Text style={styles.settingDescription}>
+            Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn on NR/ISP). Capture still sends AE÷ and ISO cap in take_photo.
+          </Text>
+          <OptionGroup label="ae divisor">
+            {SCAN_AE_DIVISOR_OPTIONS.map((option) => (
+              <Chip
+                key={option}
+                active={aeDivisor === option}
+                value={`÷${option}`}
+                onPress={() => onAeDivisorChange(option)}
+              />
+            ))}
+          </OptionGroup>
+          <OptionGroup label="iso cap">
+            {SCAN_ISO_CAP_OPTIONS.map((option) => (
+              <Chip
+                key={option}
+                active={isoCap === option}
+                value={String(option)}
+                onPress={() => onIsoCapChange(option)}
+              />
+            ))}
+          </OptionGroup>
+        </>
+      ) : (
+        <Text style={styles.settingDescription}>
+          Off — capture uses the size, compress, and exposure options below.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function ExposureControl({
+  disabled = false,
   enabled,
   onEnabledChange,
   onIsoChange,
@@ -956,6 +1064,7 @@ function ExposureControl({
   iso,
   value,
 }: {
+  disabled?: boolean;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
   onIsoChange: (iso: number) => void;
@@ -963,14 +1072,16 @@ function ExposureControl({
   iso: number;
   value: number;
 }) {
+  const controlsDisabled = disabled || !enabled;
   return (
-    <View style={styles.settingCard}>
+    <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
       <View style={styles.settingHeader}>
         <View>
           <Text style={styles.settingLabel}>EXPOSURE</Text>
           <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto exposure'}</Text>
         </View>
         <Switch
+          disabled={disabled}
           ios_backgroundColor="rgba(15,42,29,0.18)"
           onValueChange={onEnabledChange}
           thumbColor="#fff"
@@ -979,7 +1090,7 @@ function ExposureControl({
         />
       </View>
       <RangeSlider
-        disabled={!enabled}
+        disabled={controlsDisabled}
         max={PHOTO_EXPOSURE_MAX_NS}
         min={PHOTO_EXPOSURE_MIN_NS}
         onChange={onValueChange}
@@ -1000,7 +1111,7 @@ function ExposureControl({
         </View>
       </View>
       <RangeSlider
-        disabled={!enabled}
+        disabled={controlsDisabled}
         max={PHOTO_ISO_MAX}
         min={PHOTO_ISO_MIN}
         onChange={onIsoChange}
@@ -1711,6 +1822,7 @@ const styles = StyleSheet.create({
   barcodeValue: { color: colors.ink, fontSize: 11, fontWeight: '700', lineHeight: 15, marginTop: 2 },
   barcodeMeta: { color: colors.muted, fontSize: 10, fontWeight: '600', lineHeight: 14, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
+  scanModeBelowCapture: { marginTop: 12, marginHorizontal: 6 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.45 },
 
