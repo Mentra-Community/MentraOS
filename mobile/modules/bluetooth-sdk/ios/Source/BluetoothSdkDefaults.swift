@@ -4,13 +4,15 @@ import Foundation
 enum BluetoothSdkDefaults {
     static var sdkVersion: String? {
         #if SWIFT_PACKAGE
-            normalizedSdkVersion("__MENTRA_BLUETOOTH_SDK_VERSION__")
+            normalizedSdkVersion(swiftPackageSdkVersion)
         #else
             packageVersion(from: sdkBundle)
         #endif
     }
 
     static let voiceActivityDetectionEnabled = false
+    private static let swiftPackageSdkVersion = "__MENTRA_BLUETOOTH_SDK_VERSION__"
+    private static let swiftPackageSdkVersionPlaceholder = "__MENTRA" + "_BLUETOOTH_SDK_VERSION__"
 
     private static var sdkBundle: Bundle {
         #if SWIFT_PACKAGE
@@ -40,7 +42,7 @@ enum BluetoothSdkDefaults {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               trimmed != "1.0",
-              trimmed != "__MENTRA_BLUETOOTH_SDK_VERSION__"
+              trimmed != swiftPackageSdkVersionPlaceholder
         else {
             return nil
         }
