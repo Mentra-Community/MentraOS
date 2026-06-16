@@ -1471,7 +1471,7 @@ class G2: NSObject, SGCManager {
     // ever outstanding, so a single slot suffices.
     private var pendingImgAckSession: Int?
     private var pendingImgAck: CheckedContinuation<Bool, Never>?
-    private let IMG_ACK_TIMEOUT_NS: UInt64 = 500_000_000
+    private let IMG_ACK_TIMEOUT_NS: UInt64 = 1_000_000_000// 1000ms timeout
     private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
@@ -2059,7 +2059,7 @@ class G2: NSObject, SGCManager {
             "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
         )
 
-        // for attempt in 1...IMG_MAX_ATTEMPTS {
+        for attempt in 1...IMG_MAX_ATTEMPTS {
             var fragmentIndex: Int32 = 0
             var offset = 0
             var transferOk = true
@@ -2089,28 +2089,26 @@ class G2: NSObject, SGCManager {
                     "G2: sendImageData(\(containerName)) - attempt \(attempt) sent fragment \(fragmentIndex)"
                 )
 
-                // Wait for THIS fragment's ACK (500ms timeout) before sending the next. On
-                // timeout/img_failed, abandon the attempt and retry the whole image.
-                // let ok = await awaitImageAck(sessionId: sessionId)
-                // if !ok {
-                //     Bridge.log(
-                //         "G2: sendImageData(\(containerName)) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
-                //     )
-                //     transferOk = false
-                //     break
-                // }
-
-                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms between fragments
+                // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
+                // Timeout/img_failed → abandon the attempt and retry the whole image.
+                let ok = await awaitImageAck(sessionId: sessionId)
+                if !ok {
+                    Bridge.log(
+                        "G2: sendImageData(\(containerName)) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                    )
+                    transferOk = false
+                    break
+                }
 
                 fragmentIndex += 1
                 offset = end
             }
 
-            // if transferOk {
-            //     Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
-            //     return
-            // }
-        // }
+            if transferOk {
+                Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
+                return
+            }
+        }
 
         Bridge.log("G2: WARN: sendImageData(\(containerName)) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
