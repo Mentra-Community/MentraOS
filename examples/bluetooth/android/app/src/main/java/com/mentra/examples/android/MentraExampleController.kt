@@ -30,7 +30,6 @@ import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
-import com.mentra.bluetoothsdk.OtaQueryResult
 import com.mentra.bluetoothsdk.OtaStatusEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
 import com.mentra.bluetoothsdk.CameraFov
@@ -1898,8 +1897,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         applyOtaStatus(event)
     }
 
-    private fun handleOtaQueryResult(result: OtaQueryResult): Boolean {
-        if (result.type == "ota_update_available") {
+    private fun handleOtaCheckResult(updateAvailable: Boolean): Boolean {
+        if (updateAvailable) {
             state = state.copy(
                 otaStatus = null,
                 otaStatusMessage = null,
@@ -1909,24 +1908,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return true
         }
 
-        val event = OtaStatusEvent(
-            sessionId = result.values.stringValue("session_id").orEmpty(),
-            totalSteps = result.values.intValue("total_steps") ?: 0,
-            currentStep = result.values.intValue("current_step") ?: 0,
-            stepType = result.values.stringValue("step_type").orEmpty(),
-            phase = result.values.stringValue("phase").orEmpty(),
-            stepPercent = result.values.intValue("step_percent") ?: 0,
-            overallPercent = result.values.intValue("overall_percent") ?: 0,
-            status = result.values.stringValue("status").orEmpty(),
-            errorMessage = result.values.stringValue("error_message"),
-            glassesTimeMs = result.values.longValue("glasses_time_ms"),
-            values = result.values,
+        state = state.copy(
+            otaStatus = null,
+            otaStatusMessage = "Glasses firmware is up to date",
+            otaUpdateAvailable = false,
         )
-        applyOtaStatus(event)
-        if (!isDisplayableOtaStatus(event)) {
-            state = state.copy(otaStatusMessage = "Glasses firmware is up to date")
-            addEvent("LIVE", "OTA up to date")
-        }
+        addEvent("LIVE", "OTA up to date")
         return false
     }
 
@@ -1977,7 +1964,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun checkForOtaUpdate() = runAction("Check OTA") {
         requireConnected("check OTA")
         requireGlassesWifi("check for OTA updates")
-        handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+        handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
     }
 
     private fun maybeAutoCheckOta() {
@@ -2001,7 +1988,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             try {
                 requireConnected("check OTA")
                 requireGlassesWifi("check for OTA updates")
-                handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+                handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
             } finally {
                 autoOtaCheckInProgress = false
             }

@@ -313,7 +313,7 @@ function otaCardDetail(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaUpdateAvailable) {
     return 'Update your glasses before continuing. This example app may not work properly until the glasses firmware is current.';
   }
-  return 'Tap Check OTA to ask the glasses for availability and progress.';
+  return 'Tap Check OTA to compare the current glasses version with the SDK OTA manifest.';
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
@@ -321,12 +321,28 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     return null;
   }
   const percent = sdk.otaStatus?.overall_percent ?? 0;
+  const updateRequired = sdk.otaUpdateAvailable && !sdk.otaStatus;
   return (
-    <View style={styles.otaCard}>
+    <LinearGradient
+      colors={updateRequired ? ['#FFF5DF', '#FFE6E1'] : ['#fff', '#fff']}
+      style={[styles.otaCard, updateRequired && styles.otaCardRequired]}>
       <View style={styles.otaHead}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.otaEyebrow}>OTA</Text>
-          <Text style={styles.otaTitle}>{otaCardTitle(sdk)}</Text>
+        <View style={styles.otaTitleRow}>
+          {updateRequired ? (
+            <View style={styles.otaWarningIcon}>
+              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="m21.7 18.6-8.3-14a1.6 1.6 0 0 0-2.8 0l-8.3 14A1.6 1.6 0 0 0 3.7 21h16.6a1.6 1.6 0 0 0 1.4-2.4Z" />
+                <Path d="M12 8v5" />
+                <Path d="M12 17h.01" />
+              </Svg>
+            </View>
+          ) : null}
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.otaEyebrow, updateRequired && styles.otaEyebrowRequired]}>
+              {updateRequired ? 'ACTION NEEDED' : 'OTA'}
+            </Text>
+            <Text style={[styles.otaTitle, updateRequired && styles.otaTitleRequired]}>{otaCardTitle(sdk)}</Text>
+          </View>
         </View>
         {sdk.otaStatus ? <Text style={styles.otaPercent}>{percent}%</Text> : null}
       </View>
@@ -335,8 +351,25 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={[styles.otaFill, { width: `${Math.max(0, Math.min(percent, 100))}%` }]} />
         </View>
       ) : null}
-      <Text style={styles.otaDetail}>{otaCardDetail(sdk)}</Text>
-    </View>
+      <Text style={[styles.otaDetail, updateRequired && styles.otaDetailRequired]}>{otaCardDetail(sdk)}</Text>
+      {updateRequired ? (
+        <Pressable
+          disabled={!canStartOta(sdk)}
+          onPress={sdk.startOtaUpdate}
+          style={({ pressed }) => [
+            styles.otaStartButton,
+            pressed && styles.btnPressed,
+            !canStartOta(sdk) && styles.otaStartButtonDisabled,
+          ]}>
+          <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="M12 3v12" />
+            <Path d="m7 10 5 5 5-5" />
+            <Path d="M5 21h14" />
+          </Svg>
+          <Text style={styles.otaStartButtonText}>{canStartOta(sdk) ? 'Start OTA' : 'Connect Wi-Fi first'}</Text>
+        </Pressable>
+      ) : null}
+    </LinearGradient>
   );
 }
 
@@ -557,14 +590,23 @@ const styles = StyleSheet.create({
   signalBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingBottom: 6 },
   bar: { width: 6, borderRadius: 3 },
   statRow: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 12 },
-  otaCard: { marginHorizontal: 16, marginTop: 10, padding: 14, borderRadius: 16, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', shadowColor: '#0F2A1D', shadowOpacity: 0.06, shadowRadius: 18, shadowOffset: { width: 0, height: 6 } },
+  otaCard: { marginHorizontal: 16, marginTop: 10, padding: 14, borderRadius: 16, backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', shadowColor: '#0F2A1D', shadowOpacity: 0.06, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, gap: 0 },
+  otaCardRequired: { borderColor: 'rgba(255,59,48,0.34)', shadowColor: '#FF3B30', shadowOpacity: 0.18, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
   otaHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  otaTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  otaWarningIcon: { width: 34, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.red },
   otaEyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.1, fontFamily: 'Courier' },
+  otaEyebrowRequired: { color: colors.red, fontWeight: '800' },
   otaTitle: { color: colors.ink, fontSize: 15, fontWeight: '700', marginTop: 3 },
+  otaTitleRequired: { color: colors.inkAlt, fontSize: 19, fontWeight: '900' },
   otaPercent: { color: colors.greenInk, fontSize: 20, fontWeight: '800' },
   otaTrack: { height: 6, borderRadius: 999, overflow: 'hidden', backgroundColor: 'rgba(14,44,26,0.08)', marginTop: 12 },
   otaFill: { height: 6, borderRadius: 999, backgroundColor: colors.greenPrimary },
   otaDetail: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16, marginTop: 9 },
+  otaDetailRequired: { color: '#5F201B', fontSize: 13, fontWeight: '700', lineHeight: 18, marginTop: 11 },
+  otaStartButton: { marginTop: 13, minHeight: 48, borderRadius: 14, backgroundColor: colors.red, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  otaStartButtonDisabled: { backgroundColor: 'rgba(95,32,27,0.36)' },
+  otaStartButtonText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   statCard: {
     flex: 1,
     backgroundColor: '#fff',

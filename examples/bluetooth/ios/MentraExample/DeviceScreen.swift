@@ -322,16 +322,28 @@ struct DeviceScreen: View {
     }
 
     private var otaCard: some View {
+        let updateRequired = model.otaUpdateAvailable && model.otaStatus == nil
         return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("OTA")
-                        .font(.system(size: 10, weight: .semibold).monospaced())
-                        .tracking(1.1)
-                        .foregroundColor(AppColor.muted)
-                    Text(otaCardTitle(model: model))
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(AppColor.ink)
+                HStack(alignment: .center, spacing: 10) {
+                    if updateRequired {
+                        ZStack {
+                            Circle().fill(AppColor.red)
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 34, height: 34)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(updateRequired ? "ACTION NEEDED" : "OTA")
+                            .font(.system(size: 10, weight: updateRequired ? .heavy : .semibold).monospaced())
+                            .tracking(1.1)
+                            .foregroundColor(updateRequired ? AppColor.red : AppColor.muted)
+                        Text(otaCardTitle(model: model))
+                            .font(.system(size: updateRequired ? 19 : 15, weight: updateRequired ? .heavy : .bold))
+                            .foregroundColor(AppColor.inkAlt)
+                    }
                 }
                 Spacer()
                 if let status = model.otaStatus {
@@ -352,15 +364,39 @@ struct DeviceScreen: View {
                 .frame(height: 6)
             }
             Text(otaCardDetail(model: model))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(AppColor.muted)
+                .font(.system(size: updateRequired ? 13 : 12, weight: updateRequired ? .bold : .medium))
+                .foregroundColor(updateRequired ? Color(hex: 0x5F201B) : AppColor.muted)
+                .lineSpacing(updateRequired ? 2 : 0)
                 .fixedSize(horizontal: false, vertical: true)
+            if updateRequired {
+                Button(action: model.startOtaUpdate) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.system(size: 15, weight: .bold))
+                        Text(canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
+                            .font(.system(size: 14, weight: .heavy))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 48)
+                    .background(canStartOta(model: model) ? AppColor.red : Color(hex: 0x5F201B).opacity(0.36))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStartOta(model: model))
+            }
         }
         .padding(14)
-        .background(Color.white)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.7), lineWidth: 1))
+        .background(
+            LinearGradient(
+                colors: updateRequired ? [Color(hex: 0xFFF5DF), Color(hex: 0xFFE6E1)] : [.white, .white],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(updateRequired ? AppColor.red.opacity(0.34) : Color.white.opacity(0.7), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: Color(hex: 0x0F2A1D).opacity(0.06), radius: 18, x: 0, y: 6)
+        .shadow(color: (updateRequired ? AppColor.red : Color(hex: 0x0F2A1D)).opacity(updateRequired ? 0.18 : 0.06), radius: updateRequired ? 22 : 18, x: 0, y: updateRequired ? 8 : 6)
     }
 }
 
@@ -448,7 +484,7 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     if model.otaUpdateAvailable {
         return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
     }
-    return "Tap Check OTA to ask the glasses for availability and progress."
+    return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }
 
 @MainActor

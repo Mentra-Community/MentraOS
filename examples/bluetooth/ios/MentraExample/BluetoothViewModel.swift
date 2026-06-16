@@ -1659,11 +1659,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func checkForOtaUpdateResult() async throws -> Bool {
-        handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+        handleOtaCheckResult(try await mentraBluetoothSdk.checkForOtaUpdate())
     }
 
-    private func handleOtaQueryResult(_ result: OtaQueryResult) -> Bool {
-        if result.type == "ota_update_available" {
+    private func handleOtaCheckResult(_ updateAvailable: Bool) -> Bool {
+        if updateAvailable {
             otaStatus = nil
             otaStatusMessage = nil
             otaUpdateAvailable = true
@@ -1671,12 +1671,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             return true
         }
 
-        let event = OtaStatusEvent(values: result.values)
-        applyOtaStatus(event)
-        if !isDisplayableOtaStatus(event) {
-            otaStatusMessage = "Glasses firmware is up to date"
-            append(tag: "LIVE", text: "OTA up to date")
-        }
+        otaStatus = nil
+        otaStatusMessage = "Glasses firmware is up to date"
+        otaUpdateAvailable = false
+        append(tag: "LIVE", text: "OTA up to date")
         return false
     }
 
