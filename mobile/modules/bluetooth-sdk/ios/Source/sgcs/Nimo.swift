@@ -103,6 +103,7 @@ enum NimoProtocol {
 
     // app ids
     static let APP_ID_DASHBOARD = 0x00
+    static let APP_ID_NAV = 0x01
     static let APP_ID_ASR_NOTE = 0x04
     static let APP_ID_PROMPTER = 0x06
     static let APP_ID_AI_TALK = 0x07
@@ -642,6 +643,7 @@ class Nimo: NSObject, SGCManager {
     // Text rendering
     private var pendingText: String?
     private var textAppEntered = false
+    private var navAppEntered = false
     private var currentGlassesAppId = -1
 
     // Battery
@@ -807,11 +809,13 @@ class Nimo: NSObject, SGCManager {
     func displayBitmap(
         base64ImageData: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?
     ) async -> Bool {
-        // Nimo widgets have fixed geometry; x/y are not honored. Renders into the dashboard
-        // location-map widget (appId 0x00, layout right, resId 0x00, 304x180 2bpp).
-        // TODO: hardware-verify widget choice and whether the dashboard must be foregrounded.
-        let targetWidth = 304
-        let targetHeight = 180
+        // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
+        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp). The mini-map is the only
+        // bitmap consumer today and is square, so it maps cleanly with no aspect distortion.
+        // The nav app must be foregrounded before pushing content (mirrors the text path).
+        // TODO: hardware-verify the nav app-mode (standalone vs popup) and enter/exit churn.
+        let targetWidth = 160
+        let targetHeight = 160
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {
@@ -822,6 +826,17 @@ class Nimo: NSObject, SGCManager {
         else { return false }
         let packed = packL8To2bpp(grayscale)
         let (payload, compression) = compressAdaptive(packed)
+        if !navAppEntered {
+            sendFrame(
+                NimoFrameCodec.encodeFrame(
+                    cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                    key: NimoProtocol.CTRL_ENTER_APP,
+                    payload: Data([UInt8(NimoProtocol.APP_ID_NAV), UInt8(NimoProtocol.APP_MODE_STANDALONE)])
+                )
+            )
+            // Optimistic; corrected by app-state reports if the glasses refuse/exit.
+            navAppEntered = true
+        }
         let content =
             NimoFrameCodec.imageHeader(
                 width: targetWidth,
@@ -832,7 +847,7 @@ class Nimo: NSObject, SGCManager {
                 compressedSize: compression == NimoProtocol.COMPRESSION_NONE ? 0 : payload.count
             ) + payload
         let frames = NimoFrameCodec.updateContentFrames(
-            appId: NimoProtocol.APP_ID_DASHBOARD,
+            appId: NimoProtocol.APP_ID_NAV,
             layoutId: 0,
             resId: 0,
             resType: NimoProtocol.WIDGET_PICTURE,
@@ -845,6 +860,7 @@ class Nimo: NSObject, SGCManager {
     func showDashboard() {
         Bridge.log("NIMO: showDashboard()")
         textAppEntered = false
+        navAppEntered = false
         sendFrame(
             NimoFrameCodec.encodeFrame(
                 cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
@@ -921,6 +937,7 @@ class Nimo: NSObject, SGCManager {
         Bridge.log("NIMO: exit()")
         let appId = currentGlassesAppId >= 0 ? currentGlassesAppId : textAppId
         textAppEntered = false
+        navAppEntered = false
         sendFrame(
             NimoFrameCodec.encodeFrame(
                 cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
@@ -1285,6 +1302,7 @@ class Nimo: NSObject, SGCManager {
         handshakeState = .idle
         twsConnected = false
         textAppEntered = false
+        navAppEntered = false
         currentGlassesAppId = -1
         pendingText = nil
         receiveAssembler.reset()
@@ -1406,9 +1424,11 @@ class Nimo: NSObject, SGCManager {
                 case NimoProtocol.STATE_ENTER:
                     currentGlassesAppId = appId
                     if appId != textAppId { textAppEntered = false }
+                    if appId != NimoProtocol.APP_ID_NAV { navAppEntered = false }
                 case NimoProtocol.STATE_EXIT:
                     if appId == currentGlassesAppId { currentGlassesAppId = -1 }
                     if appId == textAppId { textAppEntered = false }
+                    if appId == NimoProtocol.APP_ID_NAV { navAppEntered = false }
                 default:
                     break
                 }

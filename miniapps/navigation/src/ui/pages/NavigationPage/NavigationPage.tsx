@@ -231,7 +231,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [rawMapOpen, setRawMapOpen] = useState(false)
   const [showPivots, setShowPivots] = useState(false)
   const [showOffRouteLine, setShowOffRouteLine] = useState(false)
-  const [showMinimap, setShowMinimap] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(true)
   const [devTab, setDevTab] = useState<"nav" | "display">("nav")
 
   // Swallow every long-press-derived `contextmenu` event app-wide

@@ -128,6 +128,7 @@ internal object NimoProtocol {
 
     // app ids
     const val APP_ID_DASHBOARD = 0x00
+    const val APP_ID_NAV = 0x01
     const val APP_ID_ASR_NOTE = 0x04
     const val APP_ID_PROMPTER = 0x06
     const val APP_ID_AI_TALK = 0x07
@@ -971,6 +972,7 @@ class Nimo : SGCManager() {
     private var textQueueRunnable: Runnable? = null
     private var pendingText: String? = null
     private var textAppEntered = false
+    private var navAppEntered = false
     private var currentGlassesAppId = -1
 
     // Battery
@@ -1163,11 +1165,13 @@ class Nimo : SGCManager() {
             width: Int?,
             height: Int?
     ): Boolean {
-        // Nimo widgets have fixed geometry; x/y are not honored. Renders into the dashboard
-        // location-map widget (appId 0x00, layout right, resId 0x00, 304x180 2bpp).
-        // TODO: hardware-verify widget choice and whether the dashboard must be foregrounded.
-        val targetWidth = 304
-        val targetHeight = 180
+        // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
+        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp). The mini-map is the only
+        // bitmap consumer today and is square, so it maps cleanly with no aspect distortion.
+        // The nav app must be foregrounded before pushing content (mirrors the text path).
+        // TODO: hardware-verify the nav app-mode (standalone vs popup) and enter/exit churn.
+        val targetWidth = 160
+        val targetHeight = 160
         return try {
             val imageBytes = Base64.decode(base64ImageData, Base64.DEFAULT)
             val bitmap =
@@ -1175,6 +1179,20 @@ class Nimo : SGCManager() {
             val grayscale = bitmapToGrayscale(bitmap, targetWidth, targetHeight)
             val packed = packL8To2bpp(grayscale)
             val (payload, compression) = compressAdaptive(packed)
+            if (!navAppEntered) {
+                sendFrame(
+                        NimoFrameCodec.encodeFrame(
+                                NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                                NimoProtocol.CTRL_ENTER_APP,
+                                byteArrayOf(
+                                        NimoProtocol.APP_ID_NAV.toByte(),
+                                        NimoProtocol.APP_MODE_STANDALONE.toByte()
+                                )
+                        )
+                )
+                // Optimistic; corrected by app-state reports if the glasses refuse/exit.
+                navAppEntered = true
+            }
             val content =
                     NimoFrameCodec.imageHeader(
                             width = targetWidth,
@@ -1188,7 +1206,7 @@ class Nimo : SGCManager() {
                     ) + payload
             val frames =
                     NimoFrameCodec.updateContentFrames(
-                            appId = NimoProtocol.APP_ID_DASHBOARD,
+                            appId = NimoProtocol.APP_ID_NAV,
                             layoutId = 0,
                             resId = 0,
                             resType = NimoProtocol.WIDGET_PICTURE,
@@ -1205,6 +1223,7 @@ class Nimo : SGCManager() {
     override fun showDashboard() {
         Bridge.log("NIMO: showDashboard()")
         textAppEntered = false
+        navAppEntered = false
         sendFrame(
                 NimoFrameCodec.encodeFrame(
                         NimoProtocol.CMD_CONTROL_INSTRUCTION,
@@ -1278,6 +1297,7 @@ class Nimo : SGCManager() {
         Bridge.log("NIMO: exit()")
         val appId = if (currentGlassesAppId >= 0) currentGlassesAppId else textAppId
         textAppEntered = false
+        navAppEntered = false
         sendFrame(
                 NimoFrameCodec.encodeFrame(
                         NimoProtocol.CMD_CONTROL_INSTRUCTION,
@@ -2074,6 +2094,7 @@ class Nimo : SGCManager() {
         handshakeState = HandshakeState.IDLE
         twsConnected = false
         textAppEntered = false
+        navAppEntered = false
         currentGlassesAppId = -1
         pendingText = null
         audioClient.stop()
@@ -2139,6 +2160,62 @@ class Nimo : SGCManager() {
 
     // ---------- Text Rendering ----------
 
+    /**
+     * TEMP HW TEST: build a 160x160 grayscale test pattern (four vertical bands
+     * at the 4 quantization levels: black | dark | light | white) and push it
+     * through the exact same nav-minimap pipeline as displayBitmap. If the bands
+     * render left→right on the glasses, the SDK bitmap path works end-to-end.
+     */
+    private fun displaySampleBitmap() {
+        val w = 160
+        val h = 160
+        val gray = ByteArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val band = (x * 4 / w).coerceIn(0, 3) // 0..3 across the width
+                gray[y * w + x] = (band * 85).toByte() // 0, 85, 170, 255
+            }
+        }
+        val packed = packL8To2bpp(gray)
+        val (payload, compression) = compressAdaptive(packed)
+        if (!navAppEntered) {
+            sendFrame(
+                    NimoFrameCodec.encodeFrame(
+                            NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                            NimoProtocol.CTRL_ENTER_APP,
+                            byteArrayOf(
+                                    NimoProtocol.APP_ID_NAV.toByte(),
+                                    NimoProtocol.APP_MODE_STANDALONE.toByte()
+                            )
+                    )
+            )
+            navAppEntered = true
+        }
+        val content =
+                NimoFrameCodec.imageHeader(
+                        width = w,
+                        height = h,
+                        formatBpp = NimoProtocol.FORMAT_2BPP,
+                        compression = compression,
+                        originalSize = packed.size,
+                        compressedSize =
+                                if (compression == NimoProtocol.COMPRESSION_NONE) 0
+                                else payload.size
+                ) + payload
+        val frames =
+                NimoFrameCodec.updateContentFrames(
+                        appId = NimoProtocol.APP_ID_NAV,
+                        layoutId = 0,
+                        resId = 0,
+                        resType = NimoProtocol.WIDGET_PICTURE,
+                        content = content
+                )
+        enqueueFrames(frames)
+        Bridge.log(
+                "NIMO: displaySampleBitmap → ${frames.size} frames, ${payload.size}B comp=$compression"
+        )
+    }
+
     private fun drainTextQueue() {
         val text = pendingText ?: return
         if (handshakeState != HandshakeState.READY) return
@@ -2198,10 +2275,12 @@ class Nimo : SGCManager() {
                         NimoProtocol.STATE_ENTER -> {
                             currentGlassesAppId = appId
                             if (appId != textAppId) textAppEntered = false
+                            if (appId != NimoProtocol.APP_ID_NAV) navAppEntered = false
                         }
                         NimoProtocol.STATE_EXIT -> {
                             if (appId == currentGlassesAppId) currentGlassesAppId = -1
                             if (appId == textAppId) textAppEntered = false
+                            if (appId == NimoProtocol.APP_ID_NAV) navAppEntered = false
                         }
                     }
                 }

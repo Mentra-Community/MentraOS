@@ -45,7 +45,9 @@ export class NavigationController {
   private logSeq = 0
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
-  private showMinimap = false
+  // Default-on: push the glasses minimap bitmap whenever a trip is running with
+  // a fix. The dev-panel toggle ("Glasses minimap bitmap") can still turn it off.
+  private showMinimap = true
   private lastCoordsAt = 0
   private gettingFix = false
   // Tracks whether a trip has completed (arrived or stopped) in this

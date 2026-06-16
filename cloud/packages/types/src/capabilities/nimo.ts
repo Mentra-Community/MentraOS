@@ -25,6 +25,9 @@ export const nimo: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: true,
+    // Bitmaps render into the nav mini-map widget (appId 0x01, 160x160 2bpp);
+    // see displayBitmap in Nimo.kt / Nimo.swift. The resolution below is the
+    // text-display placeholder, not the bitmap target.
     // TODO: placeholder - verify against hardware screen info
     resolution: { width: 640, height: 400 },
     maxTextLines: 5,
