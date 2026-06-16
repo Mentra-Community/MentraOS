@@ -94,7 +94,10 @@ jobs:
 
           CORE_INGRESS=$(wait_for_jsonpath "ingress/cloud-debug-core" "{.status.loadBalancer.ingress[0].hostname}")
           RUNTIME_INGRESS=$(wait_for_jsonpath "ingress/cloud-debug-runtime" "{.status.loadBalancer.ingress[0].hostname}")
-          UDP_NLB=$(wait_for_jsonpath "svc/cloud-debug-audio-udp" "{.status.loadBalancer.ingress[0].hostname}" || true)
+          UDP_NLB=""
+          if porter kubectl -- get svc/cloud-debug-audio-udp >/dev/null 2>&1; then
+            UDP_NLB=$(wait_for_jsonpath "svc/cloud-debug-audio-udp" "{.status.loadBalancer.ingress[0].hostname}" || true)
+          fi
           if [ -z "$UDP_NLB" ]; then
             echo "Debug UDP NLB is not available yet; skipping UDP DNS record." >&2
           fi
