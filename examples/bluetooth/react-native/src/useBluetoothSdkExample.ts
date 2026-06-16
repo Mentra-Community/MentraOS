@@ -7,6 +7,7 @@ import BluetoothSdk, {
   type AudioConnectedEvent,
   type ButtonPressEvent,
   type BluetoothSdkEventMap,
+  type ButtonPhotoSettings,
   type CameraFovResult,
   type CameraRoiPosition,
   type CompatibleGlassesSearchStopEvent,
@@ -16,6 +17,7 @@ import BluetoothSdk, {
   type MicLc3Event,
   type MicPcmEvent,
   type OtaStatusEvent,
+  type PhotoRequestParams,
   type PhotoSuccessResponseEvent,
   type PhotoStatusEvent,
   type SettingsAckEvent,
@@ -26,11 +28,6 @@ import BluetoothSdk, {
   type VideoRecordingStatusEvent,
   type VoiceActivityDetectionStatusEvent,
 } from '@mentra/bluetooth-sdk';
-import {
-  requestPhotoCompat,
-  setButtonPhotoSettingsCompat,
-  type ScanPhotoRequestParams,
-} from './bluetoothSdkCompat';
 import {
   useMentraBluetooth,
   type DefaultDeviceStorage,
@@ -233,7 +230,7 @@ export const SCAN_MODE_BUTTON_PRESET = {
 function buildScanButtonPreset(
   aeExposureDivisor: ScanAeDivisor,
   isoCap: number,
-): typeof SCAN_MODE_BUTTON_PRESET & { aeExposureDivisor: ScanAeDivisor; isoCap: number } {
+): ButtonPhotoSettings & { aeExposureDivisor: ScanAeDivisor; isoCap: number } {
   return {
     ...SCAN_MODE_BUTTON_PRESET,
     aeExposureDivisor,
@@ -1096,11 +1093,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     await runAction(enabled ? 'Apply scan preset on glasses' : 'Restore photo preset on glasses', async () => {
       requireConnected('sync photo capture settings');
       if (enabled) {
-        await setButtonPhotoSettingsCompat(
+        await BluetoothSdk.setButtonPhotoSettings(
           buildScanButtonPreset(aeDivisor, isoCapValue),
         );
       } else {
-        await setButtonPhotoSettingsCompat({
+        await BluetoothSdk.setButtonPhotoSettings({
           size: photoSize,
           mfnr: true,
           zsl: true,
@@ -1130,7 +1127,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function buildPhotoRequestFields(): Omit<
-    ScanPhotoRequestParams,
+    PhotoRequestParams,
     'requestId' | 'appId' | 'webhookUrl' | 'authToken'
   > {
     if (scanMode) {
@@ -1332,7 +1329,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       try {
-        const response = await requestPhotoCompat({
+        const response = await BluetoothSdk.requestPhoto({
           requestId,
           appId: PHOTO_APP_ID,
           webhookUrl: uploadUrlText,
@@ -1373,7 +1370,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
 
     try {
-      const response = await requestPhotoCompat({
+      const response = await BluetoothSdk.requestPhoto({
         requestId,
         appId: PHOTO_APP_ID,
         webhookUrl: receiver.uploadUrl,
