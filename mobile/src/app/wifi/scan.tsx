@@ -1,4 +1,4 @@
-import {island, type WifiSearchResult} from "@mentra/island"
+import {toolkit, type WifiSearchResult} from "@mentra/island"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
@@ -81,7 +81,7 @@ export default function WifiScanScreen() {
     setNetworks([])
 
     try {
-      const scanResults = await island.glasses.wifi.scan()
+      const scanResults = await toolkit.glasses.wifi.scan()
       console.log(`WIFI_SCAN: Received ${scanResults.length} WiFi scan results`)
       setNetworks(
         scanResults.map((network) => ({
@@ -118,7 +118,7 @@ export default function WifiScanScreen() {
             onPress: async () => {
               try {
                 console.log(`WIFI_SCAN: Forgetting network: ${selectedNetwork.ssid}`)
-                await island.glasses.wifi.forget(selectedNetwork.ssid)
+                await toolkit.glasses.wifi.forget(selectedNetwork.ssid)
                 // Also remove from local saved credentials
                 WifiCredentialsService.removeCredentials(selectedNetwork.ssid)
                 setSavedNetworks((prev) => prev.filter((ssid) => ssid !== selectedNetwork.ssid))

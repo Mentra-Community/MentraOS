@@ -1,7 +1,8 @@
 /**
- * `island` — the namespaced OEM-facing toolkit API (the "(A) host API" from the
- * Phase-1 contract). Host UI calls `island.<domain>.<method>()`; each domain is a
- * typed facade over the runtime.
+ * `toolkit` — the namespaced OEM-facing toolkit API (the "(A) host API" from the
+ * Phase-1 contract). Host UI calls `toolkit.<domain>.<method>()`; each domain is a
+ * typed facade over the runtime. (Exported from the `@mentra/island` module, whose
+ * name stays `island` in code; the public API surface is `toolkit`.)
  *
  * This is additive: it grows one facade at a time and lives *alongside* the flat
  * named exports in `index.ts` during the migration. The flat exports (and the
@@ -12,7 +13,7 @@ import {glassesWifi} from "./facades/glassesWifi"
 import {displayMirror} from "./facades/displayMirror"
 import {useGlassesStore} from "./stores/glasses"
 
-export const island = {
+export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
   configure,
   start,

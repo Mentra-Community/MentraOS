@@ -1,6 +1,6 @@
 /**
  * glasses display mirror — island's read-model of the latest display event sent
- * to the glasses, for a phone-side preview (`island.display.mirror`).
+ * to the glasses, for a phone-side preview (`toolkit.display.mirror`).
  *
  * This is the additive "facade" half of inverting the mirror: island owns this
  * read-model and is fed every processed display event (from the local miniapp

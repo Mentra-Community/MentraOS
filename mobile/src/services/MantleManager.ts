@@ -28,7 +28,7 @@ import {
   configureRuntime,
   getRuntimeHooks,
   displayProcessor,
-  island,
+  toolkit,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
@@ -169,18 +169,18 @@ class MantleManager {
     // Island front door: hand island the host's auth provider, then mark it
     // started. Additive — the `configure*` adapter seams below still wire the
     // host services during the migration; consumers move onto this incrementally.
-    island.configure({
+    toolkit.configure({
       auth: {
         getSubjectToken: async () => {
           const res = await mentraAuth.getSession()
           if (res.is_error() || !res.value.token) {
-            throw new Error("island.configure: no session token available")
+            throw new Error("toolkit.configure: no session token available")
           }
           return {token: res.value.token, type: "supabase"}
         },
       },
     })
-    void island.start()
+    void toolkit.start()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the

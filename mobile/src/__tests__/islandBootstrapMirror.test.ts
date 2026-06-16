@@ -31,7 +31,7 @@ describe("island bootstrap front door", () => {
   })
 })
 
-describe("island.display.mirror read-model", () => {
+describe("toolkit.display.mirror read-model", () => {
   it("ingest() sets current() and notifies subscribers", () => {
     const seen: unknown[] = []
     const unsub = displayMirror.onMirror((e) => seen.push(e))

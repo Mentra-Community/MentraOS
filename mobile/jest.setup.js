@@ -256,9 +256,9 @@ jest.mock("@mentra/island", () => {
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates).
     ...realGlasses,
-    // The namespaced (A) host API. Mirrors the real `island` object; members are
+    // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
-    island: {
+    toolkit: {
       configure: jest.fn(),
       start: jest.fn(() => Promise.resolve()),
       stop: jest.fn(() => Promise.resolve()),

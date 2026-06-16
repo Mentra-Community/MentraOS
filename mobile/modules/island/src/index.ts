@@ -79,7 +79,7 @@ export {
 
 // The namespaced OEM-facing toolkit API (the "(A) host API"). Additive — grows one
 // facade at a time alongside the flat exports below. See ./island.
-export {island} from "./island"
+export {toolkit} from "./island"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
@@ -92,7 +92,7 @@ export type {
 
 // Glasses device-state store — moved into island so island owns device state.
 // Re-exported through the host's @/stores/glasses shim so the app keeps its
-// imports. Also surfaced as island.glassesStore (the escape hatch). Predicates
+// imports. Also surfaced as toolkit.glassesStore (the escape hatch). Predicates
 // (isGlassesConnected/…) come from GlassesReadiness above, not re-exported here.
 export {
   useGlassesStore,
