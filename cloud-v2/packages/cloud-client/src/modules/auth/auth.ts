@@ -1,0 +1,421 @@
+/**
+ * @fileoverview `cloud.auth`: the one owner of credentials.
+ *
+ * It holds the access token in memory, persists the refresh token through the
+ * injected storage, mints per-miniapp tokens, and never hands the access token
+ * to a miniapp. The other two modules (`cloud.runtime`, `cloud.core`) get the
+ * access token from here via `getAccessToken`, which refreshes transparently
+ * when the token is near expiry.
+ *
+ * Token lifecycle:
+ *  - First use exchanges the configured subject token at `/exchange` for an
+ *    access + refresh pair (RFC 8693). A `getSubjectToken` callback variant
+ *    fetches the subject token on demand for subject tokens that themselves
+ *    expire. An `accessToken`/`refreshToken` variant skips straight to refresh.
+ *  - Near expiry (within a 60s margin) it refreshes at `/refresh` and rotates.
+ *  - Exchange, refresh, and each per-miniapp mint are single-flighted, so a
+ *    reconnect storm cannot fire a burst of competing requests (and a rotated
+ *    refresh token cannot be invalidated out from under a concurrent caller).
+ *  - If a refresh fails, `onExpired` fires once and the host re-authenticates;
+ *    we do not retry forever against a dead refresh token.
+ *
+ * Security: the access token is never written to storage, never given to a
+ * miniapp, and no token is ever logged.
+ *
+ * See docs/issues/004-cloud-client/spec.md ("cloud.auth"), design.md, and
+ * docs/issues/001-cloud-core/auth/spec.md (endpoints + token shapes).
+ */
+import type { AuthConfig, SubjectTokenType } from "../../config";
+import type { HttpClient } from "../../http";
+import type { Logger } from "../../logger";
+import { AuthExpiredError } from "../../errors";
+import { decodeClaims } from "./jwt";
+import { TokenStore } from "./token-store";
+
+/**
+ * The public auth surface a host uses, from spec.md.
+ *
+ * Declared here (rather than imported) because it is a client-side module
+ * contract, not a wire type: the protocol package owns the on-the-wire shapes,
+ * this owns the module shapes. `cloud.runtime` and `cloud.core` depend only on
+ * `getAccessToken`.
+ */
+export interface AuthModule {
+  // current access token, refreshing as needed (used by runtime/core). Pass
+  // `{ forceRefresh: true }` to bypass the in-memory cache and refresh now, for
+  // the case where the cloud rejected a token the client still thinks is fresh
+  // (clock skew or a mid-session revoke surfaced as AUTH_EXPIRED).
+  getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string>;
+  // a miniapp-scoped token, cached per packageName and re-minted before expiry
+  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>;
+  // the user/oem identity read off the access token's claims
+  readonly identity: { mentraUserId: string; oemId: string };
+  // refresh failed; the host must send the user back through login
+  onExpired(handler: () => void): () => void;
+}
+
+/** RFC 8693 token-exchange grant type for the `/exchange` call. */
+const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
+
+/**
+ * Map a config `SubjectTokenType` to the RFC 8693 `subject_token_type` URN the
+ * cloud expects.
+ *
+ * All three supported subject tokens (an OEM-signed JWT, a Mentra core token, a
+ * Supabase session) are presented as a JWT and verified by their own `iss` /
+ * verification path on the cloud, so they share the one JWT token-type URN. The
+ * mapping is kept explicit (rather than hard-coding one URN) so that if the
+ * cloud later wants distinct URNs per source, this is the single place to widen.
+ */
+const SUBJECT_TOKEN_TYPE_URN: Record<SubjectTokenType, string> = {
+  "oem-jwt": "urn:ietf:params:oauth:token-type:jwt",
+  "mentra-core": "urn:ietf:params:oauth:token-type:jwt",
+  supabase: "urn:ietf:params:oauth:token-type:jwt",
+};
+
+/** Seconds of headroom before `exp` at which we proactively refresh/re-mint. */
+const EXPIRY_MARGIN_SECONDS = 60;
+
+/** The cloud's token endpoints, relative to the core base URL. */
+const EXCHANGE_PATH = "/api/client/auth/exchange";
+const REFRESH_PATH = "/api/client/auth/refresh";
+const MINIAPP_TOKEN_PATH = "/api/client/auth/miniapp-token";
+
+/** Single-flight keys. The miniapp key is suffixed per packageName below. */
+const FLIGHT_ACCESS = "access-token";
+const MINIAPP_FLIGHT_PREFIX = "miniapp-token:";
+
+/** The cloud's RFC-shaped token response from `/exchange` and `/refresh`. */
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+/** A cached miniapp token plus its absolute expiry (Unix seconds). */
+interface MiniappTokenEntry {
+  token: string;
+  expiresAt: number;
+}
+
+export class Auth implements AuthModule {
+  private readonly http: HttpClient;
+  private readonly store: TokenStore;
+  private readonly config: AuthConfig;
+  private readonly logger: Logger;
+  /**
+   * Base URL for the form-encoded `/exchange` and `/refresh` calls.
+   *
+   * These two endpoints take `application/x-www-form-urlencoded` bodies and
+   * present the subject/refresh token in the body (not as a Bearer), so they go
+   * through `fetch` directly rather than the JSON-only injected `HttpClient`.
+   * The Bearer-authenticated, JSON `/miniapp-token` call uses the injected
+   * `http` as designed. See the deviation note in the structured output: this
+   * is the one place `client.ts` must pass `endpoints.core`.
+   */
+  private readonly baseUrl: string;
+
+  /** Miniapp tokens cached per packageName until near expiry. */
+  private readonly miniappCache = new Map<string, MiniappTokenEntry>();
+
+  /** Registered `onExpired` handlers. */
+  private readonly expiredHandlers = new Set<() => void>();
+
+  /**
+   * Latches once `onExpired` has fired, so a dead refresh token notifies the
+   * host exactly once instead of on every subsequent call.
+   */
+  private expiredFired = false;
+
+  constructor(deps: {
+    http: HttpClient;
+    store: TokenStore;
+    config: AuthConfig;
+    logger: Logger;
+    baseUrl: string;
+  }) {
+    this.http = deps.http;
+    this.store = deps.store;
+    this.config = deps.config;
+    this.logger = deps.logger;
+    this.baseUrl = deps.baseUrl;
+  }
+
+  /**
+   * Return a currently valid access token, exchanging or refreshing as needed.
+   *
+   * The happy path is a cache hit: an in-memory token still outside the expiry
+   * margin is returned with no network call. Otherwise we obtain one through a
+   * single-flight so concurrent callers share the same request.
+   */
+  async getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+    // A forced refresh drops the cached access token first, so the cache check
+    // below misses and we go straight to the single-flight refresh. The
+    // single-flight still de-dupes, so a burst of forced refreshes (one per
+    // reconnect attempt) collapses to one request.
+    if (opts?.forceRefresh) {
+      this.store.invalidateAccess();
+    } else {
+      const cached = this.store.current();
+      if (cached && !this.isExpiring(cached.exp)) {
+        return cached.accessToken;
+      }
+    }
+
+    // De-dupe: if a refresh/exchange is already running, await that one result.
+    return this.store.singleFlight(FLIGHT_ACCESS, () => this.obtainAccessToken());
+  }
+
+  /**
+   * Mint (or return a cached) miniapp-scoped token for `packageName`.
+   *
+   * Cached per packageName and re-minted only when near expiry, so a steady
+   * miniapp does not hit the cloud on every call. The mint is single-flighted
+   * per packageName so two near-simultaneous launches of the same miniapp share
+   * one request. The access token is the Bearer here and is never exposed to the
+   * miniapp; only the returned miniapp-scoped token is.
+   */
+  async getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }> {
+    const cached = this.miniappCache.get(packageName);
+    if (cached && !this.isExpiring(cached.expiresAt)) {
+      return { token: cached.token, expiresAt: cached.expiresAt };
+    }
+
+    return this.store.singleFlight(MINIAPP_FLIGHT_PREFIX + packageName, async () => {
+      // Re-check the cache inside the flight: a concurrent mint that resolved
+      // while we were queued may have already filled it.
+      const fresh = this.miniappCache.get(packageName);
+      if (fresh && !this.isExpiring(fresh.expiresAt)) {
+        return { token: fresh.token, expiresAt: fresh.expiresAt };
+      }
+
+      const accessToken = await this.getAccessToken();
+      const res = await this.http.post<MiniappTokenEntry>(
+        MINIAPP_TOKEN_PATH,
+        { packageName },
+        { bearer: accessToken },
+      );
+
+      const entry: MiniappTokenEntry = { token: res.token, expiresAt: res.expiresAt };
+      this.miniappCache.set(packageName, entry);
+      this.logger.debug("minted miniapp token", { packageName });
+      return { token: entry.token, expiresAt: entry.expiresAt };
+    });
+  }
+
+  /**
+   * The user + OEM identity, read straight off the access token's claims.
+   *
+   * The claims are unverified base64 JSON (the cloud verifies the signature on
+   * every call, so the client need not). Throws if no access token has been
+   * obtained yet, since identity is meaningless before the first exchange.
+   */
+  get identity(): { mentraUserId: string; oemId: string } {
+    const current = this.store.current();
+    if (!current) {
+      throw new AuthExpiredError("identity is unavailable before first sign-in");
+    }
+    const claims = decodeClaims(current.accessToken);
+    return { mentraUserId: claims.sub, oemId: claims.oem_id };
+  }
+
+  /**
+   * Register a handler invoked when a refresh fails and re-auth is required.
+   *
+   * Returns an unsubscribe function, matching the rest of the client's `on*`
+   * surface. Handlers fire at most once per dead-credential event (see
+   * `fireExpired`).
+   */
+  onExpired(handler: () => void): () => void {
+    this.expiredHandlers.add(handler);
+    return () => {
+      this.expiredHandlers.delete(handler);
+    };
+  }
+
+  // === internals ===
+
+  /**
+   * Decide whether a token is close enough to its `exp` that we should refresh
+   * now rather than risk handing out one that expires mid-flight.
+   *
+   * `exp` is Unix seconds (the JWT convention), so we compare against the clock
+   * in seconds and subtract the margin.
+   */
+  private isExpiring(expSeconds: number): boolean {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    return expSeconds - EXPIRY_MARGIN_SECONDS <= nowSeconds;
+  }
+
+  /**
+   * Obtain a fresh access token: refresh if we hold a refresh token, otherwise
+   * do the first-use exchange. Runs inside the single-flight from
+   * `getAccessToken`, so only one of these is ever in flight.
+   */
+  private async obtainAccessToken(): Promise<string> {
+    const refreshToken = await this.store.refreshToken();
+    if (refreshToken) {
+      return this.refresh(refreshToken);
+    }
+    return this.exchange();
+  }
+
+  /**
+   * First-use exchange: trade the configured subject token for an access +
+   * refresh pair and save them.
+   *
+   * Three config shapes feed this: a raw subject token, a `getSubjectToken`
+   * callback (for subject tokens that expire before exchange, so we fetch one
+   * fresh each time), or a pre-exchanged access/refresh pair. The last shape has
+   * no subject token at all: we persist its refresh token and refresh, since we
+   * only reach `exchange` when no refresh token is stored.
+   */
+  private async exchange(): Promise<string> {
+    // Pre-exchanged credentials: seed the store and refresh, no /exchange call.
+    if ("refreshToken" in this.config) {
+      await this.store.save({
+        accessToken: this.config.accessToken,
+        refreshToken: this.config.refreshToken,
+      });
+      // The seeded access token may already be near expiry, so refresh through
+      // the normal path to guarantee a fresh one.
+      return this.refresh(this.config.refreshToken);
+    }
+
+    const subject = await this.resolveSubjectToken();
+    const body = new URLSearchParams({
+      grant_type: TOKEN_EXCHANGE_GRANT,
+      subject_token: subject.token,
+      subject_token_type: SUBJECT_TOKEN_TYPE_URN[subject.type],
+    });
+
+    const tokens = await this.postForm(EXCHANGE_PATH, body, "exchange");
+    await this.store.save({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+    });
+    // A successful exchange means credentials are live again; clear the latch so
+    // a future failure can notify the host once more.
+    this.expiredFired = false;
+    this.logger.info("exchanged subject token for access token");
+    return tokens.access_token;
+  }
+
+  /**
+   * Refresh near expiry: trade the stored refresh token for a new access token
+   * and a rotated refresh token, saving both.
+   *
+   * On failure (the refresh token is dead or revoked) we clear stored state and
+   * fire `onExpired` once, then surface an `AuthExpiredError`. We do not retry:
+   * a dead refresh token will not heal on its own, and retrying would loop.
+   */
+  private async refresh(refreshToken: string): Promise<string> {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    });
+
+    let tokens: TokenResponse;
+    try {
+      tokens = await this.postForm(REFRESH_PATH, body, "refresh");
+    } catch {
+      // The refresh token is unusable: drop it so we do not keep presenting a
+      // known-bad token, notify the host once, and stop.
+      await this.store.clear();
+      this.fireExpired();
+      throw new AuthExpiredError("token refresh failed; re-auth required");
+    }
+
+    await this.store.save({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+    });
+    this.expiredFired = false;
+    this.logger.debug("refreshed access token");
+    return tokens.access_token;
+  }
+
+  /**
+   * Resolve the subject token to exchange, from either the static config field
+   * or the `getSubjectToken` callback.
+   *
+   * Only reached for the two non-pre-exchanged config shapes; the caller handles
+   * the pre-exchanged shape before us, so the final throw is just exhaustiveness.
+   */
+  private async resolveSubjectToken(): Promise<{ token: string; type: SubjectTokenType }> {
+    if ("subjectToken" in this.config) {
+      return { token: this.config.subjectToken, type: this.config.subjectTokenType };
+    }
+    if ("getSubjectToken" in this.config) {
+      return this.config.getSubjectToken();
+    }
+    throw new AuthExpiredError("no subject token available to exchange");
+  }
+
+  /**
+   * POST a form-encoded body to a token endpoint and parse the RFC token
+   * response.
+   *
+   * Uses `fetch` directly (not the injected JSON `HttpClient`) because these
+   * endpoints require `application/x-www-form-urlencoded` and present the
+   * subject/refresh token in the body, not as a Bearer header. We never log the
+   * body: it carries a token.
+   */
+  private async postForm(
+    path: string,
+    body: URLSearchParams,
+    label: string,
+  ): Promise<TokenResponse> {
+    const url = this.joinUrl(path);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      // The body may carry an RFC `{ error, error_description }`, but we keep the
+      // thrown detail to the status + label so no token field can leak into a
+      // message a host might surface. The caller maps this to re-auth.
+      this.logger.warn("auth token request failed", { label, status: res.status });
+      throw new AuthExpiredError(`${label} request failed with status ${res.status}`);
+    }
+
+    return (await res.json()) as TokenResponse;
+  }
+
+  /**
+   * Join the core base URL and a path without a double or missing slash.
+   *
+   * Done by hand (not `new URL`) so a base that already carries a path prefix (a
+   * proxy mount point) is preserved, matching the shared HTTP helper's joining.
+   */
+  private joinUrl(path: string): string {
+    const base = this.baseUrl.replace(/\/+$/, "");
+    const suffix = path.replace(/^\/+/, "");
+    return `${base}/${suffix}`;
+  }
+
+  /**
+   * Notify every `onExpired` handler exactly once per dead-credential event.
+   *
+   * The latch prevents a flood of notifications when many queued calls all fail
+   * against the same dead refresh token; it resets on the next successful
+   * exchange/refresh so a later failure can notify again.
+   */
+  private fireExpired(): void {
+    if (this.expiredFired) return;
+    this.expiredFired = true;
+    for (const handler of this.expiredHandlers) {
+      try {
+        handler();
+      } catch (err) {
+        // A host handler throwing must not stop the others from running.
+        this.logger.error("onExpired handler threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+}

@@ -1,12 +1,6 @@
 import {type RgbLedControlResponseEvent, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {
-  displayProcessor,
-  localMiniappRuntime,
-  localSttFallbackCoordinator,
-  micStateCoordinator,
-  throttle,
-} from "@mentra/island"
+import {displayProcessor, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import mantle from "@/services/MantleManager"
@@ -842,21 +836,14 @@ class SocketComms {
         this.handle_udp_ping_ack(msg)
         break
 
-      case "data_stream": {
-        const streamType = msg.streamType
-        if (typeof streamType === "string" && streamType.startsWith("transcription:")) {
-          localSttFallbackCoordinator.onCloudTranscript()
-        }
-        localMiniappRuntime.forwardEvent(streamType, msg.data)
-        break
-      }
-
-      case "phone_stream_status":
-      case "phone_managed_stream_status":
-        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
-        // any local miniapp that still has a pending cloud request (legacy
-        // path; phone-orchestrated v2 streaming doesn't register one).
-        localMiniappRuntime.handleCloudMessage(msg)
+      case "data_stream":
+        // Local island miniapps are powered ONLY by the cloud client and
+        // device-sourced events, never by the v1 cloud socket. The cloud client
+        // (the `@mentra/island` runtime + cloudClient adapter) owns transcript/
+        // translation delivery to them, with on-device STT as the cloud-down
+        // fallback. v1 cloud `data_stream` messages must NOT reach local
+        // miniapps, so there is no forward here. (Cloud SDK apps still receive
+        // their data via the v1 relay path, not this forward.)
         break
 
       default:

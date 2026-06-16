@@ -53,6 +53,26 @@ class ObservableStore {
         listeners.forEach { it(normalizedCategory, mapOf(key to value)) }
     }
 
+    fun remove(category: String, key: String) {
+        val normalizedCategory: String
+        val updatedSnapshot: Map<String, Any>
+        val listeners: List<(String, Map<String, Any>) -> Unit>
+
+        synchronized(this) {
+            normalizedCategory = normalizeCategory(category)
+            val fullKey = "$normalizedCategory.$key"
+            if (!values.containsKey(fullKey)) return // already absent, no notification needed
+            values.remove(fullKey)
+            val prefix = "$normalizedCategory."
+            updatedSnapshot = values.filterKeys { it.startsWith(prefix) }
+                    .mapKeys { it.key.removePrefix(prefix) }
+            listeners = emitListeners.values.toList()
+        }
+
+        // Emit the full updated category snapshot so UI listeners can clear the removed key.
+        listeners.forEach { it(normalizedCategory, updatedSnapshot) }
+    }
+
     @Synchronized
     fun get(category: String, key: String): Any? = values["${normalizeCategory(category)}.$key"]
 

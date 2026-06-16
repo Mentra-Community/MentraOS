@@ -2,7 +2,8 @@
   "private": true,
   "workspaces": [
     "*",
-    "../mobile/modules/miniapp"
+    "../mobile/modules/miniapp",
+    "../local-miniapps/*"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",

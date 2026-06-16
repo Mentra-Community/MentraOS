@@ -28,6 +28,7 @@ public final class ActivePhotoCapture {
     public final Long exposureTimeNs;
     /** {@code null} = derive ISO from preview metering for manual exposure captures. */
     public final Integer iso;
+    public final PhotoCaptureSettings captureSettings;
     public final boolean ledEnabled;
     public final long startTimeMs;
     public final CameraNeoService.PhotoCaptureCallback callback;
@@ -40,7 +41,7 @@ public final class ActivePhotoCapture {
             boolean ledEnabled,
             long startTimeMs,
             CameraNeoService.PhotoCaptureCallback callback) {
-        this(filePath, size, isFromSdk, exposureTimeNs, null, ledEnabled, startTimeMs, callback);
+        this(filePath, size, isFromSdk, exposureTimeNs, null, PhotoCaptureSettings.EMPTY, ledEnabled, startTimeMs, callback);
     }
 
     public ActivePhotoCapture(
@@ -52,11 +53,26 @@ public final class ActivePhotoCapture {
             boolean ledEnabled,
             long startTimeMs,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(filePath, size, isFromSdk, exposureTimeNs, iso, PhotoCaptureSettings.EMPTY, ledEnabled, startTimeMs, callback);
+    }
+
+    public ActivePhotoCapture(
+            String filePath,
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean ledEnabled,
+            long startTimeMs,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.filePath = filePath;
         this.size = size;
         this.isFromSdk = isFromSdk;
         this.exposureTimeNs = exposureTimeNs;
         this.iso = iso;
+        this.captureSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         this.ledEnabled = ledEnabled;
         this.startTimeMs = startTimeMs;
         this.callback = callback;
@@ -73,6 +89,7 @@ public final class ActivePhotoCapture {
                 queued.isFromSdk,
                 queued.exposureTimeNs,
                 queued.iso,
+                queued.captureSettings,
                 queued.enableLed,
                 queued.enqueuedAtMs,
                 queued.callback);

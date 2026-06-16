@@ -34,6 +34,7 @@ const GRID_COLUMNS = 4
 const POPOVER_WIDTH = 180
 const SCREEN_PADDING = 4 * 12
 const PLACEHOLDER_COUNT = 20
+const PRIMARY_HOME_SLOT_COUNT = PLACEHOLDER_COUNT
 
 type MasonryAppItem = ClientApp & {id: string; height: number}
 
@@ -214,12 +215,21 @@ export function AppsGrid({
   useEffect(() => {
     const result = getAppsOrder()
     if (result.is_ok()) {
-      // for (const [packageName, index] of Object.entries(result.value)) {
-      //   console.log("index", index, "packageName", packageName)
-      // }
-      setOrderMap(result.value)
+      setOrderMap((current) => {
+        const currentKeys = Object.keys(current)
+        const nextKeys = Object.keys(result.value)
+        if (currentKeys.length !== nextKeys.length) {
+          return result.value
+        }
+        for (const key of nextKeys) {
+          if (current[key] !== result.value[key]) {
+            return result.value
+          }
+        }
+        return current
+      })
     }
-  }, [])
+  }, [apps])
 
   // gridData was previously a `useMemo` that MUTATED `orderMap` (React state)
   // during its computation — adding dummy `@emptyN` keys, deleting keys when
@@ -382,6 +392,38 @@ export function AppsGrid({
     [apps, selectedApp],
   )
 
+  const placeAppOnHome = useCallback(
+    (app: ClientApp) => {
+      const packageName = app.packageName
+      useAppStatusStore.getState().setHiddenStatus(packageName, false)
+
+      const latestOrder = getAppsOrder()
+      const currentOrder = latestOrder.is_ok() ? latestOrder.value : orderMap
+      const nextOrder: OrderMap = {...currentOrder}
+      delete nextOrder[packageName]
+
+      const emptySlot = Object.entries(nextOrder)
+        .filter(([pkg, index]) => pkg.startsWith("@empty") && index < PRIMARY_HOME_SLOT_COUNT)
+        .sort(([, a], [, b]) => a - b)[0]
+
+      if (emptySlot) {
+        const [emptyPackageName, emptyIndex] = emptySlot
+        delete nextOrder[emptyPackageName]
+        nextOrder[packageName] = emptyIndex
+      } else {
+        for (const [pkg, index] of Object.entries(nextOrder)) {
+          nextOrder[pkg] = index + 1
+        }
+        nextOrder[packageName] = 0
+      }
+
+      setOrderMap(nextOrder)
+      saveAppsOrder(nextOrder)
+      onAddToHome?.(app)
+    },
+    [onAddToHome, orderMap],
+  )
+
   const popoverActions: PopoverAction[] = useMemo(
     () =>
       [
@@ -427,17 +469,15 @@ export function AppsGrid({
             }
           },
         },
-        showAllApps &&
-          liveSelectedApp?.hidden && {
-            label: translate("appInfo:addToHome"),
-            icon: "plus",
-            onPress: () => {
-              useAppStatusStore.getState().setHiddenStatus(liveSelectedApp?.packageName, false)
-              if (onAddToHome) {
-                onAddToHome(liveSelectedApp)
-              }
-            },
+        showAllApps && {
+          label: translate("appInfo:addToHome"),
+          icon: "plus",
+          onPress: () => {
+            if (liveSelectedApp) {
+              placeAppOnHome(liveSelectedApp)
+            }
           },
+        },
         !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:uninstall"),
           icon: "trash",
@@ -449,7 +489,7 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, startApplet, stopApplet, showAllApps],
+    [liveSelectedApp, startApplet, stopApplet, showAllApps, placeAppOnHome, push, onOpenApp],
   )
 
   const handlePress = async (app: ClientApp) => {

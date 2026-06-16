@@ -1,0 +1,14 @@
+{
+  "name": "@mentra/cloud-proxy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/cloud-shared": "workspace:*"
+  }
+}
