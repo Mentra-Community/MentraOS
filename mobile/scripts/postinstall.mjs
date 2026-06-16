@@ -14,6 +14,10 @@ await $({ stdio: 'inherit', cwd: 'modules/bluetooth-sdk' })`bun run prepare`;
 await $({ stdio: 'inherit', cwd: 'modules/jspolyfill' })`bun run build`;
 await $({ stdio: 'inherit', cwd: 'modules/crust' })`bun run prepare`;
 await $({ stdio: 'inherit', cwd: 'modules/miniapp' })`bun run prepare`;
+// Island compiles source imported from ../cloud-v2/packages/*. TypeScript
+// resolves those files' dependencies from cloud-v2/, not mobile/, so provision
+// the cloud-v2 workspace deps before the isolated Expo module build.
+await $({ stdio: 'inherit', cwd: '../cloud-v2' })`bun install --frozen-lockfile --ignore-scripts`;
 // island depends on bluetooth-sdk + miniapp build outputs, so its prepare
 // (renamed to build:module) runs here instead of being auto-triggered by bun
 // install in parallel with its workspace deps.
