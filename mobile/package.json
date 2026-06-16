@@ -4,6 +4,9 @@
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
+    "../cloud-v2/packages/cloud-client",
+    "../cloud-v2/packages/runtime",
+    "../cloud-v2/packages/shared",
     "modules/*"
   ],
   "scripts": {

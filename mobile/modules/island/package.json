@@ -54,7 +54,7 @@
     "react-native-share": "*",
     "@dr.pogodin/react-native-fs": "*",
     "@mentra/bluetooth-sdk": "*",
-    "@mentra/cloud-client": "*",
+    "@mentra/cloud-client": "workspace:*",
     "@mentra/miniapp": "*"
   }
 }
