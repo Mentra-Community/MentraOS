@@ -7,20 +7,14 @@ import type {
   OtaUpdateInfo,
   WifiStatus,
 } from "@mentra/bluetooth-sdk-internal"
+import {isGlassesConnected, isGlassesLinkLayerBusy, isGlassesReady} from "@mentra/island"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
-export function isGlassesConnected(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "connected"
-}
-
-export function isGlassesReady(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "connected" && connection.fullyBooted
-}
-
-export function isGlassesLinkLayerBusy(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "scanning" || connection.state === "connecting" || connection.state === "bonding"
-}
+// The connection predicates live in @mentra/island (which re-exports the single
+// source of truth from @mentra/bluetooth-sdk). Re-export them here so existing
+// importers of @/stores/glasses keep working unchanged.
+export {isGlassesConnected, isGlassesLinkLayerBusy, isGlassesReady}
 
 export const selectGlassesConnected = (state: {connection: GlassesConnectionStatus}) =>
   isGlassesConnected(state.connection)
