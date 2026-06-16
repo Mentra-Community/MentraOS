@@ -585,7 +585,7 @@ export default function OtaProgressScreen() {
         "OTA_TRACK: send_ota_start",
         JSON.stringify({attempt: retryCount + 1, maxRetries: MAX_RETRIES, sequence: [...updateSequenceRef.current]}),
       )
-      await BluetoothSdk.sendOtaStart(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
+      await BluetoothSdk.startOtaUpdate(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
       setOtaStartTime(Date.now())
 
       // Start global session timeout once (covers whole multi-step OTA)

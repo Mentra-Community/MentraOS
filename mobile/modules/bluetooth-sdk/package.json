@@ -22,6 +22,11 @@
       "react-native": "./src/photo-receiver/index.ts",
       "default": "./build/photo-receiver/index.js"
     },
+    "./debug": {
+      "types": "./build/debug.d.ts",
+      "react-native": "./src/debug.ts",
+      "default": "./build/debug.js"
+    },
     "./_private/*": null,
     "./build/*": null,
     "./src/*": null,

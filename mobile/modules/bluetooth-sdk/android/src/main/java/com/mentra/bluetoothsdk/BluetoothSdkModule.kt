@@ -512,8 +512,25 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { otaVersionUrl: String? ->
-            requireSdk().sendOtaStart(otaVersionUrl).values
+        Function("setOtaVersionUrl") { otaVersionUrl: String ->
+            requireSdk().setOtaVersionUrl(otaVersionUrl)
+        }
+
+        Function("getOtaVersionUrl") { requireSdk().getOtaVersionUrl() }
+
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue:
+        // manifest fetches and version waits can block for several seconds.
+        AsyncFunction("checkForOtaUpdate") Coroutine { ->
+            withContext(Dispatchers.IO) { requireSdk().checkForOtaUpdate() }
+        }
+
+        AsyncFunction("startOtaUpdate") { otaVersionUrl: String? ->
+            val sdk = requireSdk()
+            if (otaVersionUrl.isNullOrBlank()) {
+                sdk.startOtaUpdate().values
+            } else {
+                sdk.startOtaUpdate(otaVersionUrl).values
+            }
         }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }

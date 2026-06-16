@@ -893,7 +893,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -993,12 +992,10 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
-  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-  checkForOtaUpdate(): Promise<OtaQueryResult>
-  /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
-  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-  retryOtaVersionCheck(): Promise<OtaQueryResult>
+  /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
+  checkForOtaUpdate(): Promise<boolean>
+  /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
+  startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
