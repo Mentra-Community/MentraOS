@@ -328,7 +328,21 @@ jest.mock("@mentra/island", () => {
         mirror: {
           current: jest.fn(() => null),
           onMirror: jest.fn(() => () => {}),
+          view: jest.fn(() => "main"),
+          setView: jest.fn(),
         },
+      },
+      miniapps: {
+        list: jest.fn(() => []),
+        onChanged: jest.fn(() => () => {}),
+        refresh: jest.fn(() => Promise.resolve()),
+        start: jest.fn(() => Promise.resolve(true)),
+        stop: jest.fn(() => Promise.resolve()),
+        setForeground: jest.fn(() => Promise.resolve()),
+        clearForeground: jest.fn(),
+        stopAll: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        install: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),

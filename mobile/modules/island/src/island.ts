@@ -16,6 +16,7 @@ import {session} from "./facades/session"
 import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
 import {incidents} from "./facades/incidents"
+import {miniapps} from "./facades/miniapps"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -39,6 +40,8 @@ export const toolkit = {
   dev,
   /** Bug-report / feedback submission (island-owned RestComms). */
   incidents,
+  /** Miniapp lifecycle (the WebView bridge primitives are exported separately). */
+  miniapps,
   display: {
     mirror: displayMirror,
   },
