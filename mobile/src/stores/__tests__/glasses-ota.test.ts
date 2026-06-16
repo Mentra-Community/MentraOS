@@ -95,7 +95,6 @@ describe("wifiStatusKnown reset on disconnect", () => {
 
   it("maps wifiCaptivePortal from legacy fields when true", () => {
     useGlassesStore.getState().setGlassesInfo({
-      connected: true,
       wifiConnected: true,
       wifiSsid: "Airport_WiFi",
       wifiCaptivePortal: true,
