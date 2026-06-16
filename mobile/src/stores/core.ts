@@ -1,32 +1,3 @@
-import {create} from "zustand"
-import {subscribeWithSelector} from "zustand/middleware"
-import {BluetoothStatus} from "@mentra/bluetooth-sdk-internal"
-
-interface CoreState extends BluetoothStatus {
-  setCoreInfo: (info: Partial<BluetoothStatus>) => void
-  reset: () => void
-}
-
-const initialState: BluetoothStatus = {
-  // state:
-  searching: false,
-  searchingController: false,
-  micRanking: ["glasses", "phone", "bluetooth", "bluetoothClassic"],
-  systemMicUnavailable: false,
-  currentMic: null,
-  searchResults: [],
-  wifiScanResults: [],
-  lastLog: [],
-  otherBtConnected: false,
-  galleryModeEnabled: true,
-}
-
-export const useCoreStore = create<CoreState>()(
-  subscribeWithSelector((set) => ({
-    ...initialState,
-
-    setCoreInfo: (info) => set((state) => ({...state, ...info})),
-
-    reset: () => set(initialState),
-  })),
-)
+// Moved into @mentra/island. This shim re-exports it so existing `@/stores/core`
+// importers stay unchanged — the Mentra-app escape hatch (also toolkit.stores.core).
+export {useCoreStore} from "@mentra/island"

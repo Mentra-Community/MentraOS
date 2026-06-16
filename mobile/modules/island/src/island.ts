@@ -13,6 +13,9 @@ import {glassesWifi} from "./facades/glassesWifi"
 import {displayMirror} from "./facades/displayMirror"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
+import {useCoreStore} from "./stores/core"
+import {useConnectionStore} from "./stores/connection"
+import {useGallerySyncStore} from "./stores/gallerySync"
 
 export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
@@ -26,11 +29,16 @@ export const toolkit = {
     mirror: displayMirror,
   },
   /**
-   * Escape hatches — the raw device-state zustand stores, exposed so the Mentra
-   * app keeps using them directly instead of rewriting every screen onto typed
-   * facades. These are Mentra-app convenience, NOT the OEM contract — OEMs use the
-   * typed facades above. Prefer a facade where one exists.
+   * Escape hatches — the raw device-state zustand stores, grouped under `stores`,
+   * exposed so the Mentra app keeps using them directly instead of rewriting every
+   * screen onto typed facades. These are Mentra-app convenience, NOT the OEM
+   * contract — OEMs use the typed facades above. Prefer a facade where one exists.
    */
-  glassesStore: useGlassesStore,
-  displayStore: useDisplayStore,
+  stores: {
+    glasses: useGlassesStore,
+    display: useDisplayStore,
+    core: useCoreStore,
+    connection: useConnectionStore,
+    gallerySync: useGallerySyncStore,
+  },
 }

@@ -2,24 +2,11 @@
  * Type definitions for the ASG package
  */
 
-export interface PhotoInfo {
-  name: string
-  url: string
-  download: string
-  size: number
-  modified: string | number // Unix timestamp (milliseconds) - can be string or number from API
-  mime_type?: string
-  is_video?: boolean
-  thumbnail_data?: string
-  downloaded_at?: number
-  // Video duration in milliseconds (from glasses sync response)
-  duration?: number
-  // New fields for filesystem storage
-  filePath?: string
-  thumbnailPath?: string
-  // Glasses model that captured this media
-  glassesModel?: string
-}
+// PhotoInfo moved into @mentra/island (with the gallerySync store that owns it).
+// Imported as a local name (sibling types below use it) and re-exported so existing
+// `@/types/asg` importers stay unchanged.
+import type {PhotoInfo} from "@mentra/island"
+export type {PhotoInfo}
 
 export interface CaptureFile {
   name: string // "IMG_xxx/base.jpg" or "IMG_xxx.jpg" (legacy)
