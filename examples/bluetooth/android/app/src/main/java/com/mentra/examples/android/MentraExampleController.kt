@@ -2931,6 +2931,27 @@ val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
 println("Video stopped: ${'$'}{stopped.status}")
 """.trimIndent()
     }
+    if (scanMode) {
+        return """
+$prefix
+val photo = mentraBluetoothSdk.requestPhoto(
+    PhotoRequest(
+      requestId = requestId,
+      appId = "com.mentra.bluetoothsdk.example.android",
+      size = PhotoSize.MAX,
+      webhookUrl = uploadUrl,
+      compress = PhotoCompression.NONE,
+      sound = false,
+      aeExposureDivisor = $scanAeDivisor,
+      isoCap = $scanIsoCap,
+      noiseReduction = false,
+      edgeEnhancement = false,
+      mfnr = false,
+    )
+)
+println("Scan photo delivered: ${'$'}{photo.response.requestId}")
+""".trimIndent()
+    }
     return """
 $prefix
 val photo = mentraBluetoothSdk.requestPhoto(

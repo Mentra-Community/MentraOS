@@ -764,7 +764,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
-      if (!wasConnectedRef.current) {
+      if (!wasConnectedRef.current && scanMode) {
         // Re-apply scan preset on reconnect so glasses button preset stays in sync.
         void syncScanCapturePreset(scanMode, scanAeDivisor, scanIsoCap);
       }
