@@ -1,0 +1,172 @@
+---
+title: "Runtime Toolkit"
+description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, status, wifi, speech, and display, over a device-agnostic runtime."
+---
+
+<Note>
+**Status: preview (Phase 1).** The runtime toolkit is being built domain by domain.
+The surface documented here is shipped and stable; more domains (settings,
+permissions, gallery, session) are landing behind the same patterns. The runtime is
+not yet packaged for external install — reach out to
+[help@mentra.glass](mailto:help@mentra.glass) to integrate today.
+</Note>
+
+## What it is
+
+The **runtime toolkit** is the API an OEM host app (the phone-side app that talks to
+your glasses) calls to run MentraOS. It ships as the `@mentra/island` module and
+exposes a single namespaced object, **`toolkit`**:
+
+```ts
+import {toolkit} from "@mentra/island"
+```
+
+The dividing line:
+
+- **The host owns UI, navigation, and login.** Your screens, your router, your auth.
+- **The toolkit owns the runtime and the device.** Connection, device state, wifi,
+  on-device speech models, the display pipeline, the miniapp runtime.
+
+So an OEM builds its own UI and calls `toolkit.<domain>.<method>()` for everything
+device- and runtime-related. The toolkit is device-agnostic: the same calls work
+across glasses models.
+
+## Lifecycle
+
+The host hands the toolkit its auth + config once, then starts it.
+
+```ts
+import {toolkit} from "@mentra/island"
+
+toolkit.configure({
+  // REQUIRED — the host owns login; the toolkit owns the rest.
+  auth: {
+    // Return your current (auto-refreshed) backend token.
+    getSubjectToken: async () => ({token: await getToken(), type: "supabase"}),
+  },
+  // Optional cloud endpoints + OEM identity.
+  config: {coreUrl, runtimeUrl, oemId},
+  // Optional analytics sink.
+  analytics: (event, props) => track(event, props),
+})
+
+await toolkit.start() // idempotent
+// …
+await toolkit.stop()  // idempotent
+```
+
+| Call | Purpose |
+|---|---|
+| `toolkit.configure(opts)` | Hand the toolkit `auth` (required), `config`, `analytics`. Call once, before `start()`. |
+| `toolkit.start()` | Mark the runtime started. Idempotent. |
+| `toolkit.stop()` | Tear down. Idempotent. |
+
+`auth.getSubjectToken()` is the only must-have seam — the host owns login and returns
+a fresh token on demand; the toolkit owns everything downstream.
+
+## `toolkit.glasses`
+
+Connection actions, a curated status/info read-model, capabilities, version, and the
+discrete input events.
+
+### Connection
+
+```ts
+await toolkit.glasses.connectDefault() // connect the last-paired glasses
+await toolkit.glasses.disconnect()
+await toolkit.glasses.forget()
+```
+
+### Status & info (read-models)
+
+`status()` returns a snapshot projected from the runtime's glasses store, in a stable
+shape that doesn't leak the internal store layout:
+
+```ts
+const s = toolkit.glasses.status()
+// { state, fullyBooted, battery, charging,
+//   case: {battery, charging, open, removed},
+//   signal, micEnabled, vadEnabled, btClassic }
+
+const unsubscribe = toolkit.glasses.onStatus((s) => render(s))
+
+const info = toolkit.glasses.info()
+// { model, style, color, firmwareVersion, mtkFirmware, besFirmware,
+//   serialNumber, buildNumber, btMac }
+
+const caps = toolkit.glasses.capabilities() // model capability table
+await toolkit.glasses.requestVersionInfo()  // ask glasses to report fresh version info
+```
+
+### Input events
+
+```ts
+const offButton = toolkit.glasses.onButtonPress((e) => { /* ButtonPressEvent */ })
+const offTouch  = toolkit.glasses.onTouchGesture((e) => { /* TouchEvent */ })
+```
+
+Every `on*()` returns an unsubscribe function.
+
+### `toolkit.glasses.wifi`
+
+```ts
+const networks = await toolkit.glasses.wifi.scan()            // WifiSearchResult[]
+await toolkit.glasses.wifi.connect(ssid, password)            // rejects with a coded error on failure
+await toolkit.glasses.wifi.forget(ssid)
+const status = toolkit.glasses.wifi.status()                  // WifiStatus snapshot
+const off = toolkit.glasses.wifi.onStatus((status) => { … })  // subscribe
+```
+
+`connect()` propagates the bluetooth layer's coded errors (`bluetooth_powered_off`,
+`request_timeout`, …) unchanged, so your UI keeps its own error mapping.
+
+## `toolkit.speech`
+
+On-device STT/TTS model management.
+
+```ts
+toolkit.speech.stt.currentLanguage()
+toolkit.speech.stt.languages()
+toolkit.speech.stt.languageInfo()
+await toolkit.speech.stt.download(/* model args */)
+toolkit.speech.stt.activate(code)
+toolkit.speech.stt.cancelDownload()
+await toolkit.speech.stt.deleteModel(/* model args */)
+toolkit.speech.stt.status()                       // offline-model auto-download status
+toolkit.speech.stt.onStatusChanged((s) => { … })  // subscribe; returns unsubscribe
+
+// toolkit.speech.tts mirrors stt (no auto-download status stream).
+```
+
+## `toolkit.display.mirror`
+
+A typed read facade for a phone-side preview of the glasses screen.
+
+```ts
+const event = toolkit.display.mirror.current()             // current display event snapshot
+const off   = toolkit.display.mirror.onMirror((e) => { … }) // subscribe; returns unsubscribe
+```
+
+## `toolkit.stores.*` — escape hatch (not the OEM contract)
+
+The raw device-state stores are also exposed under `toolkit.stores`
+(`glasses`, `display`, `core`, `connection`, `gallerySync`) so the first-party Mentra
+app can keep using them directly during migration.
+
+<Warning>
+`toolkit.stores.*` is a **Mentra-app convenience, not the OEM contract.** It exposes
+the internal store shape, which can change. OEMs should use the typed facades above;
+prefer a facade wherever one exists.
+</Warning>
+
+## How a host wires in (the adapter seam)
+
+A few runtime services need things only the host can provide (persistent storage, the
+backend client, audio playback). The toolkit never imports host code; instead it
+declares small typed **ports**, and the host injects **adapters** at boot through a
+single dependency-injection seam. The host implements the interface; the toolkit owns
+the behavior. OEM hosts implement the same ports with their own backing — that is what
+keeps the runtime device- and host-agnostic. (This seam is what the remaining
+domains — settings, permissions, gallery — land behind.)
+</content>
+</invoke>

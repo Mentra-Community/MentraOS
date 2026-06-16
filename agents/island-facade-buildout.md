@@ -46,6 +46,13 @@ adapter-injection pattern (#2), not a trivial move:
 - `incidents`, `dev`, `gallery`, `phoneNotifications` — similar host coupling.
 These are real per-domain efforts, each its own careful commit.
 
+## Docs (keep current as we go)
+Each shipped domain is documented in the OEM docs at `docs/glasses-oems/toolkit.mdx`
+(Mintlify). When a facade lands, add its surface there in the same commit. The page is
+written but **not yet nav-linked in `docs/docs.json`** — it's an unreleased Phase-1
+API, so publishing to the live OEM site is gated until release (one-line nav add when
+greenlit).
+
 ## Verification per commit
 `npx tsc --noEmit -p .` (resolves `@mentra/island`→src, validates the real code) +
 `bun run test`. The island standalone build can't run locally (cloud-v2 `zod` not
