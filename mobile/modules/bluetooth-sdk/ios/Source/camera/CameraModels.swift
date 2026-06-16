@@ -48,7 +48,7 @@ public enum PhotoCompression: String {
 }
 
 public struct ButtonPhotoSettings {
-    public let size: ButtonPhotoSize
+    public let size: ButtonPhotoSize?
     public let mfnr: Bool?
     public let zsl: Bool?
     public let noiseReduction: Bool?
@@ -62,7 +62,7 @@ public struct ButtonPhotoSettings {
     public let resetCaptureTuning: Bool?
 
     public init(
-        size: ButtonPhotoSize,
+        size: ButtonPhotoSize?,
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         noiseReduction: Bool? = nil,
@@ -90,12 +90,12 @@ public struct ButtonPhotoSettings {
     }
 
     static func from(params: [String: Any]) -> ButtonPhotoSettings {
-        let sizeRaw = params["size"] as? String ?? "medium"
+        let size = (params["size"] as? String).map { ButtonPhotoSize(normalizedRawValue: $0) }
         let aeExposureDivisor =
             optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
         return ButtonPhotoSettings(
-            size: ButtonPhotoSize(normalizedRawValue: sizeRaw),
+            size: size,
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
             noiseReduction: optionalBoolValue(params, "noiseReduction"),
