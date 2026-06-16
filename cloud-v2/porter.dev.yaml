@@ -38,7 +38,7 @@ services:
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
-    cpuCores: 2
+    cpuCores: 1
     ramMegabytes: 2048
     domains:
       - name: runtime.dev.us-west-2.mentraglass.com
