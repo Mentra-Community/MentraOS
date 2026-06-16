@@ -273,6 +273,16 @@ jest.mock("@mentra/island", () => {
       start: jest.fn(() => Promise.resolve()),
       stop: jest.fn(() => Promise.resolve()),
       glasses: {
+        connectDefault: jest.fn(() => Promise.resolve()),
+        disconnect: jest.fn(() => Promise.resolve()),
+        forget: jest.fn(() => Promise.resolve()),
+        status: jest.fn(() => ({state: "disconnected"})),
+        onStatus: jest.fn(() => () => {}),
+        info: jest.fn(() => ({})),
+        capabilities: jest.fn(() => ({})),
+        requestVersionInfo: jest.fn(() => Promise.resolve()),
+        onButtonPress: jest.fn(() => () => {}),
+        onTouchGesture: jest.fn(() => () => {}),
         wifi: {
           scan: jest.fn(() => Promise.resolve([])),
           connect: jest.fn(() => Promise.resolve()),
