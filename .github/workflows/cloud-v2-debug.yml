@@ -36,6 +36,7 @@ jobs:
       CORE_HOSTNAME: core.debug.us-west-2.dev.mentraglass.com
       RUNTIME_HOSTNAME: runtime.debug.us-west-2.dev.mentraglass.com
       UDP_HOSTNAME: audio-udp.debug.us-west-2.dev.mentraglass.com
+      DEBUG_HTTP_INGRESS: k8s-ingressn-ingressn-4836336368-5211ddb0c36e7723.elb.us-west-2.amazonaws.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,29 +67,15 @@ jobs:
             --variables CLOUD_RUNTIME_AUTH_AUDIENCE=cloud-runtime \
             --variables 'CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"cloud-core","publicKeyEnv":"MENTRA_JWT_PUBLIC_KEY","userIdClaim":"sub","oemIdClaim":"oem_id"}]'
 
-      - name: Apply debug UDP NLB service
-        working-directory: cloud-v2
-        continue-on-error: true
-        run: porter kubectl -- apply -f deploy/audio-udp-nlb-debug.yaml
-
       - name: Discover deployed load balancers
         id: endpoints
         run: |
           set -euo pipefail
 
-          CORE_INGRESS=$(porter kubectl -- get ingress cloud-debug-core -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}')
-          RUNTIME_INGRESS=$(porter kubectl -- get ingress cloud-debug-runtime -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}')
-          UDP_NLB=""
-          if porter kubectl -- get svc/cloud-debug-audio-udp >/dev/null 2>&1; then
-            UDP_NLB=$(porter kubectl -- get svc cloud-debug-audio-udp -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}' || true)
-          fi
-          if [ -z "$UDP_NLB" ]; then
-            echo "Debug UDP NLB is not available yet; skipping UDP DNS record." >&2
-          fi
-
-          echo "core_ingress=$CORE_INGRESS" >> "$GITHUB_OUTPUT"
-          echo "runtime_ingress=$RUNTIME_INGRESS" >> "$GITHUB_OUTPUT"
-          echo "udp_nlb=$UDP_NLB" >> "$GITHUB_OUTPUT"
+          echo "core_ingress=${DEBUG_HTTP_INGRESS}" >> "$GITHUB_OUTPUT"
+          echo "runtime_ingress=${DEBUG_HTTP_INGRESS}" >> "$GITHUB_OUTPUT"
+          echo "udp_nlb=" >> "$GITHUB_OUTPUT"
+          echo "Debug UDP NLB is not available from this workflow yet; skipping UDP DNS record." >&2
 
       - name: Upsert Cloudflare DNS
         working-directory: cloud-v2
