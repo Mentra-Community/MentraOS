@@ -55,8 +55,18 @@ export const glasses = {
 
   // --- read-model (projected from the island-owned glasses store) ---
   status: (): GlassesStatusSnapshot => projectStatus(),
-  onStatus: (cb: (status: GlassesStatusSnapshot) => void): (() => void) =>
-    useGlassesStore.subscribe(() => cb(projectStatus())),
+  onStatus: (cb: (status: GlassesStatusSnapshot) => void): (() => void) => {
+    // Dedupe: the glasses store updates on many fields; only fire when the
+    // projected status snapshot actually changes.
+    let last = JSON.stringify(projectStatus())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectStatus()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
+  },
   info: (): GlassesInfoSnapshot => projectInfo(),
   capabilities: () => getModelCapabilities(useGlassesStore.getState().deviceModel as DeviceTypes),
   /** Ask the glasses to report fresh firmware/version info (updates the store). */

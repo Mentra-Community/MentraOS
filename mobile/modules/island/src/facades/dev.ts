@@ -12,6 +12,22 @@ import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
 
+/**
+ * Reconnect the cloud client onto the current cloud-URL overrides. When both are
+ * explicit, reconnect with them; otherwise rebuild with the boot-resolved config
+ * (which carries the host's Metro/env URL resolution).
+ */
+function applyCloudUrlReconnect(): void {
+  const s = useSettingsStore.getState()
+  const core = s.getSetting(SETTINGS.cloud_core_url.key)
+  const runtime = s.getSetting(SETTINGS.cloud_runtime_url.key)
+  if (typeof core === "string" && core.trim() && typeof runtime === "string" && runtime.trim()) {
+    cloudClientService.reconnect({core: core.trim(), runtime: runtime.trim()})
+  } else {
+    cloudClientService.reconnect()
+  }
+}
+
 export const dev = {
   /** The backend's required/recommended client version. */
   minimumClientVersion: () => restComms.getMinimumClientVersion(),
@@ -31,13 +47,12 @@ export const dev = {
     const s = useSettingsStore.getState()
     if (urls.core !== undefined) s.setSetting(SETTINGS.cloud_core_url.key, urls.core)
     if (urls.runtime !== undefined) s.setSetting(SETTINGS.cloud_runtime_url.key, urls.runtime)
-    if (urls.core && urls.runtime) cloudClientService.reconnect({core: urls.core, runtime: urls.runtime})
-    else cloudClientService.reconnect()
+    applyCloudUrlReconnect()
   },
 
   /** The saved backend URLs (the dev URL-switcher list). */
   savedUrls: (): string[] => useSettingsStore.getState().getSetting(SETTINGS.saved_backend_urls.key) ?? [],
 
   /** Tear down + rebuild the live cloud client (the dev "reconnect" button). */
-  reconnectCloud: (): void => cloudClientService.reconnect(),
+  reconnectCloud: (): void => applyCloudUrlReconnect(),
 }

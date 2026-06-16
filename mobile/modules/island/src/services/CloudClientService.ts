@@ -19,6 +19,7 @@ import type {SubjectTokenType} from "@mentra/cloud-client"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
+import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {
   configureRuntime,
   type CloudClientStatusSnapshot,
@@ -70,7 +71,12 @@ function resolveEndpoints(): {core: string; runtime: string} {
 }
 
 function frameSizeBytes(): Lc3FrameSizeBytes {
-  const size = getConfigValues().audioFrameSizeBytes
+  // Read LIVE from the island settings store (the source of truth) so a
+  // reconnect after a glasses swap (G1=20 ↔ G2=40) picks up the new frame size,
+  // not the one-time toolkit.configure({config}) snapshot. Falls back to the
+  // config value (set at boot) then 20 when the setting is unset.
+  const fromSettings = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
+  const size = fromSettings ?? getConfigValues().audioFrameSizeBytes
   return size === 20 || size === 40 || size === 60 ? size : 20
 }
 
