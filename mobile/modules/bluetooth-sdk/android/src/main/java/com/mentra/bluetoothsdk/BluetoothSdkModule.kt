@@ -489,7 +489,11 @@ class BluetoothSdkModule : Module() {
 
         Function("getOtaVersionUrl") { requireSdk().getOtaVersionUrl() }
 
-        AsyncFunction("checkForOtaUpdate") { requireSdk().checkForOtaUpdate() }
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue:
+        // manifest fetches and version waits can block for several seconds.
+        AsyncFunction("checkForOtaUpdate") Coroutine { ->
+            withContext(Dispatchers.IO) { requireSdk().checkForOtaUpdate() }
+        }
 
         AsyncFunction("startOtaUpdate") { otaVersionUrl: String? ->
             val sdk = requireSdk()

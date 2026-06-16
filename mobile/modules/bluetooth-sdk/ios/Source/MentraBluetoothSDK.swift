@@ -1052,7 +1052,13 @@ public final class MentraBluetoothSDK {
 
         do {
             let versionInfo = try await requestVersionInfo()
-            return GlassesStatus(values: status.values.merging(versionInfo.dictionary) { _, new in new })
+            let values = status.values.merging(versionInfo.dictionary) { existing, new in
+                if let newString = new as? String, newString.isEmpty {
+                    return existing
+                }
+                return new
+            }
+            return GlassesStatus(values: values)
         } catch {
             return status
         }
