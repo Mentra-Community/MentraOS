@@ -501,9 +501,7 @@ public final class MentraBluetoothSDK {
                         DeviceStore.shared.remove(cat, key)
                     }
                 }
-                if let size = settings.size {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue)
-                }
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", settings.size.rawValue)
                 if let mfnr = settings.mfnr {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
                 }
