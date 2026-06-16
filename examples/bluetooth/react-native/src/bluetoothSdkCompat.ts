@@ -82,7 +82,7 @@ export function photoRequestParamsForNativeCompat(
     size: normalizePhotoSizeTier(params.size),
     webhookUrl: params.webhookUrl ?? '',
     compress: params.compress,
-    flash: true,
+    flash: params.sound !== false,
     sound: params.sound,
   };
   if (params.authToken != null && params.authToken.length > 0) {

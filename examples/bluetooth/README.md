@@ -33,9 +33,9 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 - Reading typed lifecycle state for glasses, SDK runtime, and scan progress.
 - Displaying text, clearing the display, and opening the dashboard on display-equipped models such as G2.
 - Checking Mentra Live OTA availability and showing update progress/status.
-- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, OTA, audio, and SDK diagnostic events.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, video upload, OTA, audio, and SDK diagnostic events.
 - Controlling model-supported features such as brightness, dashboard position, head-up angle, gallery mode, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera capture settings, and streaming.
-- Running local photo upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
+- Running local media upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
 
 ## Repository Map
 
@@ -46,9 +46,9 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 - `docs/hardware-integration.md`: model differences and capability gating.
 - `docs/production-checklist.md`: release-readiness checklist.
 - `docs/troubleshooting.md`: build, permission, scan, stream, and React Native issues.
-- `examples/local-demo-cloud`: recommended local helper for photo upload and stream preview.
+- `examples/local-demo-cloud`: recommended local helper for media upload and stream preview.
 - `examples/react-native-elevenlabs-audio`: focused Mentra Live PCM to ElevenLabs WebSocket repro app.
-- `examples/photo-webhook-server`: focused photo webhook server.
+- `examples/photo-webhook-server`: focused media upload webhook server.
 - `examples/local-webrtc-server`: lower-level MediaMTX helper.
 
 ## Local SDK Development
@@ -57,6 +57,9 @@ Published package installs are the normal SDK path. Local overrides are only for
 
 - Android: publish `com.mentraglass:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
 - iOS: point Xcode at a local Swift package checkout when testing unpublished Swift SDK source changes.
-- React Native: install a local `@mentra/bluetooth-sdk` package path and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve the same package.
+- React Native: keep the published package pinned for clean checkouts, then
+  locally symlink `node_modules/@mentra/bluetooth-sdk` to an SDK source checkout
+  and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve
+  the same package.
 
 The example READMEs document each override explicitly. Do not bake machine-specific paths into committed app config.

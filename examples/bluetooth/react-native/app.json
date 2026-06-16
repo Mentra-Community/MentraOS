@@ -16,7 +16,7 @@
         "NSBluetoothAlwaysUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSBluetoothPeripheralUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSCameraUsageDescription": "This example app can trigger camera capture on connected smart glasses.",
-        "NSLocalNetworkUsageDescription": "This example app can talk to local photo webhook and streaming preview servers.",
+        "NSLocalNetworkUsageDescription": "This example app can talk to local media upload and streaming preview servers.",
         "NSMicrophoneUsageDescription": "This example app can stream microphone audio from connected smart glasses."
       }
     },

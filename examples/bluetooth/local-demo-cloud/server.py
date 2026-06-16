@@ -32,11 +32,11 @@ PHOTO_SERVER = REPO_ROOT / "examples" / "photo-webhook-server" / "server.py"
 
 def parse_options() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Start the local photo webhook and MediaMTX streaming server for Mentra SDK examples."
+        description="Start the local media webhook and MediaMTX streaming server for Mentra SDK examples."
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Host interface for the photo webhook.")
+    parser.add_argument("--host", default="0.0.0.0", help="Host interface for the media webhook.")
     parser.add_argument("--host-ip", default=None, help="LAN IP printed for phones and glasses.")
-    parser.add_argument("--photo-port", type=int, default=DEFAULT_PHOTO_PORT, help="Photo webhook HTTP port.")
+    parser.add_argument("--photo-port", type=int, default=DEFAULT_PHOTO_PORT, help="Media webhook HTTP port.")
     parser.add_argument("--rtmp-port", type=int, default=DEFAULT_RTMP_PORT, help="MediaMTX RTMP ingest port.")
     parser.add_argument("--hls-port", type=int, default=DEFAULT_HLS_PORT, help="MediaMTX HLS preview port.")
     parser.add_argument("--webrtc-port", type=int, default=DEFAULT_WEBRTC_PORT, help="MediaMTX WebRTC HTTP port.")
@@ -49,10 +49,10 @@ def parse_options() -> argparse.Namespace:
     parser.add_argument("--rtmp-path", default=DEFAULT_RTMP_STREAM_PATH, help="MediaMTX RTMP/HLS stream path.")
     parser.add_argument("--webrtc-path", default=DEFAULT_WEBRTC_STREAM_PATH, help="MediaMTX WHIP/WHEP stream path.")
     parser.add_argument("--srt-path", default=DEFAULT_SRT_STREAM_PATH, help="MediaMTX SRT/HLS stream path.")
-    parser.add_argument("--photo-only", action="store_true", help="Start only the photo webhook.")
+    parser.add_argument("--photo-only", action="store_true", help="Start only the media webhook.")
     parser.add_argument("--streaming-only", action="store_true", help="Start only the MediaMTX streaming server.")
     parser.add_argument("--webrtc-only", dest="streaming_only", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--skip-photo", action="store_true", help="Do not start the photo webhook.")
+    parser.add_argument("--skip-photo", action="store_true", help="Do not start the media webhook.")
     parser.add_argument("--skip-streaming", action="store_true", help="Do not start MediaMTX.")
     parser.add_argument("--skip-webrtc", dest="skip_streaming", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
@@ -253,18 +253,18 @@ def print_urls(
     print("=======================")
 
     if photo_warning:
-        print("\nPhoto webhook was not started:")
+        print("\nMedia webhook was not started:")
         print(f"  {photo_warning}")
-        print("  If another photo webhook is already running, use this URL:")
+        print("  If another media webhook is already running, use this URL:")
         print(f"  http://{host_ip}:{options.photo_port}/upload")
     elif not options.skip_photo:
-        print("\nPhoto upload URL:")
+        print("\nMedia upload URL:")
         print(f"  http://{host_ip}:{options.photo_port}/upload")
 
     if streaming_warning:
         print("\nStreaming server is not running:")
         print(f"  {streaming_warning}")
-        print("  Photo upload is still available. Install/start Docker later to try RTMP/SRT/WebRTC streaming.")
+        print("  Media upload is still available. Install/start Docker later to try RTMP/SRT/WebRTC streaming.")
     elif not options.skip_streaming:
         print("\nRTMP publish URL:")
         print(f"  rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")

@@ -524,6 +524,85 @@ Your webhook should accept multipart form data with a `photo` file and `requestI
 
 For local development, run `python3 examples/local-demo-cloud/server.py` from the repo root and use the printed LAN `/upload` URL. Do not use `localhost`.
 
+## Camera Video Recording
+
+Use video recording when your app needs a clip instead of a still image. Start recording with optional per-recording settings, then stop recording with an optional webhook URL. `maxRecordingTimeMinutes` is an auto-stop guard; `0` or an omitted value records until your app stops recording or the glasses interrupt it. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
+
+Android:
+
+```kotlin
+val requestId = "video-${System.currentTimeMillis()}"
+
+val started = sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId = requestId,
+        save = true,
+        sound = true,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        maxRecordingTimeMinutes = 1,
+    )
+)
+println("Video started: ${started.status}")
+
+val stopped = sdk.stopVideoRecording(
+    requestId = requestId,
+    webhookUrl = "https://api.example.com/mentra/video",
+    authToken = "optional-token",
+)
+println("Video uploaded: ${stopped.status}")
+```
+
+iOS:
+
+```swift
+let requestId = "video-\(Date().timeIntervalSince1970)"
+
+let started = try await sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId: requestId,
+        save: true,
+        sound: true,
+        width: 1280,
+        height: 720,
+        fps: 30,
+        maxRecordingTimeMinutes: 1
+    )
+)
+print("Video started: \(started.status)")
+
+let stopped = try await sdk.stopVideoRecording(
+    requestId: requestId,
+    webhookUrl: "https://api.example.com/mentra/video",
+    authToken: "optional-token"
+)
+print("Video uploaded: \(stopped.status)")
+```
+
+React Native:
+
+```ts
+const requestId = `video-${Date.now()}`;
+
+const started = await BluetoothSdk.startVideoRecording(requestId, true, true, {
+  width: 1280,
+  height: 720,
+  fps: 30,
+  maxRecordingTimeMinutes: 1,
+});
+console.log('Video started', started.status);
+
+const stopped = await BluetoothSdk.stopVideoRecording(
+  requestId,
+  'https://api.example.com/mentra/video',
+  'optional-token',
+);
+console.log('Video uploaded', stopped.status);
+```
+
+`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` or `file` field and `requestId`.
+
 ## Streaming
 
 Use streaming requests when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. G2 does not have a camera. The SDK selects the protocol from the URL prefix.
@@ -708,7 +787,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `requestPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
-| `video_recording_status` | `VideoRecordingStatusEvent` | Raw video recording start/stop success or failure event. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with successful status and reject on ASG failure. |
+| `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails, or a status query reports whether the glasses are recording. `startVideoRecording(...)` resolves from `recording_started`; `stopVideoRecording(...)` resolves from `recording_stopped` unless a webhook upload was requested, in which case it waits for upload success. |
+| `media_success` / `media_error` | `MediaUploadEvent` | Raw glasses media upload completion events. Video webhook stops use these events to resolve or reject the `stopVideoRecording(...)` promise after recording has stopped. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
 | `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports that the hardware setting was applied. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
@@ -724,9 +804,9 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
 | `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
 
-For request/response commands, prefer the value returned by the method. Use listeners for ongoing hardware streams and status updates. React Native event payload fields use camelCase: `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+For request/response commands, prefer the value returned by the method. Use listeners for ongoing hardware streams and status updates. React Native event payload fields use camelCase: `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`, successful `media_success` events include `requestId`, `mediaUrl`, and `mediaType`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
-Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onVoiceActivityDetectionStatus`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onVoiceActivityDetectionStatus`, `onSpeakingStatus`, `onPhotoResponse`, `onVideoRecordingStatus`, `onMediaUpload`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`; `didReceive` carries `BluetoothEvent.videoRecordingStatus` and `BluetoothEvent.mediaUpload` for video lifecycle and upload events. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
 ## SDK Models
 
@@ -751,7 +831,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
-| `startVideoRecording` / `stopVideoRecording` | Resolve with successful `VideoRecordingStatusEvent` values from the ASG client and reject when the ASG reports failure. Check `status` before updating recording UI. |
+| `startVideoRecording` / `stopVideoRecording` | `startVideoRecording` resolves from `recording_started`. `stopVideoRecording` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus video `media_success` and rejects on video `media_error`. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 
 ## Error Handling

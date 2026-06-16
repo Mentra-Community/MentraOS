@@ -24,6 +24,17 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private struct WebhookReachability {
+    let healthUrl: URL
+    let host: String
+}
+
+private struct PersistedCloudUrls {
+    let streamProtocol: ExampleStreamProtocol?
+    let streamUrl: String?
+    let webhookUrl: String?
+}
+
 private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
     var parts = ["\(ack.setting) \(ack.status)"]
     if let fov = ack.values["fov"] {
@@ -126,6 +137,71 @@ struct PhotoPreviewDetails {
     }
 }
 
+struct VideoPreviewDetails {
+    let byteCount: Int?
+    let contentType: String?
+    let durationMs: Int?
+    let error: String?
+    let mediaUrl: String?
+    let previewUrl: String?
+    let requestId: String?
+    let source: String
+    let state: String
+    let status: String?
+    let timestamp: Int?
+    let uploadUrl: String?
+    let uploadedAt: String?
+
+    func updated(
+        byteCount: Int? = nil,
+        contentType: String? = nil,
+        durationMs: Int? = nil,
+        error: String? = nil,
+        mediaUrl: String? = nil,
+        previewUrl: String? = nil,
+        requestId: String? = nil,
+        state: String,
+        status: String? = nil,
+        timestamp: Int? = nil,
+        uploadUrl: String? = nil,
+        uploadedAt: String? = nil
+    ) -> VideoPreviewDetails {
+        VideoPreviewDetails(
+            byteCount: byteCount ?? self.byteCount,
+            contentType: contentType ?? self.contentType,
+            durationMs: durationMs ?? self.durationMs,
+            error: error,
+            mediaUrl: mediaUrl ?? self.mediaUrl,
+            previewUrl: previewUrl ?? self.previewUrl,
+            requestId: requestId ?? self.requestId,
+            source: source,
+            state: state,
+            status: status ?? self.status,
+            timestamp: timestamp ?? self.timestamp,
+            uploadUrl: uploadUrl ?? self.uploadUrl,
+            uploadedAt: uploadedAt ?? self.uploadedAt
+        )
+    }
+
+    static func pending(requestId: String, state: String, uploadUrl: String) -> VideoPreviewDetails {
+        VideoPreviewDetails(
+            byteCount: nil,
+            contentType: nil,
+            durationMs: nil,
+            error: nil,
+            mediaUrl: nil,
+            previewUrl: nil,
+            requestId: requestId,
+            source: "Cloud server",
+            state: state,
+            status: nil,
+            timestamp: nil,
+            uploadUrl: uploadUrl,
+            uploadedAt: nil
+        )
+    }
+}
+
 func deviceModelLabel(_ model: DeviceModel) -> String {
     switch model {
     case .mentraLive:
@@ -193,10 +269,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActionOrder: [Int] = []
     private var streamConfigurationChangeInProgress = false
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
-    @Published var webhookUrl = defaultPhotoUploadUrl
+    @Published var webhookUrl = defaultPhotoUploadUrl {
+        didSet {
+            guard webhookUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
     @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
+    @Published private(set) var videoPreviewDetails: VideoPreviewDetails?
+    @Published private(set) var videoPreviewUrl: URL?
+    @Published private(set) var videoRecording = false
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
     @Published private(set) var photoSize: PhotoSize = .max
     @Published private(set) var scanMode = false
@@ -212,8 +296,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var cameraSettingsStatus = "Camera settings: default"
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
-    @Published var streamProtocol: ExampleStreamProtocol = .webrtc
-    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl
+    @Published var streamProtocol: ExampleStreamProtocol = .webrtc {
+        didSet {
+            guard streamProtocol != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
+    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl {
+        didSet {
+            guard streamUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
     @Published private(set) var streamFps = 15
     @Published private(set) var streamCloudServerEnabled = false
     @Published private(set) var directStreamReceiverRunning = false
@@ -251,8 +345,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private let mentraBluetoothSdk = MentraBluetoothSDK()
     let directWhipReceiver = GStreamerWhipReceiver()
     private var activePhotoRequestId: String?
+    private var activeVideoRequestId: String?
     private var activeStreamId: String?
     private var pollGeneration = 0
+    private var videoPollGeneration = 0
     private var directPhotoTimeoutTask: Task<Void, Never>?
     private var previewHealthTask: Task<Void, Never>?
     private var directStreamStartTask: Task<Void, Never>?
@@ -267,6 +363,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var micPlayer: AVAudioPlayer?
     private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
     private let defaultDeviceDefaults = UserDefaults.standard
+    private let cloudUrlDefaults = UserDefaults.standard
     private let directWhipProxy = WhipHeaderProxy()
     private nonisolated(unsafe) var photoUploadServer: LocalPhotoUploadServer?
 
@@ -276,6 +373,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         static let name = "mentra.example.defaultDevice.name"
         static let identifier = "mentra.example.defaultDevice.identifier"
         static let savedAt = "mentra.example.defaultDevice.savedAt"
+    }
+
+    private enum CloudUrlStorage {
+        static let version = "mentra.example.cloudUrls.version"
+        static let streamProtocol = "mentra.example.cloudUrls.streamProtocol"
+        static let streamUrl = "mentra.example.cloudUrls.streamUrl"
+        static let webhookUrl = "mentra.example.cloudUrls.webhookUrl"
+        static let savedAt = "mentra.example.cloudUrls.savedAt"
     }
 
     var glassesConnected: Bool {
@@ -316,6 +421,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
         )
         let savedDefaultDevice = loadPersistedDefaultDevice()
+        let savedCloudUrls = loadPersistedCloudUrls()
         if let savedDevice = savedDefaultDevice {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
@@ -325,6 +431,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         applySdkState(mentraBluetoothSdk.sdkState)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
+        } else if let value = savedCloudUrls.webhookUrl {
+            webhookUrl = value
+        }
+        let environmentStreamUrl = ProcessInfo.processInfo.environment["MENTRA_STREAM_URL"]
+        if environmentStreamUrl == nil, let value = savedCloudUrls.streamProtocol {
+            streamProtocol = value
+        }
+        if let value = environmentStreamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamProtocol {
+            streamUrl = value.defaultUrl
         }
         if savedDefaultDevice != nil {
             scheduleAutoConnectDefaultOnStartup()
@@ -476,7 +595,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard photoDestination != destination else { return }
         if destination == .macBookServer {
             stopPhonePhotoServer()
-            cameraStatus = "Camera: enter a Photo upload URL"
+            cameraStatus = "Camera: enter a media upload URL"
         } else {
             cameraStatus = "Camera: phone receiver will start before capture"
         }
@@ -632,7 +751,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 throw ExampleActionError(message: validationMessage)
             }
             guard let statusUrl = photoStatusUrl(uploadUrl, requestId: "") else {
-                let message = "Enter a valid http:// or https:// Photo upload URL."
+                let message = "Enter a valid http:// or https:// media upload URL."
                 cameraStatus = "Camera: \(message)"
                 throw ExampleActionError(message: message)
             }
@@ -726,6 +845,109 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         )
     }
 
+    func toggleVideoRecording() {
+        if activeVideoRequestId != nil || videoRecording {
+            stopVideoRecording()
+        } else {
+            startVideoRecording()
+        }
+    }
+
+    private func startVideoRecording() {
+        runAsyncAction("Start video recording") { [self] in
+            try requireConnected("record video")
+            try requireGlassesWifi("record video")
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard photoStatusUrl(uploadUrl, requestId: "") != nil else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
+            }
+            cameraStatus = "Camera: checking this app can reach the media server before video"
+            do {
+                let reachability = try await checkWebhookReachable(uploadUrl)
+                cameraStatus = "Camera: this app reached media server (\(reachability.host)); starting video"
+                append(tag: "LIVE", text: "app reached media server for video \(reachability.healthUrl.absoluteString)")
+            } catch {
+                let message = webhookReachabilityErrorMessage(error)
+                cameraStatus = "Camera: media server check failed: \(message)"
+                videoPreviewDetails = .pending(requestId: "", state: "error", uploadUrl: uploadUrl)
+                    .updated(error: message, state: "error")
+                append(tag: "LIVE", text: "media server check failed: \(message)")
+                throw ExampleActionError(message: "Media server check failed: \(message)")
+            }
+            let requestId = "video-\(Int(Date().timeIntervalSince1970 * 1000))"
+            activeVideoRequestId = requestId
+            videoPollGeneration += 1
+            videoPreviewDetails = .pending(requestId: requestId, state: "recording", uploadUrl: uploadUrl)
+            videoPreviewUrl = nil
+            videoRecording = true
+            cameraStatus = "Camera: recording video (\(requestId))"
+            do {
+                let event = try await mentraBluetoothSdk.startVideoRecording(
+                    VideoRecordingRequest(
+                        requestId: requestId,
+                        save: true,
+                        sound: true,
+                        maxRecordingTimeMinutes: 1
+                    )
+                )
+                handleVideoRecordingStatus(event)
+            } catch {
+                if activeVideoRequestId == requestId {
+                    activeVideoRequestId = nil
+                }
+                videoRecording = false
+                videoPreviewDetails = .pending(requestId: requestId, state: "error", uploadUrl: uploadUrl)
+                    .updated(error: error.localizedDescription, state: "error")
+                cameraStatus = "Camera: video failed (\(error.localizedDescription))"
+                throw error
+            }
+        }
+    }
+
+    private func stopVideoRecording() {
+        runAsyncAction("Stop & upload video") { [self] in
+            guard let requestId = activeVideoRequestId else {
+                throw ExampleActionError(message: "No active video recording to stop.")
+            }
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
+            guard let statusUrl = photoStatusUrl(uploadUrl, requestId: requestId) else {
+                let message = "Enter a valid http:// or https:// media upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
+            }
+            videoPollGeneration += 1
+            let generation = videoPollGeneration
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "uploading", uploadUrl: uploadUrl))
+                .updated(requestId: requestId, state: "uploading", uploadUrl: uploadUrl)
+            cameraStatus = "Camera: stopping video and uploading (\(requestId))"
+            do {
+                let event = try await mentraBluetoothSdk.stopVideoRecording(requestId: requestId, webhookUrl: uploadUrl)
+                handleVideoRecordingStatus(event)
+                pollVideoPreview(requestId: requestId, statusUrl: statusUrl, generation: generation)
+            } catch {
+                if activeVideoRequestId == requestId {
+                    activeVideoRequestId = nil
+                }
+                videoRecording = false
+                videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: uploadUrl))
+                    .updated(error: error.localizedDescription, requestId: requestId, state: "error", uploadUrl: uploadUrl)
+                cameraStatus = "Camera: video upload failed (\(error.localizedDescription))"
+                throw error
+            }
+        }
+    }
+
     private func startPhonePhotoServer() throws -> String {
         guard let host = bestLocalIPv4Address() else {
             let message = "No phone LAN IP found. Connect this iPhone to Wi-Fi or a network reachable by the glasses."
@@ -808,8 +1030,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "TX", text: "Test webhook failed: \(validationMessage)")
                 throw ExampleActionError(message: validationMessage)
             }
-            guard let healthUrl = webhookHealthUrl(uploadUrl) else {
-                let message = "Enter a valid http:// or https:// Photo upload URL."
+            guard webhookHealthUrl(uploadUrl) != nil else {
+                let message = "Enter a valid http:// or https:// media upload URL."
                 cameraStatus = "Camera: \(message)"
                 append(tag: "TX", text: "Test webhook failed: invalid URL")
                 throw ExampleActionError(message: message)
@@ -818,25 +1040,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             cameraStatus = "Camera: testing local webhook"
             Task {
                 do {
-                    var request = URLRequest(url: URL(string: "\(healthUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!)
-                    request.cachePolicy = .reloadIgnoringLocalCacheData
-                    request.timeoutInterval = 3
-                    let (_, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        cameraStatus = "Camera: webhook test failed: invalid response"
-                        append(tag: "LIVE", text: "webhook test failed: invalid response")
-                        return
-                    }
-                    guard (200 ..< 300).contains(http.statusCode) else {
-                        cameraStatus = "Camera: webhook returned HTTP \(http.statusCode)"
-                        append(tag: "LIVE", text: "webhook returned HTTP \(http.statusCode)")
-                        return
-                    }
-                    cameraStatus = "Camera: webhook reachable (\(healthUrl.host ?? "server"))"
-                    append(tag: "LIVE", text: "webhook reachable \(healthUrl.absoluteString)")
+                    let reachability = try await checkWebhookReachable(uploadUrl)
+                    cameraStatus = "Camera: webhook reachable (\(reachability.host))"
+                    append(tag: "LIVE", text: "webhook reachable \(reachability.healthUrl.absoluteString)")
                 } catch {
-                    cameraStatus = "Camera: webhook test failed: \(error.localizedDescription)"
-                    append(tag: "LIVE", text: "webhook test failed: \(error.localizedDescription)")
+                    let message = webhookReachabilityErrorMessage(error)
+                    cameraStatus = "Camera: webhook test failed: \(message)"
+                    append(tag: "LIVE", text: "webhook test failed: \(message)")
                 }
             }
         }
@@ -1400,10 +1610,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        let wasConnected = glassesConnected
         glassesValues = glasses
         hotspotEnabled = enabledHotspotStatus(glasses) != nil
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
+        } else if !wasConnected {
+            // Re-apply scan preset on reconnect so button captures stay in sync.
+            if scanMode {
+                pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: scanIsoCap)
+            }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
         append(tag: "STORE", text: summarize(glasses))
@@ -1449,6 +1665,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handleRawEvent(name: "hotspot_error", values: error.values)
         case .photoResponse:
             break
+        case let .videoRecordingStatus(status):
+            handleVideoRecordingStatus(status)
+        case let .mediaUpload(upload):
+            handleMediaUpload(upload)
         case let .streamStatus(status):
             handleStreamStatus(status.status)
         case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
@@ -1591,7 +1811,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func requireConnected(_ feature: String) throws {
         guard glassesConnected else {
             let message = "Connect glasses first to \(feature)."
-            if feature.contains("photo") || feature.contains("capture") {
+            if feature.contains("photo") || feature.contains("capture") || feature.contains("video") {
                 cameraStatus = message
             }
             if feature.contains("stream") {
@@ -1605,7 +1825,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func requireGlassesWifi(_ feature: String) throws {
         guard glassesWifiConnected else {
             let message = "Connect the glasses to Wi-Fi from the System tab before you \(feature)."
-            if feature.contains("photo") || feature.contains("capture") {
+            if feature.contains("photo") || feature.contains("capture") || feature.contains("video") {
                 cameraStatus = "Camera: \(message)"
             }
             if feature.contains("stream") {
@@ -1721,6 +1941,81 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         defaultDeviceDefaults.set(Date().timeIntervalSince1970, forKey: DefaultDeviceStorage.savedAt)
     }
 
+    private func loadPersistedCloudUrls() -> PersistedCloudUrls {
+        guard cloudUrlDefaults.integer(forKey: CloudUrlStorage.version) == 1 else {
+            return PersistedCloudUrls(streamProtocol: nil, streamUrl: nil, webhookUrl: nil)
+        }
+        let streamProtocol = cloudUrlDefaults.string(forKey: CloudUrlStorage.streamProtocol)
+            .flatMap(ExampleStreamProtocol.init(rawValue:))
+        return PersistedCloudUrls(
+            streamProtocol: streamProtocol,
+            streamUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.streamUrl),
+            webhookUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.webhookUrl)
+        )
+    }
+
+    private func savePersistedCloudUrls() {
+        cloudUrlDefaults.set(1, forKey: CloudUrlStorage.version)
+        cloudUrlDefaults.set(streamProtocol.rawValue, forKey: CloudUrlStorage.streamProtocol)
+        cloudUrlDefaults.set(streamUrl, forKey: CloudUrlStorage.streamUrl)
+        cloudUrlDefaults.set(webhookUrl, forKey: CloudUrlStorage.webhookUrl)
+        cloudUrlDefaults.set(Date().timeIntervalSince1970, forKey: CloudUrlStorage.savedAt)
+    }
+
+    private func checkWebhookReachable(_ uploadUrl: String) async throws -> WebhookReachability {
+        guard let healthUrl = webhookHealthUrl(uploadUrl) else {
+            throw ExampleActionError(message: "Enter a valid http:// or https:// media upload URL.")
+        }
+        var request = URLRequest(url: cacheBustedUrl(healthUrl))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 3
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ExampleActionError(message: "invalid response")
+            }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw ExampleActionError(
+                    message: "This app reached \(healthUrl.absoluteString), but the media server returned HTTP \(http.statusCode)."
+                )
+            }
+            return WebhookReachability(healthUrl: healthUrl, host: healthUrl.host ?? "server")
+        } catch let error as ExampleActionError {
+            throw error
+        } catch let error as URLError {
+            throw ExampleActionError(message: webhookReachabilityErrorMessage(error, healthUrl: healthUrl))
+        } catch {
+            throw error
+        }
+    }
+
+    private func cacheBustedUrl(_ url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var queryItems = components?.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "poll", value: "\(Int(Date().timeIntervalSince1970 * 1000))"))
+        components?.queryItems = queryItems
+        return components?.url ?? url
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: Error) -> String {
+        error.localizedDescription
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: URLError, healthUrl: URL) -> String {
+        switch error.code {
+        case .timedOut:
+            return "Timed out after 3s while this app tried to GET \(healthUrl.absoluteString). This only checks app-device-to-media-server reachability."
+        case .cannotFindHost:
+            return "This app could not resolve \(healthUrl.host ?? "the media server host") while checking \(healthUrl.absoluteString). Check that the media server URL uses a host this device can reach."
+        case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
+            return "This app could not GET \(healthUrl.absoluteString). Check that the media server is running and that this device can reach that host on the local network."
+        case .appTransportSecurityRequiresSecureConnection:
+            return "iOS blocked \(healthUrl.absoluteString) because App Transport Security requires HTTPS for this host."
+        default:
+            return "This app could not GET \(healthUrl.absoluteString): \(error.localizedDescription)"
+        }
+    }
+
     private func applyDisconnectedState(status: String) {
         glassesValues = .disconnected(connection: .disconnected)
         stopPreviewHealthPoll()
@@ -1743,6 +2038,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             activePhotoRequestId = nil
             pollGeneration += 1
             cameraStatus = "Disconnected before photo upload completed"
+        }
+        if activeVideoRequestId != nil || videoRecording {
+            activeVideoRequestId = nil
+            videoPollGeneration += 1
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: "", state: "error", uploadUrl: webhookUrl))
+                .updated(error: "Disconnected before video upload completed", state: "error")
+            cameraStatus = "Disconnected before video upload completed"
         }
     }
 
@@ -2039,6 +2342,60 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: "photo response \(requestId)")
     }
 
+    private func handleVideoRecordingStatus(_ event: VideoRecordingStatusEvent) {
+        let requestId = event.requestId.isEmpty ? (activeVideoRequestId ?? "") : event.requestId
+        if let activeVideoRequestId, !requestId.isEmpty, requestId != activeVideoRequestId {
+            append(tag: "LIVE", text: "ignoring stale video status \(requestId)")
+            return
+        }
+        let durationMs = intValue(event.data?["duration_ms"])
+        let failed = !event.success || videoStatusIsFailure(event.status)
+        if event.status == "recording_started" || event.data.flatMap({ boolValue($0, "recording") }) == true {
+            activeVideoRequestId = requestId
+            videoRecording = true
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "recording", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: "recording", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: recording video"
+        } else if event.status == "recording_stopped" {
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "uploading", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: "uploading", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video stopped; waiting for upload preview"
+        } else if failed {
+            activeVideoRequestId = nil
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, error: event.details ?? event.status, requestId: requestId, state: "error", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video failed (\(event.details ?? event.status))"
+        } else {
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "recording", uploadUrl: webhookUrl))
+                .updated(durationMs: durationMs, requestId: requestId, state: videoPreviewDetails?.state ?? "recording", status: event.status, timestamp: event.timestamp)
+            cameraStatus = "Camera: video \(event.status.replacingOccurrences(of: "_", with: " "))"
+        }
+        append(tag: "LIVE", text: "video status \(event.status)")
+    }
+
+    private func handleMediaUpload(_ event: MediaUploadEvent) {
+        guard event.isVideo else { return }
+        if let activeVideoRequestId, event.requestId != activeVideoRequestId {
+            append(tag: "LIVE", text: "ignoring stale video upload \(event.requestId)")
+            return
+        }
+        if !event.isSuccess {
+            activeVideoRequestId = nil
+            videoRecording = false
+            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: event.requestId, state: "error", uploadUrl: webhookUrl))
+                .updated(error: event.errorMessage ?? "upload failed", requestId: event.requestId, state: "error", timestamp: event.timestamp)
+            cameraStatus = "Camera: video upload failed (\(event.errorMessage ?? "upload failed"))"
+            append(tag: "LIVE", text: "video upload failed \(event.errorMessage ?? "")")
+            return
+        }
+        videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: event.requestId, state: "uploading", uploadUrl: webhookUrl))
+            .updated(mediaUrl: event.mediaUrl, requestId: event.requestId, state: videoPreviewDetails?.state == "preview" ? "preview" : "uploading", timestamp: event.timestamp)
+        cameraStatus = "Camera: video uploaded; loading preview"
+        append(tag: "LIVE", text: "video uploaded \(event.mediaUrl ?? "")")
+    }
+
     private func pollPhotoPreview(requestId: String, statusUrl: URL, generation: Int) {
         Task {
             for attempt in 0 ..< 45 {
@@ -2082,6 +2439,57 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    private func pollVideoPreview(requestId: String, statusUrl: URL, generation: Int) {
+        Task {
+            for attempt in 0 ..< 180 {
+                guard activeVideoRequestId == requestId, videoPollGeneration == generation else { return }
+                do {
+                    let cacheBusted = URL(string: "\(statusUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!
+                    let (data, response) = try await URLSession.shared.data(from: cacheBusted)
+                    if let http = response as? HTTPURLResponse, http.statusCode == 200,
+                       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    {
+                        let mediaType = stringValue(json, "mediaType")
+                        let videoUrl = stringValue(json, "videoUrl")
+                            ?? (mediaType == "video" ? (stringValue(json, "mediaUrl") ?? stringValue(json, "url")) : nil)
+                        if let videoUrl, let url = URL(string: videoUrl) {
+                            videoPreviewUrl = url
+                            videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "preview", uploadUrl: webhookUrl))
+                                .updated(
+                                    byteCount: intValue(json, "fileSizeBytes"),
+                                    contentType: stringValue(json, "contentType"),
+                                    mediaUrl: stringValue(json, "mediaUrl") ?? stringValue(json, "url"),
+                                    previewUrl: videoUrl,
+                                    requestId: stringValue(json, "requestId") ?? requestId,
+                                    state: "preview",
+                                    uploadedAt: stringValue(json, "uploadedAt")
+                                )
+                            cameraStatus = "Camera: loaded video preview"
+                            activeVideoRequestId = nil
+                            append(tag: "LIVE", text: "local video ready \(videoUrl)")
+                            return
+                        }
+                    }
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for video upload \(requestId)")
+                    }
+                } catch {
+                    if attempt == 0 || attempt % 10 == 9 {
+                        append(tag: "LIVE", text: "waiting for local video server")
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            if activeVideoRequestId == requestId {
+                activeVideoRequestId = nil
+                videoRecording = false
+                videoPreviewDetails = (videoPreviewDetails ?? .pending(requestId: requestId, state: "error", uploadUrl: webhookUrl))
+                    .updated(error: "Timed out waiting for local server upload", requestId: requestId, state: "error")
+                cameraStatus = "Camera: timed out waiting for local server video upload"
+            }
+        }
+    }
+
     private var isDirectPhoneWebRtcSelected: Bool {
         !streamCloudServerEnabled
     }
@@ -2119,6 +2527,12 @@ func stringValue(_ values: [String: Any], _ key: String) -> String? {
 func intValue(_ values: [String: Any], _ key: String) -> Int? {
     if let int = values[key] as? Int { return int }
     if let number = values[key] as? NSNumber { return number.intValue }
+    return nil
+}
+
+func intValue(_ value: Any?) -> Int? {
+    if let int = value as? Int { return int }
+    if let number = value as? NSNumber { return number.intValue }
     return nil
 }
 
@@ -2441,12 +2855,26 @@ func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
 func photoUploadValidationMessage(_ uploadUrlText: String) -> String? {
     let value = uploadUrlText.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.isEmpty {
-        return "Enter the cloud server Photo upload URL."
+        return "Enter the cloud server media upload URL."
     }
     if value.contains("<computer-ip>") {
         return "Replace <computer-ip> with the cloud server IP."
     }
     return nil
+}
+
+func videoStatusIsFailure(_ status: String) -> Bool {
+    [
+        "not_recording",
+        "request_id_mismatch",
+        "service_unavailable",
+        "json_error",
+        "battery_low",
+        "camera_busy",
+        "storage_unavailable",
+        "integrity_failed",
+        "error",
+    ].contains(status)
 }
 
 func checkLocalRtmpServer(rtmpUrl: String) async throws {

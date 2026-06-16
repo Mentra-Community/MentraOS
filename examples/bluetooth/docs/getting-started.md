@@ -68,14 +68,14 @@ Add the public Swift package in Xcode or `Package.swift`:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use version `0.1.11` or newer, then add the `MentraBluetoothSDK` product to your app target.
+Use version `0.1.12` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.11"
+  from: "0.1.12"
 )
 ```
 
@@ -137,12 +137,51 @@ bunx expo run:android
 
 The React Native starter example also includes `bun run android:dev`, which starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
-For unreleased SDK development, install a local package path and set the package path for Metro/native resolution:
+For unreleased React Native SDK development, point the installed package folder
+at your local SDK checkout and set the same path for Metro. This works even
+when the local source package version does not match the published version in
+`package.json`, because Expo native autolinking reads the symlinked package
+folder directly.
 
 ```bash
-bun add --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:ios
+cd examples/react-native
+SDK_PATH="/path/to/MentraOS-dev/mobile/modules/bluetooth-sdk"
+
+mkdir -p node_modules/@mentra
+rm -rf node_modules/@mentra/bluetooth-sdk
+ln -s "$SDK_PATH" node_modules/@mentra/bluetooth-sdk
+
+export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH="$SDK_PATH"
+bunx expo run:ios
+# or
+bun run android:dev
 ```
+
+Do not use `bun add --no-save` for this override. The local SDK package has the
+same package name as the published dependency, so Bun can treat the override as a
+self-dependency loop. If you run `bun install`, recreate the symlink before
+testing from source again. To return to the published package, remove the
+symlink and run `bun install`.
+
+To switch a React Native example back from local SDK source to the published
+package, unset the Metro override, remove the symlinked package folder, and
+install the published SDK version:
+
+```bash
+cd examples/react-native
+
+unset MENTRA_BLUETOOTH_SDK_PACKAGE_PATH
+rm -rf node_modules/@mentra/bluetooth-sdk
+
+bun add @mentra/bluetooth-sdk@0.1.12
+bun install
+```
+
+For the native Android example, unset `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` before
+building and omit `-PmentraUseMavenLocal=true` when you want Maven Central rather
+than local artifacts. For the native iOS example, remove any local Swift package
+override in Xcode and resolve the remote `mentra-bluetooth-sdk-ios` package at
+the published version.
 
 ## Permissions
 
@@ -166,7 +205,7 @@ iOS apps should include permission copy in `Info.plist`:
 <key>NSMicrophoneUsageDescription</key>
 <string>This app uses the microphone when you enable audio or transcription features.</string>
 <key>NSLocalNetworkUsageDescription</key>
-<string>This app connects to local photo and streaming helpers during development.</string>
+<string>This app connects to local media upload and streaming helpers during development.</string>
 ```
 
 ## Background Operation On iOS
@@ -396,7 +435,7 @@ bun run android:dev
 
 `bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview.
 
-For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
+For photo/video upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
 
 ```bash
 python3 examples/local-demo-cloud/server.py

@@ -1,8 +1,8 @@
-# Photo Webhook Server
+# Media Webhook Server
 
-This tiny local server is for testing Mentra Live photo uploads during SDK development.
+This tiny local server is for testing Mentra Live photo and video uploads during SDK development.
 
-It receives the `requestPhoto` webhook upload, saves the image on your computer, and serves JSON status endpoints that the Android, iOS, and React Native example apps can poll to show a preview.
+It receives `requestPhoto` and video-recording webhook uploads, saves the media on your computer, and serves JSON status endpoints that the Android, iOS, and React Native example apps can poll to show a preview.
 
 ## Run
 
@@ -22,9 +22,10 @@ Use the LAN URL, not `localhost`, in the Android, iOS, or React Native example a
 
 ## Endpoints
 
-- `POST /upload`: Mentra Live uploads multipart form data with a `photo` file and `requestId`. Some upload paths also include fields such as `source`, `type`, or `success`.
-- `GET /uploads/<requestId>.json`: returns metadata for one uploaded photo. Cache-busting query strings are accepted, for example `/uploads/<requestId>.json?poll=123`.
-- `GET /latest.json`: returns metadata for the latest uploaded photo.
+- `POST /upload`: Mentra Live uploads multipart form data with a `photo`, `video`, or `file` field. Some upload paths also include `requestId`, JSON `metadata`, `type`, or `success` fields.
+- `GET /uploads/<requestId>.json`: returns metadata for one uploaded media item. Cache-busting query strings are accepted, for example `/uploads/<requestId>.json?poll=123`.
+- `GET /latest.json`: returns metadata for the latest uploaded media item.
 - `GET /photos/<requestId>.jpg`: serves the saved photo.
+- `GET /media/<requestId>.mp4`: serves the saved video.
 
-Uploaded photos are written to `examples/photo-webhook-server/uploads/`, which is ignored by git.
+Uploaded media is written to `examples/photo-webhook-server/uploads/`, which is ignored by git.
