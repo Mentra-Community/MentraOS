@@ -15,15 +15,14 @@ import BluetoothSdk, {
   type DeviceModel,
   type MicLc3Event,
   type MicPcmEvent,
-  type OtaQueryResult,
   type OtaStatusEvent,
-  type OtaUpdateAvailableEvent,
   type PhotoSuccessResponseEvent,
   type PhotoStatusEvent,
   type SettingsAckEvent,
   type SpeakingStatusEvent,
   type StreamStatusEvent,
   type TouchEvent,
+  type VersionInfoEvent,
   type VideoRecordingStatusEvent,
   type VoiceActivityDetectionStatusEvent,
 } from '@mentra/bluetooth-sdk';
@@ -79,6 +78,34 @@ type MediaUploadErrorEvent = BluetoothSdkEventMap['media_error'];
 
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
+}
+
+function isOtaEventInProgress(payload: OtaStatusEvent | null) {
+  return payload?.status === 'in_progress' || payload?.status === 'step_complete';
+}
+
+function otaVersionSignature(glasses: GlassesRuntimeState) {
+  if (!glasses.connected) {
+    return 'disconnected';
+  }
+  return [
+    glasses.device.buildNumber,
+    glasses.firmware.buildNumber,
+    glasses.device.appVersion,
+    glasses.firmware.appVersion,
+    glasses.firmware.source,
+    glasses.firmware.version,
+  ].filter(Boolean).join('|') || 'version-unknown';
+}
+
+function otaVersionInfoSignature(event: VersionInfoEvent) {
+  return [
+    event.buildNumber,
+    event.appVersion,
+    event.mtkFirmwareVersion,
+    event.besFirmwareVersion,
+    event.firmwareVersion,
+  ].filter(Boolean).join('|') || 'version-unknown';
 }
 
 export type StreamResolvedConfig = {
@@ -306,7 +333,7 @@ export type BluetoothSdkExampleState = {
   micRecording: boolean;
   otaStatus: OtaStatusEvent | null;
   otaStatusMessage: string | null;
-  otaUpdateAvailable: OtaUpdateAvailableEvent | null;
+  otaUpdateAvailable: boolean;
   pcmBytes: number;
   pcmFrames: number;
   speaking: boolean | null;
@@ -513,8 +540,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
-  const [otaUpdateAvailable, setOtaUpdateAvailable] =
-    useState<OtaUpdateAvailableEvent | null>(null);
+  const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
   const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
     Platform.OS === 'ios'
       ? IOS_AUDIO_ROUTE_HINT
@@ -561,6 +587,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const micStartedAtRef = useRef<number | null>(null);
   const didAutoConnectDefaultRef = useRef(false);
   const wasConnectedRef = useRef(false);
+  const autoOtaCheckedConnectionRef = useRef<string | null>(null);
+  const autoOtaCheckInProgressRef = useRef(false);
+  const latestAutoOtaCheckKeyRef = useRef<string | null>(null);
+  const otaStatusRef = useRef<OtaStatusEvent | null>(null);
+  const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
+  const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
 
   const bluetooth = useMentraBluetooth({
     defaultDeviceStorage,
@@ -575,6 +607,18 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const discoveredDevices = bluetooth.scan.devices;
   const glasses = bluetooth.glasses;
   const glassesConnected = glasses.connected;
+  const glassesWifiConnected = isGlassesWifiConnected(glasses);
+  const connectedDeviceKey = glassesConnected
+    ? [
+        glasses.device.bluetoothName,
+        glasses.device.serialNumber,
+        glasses.device.deviceModel,
+      ].filter(Boolean).join('|') || 'connected'
+    : null;
+  const autoOtaCheckKey = connectedDeviceKey
+    ? `${connectedDeviceKey}|${latestVersionInfoSignature ?? otaVersionSignature(glasses)}`
+    : null;
+  const otaInProgress = isOtaEventInProgress(otaStatus);
   const phone = bluetooth.sdk;
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
@@ -583,6 +627,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
   galleryModeEnabledRef.current = galleryModeEnabled;
+  latestAutoOtaCheckKeyRef.current = autoOtaCheckKey;
+  otaStatusRef.current = otaStatus;
 
   useEffect(() => {
     let cancelled = false;
@@ -626,6 +672,48 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       await bluetooth.connectDefault();
     });
   }, [defaultDevice, glassesConnected]);
+
+  useEffect(() => {
+    if (!glassesConnected) {
+      autoOtaCheckedConnectionRef.current = null;
+      autoOtaCheckInProgressRef.current = false;
+      latestAutoOtaCheckKeyRef.current = null;
+      setLatestVersionInfoSignature(null);
+      return;
+    }
+    if (
+      !autoOtaCheckKey ||
+      !glassesWifiConnected ||
+      autoOtaCheckedConnectionRef.current === autoOtaCheckKey ||
+      autoOtaCheckInProgressRef.current ||
+      otaInProgress
+    ) {
+      return;
+    }
+
+    const checkedKey = autoOtaCheckKey;
+    autoOtaCheckInProgressRef.current = true;
+    void runAction('Auto-check OTA', async () => {
+      let checkSucceeded = false;
+      try {
+        await checkForOtaUpdateResult();
+        checkSucceeded = true;
+      } finally {
+        autoOtaCheckInProgressRef.current = false;
+        if (!checkSucceeded) {
+          return;
+        }
+        autoOtaCheckedConnectionRef.current = checkedKey;
+        if (
+          latestAutoOtaCheckKeyRef.current &&
+          latestAutoOtaCheckKeyRef.current !== checkedKey &&
+          !isOtaEventInProgress(otaStatusRef.current)
+        ) {
+          setAutoOtaCheckRetryTick((tick) => tick + 1);
+        }
+      }
+    });
+  }, [autoOtaCheckKey, autoOtaCheckRetryTick, glassesConnected, glassesWifiConnected, otaInProgress]);
 
   useEffect(() => {
     const subscriptions = [
@@ -676,6 +764,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           setStreamStatus(JSON.stringify(payload));
         }
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
+      }),
+      BluetoothSdk.addListener('version_info', (payload: VersionInfoEvent) => {
+        setLatestVersionInfoSignature(otaVersionInfoSignature(payload));
       }),
       BluetoothSdk.addListener('ota_status', applyOtaStatus),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
@@ -907,21 +998,32 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('check for OTA updates');
+      if (isOtaEventInProgress(otaStatusRef.current)) {
+        addEvent('TX', 'OTA check skipped while update is in progress');
+        return;
+      }
       await checkForOtaUpdateResult();
     });
   }
 
-  async function checkForOtaUpdateResult(): Promise<OtaQueryResult> {
-    const result = await BluetoothSdk.checkForOtaUpdate();
-    if (result.type === 'ota_update_available') {
+  async function checkForOtaUpdateResult(): Promise<boolean> {
+    const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
+    if (isOtaEventInProgress(otaStatusRef.current)) {
+      addEvent('LIVE', 'OTA check result ignored while update is in progress');
+      return updateAvailable;
+    }
+    if (updateAvailable) {
       setOtaStatus(null);
       setOtaStatusMessage(null);
-      setOtaUpdateAvailable(result);
-      addEvent('LIVE', `OTA available ${result.version_name ?? 'unknown'} (${(result.updates ?? []).join(', ') || 'update'})`);
-      return result;
+      setOtaUpdateAvailable(true);
+      addEvent('LIVE', 'OTA update available');
+      return true;
     }
-    applyOtaStatus(result);
-    return result;
+    setOtaStatus(null);
+    setOtaStatusMessage('Glasses firmware is up to date');
+    setOtaUpdateAvailable(false);
+    addEvent('LIVE', 'OTA up to date');
+    return false;
   }
 
   async function startOtaUpdate() {
@@ -2769,7 +2871,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setGalleryServerStatus('Gallery server: connect glasses first');
     setOtaStatus(null);
     setOtaStatusMessage(null);
-    setOtaUpdateAvailable(null);
+    setOtaUpdateAvailable(false);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -2780,7 +2882,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (!isDisplayableOtaStatus(payload)) {
       setOtaStatus(null);
       setOtaStatusMessage('No active OTA');
-      setOtaUpdateAvailable(null);
+      setOtaUpdateAvailable(false);
       addEvent('LIVE', 'OTA idle');
       return;
     }
@@ -2788,7 +2890,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setOtaStatus(payload);
     setOtaStatusMessage(null);
     if (payload.status === 'complete' || payload.status === 'failed') {
-      setOtaUpdateAvailable(null);
+      setOtaUpdateAvailable(false);
     }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
   }

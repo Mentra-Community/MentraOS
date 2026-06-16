@@ -1,10 +1,11 @@
 import { requireNativeModule } from 'expo';
 import BluetoothSdk, {
+  type ButtonPhotoSettings,
+  type PhotoCompression,
+  type PhotoSize,
   type PhotoSuccessResponseEvent,
   type SettingsAckSuccessEvent,
 } from '@mentra/bluetooth-sdk';
-
-type PhotoSize = 'low' | 'medium' | 'high' | 'max';
 
 export type ScanButtonPhotoSettings = {
   size?: PhotoSize;
@@ -16,7 +17,7 @@ export type ScanButtonPhotoSettings = {
   ispAnalogGain?: string;
   aeExposureDivisor?: number;
   isoCap?: number;
-  compress?: string;
+  compress?: PhotoCompression;
   sound?: boolean;
   resetCaptureTuning?: boolean;
 };
@@ -27,7 +28,7 @@ export type ScanPhotoRequestParams = {
   webhookUrl: string;
   authToken: string | null;
   size: PhotoSize;
-  compress: string;
+  compress: PhotoCompression;
   sound: boolean;
   save?: boolean;
   exposureTimeNs?: number | null;
@@ -70,10 +71,6 @@ function normalizePhotoSizeTier(size: string | undefined): PhotoSize {
   }
 }
 
-/**
- * Published SDK 0.1.12 omits scan-mode fields from requestPhoto payloads.
- * Build the full native map here so toggling Scan Mode affects app captures.
- */
 export function photoRequestParamsForNativeCompat(
   params: ScanPhotoRequestParams,
 ): Record<string, string | number | boolean> {
@@ -127,22 +124,25 @@ export function photoRequestParamsForNativeCompat(
   return payload;
 }
 
-/** Route granular presets to the native capture-settings API (SDK 0.1.12 public JS only accepts size strings). */
+function buttonPhotoSettingsForSdk(settings: PhotoSize | ScanButtonPhotoSettings): ButtonPhotoSettings {
+  if (typeof settings === 'string') {
+    return {size: normalizePhotoSizeTier(settings)};
+  }
+  return {
+    ...settings,
+    size: normalizePhotoSizeTier(settings.size),
+  };
+}
+
 export async function setButtonPhotoSettingsCompat(
   sizeOrSettings: PhotoSize | ScanButtonPhotoSettings,
 ): Promise<SettingsAckSuccessEvent> {
   if (typeof sizeOrSettings === 'string') {
-    return BluetoothSdk.setButtonPhotoSettings(
-      sizeOrSettings as Parameters<typeof BluetoothSdk.setButtonPhotoSettings>[0],
-    );
+    return BluetoothSdk.setButtonPhotoSettings(buttonPhotoSettingsForSdk(sizeOrSettings));
   }
   const native = NativeBluetoothSdkModule.setButtonPhotoCaptureSettings;
   if (typeof native !== 'function') {
-    // Granular scan-preset API is not available in the currently-installed native build
-    // (SDK < 0.1.13). Fall back to the size-only path so the glasses at least get max
-    // resolution; scan-mode tuning fields (AE÷, ISO cap, etc.) will not be applied.
-    const size: PhotoSize = (sizeOrSettings.size as PhotoSize | undefined) ?? ('max' as PhotoSize);
-    return BluetoothSdk.setButtonPhotoSettings(size as any);
+    return BluetoothSdk.setButtonPhotoSettings(buttonPhotoSettingsForSdk(sizeOrSettings));
   }
   return native(sizeOrSettings);
 }

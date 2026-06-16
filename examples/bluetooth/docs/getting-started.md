@@ -68,14 +68,14 @@ Add the public Swift package in Xcode or `Package.swift`:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use version `0.1.12` or newer, then add the `MentraBluetoothSDK` product to your app target.
+Use version `0.1.13` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.12"
+  from: "0.1.13"
 )
 ```
 
@@ -173,7 +173,7 @@ cd examples/react-native
 unset MENTRA_BLUETOOTH_SDK_PACKAGE_PATH
 rm -rf node_modules/@mentra/bluetooth-sdk
 
-bun add @mentra/bluetooth-sdk@0.1.12
+bun add @mentra/bluetooth-sdk@0.1.13
 bun install
 ```
 

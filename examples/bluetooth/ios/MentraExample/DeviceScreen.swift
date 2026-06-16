@@ -19,7 +19,7 @@ struct DeviceScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
 
-                    if model.otaStatus != nil || model.otaUpdateAvailable != nil {
+                    if model.otaStatus != nil || model.otaUpdateAvailable {
                         otaCard
                             .padding(.horizontal, 16)
                             .padding(.top, 10)
@@ -118,6 +118,8 @@ struct DeviceScreen: View {
         let hasDefaultTarget = hasSavedConnectionTarget(model.bluetoothValues)
         let displaySupported = connected && supportsDisplay(model.glassesValues)
         let otaWifiRequired = connected && !model.glassesWifiConnected
+        let otaInProgress = isOtaInProgress(model: model)
+        let canCheckOta = connected && model.glassesWifiConnected && !otaInProgress
         return GlassCard {
             HStack {
                 Text(connected ? "Quick actions" : "Connect glasses")
@@ -147,7 +149,7 @@ struct DeviceScreen: View {
                     LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: connected && model.glassesWifiConnected, action: model.checkForOtaUpdate)
+                    LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: canCheckOta, action: model.checkForOtaUpdate)
                     LightActionButton(icon: "arrow.down.to.line", title: "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
                 }
                 HStack(spacing: 8) {
@@ -322,16 +324,28 @@ struct DeviceScreen: View {
     }
 
     private var otaCard: some View {
+        let updateRequired = model.otaUpdateAvailable && model.otaStatus == nil
         return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("OTA")
-                        .font(.system(size: 10, weight: .semibold).monospaced())
-                        .tracking(1.1)
-                        .foregroundColor(AppColor.muted)
-                    Text(otaCardTitle(model: model))
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(AppColor.ink)
+                HStack(alignment: .center, spacing: 10) {
+                    if updateRequired {
+                        ZStack {
+                            Circle().fill(AppColor.red)
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 34, height: 34)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(updateRequired ? "ACTION NEEDED" : "OTA")
+                            .font(.system(size: 10, weight: updateRequired ? .heavy : .semibold).monospaced())
+                            .tracking(1.1)
+                            .foregroundColor(updateRequired ? AppColor.red : AppColor.muted)
+                        Text(otaCardTitle(model: model))
+                            .font(.system(size: updateRequired ? 19 : 15, weight: updateRequired ? .heavy : .bold))
+                            .foregroundColor(AppColor.inkAlt)
+                    }
                 }
                 Spacer()
                 if let status = model.otaStatus {
@@ -352,15 +366,39 @@ struct DeviceScreen: View {
                 .frame(height: 6)
             }
             Text(otaCardDetail(model: model))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(AppColor.muted)
+                .font(.system(size: updateRequired ? 13 : 12, weight: updateRequired ? .bold : .medium))
+                .foregroundColor(updateRequired ? Color(hex: 0x5F201B) : AppColor.muted)
+                .lineSpacing(updateRequired ? 2 : 0)
                 .fixedSize(horizontal: false, vertical: true)
+            if updateRequired {
+                Button(action: model.startOtaUpdate) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.system(size: 15, weight: .bold))
+                        Text(canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
+                            .font(.system(size: 14, weight: .heavy))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 48)
+                    .background(canStartOta(model: model) ? AppColor.red : Color(hex: 0x5F201B).opacity(0.36))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStartOta(model: model))
+            }
         }
         .padding(14)
-        .background(Color.white)
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.7), lineWidth: 1))
+        .background(
+            LinearGradient(
+                colors: updateRequired ? [Color(hex: 0xFFF5DF), Color(hex: 0xFFE6E1)] : [.white, .white],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(updateRequired ? AppColor.red.opacity(0.34) : Color.white.opacity(0.7), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: Color(hex: 0x0F2A1D).opacity(0.06), radius: 18, x: 0, y: 6)
+        .shadow(color: (updateRequired ? AppColor.red : Color(hex: 0x0F2A1D)).opacity(updateRequired ? 0.18 : 0.06), radius: updateRequired ? 22 : 18, x: 0, y: updateRequired ? 8 : 6)
     }
 }
 
@@ -401,7 +439,7 @@ private func targetDeviceDetail(_ device: Device) -> String {
 
 @MainActor
 private func canStartOta(model: BluetoothViewModel) -> Bool {
-    model.glassesConnected && model.glassesWifiConnected && model.otaUpdateAvailable != nil && !isOtaInProgress(model: model)
+    model.glassesConnected && model.glassesWifiConnected && model.otaUpdateAvailable && !isOtaInProgress(model: model)
 }
 
 @MainActor
@@ -414,8 +452,8 @@ private func otaStatusLine(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus {
         return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(status.overallPercent)%"
     }
-    if let update = model.otaUpdateAvailable {
-        return "Update \(update.versionName ?? "available")"
+    if model.otaUpdateAvailable {
+        return "Update required"
     }
     if let message = model.otaStatusMessage {
         return message
@@ -431,8 +469,8 @@ private func otaCardTitle(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus, isOtaInProgress(model: model) {
         return "Updating \(status.stepType.isEmpty ? "firmware" : status.stepType)"
     }
-    if let update = model.otaUpdateAvailable {
-        return "Update \(update.versionName ?? "available")"
+    if model.otaUpdateAvailable {
+        return "Update required"
     }
     return "OTA status"
 }
@@ -445,22 +483,10 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus {
         return "\(status.phase.isEmpty ? "status" : status.phase) · step \(status.currentStep)/\(status.totalSteps)"
     }
-    if let update = model.otaUpdateAvailable {
-        let updates = update.updates.isEmpty ? "firmware" : update.updates.joined(separator: ", ")
-        let size = update.totalSize.map { " · \(formatBytes($0))" } ?? ""
-        return updates + size
+    if model.otaUpdateAvailable {
+        return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
     }
-    return "Tap Check OTA to ask the glasses for availability and progress."
-}
-
-private func formatBytes(_ bytes: Int) -> String {
-    if bytes <= 0 {
-        return "unknown size"
-    }
-    if bytes < 1024 * 1024 {
-        return "\(bytes / 1024) KB"
-    }
-    return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
+    return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }
 
 @MainActor

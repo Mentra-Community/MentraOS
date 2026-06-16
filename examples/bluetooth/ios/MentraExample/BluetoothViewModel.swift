@@ -282,7 +282,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var videoPreviewUrl: URL?
     @Published private(set) var videoRecording = false
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: PhotoSize = .full
+    @Published private(set) var photoSize: PhotoSize = .max
     @Published private(set) var scanMode = false
     @Published private(set) var scanAeDivisor = 3
     @Published private(set) var scanIsoCap = 800
@@ -334,7 +334,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var micPlaybackHint: String?
     @Published private(set) var otaStatus: OtaStatusEvent?
     @Published private(set) var otaStatusMessage: String?
-    @Published private(set) var otaUpdateAvailable: OtaUpdateAvailableEvent?
+    @Published private(set) var otaUpdateAvailable = false
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
@@ -355,6 +355,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var directStreamStopTask: Task<Void, Never>?
     private var directStreamFirstFrameSeen = false
     private var lastDirectStreamFrameStatusRefresh = Date.distantPast
+    private var autoOtaCheckedConnectionKey: String?
+    private var autoOtaCheckInProgress = false
+    private var latestOtaVersionInfoSignature: String?
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -561,7 +564,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
-            handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+            if isOtaInProgress() {
+                append(tag: "TX", text: "OTA check skipped while update is in progress")
+                return
+            }
+            _ = try await checkForOtaUpdateResult()
         }
     }
 
@@ -616,9 +623,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         Task {
             do {
                 if enabled {
-                    // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan
-                    // tuning (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains) ships in
-                    // 0.1.13; bump the SwiftPM pin and restore the full preset once published.
+                    // Keep hardware-button captures at max detail while scan mode is enabled.
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
                         ButtonPhotoSettings(size: .max)
                     )
@@ -652,9 +657,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
         guard glassesConnected else { return }
-        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor
-        // and ISO-cap chips only affect on-device UI state until the 0.1.13 preset ships. We
-        // still re-assert the max-size scan button preset so the hardware button stays in sync.
+        // Re-assert the max-size scan button preset so the hardware button stays in sync.
         Task {
             do {
                 _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
@@ -794,15 +797,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
         if scanMode {
-            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
-            // isoCap/mfnr/...); those arrive in 0.1.13. Capture at max resolution with no
-            // compression so the scan still favors detail; the rest applies once the pin is bumped.
+            // Hardware-button scan settings are synced separately.
+            // App-triggered captures use max detail to match the scan preset's output tier.
             return PhotoRequest(
                 requestId: requestId,
                 appId: appId,
-                size: .full,
+                size: .max,
                 webhookUrl: webhookUrl,
-                compress: .none,
+                compress: PhotoCompression.none,
                 sound: false
             )
         }
@@ -1595,6 +1597,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
+        maybeAutoCheckOta()
         append(tag: "STORE", text: summarize(glasses))
     }
 
@@ -1648,6 +1651,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             break
         case let .otaStatus(event):
             applyOtaStatus(event)
+        case let .versionInfo(event):
+            latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+            maybeAutoCheckOta()
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
@@ -1655,18 +1661,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func handleOtaQueryResult(_ result: OtaQueryResult) {
-        if result.type == "ota_update_available" {
-            let event = OtaUpdateAvailableEvent(values: result.values)
+    private func checkForOtaUpdateResult() async throws -> Bool {
+        handleOtaCheckResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+    }
+
+    private func handleOtaCheckResult(_ updateAvailable: Bool) -> Bool {
+        if isOtaInProgress() {
+            append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
+            return updateAvailable
+        }
+        if updateAvailable {
             otaStatus = nil
             otaStatusMessage = nil
-            otaUpdateAvailable = event
-            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
-            return
+            otaUpdateAvailable = true
+            append(tag: "LIVE", text: "OTA update available")
+            return true
         }
 
-        let event = OtaStatusEvent(values: result.values)
-        applyOtaStatus(event)
+        otaStatus = nil
+        otaStatusMessage = "Glasses firmware is up to date"
+        otaUpdateAvailable = false
+        append(tag: "LIVE", text: "OTA up to date")
+        return false
     }
 
     private func applyOtaStatus(_ event: OtaStatusEvent) {
@@ -1680,7 +1696,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
-            otaUpdateAvailable = nil
+            otaUpdateAvailable = false
         }
         append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
     }
@@ -1694,7 +1710,42 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case .disconnected:
             label = "disconnected"
         }
+        maybeAutoCheckOta()
         append(tag: "STORE", text: "Wi-Fi \(label)")
+    }
+
+    private func maybeAutoCheckOta() {
+        guard glassesConnected else {
+            autoOtaCheckedConnectionKey = nil
+            autoOtaCheckInProgress = false
+            latestOtaVersionInfoSignature = nil
+            return
+        }
+        guard glassesWifiConnected, !autoOtaCheckInProgress, !isOtaInProgress() else { return }
+        let autoCheckKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+        guard autoOtaCheckedConnectionKey != autoCheckKey else { return }
+
+        autoOtaCheckInProgress = true
+        runAsyncAction("Auto-check OTA") { [self] in
+            var checkSucceeded = false
+            defer {
+                autoOtaCheckInProgress = false
+                if checkSucceeded {
+                    autoOtaCheckedConnectionKey = autoCheckKey
+                    let currentKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+                    if autoOtaCheckedConnectionKey != currentKey,
+                       glassesConnected,
+                       glassesWifiConnected,
+                       !isOtaInProgress() {
+                        maybeAutoCheckOta()
+                    }
+                }
+            }
+            try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
+            _ = try await checkForOtaUpdateResult()
+            checkSucceeded = true
+        }
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
@@ -1779,6 +1830,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Auto-connect default") {
             try mentraBluetoothSdk.connectDefault()
         }
+    }
+
+    private func isOtaInProgress() -> Bool {
+        otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
     }
 
     private func requireConnected(_ feature: String) throws {
@@ -2006,7 +2061,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         galleryServerStatus = "Gallery server: connect glasses first"
         otaStatus = nil
         otaStatusMessage = nil
-        otaUpdateAvailable = nil
+        otaUpdateAvailable = false
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
@@ -2531,6 +2586,51 @@ func isGlassesConnected(_ status: GlassesRuntimeState?) -> Bool {
 
 func connectedGlassesInfo(_ status: GlassesRuntimeState?) -> ConnectedGlassesInfo? {
     status?.device
+}
+
+func otaConnectionKey(_ status: GlassesRuntimeState?) -> String {
+    let key = [
+        connectedGlassesInfo(status)?.bluetoothName,
+        connectedGlassesInfo(status)?.serialNumber,
+        connectedGlassesInfo(status)?.deviceModel?.deviceType,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "connected" : key
+}
+
+func otaAutoCheckKey(_ status: GlassesRuntimeState?, versionInfoSignature: String? = nil) -> String {
+    "\(otaConnectionKey(status))|\(versionInfoSignature ?? otaVersionSignature(status))"
+}
+
+func otaVersionSignature(_ status: GlassesRuntimeState?) -> String {
+    guard isGlassesConnected(status) else {
+        return "disconnected"
+    }
+    let key = [
+        connectedGlassesInfo(status)?.buildNumber,
+        status?.firmware?.buildNumber,
+        connectedGlassesInfo(status)?.appVersion,
+        status?.firmware?.appVersion,
+        status?.firmware?.source.rawValue,
+        status?.firmware?.version,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
+}
+
+func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
+    let key = [
+        event.buildNumber,
+        event.appVersion,
+        event.mtkFirmwareVersion,
+        event.besFirmwareVersion,
+        event.firmwareVersion,
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
 }
 
 func modelLabel(_ status: GlassesRuntimeState?) -> String {
