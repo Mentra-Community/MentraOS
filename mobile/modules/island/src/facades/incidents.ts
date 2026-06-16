@@ -1,18 +1,58 @@
 /**
  * incidents facade — `toolkit.incidents`: bug-report / feedback submission over the
  * now-island RestComms (the incident REST calls moved in with the settings+RestComms
- * keystone). Thin passthrough (args forwarded with exact types via Parameters<>),
- * so the facade never drifts from RestComms.
+ * keystone).
  *
- * The OEM writes its own bug-report SCREEN and gathers user input + diagnostics
- * (phone state, recent logs, screenshots); island owns the submission. A single-call
- * `file()` that ALSO bundles diagnostics island-side is a follow-up — it needs the
- * host's native diagnostics-gathering (NetInfo/Constants/Location/ImagePicker + the
- * console logBuffer) moved into island first.
+ * `file()` is the one-call submission: island orchestrates createIncident → upload
+ * logs → notify the glasses → upload screenshots. The OEM writes its own report
+ * SCREEN and gathers the diagnostics (phone-state snapshot, recent logs, screenshots)
+ * — that gathering is genuinely native-coupled (NetInfo/Constants/Location/ImagePicker
+ * + console interception), so it stays host-side and is passed in. The lower-level
+ * primitives are also exposed for callers that want to drive the steps themselves.
  */
 import restComms from "../services/RestComms"
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected} from "../services/GlassesReadiness"
+import {useSettingsStore} from "../stores/settings"
+
+export interface IncidentFileInput {
+  /** The user's report fields (description/expected/actual/severity/contactEmail…). */
+  feedbackData: Record<string, unknown>
+  /** The gathered phone-state diagnostics snapshot (host-built; native-coupled). */
+  phoneState: Record<string, unknown>
+  /** Recent phone logs to attach. */
+  logs?: Parameters<typeof restComms.uploadIncidentLogs>[1]
+  /** Optional screenshot attachments. */
+  screenshots?: Parameters<typeof restComms.uploadIncidentAttachments>[1]
+}
 
 export const incidents = {
+  /**
+   * File an incident end-to-end: create it, upload logs, notify the connected
+   * glasses, and upload screenshots. Returns the new incident id (or an error).
+   */
+  async file(input: IncidentFileInput): Promise<{incidentId?: string; error?: string}> {
+    const backendUrl = useSettingsStore.getState().getRestUrl()
+    const res = await restComms.createIncident(input.feedbackData, input.phoneState)
+    if (res.is_error()) return {error: res.error.message}
+
+    const {incidentId} = res.value
+    if (input.logs && input.logs.length > 0) {
+      const r = await restComms.uploadIncidentLogs(incidentId, input.logs)
+      if (r.is_error()) console.warn("incidents.file: upload logs failed:", r.error?.message)
+    }
+    if (isGlassesConnected(useGlassesStore.getState().connection)) {
+      BluetoothSdk.sendIncidentId(incidentId, backendUrl)
+    }
+    if (input.screenshots && input.screenshots.length > 0) {
+      const r = await restComms.uploadIncidentAttachments(incidentId, input.screenshots)
+      if (r.is_error()) console.warn("incidents.file: upload attachments failed:", r.error?.message)
+    }
+    return {incidentId}
+  },
+
+  // --- lower-level primitives (drive the steps yourself) ---
   /** Create an incident (returns its id); pass the gathered phone-state snapshot. */
   create: (...args: Parameters<typeof restComms.createIncident>) => restComms.createIncident(...args),
   /** Upload the captured phone logs against an incident id. */

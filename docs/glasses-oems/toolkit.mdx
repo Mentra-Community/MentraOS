@@ -182,10 +182,15 @@ toolkit.settings.keys()                 // all known keys
 ## `toolkit.incidents`
 
 Bug-report / feedback submission. The OEM writes its own report screen + gathers
-diagnostics; island owns the submission.
+diagnostics (phone-state, logs, screenshots — native-coupled); island owns the
+submission orchestration.
 
 ```ts
-const r = await toolkit.incidents.create(feedback, phoneState) // -> { incidentId }
+// one-call: create -> upload logs -> notify glasses -> upload screenshots
+const { incidentId } = await toolkit.incidents.file({ feedbackData, phoneState, logs, screenshots })
+
+// or drive the steps yourself:
+const r = await toolkit.incidents.create(feedbackData, phoneState)
 await toolkit.incidents.uploadLogs(incidentId, logs)
 await toolkit.incidents.uploadAttachments(incidentId, images)
 await toolkit.incidents.sendFeedback(feedback)
