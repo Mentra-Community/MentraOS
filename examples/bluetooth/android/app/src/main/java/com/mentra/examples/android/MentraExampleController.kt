@@ -65,6 +65,7 @@ import com.mentra.bluetoothsdk.TouchEvent
 import com.mentra.bluetoothsdk.MediaUploadEvent
 import com.mentra.bluetoothsdk.VideoRecordingRequest
 import com.mentra.bluetoothsdk.VideoRecordingStatusEvent
+import com.mentra.bluetoothsdk.VersionInfoResult
 import com.mentra.bluetoothsdk.VoiceActivityDetectionStatusEvent
 import com.mentra.bluetoothsdk.WifiScanResult
 import com.mentra.bluetoothsdk.WifiStatus
@@ -318,6 +319,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var streamConfigurationChangeInProgress = false
     private var autoOtaCheckedConnectionKey: String? = null
     private var autoOtaCheckInProgress = false
+    private var latestOtaVersionInfoSignature: String? = null
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -1897,6 +1899,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         applyOtaStatus(event)
     }
 
+    override fun onVersionInfo(event: VersionInfoResult) {
+        latestOtaVersionInfoSignature = event.otaVersionInfoSignature()
+        maybeAutoCheckOta()
+    }
+
     private fun handleOtaCheckResult(updateAvailable: Boolean): Boolean {
         if (updateAvailable) {
             state = state.copy(
@@ -1972,17 +1979,18 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected(glasses)) {
             autoOtaCheckedConnectionKey = null
             autoOtaCheckInProgress = false
+            latestOtaVersionInfoSignature = null
             return
         }
         if (!isGlassesWifiConnected(glasses) || autoOtaCheckInProgress || isOtaInProgress()) {
             return
         }
-        val connectionKey = otaConnectionKey(glasses)
-        if (autoOtaCheckedConnectionKey == connectionKey) {
+        val autoCheckKey = otaAutoCheckKey(glasses, latestOtaVersionInfoSignature)
+        if (autoOtaCheckedConnectionKey == autoCheckKey) {
             return
         }
 
-        autoOtaCheckedConnectionKey = connectionKey
+        autoOtaCheckedConnectionKey = autoCheckKey
         autoOtaCheckInProgress = true
         runAction("Auto-check OTA") {
             try {
@@ -3325,6 +3333,35 @@ fun otaConnectionKey(status: GlassesRuntimeState?): String =
         connectedGlassesInfo(status)?.serialNumber,
         connectedGlassesInfo(status)?.deviceModel?.deviceType,
     ).joinToString("|").ifBlank { "connected" }
+
+fun otaAutoCheckKey(status: GlassesRuntimeState?, versionInfoSignature: String? = null): String =
+    listOf(
+        otaConnectionKey(status),
+        versionInfoSignature ?: status.otaVersionSignature(),
+    ).joinToString("|")
+
+fun GlassesRuntimeState?.otaVersionSignature(): String =
+    if (!isGlassesConnected(this)) {
+        "disconnected"
+    } else {
+        listOfNotNull(
+            connectedGlassesInfo(this)?.buildNumber,
+            this?.firmware?.buildNumber,
+            connectedGlassesInfo(this)?.appVersion,
+            this?.firmware?.appVersion,
+            this?.firmware?.source?.name,
+            this?.firmware?.version,
+        ).joinToString("|").ifBlank { "version-unknown" }
+    }
+
+fun VersionInfoResult.otaVersionInfoSignature(): String =
+    listOf(
+        buildNumber,
+        appVersion,
+        mtkFirmwareVersion,
+        besFirmwareVersion,
+        firmwareVersion,
+    ).filter { it.isNotBlank() }.joinToString("|").ifBlank { "version-unknown" }
 
 fun deviceLabel(status: GlassesRuntimeState?): String =
     connectedGlassesInfo(status)?.bluetoothName

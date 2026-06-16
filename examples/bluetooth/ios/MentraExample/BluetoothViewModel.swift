@@ -357,6 +357,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var lastDirectStreamFrameStatusRefresh = Date.distantPast
     private var autoOtaCheckedConnectionKey: String?
     private var autoOtaCheckInProgress = false
+    private var latestOtaVersionInfoSignature: String?
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -1651,6 +1652,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             break
         case let .otaStatus(event):
             applyOtaStatus(event)
+        case let .versionInfo(event):
+            latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+            maybeAutoCheckOta()
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
@@ -1711,13 +1715,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard glassesConnected else {
             autoOtaCheckedConnectionKey = nil
             autoOtaCheckInProgress = false
+            latestOtaVersionInfoSignature = nil
             return
         }
         guard glassesWifiConnected, !autoOtaCheckInProgress, !isOtaInProgress() else { return }
-        let connectionKey = otaConnectionKey(glassesValues)
-        guard autoOtaCheckedConnectionKey != connectionKey else { return }
+        let autoCheckKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+        guard autoOtaCheckedConnectionKey != autoCheckKey else { return }
 
-        autoOtaCheckedConnectionKey = connectionKey
+        autoOtaCheckedConnectionKey = autoCheckKey
         autoOtaCheckInProgress = true
         runAsyncAction("Auto-check OTA") { [self] in
             defer { autoOtaCheckInProgress = false }
@@ -2576,6 +2581,40 @@ func otaConnectionKey(_ status: GlassesRuntimeState?) -> String {
     .compactMap { $0 }
     .joined(separator: "|")
     return key.isEmpty ? "connected" : key
+}
+
+func otaAutoCheckKey(_ status: GlassesRuntimeState?, versionInfoSignature: String? = nil) -> String {
+    "\(otaConnectionKey(status))|\(versionInfoSignature ?? otaVersionSignature(status))"
+}
+
+func otaVersionSignature(_ status: GlassesRuntimeState?) -> String {
+    guard isGlassesConnected(status) else {
+        return "disconnected"
+    }
+    let key = [
+        connectedGlassesInfo(status)?.buildNumber,
+        status?.firmware?.buildNumber,
+        connectedGlassesInfo(status)?.appVersion,
+        status?.firmware?.appVersion,
+        status?.firmware?.source.rawValue,
+        status?.firmware?.version,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
+}
+
+func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
+    let key = [
+        event.buildNumber,
+        event.appVersion,
+        event.mtkFirmwareVersion,
+        event.besFirmwareVersion,
+        event.firmwareVersion,
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "|")
+    return key.isEmpty ? "version-unknown" : key
 }
 
 func modelLabel(_ status: GlassesRuntimeState?) -> String {
