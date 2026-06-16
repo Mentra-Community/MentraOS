@@ -708,7 +708,7 @@ const BLUETOOTH_SETTING_KEYS: string[] = [
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
-interface SettingsState {
+export interface SettingsState {
   // Settings values
   settings: Record<string, any>
   // Loading states
