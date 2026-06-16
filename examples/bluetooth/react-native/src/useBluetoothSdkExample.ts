@@ -775,7 +775,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       wasConnectedRef.current = false;
       applyDisconnectedState('Disconnected');
     }
-  }, [glassesConnected, glasses]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [glassesConnected, glasses, scanMode, scanAeDivisor, scanIsoCap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addEvent(tag: SdkConsoleEvent['tag'], text: string) {
     setEvents((current) => [event(tag, text), ...current].slice(0, 30));

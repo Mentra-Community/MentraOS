@@ -166,7 +166,10 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       sdk.activeAction === 'Stop & upload video'
     ) {
       setCaptureMode('video');
-    } else if (sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture scan photo') {
+    } else if (
+      sdk.activeAction === 'Capture & upload' ||
+      sdk.activeAction === 'Capture scan photo'
+    ) {
       setCaptureMode('photo');
     }
   }, [sdk.activeAction, sdk.videoRecording]);

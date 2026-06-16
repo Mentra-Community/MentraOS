@@ -158,7 +158,7 @@ fun CameraScreen(controller: MentraExampleController) {
                             "Connect glasses first"
                         } else if (!glassesWifiConnected) {
                             "Connect glasses to Wi-Fi"
-                        } else if (state.activeAction == "Capture & upload") {
+                        } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
                             "Capturing..."
                         } else if (state.scanMode) {
                             "Capture scan photo"
@@ -231,6 +231,8 @@ fun CameraScreen(controller: MentraExampleController) {
                         )
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                ScanModeSettingsCard(controller)
                 Spacer(Modifier.height(12.dp))
                 PhotoDetailsCard(
                     details = state.photoPreviewDetails,
@@ -328,10 +330,6 @@ fun CameraScreen(controller: MentraExampleController) {
                     onToggle = { videoDetailsExpanded = !videoDetailsExpanded },
                 )
             }
-        }
-
-        Box(Modifier.padding(horizontal = 6.dp).padding(top = 8.dp)) {
-            ScanModeSettingsCard(controller)
         }
 
         // SDK card
