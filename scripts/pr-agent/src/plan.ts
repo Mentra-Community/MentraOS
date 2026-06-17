@@ -18,7 +18,6 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   const repo = process.env.GITHUB_REPOSITORY?.split('/')[1]!;
   const prNumber = Number(process.env.PR_NUMBER);
   const author = process.env.PR_AUTHOR ?? '';
-  const isDraft = process.env.PR_DRAFT === 'true';
   const isFork = process.env.PR_IS_FORK === 'true';
   const forceRotation = process.env.FORCE_ROTATION === 'true';
 
@@ -62,10 +61,6 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   }
   if (config.authors.mode === 'label_only' && !labelNames.includes('agent-review')) {
     return skipPlan(octokit, owner, repo, prNumber, 'missing agent-review label');
-  }
-
-  if (isDraft && !labelNames.includes('agent-review')) {
-    return skipPlan(octokit, owner, repo, prNumber, 'draft PR');
   }
 
   const { state: loadedState, commentId } = await loadOrCreateState(
