@@ -366,7 +366,7 @@ These are the supported React Native app developer entrypoints:
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setCaptureLedEnabled`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
@@ -402,7 +402,7 @@ React Native exposes the narrowest return types for clear branching after `await
 | `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
 | `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
-| Gallery/button settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
+| Gallery capture settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
 | `setCameraFov(...)` | `CameraFovResult` with `fov`, `roiPosition`, `requestId`, and `timestamp` after the ASG client reports the setting was applied to camera hardware after the restart cooldown; the SDK local FOV setting updates only after this result resolves. | Glasses-side FOV/settings error, persist-only/no hardware-application ack, timeout, or send failure. |
 | `queryGalleryStatus()` | `GalleryStatusEvent`, including `cameraBusy` and optional `cameraBusyReason`. | Timeout, send failure, or another gallery status query in flight. |
 | `requestPhoto(...)` | Terminal response after capture and delivery finish: React Native `PhotoSuccessResponseEvent`; Android/iOS successful `PhotoResponseEvent`. The success includes `uploadUrl`, and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`. Progress follows through `photo_status`. | Raw `photo_response.state === "error"` from glasses/phone, fallback upload failure, terminal response timeout, or send failure. |
@@ -423,10 +423,10 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Setting | API |
 | --- | --- |
 | Photo capture defaults | `setPhotoCaptureDefaults(...)` |
-| Video resolution and frame rate | `setButtonVideoRecordingSettings(width, height, fps)` |
-| Maximum video length | `setButtonMaxRecordingTime(minutes)` |
+| Video resolution and frame rate | `setVideoRecordingDefaults({width, height, fps})` |
+| Maximum local video length | `setMaxVideoRecordingDuration(minutes)` |
 | Camera field of view | `setCameraFov(...)` |
-| Camera LED preference | `setButtonCameraLed(...)` |
+| Local capture LED preference | `setCaptureLedEnabled(...)` |
 
 `requestPhoto(...)` accepts `requestId`, `appId`, `size`, `webhookUrl`, `authToken`, `compress`, `save`, `sound`, `exposureTimeNs`, `iso`, `aeExposureDivisor`, `isoCap`, `mfnr`, `zsl`, `noiseReduction`, `edgeEnhancement`, `ispDigitalGain`, and `ispAnalogGain`. Native Android and iOS also expose `flash`; React Native always sends the capture light enabled. Manual `iso` is used only when `exposureTimeNs` enables manual exposure.
 
@@ -438,7 +438,7 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | --- | --- |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera | `requestPhoto`, gallery mode, photo capture defaults, button video settings, camera field of view |
+| Camera | `requestPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
 | Settings | Gallery mode, camera options, microphone route, Wi-Fi, hotspot, and OTA |

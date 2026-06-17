@@ -445,16 +445,16 @@ class BluetoothSdkModule : Module() {
             requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
         }
 
-        AsyncFunction("setButtonVideoRecordingSettings") { width: Int, height: Int, fps: Int ->
-            requireSdk().setButtonVideoRecordingSettings(width, height, fps).values
+        AsyncFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
+            requireSdk().setVideoRecordingDefaults(VideoRecordingDefaults(width, height, fps)).values
         }
 
-        AsyncFunction("setButtonCameraLed") { enabled: Boolean ->
-            requireSdk().setButtonCameraLed(enabled).values
+        AsyncFunction("setCaptureLedEnabled") { enabled: Boolean ->
+            requireSdk().setCaptureLedEnabled(enabled).values
         }
 
-        AsyncFunction("setButtonMaxRecordingTime") { minutes: Int ->
-            requireSdk().setButtonMaxRecordingTime(minutes).values
+        AsyncFunction("setMaxVideoRecordingDuration") { minutes: Int ->
+            requireSdk().setMaxVideoRecordingDuration(minutes).values
         }
 
         AsyncFunction("setCameraFov") { fov: Map<String, Any> ->

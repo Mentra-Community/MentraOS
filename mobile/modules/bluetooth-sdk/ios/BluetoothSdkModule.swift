@@ -331,19 +331,19 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults.from(params: params)).values
         }
 
-        AsyncFunction("setButtonVideoRecordingSettings") { (width: Int, height: Int, fps: Int) in
+        AsyncFunction("setVideoRecordingDefaults") { (width: Int, height: Int, fps: Int) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setButtonVideoRecordingSettings(width: width, height: height, fps: fps).values
+            return try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: width, height: height, fps: fps)).values
         }
 
-        AsyncFunction("setButtonCameraLed") { (enabled: Bool) in
+        AsyncFunction("setCaptureLedEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setButtonCameraLed(enabled: enabled).values
+            return try await sdk.setCaptureLedEnabled(enabled).values
         }
 
-        AsyncFunction("setButtonMaxRecordingTime") { (minutes: Int) in
+        AsyncFunction("setMaxVideoRecordingDuration") { (minutes: Int) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setButtonMaxRecordingTime(minutes: minutes).values
+            return try await sdk.setMaxVideoRecordingDuration(minutes: minutes).values
         }
 
         AsyncFunction("setCameraFov") { (fov: [String: Any]) in

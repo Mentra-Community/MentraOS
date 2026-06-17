@@ -71,7 +71,7 @@ data class PhotoCaptureDefaults(
     val resetCaptureTuning: Boolean = false,
 )
 
-data class ButtonVideoRecordingSettings(
+data class VideoRecordingDefaults(
     val width: Int,
     val height: Int,
     val fps: Int,
