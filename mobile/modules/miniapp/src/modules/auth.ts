@@ -38,8 +38,7 @@ export class AuthModule {
   async fetch(input: RequestInfo | URL, init: AuthFetchOptions = {}): Promise<Response> {
     const {minTtlMs, ...requestInit} = init
     const token = await this.getToken({minTtlMs})
-    const headers = new Headers(requestInit.headers)
-    headers.set("Authorization", `Bearer ${token}`)
+    const headers = mergeHeaders(requestInit.headers, {Authorization: `Bearer ${token}`})
     return fetch(input, {...requestInit, headers})
   }
 
@@ -48,3 +47,22 @@ export class AuthModule {
   }
 }
 
+function mergeHeaders(base: HeadersInit | undefined, next: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {}
+
+  if (Array.isArray(base)) {
+    for (const [key, value] of base) {
+      headers[key] = value
+    }
+  } else if (typeof Headers !== "undefined" && base instanceof Headers) {
+    base.forEach((value, key) => {
+      headers[key] = value
+    })
+  } else if (base && typeof base === "object") {
+    for (const [key, value] of Object.entries(base)) {
+      if (typeof value === "string") headers[key] = value
+    }
+  }
+
+  return {...headers, ...next}
+}

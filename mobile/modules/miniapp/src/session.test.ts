@@ -223,6 +223,48 @@ describe("MiniappSession auth", () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test("session.auth.fetch works when Headers is unavailable", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch_no_headers",
+      packageName: "com.test.auth.fetch.noheaders",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch_no_headers",
+        token: "fetch-token-no-headers",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    const originalHeaders = globalThis.Headers
+    let observedHeaders: HeadersInit | undefined
+    globalThis.Headers = undefined as never
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      observedHeaders = init?.headers
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedHeaders).toEqual({
+        "Content-Type": "application/json",
+        Authorization: "Bearer fetch-token-no-headers",
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.Headers = originalHeaders
+    }
+  })
 })
 
 describe("MiniappSession request correlation", () => {

@@ -8,7 +8,7 @@
     "backend:start": "bun backend/src/index.ts",
     "miniapp:dev": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp dev",
     "miniapp:build": "cd miniapp && bun run build.ts",
-    "miniapp:pack": "cd miniapp && rm -f build/com.mentra.local-merge-0.1.4.zip && bun ../node_modules/.bin/mentra-miniapp pack --no-build",
+    "miniapp:pack": "cd miniapp && rm -f build/com.mentra.local-merge-0.1.6.zip && bun ../node_modules/.bin/mentra-miniapp pack --no-build",
     "build": "bun run miniapp:build",
     "pack": "bun run miniapp:build && bun run miniapp:pack"
   },
