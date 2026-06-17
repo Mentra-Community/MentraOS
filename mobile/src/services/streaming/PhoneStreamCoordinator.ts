@@ -274,8 +274,6 @@ export class PhoneStreamCoordinator {
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
-          keepAlive: true,
-          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
           sound: opts.sound ?? true,
           // The native bridge rejects explicit `undefined` values ("Value is
           // undefined, expected an Object") — only include what was provided.
@@ -363,8 +361,6 @@ export class PhoneStreamCoordinator {
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,
-          keepAlive: true,
-          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
           sound: opts.sound ?? true,
           // See startUnmanaged: the native bridge rejects explicit `undefined`.
           ...(opts.video !== undefined ? {video: opts.video as never} : {}),

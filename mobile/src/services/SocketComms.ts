@@ -1,4 +1,4 @@
-import {type RgbLedControlResponseEvent, type TouchEvent} from "@mentra/bluetooth-sdk"
+import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {displayProcessor, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
 
@@ -20,6 +20,44 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const finiteNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined
+
+type ExternalStreamKeepAliveRequest = {
+  type: "keep_stream_alive"
+  streamId: string
+  ackId: string
+}
+
+const normalizeStreamVideoConfig = (value: unknown): StreamStartRequest["video"] | undefined => {
+  if (!isRecord(value)) return undefined
+  const config: NonNullable<StreamStartRequest["video"]> = {}
+  const width = finiteNumber(value.width)
+  const height = finiteNumber(value.height)
+  const bitrate = finiteNumber(value.bitrate)
+  const fps = finiteNumber(value.fps)
+  if (width !== undefined) config.width = width
+  if (height !== undefined) config.height = height
+  if (bitrate !== undefined) config.bitrate = bitrate
+  if (fps !== undefined) config.fps = fps
+  return Object.keys(config).length > 0 ? config : undefined
+}
+
+const normalizeStreamAudioConfig = (value: unknown): StreamStartRequest["audio"] | undefined => {
+  if (!isRecord(value)) return undefined
+  const config: NonNullable<StreamStartRequest["audio"]> = {}
+  const bitrate = finiteNumber(value.bitrate)
+  const sampleRate = finiteNumber(value.sampleRate)
+  if (bitrate !== undefined) config.bitrate = bitrate
+  if (sampleRate !== undefined) config.sampleRate = sampleRate
+  if (typeof value.echoCancellation === "boolean") config.echoCancellation = value.echoCancellation
+  if (typeof value.noiseSuppression === "boolean") config.noiseSuppression = value.noiseSuppression
+  return Object.keys(config).length > 0 ? config : undefined
+}
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -566,15 +604,25 @@ class SocketComms {
       })
   }
 
-  private handle_start_stream(msg: any) {
-    const streamUrl = msg.streamUrl
-    if (streamUrl) {
-      void BluetoothSdk.startExternallyManagedStream(msg).catch((error) => {
-        console.warn("SOCKET: start_stream failed:", error)
-      })
-    } else {
+  private handle_start_stream(msg: unknown) {
+    if (!isRecord(msg) || typeof msg.streamUrl !== "string" || msg.streamUrl.length === 0) {
       console.log("Invalid stream request: missing stream URL")
+      return
     }
+    const streamId = typeof msg.streamId === "string" ? msg.streamId : undefined
+    const video = normalizeStreamVideoConfig(msg.video)
+    const audio = normalizeStreamAudioConfig(msg.audio)
+    const request: StreamStartRequest = {
+      type: "start_stream",
+      streamUrl: msg.streamUrl,
+      ...(streamId !== undefined ? {streamId} : {}),
+      ...(typeof msg.sound === "boolean" ? {sound: msg.sound} : {}),
+      ...(video !== undefined ? {video} : {}),
+      ...(audio !== undefined ? {audio} : {}),
+    }
+    void BluetoothSdk.startExternallyManagedStream(request).catch((error) => {
+      console.warn("SOCKET: start_stream failed:", error)
+    })
   }
 
   private handle_stop_stream() {
@@ -583,9 +631,18 @@ class SocketComms {
     })
   }
 
-  private handle_keep_stream_alive(msg: any) {
+  private handle_keep_stream_alive(msg: unknown) {
     console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    BluetoothSdk.sendExternallyManagedStreamKeepAlive(msg)
+    if (!isRecord(msg) || typeof msg.streamId !== "string" || typeof msg.ackId !== "string") {
+      console.log("Invalid keep_stream_alive request: missing streamId or ackId")
+      return
+    }
+    const request: ExternalStreamKeepAliveRequest = {
+      type: "keep_stream_alive",
+      streamId: msg.streamId,
+      ackId: msg.ackId,
+    }
+    BluetoothSdk.sendExternallyManagedStreamKeepAlive(request)
   }
 
   private handle_start_video_recording(msg: any) {
