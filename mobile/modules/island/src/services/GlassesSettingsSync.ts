@@ -22,6 +22,16 @@ import {isGlassesConnected} from "./GlassesReadiness"
 let unsubChange: (() => void) | null = null
 let unsubConnect: (() => void) | null = null
 
+/**
+ * Push the FULL current device-settings set to native over the bluetooth-sdk.
+ * Used both by the on-connect transition below and as a pre-connect seed by
+ * `toolkit.glasses.connectDefault()`, so native has the phone's settings primed
+ * before the connect handshake replays them to the glasses.
+ */
+export function pushAllBluetoothSettings(): void {
+  BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+}
+
 export function startGlassesSettingsSync(): void {
   if (unsubChange || unsubConnect) return
 
@@ -45,7 +55,7 @@ export function startGlassesSettingsSync(): void {
   unsubConnect = useGlassesStore.subscribe(() => {
     const connected = isGlassesConnected(useGlassesStore.getState().connection)
     if (connected && !wasConnected) {
-      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+      pushAllBluetoothSettings()
     }
     wasConnected = connected
   })

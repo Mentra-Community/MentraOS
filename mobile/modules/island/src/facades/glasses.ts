@@ -14,6 +14,7 @@ import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {ButtonPressEvent, TouchEvent} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesReady} from "../services/GlassesReadiness"
+import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
@@ -53,7 +54,15 @@ export type GlassesInfoSnapshot = ReturnType<typeof projectInfo>
 
 export const glasses = {
   // --- connection (bluetooth-sdk passthrough) ---
-  connectDefault: (): Promise<void> => BluetoothSdk.connectDefault(),
+  /**
+   * Reconnect the default wearable. Seeds the phone's current device settings to
+   * native first, so they're primed before the connect handshake replays them to
+   * the glasses (this used to be a host-side step before `connectDefault`).
+   */
+  connectDefault: (): Promise<void> => {
+    pushAllBluetoothSettings()
+    return BluetoothSdk.connectDefault()
+  },
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
   /** Connect to a specific (discovered) device. */
@@ -97,6 +106,16 @@ export const glasses = {
     connectDefault: (): Promise<void> => BluetoothSdk.connectDefaultController(),
     disconnect: (): Promise<void> => BluetoothSdk.disconnectController(),
     forget: (): Promise<void> => BluetoothSdk.forgetController(),
+  },
+
+  // --- audio (glasses media-volume + own-app playback hint) ---
+  audio: {
+    /** Read the glasses' current media volume. */
+    getMediaVolume: () => BluetoothSdk.getGlassesMediaVolume(),
+    /** Set the glasses' media volume. */
+    setMediaVolume: (level: number) => BluetoothSdk.setGlassesMediaVolume(level),
+    /** Tell native whether THIS app is currently playing audio (for ducking). */
+    setOwnAppPlaying: (playing: boolean): Promise<void> => BluetoothSdk.setOwnAppAudioPlaying(playing),
   },
 
   // --- sub-facades ---

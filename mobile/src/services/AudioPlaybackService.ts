@@ -1,6 +1,5 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {BgTimer} from "@mentra/island"
+import {BgTimer, toolkit} from "@mentra/island"
 
 interface AudioPlayRequest {
   requestId: string
@@ -98,7 +97,7 @@ class AudioPlaybackService {
   private async getGlassesMediaVolumeWithTiming() {
     const startedAt = Date.now()
     try {
-      const result = await BluetoothSdk.getGlassesMediaVolume()
+      const result = await toolkit.glasses.audio.getMediaVolume()
       console.log(`AUDIO: Glasses media volume read completed in ${Date.now() - startedAt}ms`)
       return result
     } catch (error) {
@@ -113,7 +112,7 @@ class AudioPlaybackService {
   private async setGlassesMediaVolumeWithTiming(level: number) {
     const startedAt = Date.now()
     try {
-      const result = await BluetoothSdk.setGlassesMediaVolume(level)
+      const result = await toolkit.glasses.audio.setMediaVolume(level)
       console.log(`AUDIO: Glasses media volume set(${level}) completed in ${Date.now() - startedAt}ms`)
       return result
     } catch (error) {
@@ -259,7 +258,7 @@ class AudioPlaybackService {
         BgTimer.clearTimeout(this.audioStopDebounceTimer)
         this.audioStopDebounceTimer = null
       }
-      BluetoothSdk.setOwnAppAudioPlaying(true).catch((e) => {
+      toolkit.glasses.audio.setOwnAppPlaying(true).catch((e) => {
         console.warn("AUDIO: Failed to notify native of audio start:", e)
       })
 
@@ -365,7 +364,7 @@ class AudioPlaybackService {
     // Uses BgTimer to work reliably when app is backgrounded on Android
     this.audioStopDebounceTimer = BgTimer.setTimeout(() => {
       this.audioStopDebounceTimer = null
-      BluetoothSdk.setOwnAppAudioPlaying(false).catch((e) => {
+      toolkit.glasses.audio.setOwnAppPlaying(false).catch((e) => {
         console.warn("AUDIO: Failed to notify native of audio stop:", e)
       })
     }, AudioPlaybackService.AUDIO_STOP_DEBOUNCE_MS)
