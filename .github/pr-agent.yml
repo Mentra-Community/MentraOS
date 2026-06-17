@@ -3,8 +3,8 @@
 
 dryRun: true
 
-reviewModel: claude-4.6-sonnet-medium-thinking
-fixModel: claude-opus-4-8-thinking-xhigh
+reviewModel: claude-sonnet-4-6
+fixModel: claude-opus-4-8
 
 authors:
   mode: label_only # allowlist | all | label_only
