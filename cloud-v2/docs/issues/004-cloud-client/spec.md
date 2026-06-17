@@ -67,6 +67,10 @@ interface AuthModule {
   packageName, re-mints before expiry. The Core token is used only as the Bearer
   to Core-owned APIs and is never handed to a miniapp; only the miniapp-scoped
   token is exposed to a miniapp.
+- `identity` is Core-owned identity. Runtime-only tokens may carry identity
+  claims for Runtime authorization/logging, but `cloud.auth.identity`, miniapp
+  token minting, and miniapp auto-auth are unavailable unless `auth.core` and
+  `endpoints.core` are configured.
 
 ## `cloud.runtime`
 
@@ -140,8 +144,8 @@ interface RuntimeSnapshot {
 
 The other v2 REST calls the device makes (not the live session, not auth), each sent
 with the Core token from `cloud.auth`. It starts small and grows as miniapp-service
-lands. In runtime-only mode, `cloud.core` is absent or disabled with a clear
-`CoreNotConfiguredError`; see issue 007 for the API-shape decision.
+lands. In runtime-only mode, `cloud.core` is absent; Core-owned APIs fail clearly
+instead of being routed to Runtime.
 
 ```ts
 interface CoreModule {

@@ -161,9 +161,8 @@ rgbLedControl(
 ): Promise<RgbLedControlSuccessResponseEvent>
 
 requestVersionInfo(): Promise<VersionInfoResult>
-checkForOtaUpdate(): Promise<OtaQueryResult>
+checkForOtaUpdate(): Promise<boolean>
 startOtaUpdate(): Promise<OtaStartAckEvent>
-retryOtaVersionCheck(): Promise<OtaQueryResult>
 ```
 
 Photo, video, RGB LED, and settings promises reject when the correlated ASG event reports explicit failure. The raw event listeners still receive the full success/error payloads.
@@ -311,9 +310,8 @@ fun stopStream()
 fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent
 fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent
 fun requestVersionInfo(): VersionInfoResult
-fun checkForOtaUpdate(): OtaQueryResult
+fun checkForOtaUpdate(): Boolean
 fun startOtaUpdate(): OtaStartAckEvent
-fun retryOtaVersionCheck(): OtaQueryResult
 
 override fun close()
 ```
@@ -444,9 +442,8 @@ public func stopStream()
 public func startVideoRecording(_ request: VideoRecordingRequest) async throws -> VideoRecordingStatusEvent
 public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent
 public func requestVersionInfo() async throws -> VersionInfoResult
-public func checkForOtaUpdate() async throws -> OtaQueryResult
+public func checkForOtaUpdate() async throws -> Bool
 public func startOtaUpdate() async throws -> OtaStartAckEvent
-public func retryOtaVersionCheck() async throws -> OtaQueryResult
 
 public func invalidate()
 ```
@@ -506,8 +503,11 @@ setBrightness(level: number, autoMode?: boolean | null): Promise<void>
 setAutoBrightness(enabled: boolean): Promise<void>
 
 sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
-sendOtaStart(): Promise<void>
+setOtaVersionUrl(otaVersionUrl: string): void
+getOtaVersionUrl(): string
+startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
 sendOtaQueryStatus(): Promise<void>
+retryOtaVersionCheck(): Promise<void>
 restartTranscriber(): Promise<void>
 
 setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -520,7 +520,16 @@ getMemoryMB(): number
 ```
 
 The root event surface also omits raw/internal event families such as WebSocket
-trace events, OTA events, command-to-BLE traces, and MiniApp selection events.
+trace events, OTA events (including `ota_update_available`), command-to-BLE
+traces, and MiniApp selection events.
+
+The OTA manifest URL getter/setter (`setOtaVersionUrl` / `getOtaVersionUrl`) and
+the `startOtaUpdate(otaVersionUrl)` override are intentionally kept off the
+public boundary; `setOtaVersionUrl` / `getOtaVersionUrl` are re-exported from the
+`@mentra/bluetooth-sdk/debug` subpath for MentraOS/debug recovery only. The
+public `startOtaUpdate()` resolves the same manifest URL `checkForOtaUpdate()`
+uses (the configured/staging default, or the glasses-advertised/production URL
+for pre-wall-clock ASG builds).
 
 ### Android Native
 
@@ -532,8 +541,11 @@ internal fun displayEvent(request: DisplayEventRequest)
 internal fun setDashboardMenu(items: List<DashboardMenuItem>)
 internal fun setBrightness(level: Int, autoMode: Boolean? = null)
 internal fun setAutoBrightness(enabled: Boolean)
-internal fun sendOtaStart()
+internal fun setOtaVersionUrl(otaVersionUrl: String)
+internal fun getOtaVersionUrl(): String
+internal fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent
 internal fun sendOtaQueryStatus()
+internal fun retryOtaVersionCheck()
 internal fun sendShutdown()
 internal fun sendReboot()
 internal fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
@@ -554,8 +566,11 @@ func displayEvent(_ request: DisplayEventRequest) async throws
 func setDashboardMenu(_ items: [DashboardMenuItem]) async throws
 func setBrightness(_ level: Int, autoMode: Bool? = nil) async throws
 func setAutoBrightness(enabled: Bool) async throws
-func sendOtaStart()
+func setOtaVersionUrl(_ otaVersionUrl: String) throws
+func getOtaVersionUrl() -> String
+func startOtaUpdate(otaVersionUrl: String) async throws -> OtaStartAckEvent
 func sendOtaQueryStatus()
+func retryOtaVersionCheck()
 func sendShutdown()
 func sendReboot()
 func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil)

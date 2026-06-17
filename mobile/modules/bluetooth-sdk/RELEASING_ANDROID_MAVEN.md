@@ -2,7 +2,7 @@
 
 The normal release path is the GitHub Actions workflow documented in
 `RELEASING_CI.md`. It publishes these public Android artifacts when
-`mobile/modules/bluetooth-sdk/package.json` changes on `dev`:
+`mobile/modules/bluetooth-sdk/package.json` changes on `staging`:
 
 - `com.mentraglass:bluetooth-sdk`
 - `com.mentraglass:lc3Lib`

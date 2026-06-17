@@ -19,7 +19,9 @@ import type { CloudClientTransports } from "./transports";
  * the two halves out of sync.
  */
 export interface CloudClientConfig {
-  // proxy rewrites both core and runtime when present
+  // `core` is optional only for runtime-only deployments. If `auth.core` is set,
+  // or if `auth.runtime.source` is `"core"`, this must be present; Core/Auth
+  // calls are never routed to Runtime.
   endpoints: { core?: string; runtime: string; proxy?: string };
   auth: AuthConfig;
   transports: CloudClientTransports;
@@ -75,6 +77,8 @@ export type RuntimeAuthConfig =
     };
 
 export interface AuthConfig {
+  // Core-backed auth owns identity, Core token exchange/refresh, miniapp token
+  // minting, and miniapp auto-auth. Omit only for true runtime-only deployments.
   core?: CoreAuthConfig;
   runtime: RuntimeAuthConfig;
 }

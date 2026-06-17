@@ -232,34 +232,25 @@ In hosted-Core mode, the runtime token provider may call Core/Auth under the
 hood. In runtime-only mode, it may call an OEM auth backend, read an already
 issued token, or use a local/dev issuer. `cloud.runtime` should not know which.
 
+Core owns client identity. Runtime-only tokens still carry identity claims for
+Runtime authorization and logging, but the cloud-client does not expose those as
+`cloud.auth.identity`. Miniapp token minting and miniapp auto-auth are Core-backed
+features; a runtime-only deployment that needs an equivalent must provide its own
+OEM-specific backend auth story.
+
 ## `cloud.core` behavior in runtime-only mode
 
-Options:
-
-1. **Absent property:** `cloud.core` exists only when Core is configured.
-   - Strong type signal.
-   - More TypeScript API churn.
-2. **Disabled module:** `cloud.core` always exists but methods throw
-   `CoreNotConfiguredError`.
-   - Less API churn.
-   - Runtime-only hosts can fail later if they accidentally call Core.
-3. **Separate clients:** `new RuntimeClient(...)` and `new CloudClient(...)`.
-   - Cleanest conceptual split.
-   - More package/API surface.
-
-Recommendation for spike: evaluate Option 1 vs Option 3. Avoid silently keeping
-a required dummy `core` endpoint because that recreates the current coupling.
+Decision: `cloud.core` exists only when Core is configured. The constructor
+accepts runtime-only clients, but any Core-auth configuration requires
+`endpoints.core`; Core/Auth calls are never routed to Runtime as a fallback.
+Avoid silently keeping a required dummy `core` endpoint because that recreates the
+current coupling.
 
 ## Miniapp auth impact
 
-Today miniapp-scoped tokens are minted by Core. Runtime-only deployments need an
-explicit answer:
-
-- no Core means no Mentra-managed miniapp backend auth; or
-- the host provides `miniappTokenProvider(packageName)`; or
-- runtime issues runtime-scoped miniapp tokens from its own configured issuer.
-
-This should be a follow-up design decision. It should not block runtime auth
+Today miniapp-scoped tokens are minted by Core. No Core means no Mentra-managed
+miniapp backend auth. If an OEM wants a runtime-only miniapp backend auth story,
+that should be a separate OEM-specific design and should not block runtime auth
 independence for live captions/audio/camera.
 
 ## Implementation plan

@@ -1,7 +1,7 @@
 {
   "workspaces": [
+    "cloud-v2/packages/*",
     "miniapps/*",
-    "cloud-v2/packages/auth",
     "sdk/miniapp-cli",
     "mobile/modules/miniapp"
   ],
@@ -32,9 +32,6 @@
     "typescript-eslint": "^8.44.1"
   },
   "scripts": {
-    "prepare": "husky",
-    "generate-licenses": "bun docs/generate-licenses.ts",
-    "build:miniapp": "cd mobile/modules/miniapp && bun run build",
-    "postinstall": "bun run build:miniapp || echo '\\n[postinstall] WARNING: failed to build @mentra/miniapp. Miniapps will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'"
+    "prepare": "husky"
   }
 }

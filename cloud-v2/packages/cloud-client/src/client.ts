@@ -129,11 +129,13 @@ export class CloudClient {
       ? rewriteThroughProxy(runtimeBase, proxy)
       : runtimeBase;
 
-    if (
-      "source" in config.auth.runtime &&
-      config.auth.runtime.source === "core" &&
-      (!coreUrl || !config.auth.core)
-    ) {
+    if (config.auth.core && !coreUrl) {
+      throw new CloudClientError("auth.core requires endpoints.core");
+    }
+
+    const runtimeUsesCore =
+      "source" in config.auth.runtime && config.auth.runtime.source === "core";
+    if (runtimeUsesCore && (!coreUrl || !config.auth.core)) {
       throw new CloudClientError(
         "auth.runtime.source='core' requires endpoints.core and auth.core",
       );
@@ -144,8 +146,11 @@ export class CloudClient {
     //
     // Auth's own HTTP helper has no default token source: its `/exchange` and
     // `/refresh` calls present the subject and refresh tokens via `opts.bearer`,
-    // before any access token exists. It talks to the core service.
-    const authHttp = createHttpClient({ baseUrl: coreUrl ?? runtimeUrl, logger });
+    // before any access token exists. It is deliberately Core-only: runtime-only
+    // clients never get a fallback that points Core/Auth calls at Runtime.
+    const authHttp = coreUrl
+      ? createHttpClient({ baseUrl: coreUrl, logger })
+      : undefined;
     const store = new TokenStore({ storage: config.transports.storage });
     const auth = new Auth({
       http: authHttp,
@@ -154,7 +159,7 @@ export class CloudClient {
       logger,
       // The form-encoded `/exchange` and `/refresh` calls go through `fetch`
       // directly (not the JSON `HttpClient`), so Auth needs the core base URL.
-      baseUrl: coreUrl ?? runtimeUrl,
+      baseUrl: coreUrl,
     });
 
     const getRuntimeToken = (): Promise<string> => auth.getRuntimeToken();
