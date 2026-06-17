@@ -2520,7 +2520,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val sessionKey = event.otaSessionKey()
         if (postOtaCheckInProgress || postOtaCheckedSessionKey == sessionKey) return
 
-        postOtaCheckedSessionKey = sessionKey
         postOtaCheckInProgress = true
         autoOtaCheckInProgress = true
         runAction("Verify OTA") {
@@ -2536,6 +2535,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 postOtaCheckInProgress = false
                 autoOtaCheckInProgress = false
                 if (checkSucceeded) {
+                    postOtaCheckedSessionKey = sessionKey
                     autoOtaCheckedConnectionKey = otaAutoCheckKey(state.glassesStatus, latestOtaVersionInfoSignature)
                 }
             }

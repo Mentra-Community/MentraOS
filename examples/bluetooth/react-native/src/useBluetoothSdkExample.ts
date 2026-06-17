@@ -1069,7 +1069,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
 
-    postOtaCheckedSessionRef.current = sessionId;
     postOtaCheckInProgressRef.current = true;
     autoOtaCheckInProgressRef.current = true;
     void runAction('Verify OTA', async () => {
@@ -1084,8 +1083,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       } finally {
         postOtaCheckInProgressRef.current = false;
         autoOtaCheckInProgressRef.current = false;
-        if (checkSucceeded && latestAutoOtaCheckKeyRef.current) {
-          autoOtaCheckedConnectionRef.current = latestAutoOtaCheckKeyRef.current;
+        if (checkSucceeded) {
+          postOtaCheckedSessionRef.current = sessionId;
+          if (latestAutoOtaCheckKeyRef.current) {
+            autoOtaCheckedConnectionRef.current = latestAutoOtaCheckKeyRef.current;
+          }
         }
       }
     });

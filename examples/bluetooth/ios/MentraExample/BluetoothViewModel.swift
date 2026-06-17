@@ -1744,7 +1744,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let sessionKey = otaSessionKey(event)
         guard !postOtaCheckInProgress, postOtaCheckedSessionKey != sessionKey else { return }
 
-        postOtaCheckedSessionKey = sessionKey
         postOtaCheckInProgress = true
         autoOtaCheckInProgress = true
         runAsyncAction("Verify OTA") { [self] in
@@ -1753,6 +1752,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 postOtaCheckInProgress = false
                 autoOtaCheckInProgress = false
                 if checkSucceeded {
+                    postOtaCheckedSessionKey = sessionKey
                     autoOtaCheckedConnectionKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
                 }
             }
