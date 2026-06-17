@@ -729,6 +729,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoIspAnalogGain = gain.flatMap { photoIspAnalogGainOptions.contains($0) ? $0 : nil }
     }
 
+    func applyBarcodeScanPhotoPreset() {
+        let preset = scanButtonPreset(aeDivisor: 3, isoCap: 800)
+        photoSize = .max
+        photoCompression = .none
+        photoExposureManual = true
+        photoExposureTimeNs = photoExposureDefaultNs
+        photoIso = photoIsoDefault
+        photoAeExposureDivisor = preset.aeExposureDivisor
+        photoIsoCap = preset.isoCap
+        photoNoiseReduction = preset.noiseReduction
+        photoEdgeEnhancement = preset.edgeEnhancement
+        photoMfnr = preset.mfnr
+        photoZsl = preset.zsl
+        photoIspDigitalGain = preset.ispDigitalGain
+        photoIspAnalogGain = preset.ispAnalogGain
+    }
+
     func setPhotoExposureManual(_ enabled: Bool) {
         photoExposureManual = enabled
     }

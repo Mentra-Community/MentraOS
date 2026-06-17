@@ -230,7 +230,7 @@ export const SCAN_MODE_BUTTON_PRESET = {
   ispAnalogGain: 'low' as const,
   compress: 'none' as const,
   sound: false,
-};
+} as const;
 
 function buildScanButtonPreset(
   aeExposureDivisor: ScanAeDivisor,
@@ -282,6 +282,19 @@ export const PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333;
 export const PHOTO_ISO_MIN = 100;
 export const PHOTO_ISO_MAX = 6400;
 export const PHOTO_ISO_DEFAULT = 200;
+const photoTuningFlagFromPreset = (value: boolean): Exclude<PhotoTuningFlag, 'unset'> =>
+  value ? 'on' : 'off';
+export const BARCODE_SCAN_PHOTO_PRESET = {
+  ...SCAN_MODE_BUTTON_PRESET,
+  exposureTimeNs: PHOTO_EXPOSURE_DEFAULT_NS,
+  iso: PHOTO_ISO_DEFAULT,
+  aeExposureDivisor: SCAN_DEFAULT_AE_DIVISOR,
+  isoCap: SCAN_DEFAULT_ISO_CAP,
+  noiseReduction: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.noiseReduction),
+  edgeEnhancement: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.edgeEnhancement),
+  mfnr: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.mfnr),
+  zsl: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.zsl),
+} as const;
 export const CAMERA_FOV_MIN = 62;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
@@ -431,6 +444,7 @@ export type BluetoothSdkExampleActions = {
   setPhotoZsl: (value: PhotoTuningFlag) => void;
   setPhotoIspDigitalGain: (gain: PhotoIspDigitalGain | null) => void;
   setPhotoIspAnalogGain: (gain: PhotoIspAnalogGain | null) => void;
+  applyBarcodeScanPhotoPreset: () => void;
   setPhotoExposureManual: (enabled: boolean) => void;
   setPhotoIso: (iso: number) => void;
   setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
@@ -2182,6 +2196,22 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoIsoState(clampRounded(iso, PHOTO_ISO_MIN, PHOTO_ISO_MAX));
   }
 
+  function applyBarcodeScanPhotoPresetAction() {
+    setPhotoSize(BARCODE_SCAN_PHOTO_PRESET.size);
+    setPhotoCompression(BARCODE_SCAN_PHOTO_PRESET.compress);
+    setPhotoExposureManual(true);
+    setPhotoExposureTimeNsState(BARCODE_SCAN_PHOTO_PRESET.exposureTimeNs);
+    setPhotoIsoState(BARCODE_SCAN_PHOTO_PRESET.iso);
+    setPhotoAeExposureDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
+    setPhotoIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
+    setPhotoNoiseReduction(BARCODE_SCAN_PHOTO_PRESET.noiseReduction);
+    setPhotoEdgeEnhancement(BARCODE_SCAN_PHOTO_PRESET.edgeEnhancement);
+    setPhotoMfnr(BARCODE_SCAN_PHOTO_PRESET.mfnr);
+    setPhotoZsl(BARCODE_SCAN_PHOTO_PRESET.zsl);
+    setPhotoIspDigitalGain(BARCODE_SCAN_PHOTO_PRESET.ispDigitalGain);
+    setPhotoIspAnalogGain(BARCODE_SCAN_PHOTO_PRESET.ispAnalogGain);
+  }
+
   function setCameraFovAction(fov: number) {
     const nextFov = clampRounded(fov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
     setCameraFovState(nextFov);
@@ -3128,6 +3158,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoZsl,
     setPhotoIspDigitalGain,
     setPhotoIspAnalogGain,
+    applyBarcodeScanPhotoPreset: applyBarcodeScanPhotoPresetAction,
     setPhotoExposureManual,
     setPhotoIso: setPhotoIsoAction,
     setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,

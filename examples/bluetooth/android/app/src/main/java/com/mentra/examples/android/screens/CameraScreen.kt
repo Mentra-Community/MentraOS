@@ -725,9 +725,23 @@ private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) 
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-            Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                "Barcode preset",
+                color = AppColor.greenAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(AppColor.greenAccent.copy(alpha = 0.16f))
+                    .border(1.dp, AppColor.greenAccent.copy(alpha = 0.28f), RoundedCornerShape(999.dp))
+                    .clickable { controller.applyBarcodeScanPhotoPreset() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
         }
         CameraOptionGroup("ae divisor") {
             OptionChip("Unset", state.photoAeExposureDivisor == null) { controller.setPhotoAeExposureDivisor(null) }

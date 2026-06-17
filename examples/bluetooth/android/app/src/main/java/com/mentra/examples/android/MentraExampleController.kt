@@ -632,6 +632,25 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(photoIspAnalogGain = gain?.takeIf { it in photoIspAnalogGainOptions })
     }
 
+    fun applyBarcodeScanPhotoPreset() {
+        val preset = scanButtonPreset(3, 800)
+        state = state.copy(
+            photoSize = "max",
+            photoCompression = "none",
+            photoExposureManual = true,
+            photoExposureTimeNs = PHOTO_EXPOSURE_DEFAULT_NS,
+            photoIso = PHOTO_ISO_DEFAULT,
+            photoAeExposureDivisor = preset.aeExposureDivisor,
+            photoIsoCap = preset.isoCap,
+            photoNoiseReduction = preset.noiseReduction,
+            photoEdgeEnhancement = preset.edgeEnhancement,
+            photoMfnr = preset.mfnr,
+            photoZsl = preset.zsl,
+            photoIspDigitalGain = preset.ispDigitalGain,
+            photoIspAnalogGain = preset.ispAnalogGain,
+        )
+    }
+
     fun setPhotoExposureManual(enabled: Boolean) {
         state = state.copy(photoExposureManual = enabled)
     }

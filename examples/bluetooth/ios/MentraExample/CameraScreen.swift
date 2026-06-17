@@ -866,14 +866,28 @@ private struct PhotoRequestTuningSettingsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("PHOTO REQUEST TUNING")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.1)
-                    .foregroundColor(AppColor.muted)
-                Text("Optional request parameters")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(AppColor.greenAccent)
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PHOTO REQUEST TUNING")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundColor(AppColor.muted)
+                    Text("Optional request parameters")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+                Spacer()
+                Button("Barcode preset") {
+                    model.applyBarcodeScanPhotoPreset()
+                }
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(AppColor.greenAccent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(AppColor.greenAccent.opacity(0.16))
+                .overlay(Capsule().stroke(AppColor.greenAccent.opacity(0.28), lineWidth: 1))
+                .clipShape(Capsule())
+                .buttonStyle(.plain)
             }
 
             CameraOptionGroup(label: "ae divisor") {

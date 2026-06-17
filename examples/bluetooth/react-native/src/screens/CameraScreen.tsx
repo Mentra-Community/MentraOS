@@ -578,6 +578,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           onIspAnalogGainChange={sdk.setPhotoIspAnalogGain}
           onIspDigitalGainChange={sdk.setPhotoIspDigitalGain}
           onIsoCapChange={sdk.setPhotoIsoCap}
+          onApplyBarcodePreset={sdk.applyBarcodeScanPhotoPreset}
           onMfnrChange={sdk.setPhotoMfnr}
           onNoiseReductionChange={sdk.setPhotoNoiseReduction}
           onZslChange={sdk.setPhotoZsl}
@@ -1207,6 +1208,7 @@ function PhotoRequestTuningControl({
   mfnr,
   noiseReduction,
   onAeExposureDivisorChange,
+  onApplyBarcodePreset,
   onEdgeEnhancementChange,
   onIspAnalogGainChange,
   onIspDigitalGainChange,
@@ -1225,6 +1227,7 @@ function PhotoRequestTuningControl({
   mfnr: PhotoTuningFlag;
   noiseReduction: PhotoTuningFlag;
   onAeExposureDivisorChange: (divisor: PhotoAeExposureDivisor | null) => void;
+  onApplyBarcodePreset: () => void;
   onEdgeEnhancementChange: (value: PhotoTuningFlag) => void;
   onIspAnalogGainChange: (gain: PhotoIspAnalogGain | null) => void;
   onIspDigitalGainChange: (gain: PhotoIspDigitalGain | null) => void;
@@ -1241,6 +1244,9 @@ function PhotoRequestTuningControl({
           <Text style={styles.settingLabel}>PHOTO REQUEST TUNING</Text>
           <Text style={styles.settingHint}>Optional request parameters</Text>
         </View>
+        <Pressable disabled={disabled} onPress={onApplyBarcodePreset} style={styles.applyChip}>
+          <Text style={styles.applyChipText}>Barcode preset</Text>
+        </Pressable>
       </View>
       <OptionGroup label="ae divisor">
         <Chip
