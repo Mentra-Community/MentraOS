@@ -28,6 +28,7 @@ import type {
   PlaceSuggestion,
   SavedPlace,
   TripState,
+  UnitSystem,
 } from "./types"
 
 export interface Channels {
@@ -41,6 +42,7 @@ export interface Channels {
   "nav:log-append": LogEntry
   "nav:log-clear": Record<string, never>
   "nav:dev-settings-update": DevSettings
+  "nav:units-update": {unitSystem: UnitSystem}
 
   // ── UI → background broadcasts (fire-and-forget) ───────────────────────
   "nav:start": StartNavigationOptions & {destinationName?: string}
@@ -49,6 +51,7 @@ export interface Channels {
   "nav:set-destination": PlaceDetails | null
   "nav:set-dev-settings": Partial<DevSettings>
   "nav:set-show-minimap": boolean
+  "nav:set-units": {unitSystem: UnitSystem}
 
   // ── UI → background RPC ────────────────────────────────────────────────
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>
@@ -68,8 +71,16 @@ export interface Channels {
   // test channels
   "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
   "test:show-bitmap-test": Rpc<void, void>
+  /** Render a gradient test bitmap. `size` is the width; `height` defaults to `size` (square). */
+  "test:show-bitmap-size": Rpc<{size: number; height?: number}, void>
+  /** PoC: fetch OSM roads around the test center and draw the bare network on the glasses. */
+  "test:show-osm-map": Rpc<void, {ok: boolean; error?: string}>
+  /** PoC: pan the OSM map view by a small nudge in a direction, then redraw. */
+  "test:pan-osm-map": Rpc<{dir: "up" | "down" | "left" | "right"}, {ok: boolean; error?: string}>
   "test:count-1-to-10": Rpc<void, void>
   "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
+  /** Test: render the large centered map bitmap at a given size on demand. */
+  "test:show-large-map": Rpc<{size?: number}, {ok: boolean; error?: string}>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

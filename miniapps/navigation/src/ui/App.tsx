@@ -4,6 +4,7 @@ import "@/shared/channels"
 import {RouterProvider, useRouter} from "@/ui/router"
 import {NavigationPage} from "@/ui/pages/NavigationPage/NavigationPage"
 import {AddPlacePage} from "@/ui/pages/AddPlacePage"
+import {SettingsPage} from "@/ui/pages/SettingsPage"
 import {getGoogleMaps} from "@/ui/lib/googleMaps"
 import {ToastProvider} from "@/ui/components/Toast/Toast"
 
@@ -39,6 +40,7 @@ function Pages() {
           onClose={pop}
         />
       ) : null}
+      {route.name === "settings" ? <SettingsPage onClose={pop} /> : null}
     </>
   )
 }
