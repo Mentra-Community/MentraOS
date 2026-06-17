@@ -1,0 +1,47 @@
+# PR Agent Orchestrator configuration
+# See docs/pr-agent-orchestrator-setup.md
+
+dryRun: true
+
+reviewModel: claude-4.6-sonnet-medium-thinking
+fixModel: claude-opus-4-8-thinking-xhigh
+
+authors:
+  mode: label_only # allowlist | all | label_only
+  allowlist: []
+
+limits:
+  maxFixRounds: 5
+  maxOrchestratorCycles: 8
+  maxBugbotWaitMin: 12
+  maxCiWaitMin: 45
+  maxNewBlockingPerCycle: 5
+  maxFixAgentTurns: 20
+  consecutiveNoNewReviewsForHandoff: 2
+  discoveryCycles: 1
+
+# Path-scoped required CI check names (must match workflow `name:` fields)
+ciGates:
+  - paths:
+      - "cloud/**"
+    workflows:
+      - "🧪 Test Cloud build"
+  - paths:
+      - "cloud/packages/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+    workflows:
+      - "Run Cloud Tests ☁️"
+  - paths:
+      - "mobile/**"
+    workflows:
+      - "Mobile App Quality Checks"
+      - "Mobile App Android Build"
+  - paths:
+      - "asg_client/**"
+    workflows:
+      - "MentraOS ASG Client Build"
+  - paths:
+      - "cloud/packages/sdk/**"
+    workflows:
+      - "🧪 Test SDK build"
