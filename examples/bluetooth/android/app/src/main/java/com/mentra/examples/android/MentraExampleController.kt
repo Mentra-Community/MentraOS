@@ -673,13 +673,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun applyBarcodeScanPhotoPreset() {
-        // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
+        // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
         state = state.copy(
             photoSize = "max",
             photoCompression = "none",
-            photoExposureManual = true,
-            photoExposureTimeNs = PHOTO_EXPOSURE_DEFAULT_NS,
-            photoIso = PHOTO_ISO_DEFAULT,
+            photoExposureManual = false,
             scanAeDivisor = 3,
             scanIsoCap = 800,
             photoAeExposureDivisor = 3,
@@ -845,8 +843,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             sound = !state.scanMode,
             exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
             iso = if (state.photoExposureManual) state.photoIso else null,
-            aeExposureDivisor = state.photoAeExposureDivisor,
-            isoCap = state.photoIsoCap,
+            aeExposureDivisor = if (state.photoExposureManual) null else state.photoAeExposureDivisor,
+            isoCap = if (state.photoExposureManual) null else state.photoIsoCap,
             noiseReduction = state.photoNoiseReduction,
             edgeEnhancement = state.photoEdgeEnhancement,
             mfnr = state.photoMfnr,
@@ -3175,9 +3173,11 @@ val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
 println("Video stopped: ${'$'}{stopped.status}")
 """.trimIndent()
     }
+    val effectiveAeExposureDivisor = if (exposureManual) null else aeExposureDivisor
+    val effectiveIsoCap = if (exposureManual) null else isoCap
     val tuningLines = listOfNotNull(
-        aeExposureDivisor?.let { "      aeExposureDivisor = $it," },
-        isoCap?.let { "      isoCap = $it," },
+        effectiveAeExposureDivisor?.let { "      aeExposureDivisor = $it," },
+        effectiveIsoCap?.let { "      isoCap = $it," },
         noiseReduction?.let { "      noiseReduction = $it," },
         edgeEnhancement?.let { "      edgeEnhancement = $it," },
         mfnr?.let { "      mfnr = $it," },

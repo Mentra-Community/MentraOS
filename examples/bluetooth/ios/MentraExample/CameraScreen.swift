@@ -41,9 +41,11 @@ private func cameraSdkCall(
     let exposureLine = exposureManual
         ? "      exposureTimeNs: \(exposureTimeNs),"
         : "      exposureTimeNs: nil, // auto exposure"
+    let effectiveAeExposureDivisor = exposureManual ? nil : aeExposureDivisor
+    let effectiveIsoCap = exposureManual ? nil : isoCap
     let tuningLines = [
-        aeExposureDivisor.map { "      aeExposureDivisor: \($0)," },
-        isoCap.map { "      isoCap: \($0)," },
+        effectiveAeExposureDivisor.map { "      aeExposureDivisor: \($0)," },
+        effectiveIsoCap.map { "      isoCap: \($0)," },
         boolTuningLine("noiseReduction", noiseReduction),
         boolTuningLine("edgeEnhancement", edgeEnhancement),
         boolTuningLine("mfnr", mfnr),
@@ -704,7 +706,7 @@ private struct ScanModeSettingsCard: View {
                     .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
             if model.scanMode {
-                Text("Applies the barcode capture preset and keeps the glasses button preset in sync. Tune the live request fields below.")
+                Text("Applies the AE-divisor / ISO-cap barcode preset and keeps the glasses button preset in sync.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
             }
@@ -722,11 +724,11 @@ private struct ExposureSettingsCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("EXPOSURE")
+                    Text("MANUAL EXPOSURE")
                         .font(.system(size: 10, weight: .bold))
                         .tracking(1.1)
                         .foregroundColor(AppColor.muted)
-                    Text(model.photoExposureManual ? exposureLabel(model.photoExposureTimeNs) : "Auto exposure")
+                    Text(model.photoExposureManual ? exposureLabel(model.photoExposureTimeNs) : "Auto metered by glasses")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(AppColor.greenAccent)
                 }
@@ -774,7 +776,7 @@ private struct ExposureSettingsCard: View {
                     .font(.system(size: 10, weight: .bold))
                     .tracking(1.1)
                     .foregroundColor(AppColor.muted)
-                Text(model.photoExposureManual ? "ISO \(model.photoIso)" : "Auto ISO")
+                Text(model.photoExposureManual ? "ISO \(model.photoIso)" : "Auto / derived ISO")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(AppColor.greenAccent)
             }
@@ -820,32 +822,33 @@ private struct PhotoRequestTuningSettingsCard: View {
     @ObservedObject var model: BluetoothViewModel
 
     var body: some View {
+        let scanExposureDisabled = model.photoExposureManual
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("PHOTO REQUEST TUNING")
                     .font(.system(size: 10, weight: .bold))
                     .tracking(1.1)
                     .foregroundColor(AppColor.muted)
-                Text("Optional request parameters")
+                Text(scanExposureDisabled ? "AE divisor / ISO cap disabled in manual mode" : "Optional request parameters")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(AppColor.greenAccent)
             }
 
             CameraOptionGroup(label: "ae divisor") {
-                CameraOptionChip(value: "Unset", highlight: model.photoAeExposureDivisor == nil)
-                    .onTapGesture { model.setPhotoAeExposureDivisor(nil) }
+                CameraOptionChip(value: "Unset", highlight: model.photoAeExposureDivisor == nil, disabled: scanExposureDisabled)
+                    .onTapGesture { if !scanExposureDisabled { model.setPhotoAeExposureDivisor(nil) } }
                 ForEach(photoAeExposureDivisorOptions, id: \.self) { divisor in
-                    CameraOptionChip(value: "÷\(divisor)", highlight: model.photoAeExposureDivisor == divisor)
-                        .onTapGesture { model.setPhotoAeExposureDivisor(divisor) }
+                    CameraOptionChip(value: "÷\(divisor)", highlight: model.photoAeExposureDivisor == divisor, disabled: scanExposureDisabled)
+                        .onTapGesture { if !scanExposureDisabled { model.setPhotoAeExposureDivisor(divisor) } }
                 }
             }
 
             CameraOptionGroup(label: "iso cap") {
-                CameraOptionChip(value: "Unset", highlight: model.photoIsoCap == nil)
-                    .onTapGesture { model.setPhotoIsoCap(nil) }
+                CameraOptionChip(value: "Unset", highlight: model.photoIsoCap == nil, disabled: scanExposureDisabled)
+                    .onTapGesture { if !scanExposureDisabled { model.setPhotoIsoCap(nil) } }
                 ForEach(photoIsoCapOptions, id: \.self) { isoCap in
-                    CameraOptionChip(value: "\(isoCap)", highlight: model.photoIsoCap == isoCap)
-                        .onTapGesture { model.setPhotoIsoCap(isoCap) }
+                    CameraOptionChip(value: "\(isoCap)", highlight: model.photoIsoCap == isoCap, disabled: scanExposureDisabled)
+                        .onTapGesture { if !scanExposureDisabled { model.setPhotoIsoCap(isoCap) } }
                 }
             }
 
@@ -1379,19 +1382,20 @@ private struct FixedMediaServerRow: View {
 struct CameraOptionChip: View {
     let value: String
     var highlight: Bool = false
+    var disabled: Bool = false
 
     var body: some View {
         HStack(spacing: 6) {
             if highlight { Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundColor(AppColor.amber) }
             Text(value)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(highlight ? AppColor.greenAccent : AppColor.ink)
+                .foregroundColor(disabled ? AppColor.muted.opacity(0.7) : highlight ? AppColor.greenAccent : AppColor.ink)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(highlight ? Color(hex: 0x7DD89E).opacity(0.16) : Color.white.opacity(0.6))
-        .overlay(Capsule().stroke(highlight ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.06), lineWidth: 1))
+        .background(disabled ? Color.white.opacity(0.32) : highlight ? Color(hex: 0x7DD89E).opacity(0.16) : Color.white.opacity(0.6))
+        .overlay(Capsule().stroke(disabled ? AppColor.ink.opacity(0.04) : highlight ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.06), lineWidth: 1))
         .clipShape(Capsule())
     }
 }

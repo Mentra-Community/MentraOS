@@ -78,8 +78,8 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
         `  sound: ${scanMode ? 'false' : 'true'},`,
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
         exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO',
-        aeExposureDivisor !== null ? `  aeExposureDivisor: ${aeExposureDivisor},` : null,
-        isoCap !== null ? `  isoCap: ${isoCap},` : null,
+        !exposureManual && aeExposureDivisor !== null ? `  aeExposureDivisor: ${aeExposureDivisor},` : null,
+        !exposureManual && isoCap !== null ? `  isoCap: ${isoCap},` : null,
         tuningFlagLine('noiseReduction', noiseReduction),
         tuningFlagLine('edgeEnhancement', edgeEnhancement),
         tuningFlagLine('mfnr', mfnr),
@@ -554,6 +554,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           onMfnrChange={sdk.setPhotoMfnr}
           onNoiseReductionChange={sdk.setPhotoNoiseReduction}
           onZslChange={sdk.setPhotoZsl}
+          manualExposure={sdk.photoExposureManual}
           zsl={sdk.photoZsl}
         />
           </>
@@ -1048,7 +1049,7 @@ function ScanModeSettingsCard({
       </View>
       {enabled ? (
         <Text style={styles.settingDescription}>
-          Applies the barcode capture preset and scans captured photo previews for barcodes. Tune the live request fields below.
+          Applies the AE-divisor / ISO-cap barcode preset and scans captured photo previews for barcodes.
         </Text>
       ) : (
         <Text style={styles.settingDescription}>
@@ -1080,8 +1081,8 @@ function ExposureControl({
     <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
       <View style={styles.settingHeader}>
         <View>
-          <Text style={styles.settingLabel}>EXPOSURE</Text>
-          <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto exposure'}</Text>
+          <Text style={styles.settingLabel}>MANUAL EXPOSURE</Text>
+          <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto metered by glasses'}</Text>
         </View>
         <Switch
           disabled={disabled}
@@ -1114,7 +1115,7 @@ function ExposureControl({
       <View style={styles.isoHeader}>
         <View>
           <Text style={styles.settingLabel}>ISO</Text>
-          <Text style={styles.settingHint}>{enabled ? `ISO ${iso}` : 'Auto ISO'}</Text>
+          <Text style={styles.settingHint}>{enabled ? `ISO ${iso}` : 'Auto / derived ISO'}</Text>
         </View>
       </View>
       {enabled ? (
@@ -1147,6 +1148,7 @@ function PhotoRequestTuningControl({
   ispAnalogGain,
   ispDigitalGain,
   isoCap,
+  manualExposure,
   mfnr,
   noiseReduction,
   onAeExposureDivisorChange,
@@ -1165,6 +1167,7 @@ function PhotoRequestTuningControl({
   ispAnalogGain: PhotoIspAnalogGain | null;
   ispDigitalGain: PhotoIspDigitalGain | null;
   isoCap: PhotoIsoCap | null;
+  manualExposure: boolean;
   mfnr: PhotoTuningFlag;
   noiseReduction: PhotoTuningFlag;
   onAeExposureDivisorChange: (divisor: PhotoAeExposureDivisor | null) => void;
@@ -1177,18 +1180,22 @@ function PhotoRequestTuningControl({
   onZslChange: (value: PhotoTuningFlag) => void;
   zsl: PhotoTuningFlag;
 }) {
+  const scanExposureDisabled = disabled || manualExposure;
+
   return (
     <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
       <View style={styles.settingHeader}>
         <View>
           <Text style={styles.settingLabel}>PHOTO REQUEST TUNING</Text>
-          <Text style={styles.settingHint}>Optional request parameters</Text>
+          <Text style={styles.settingHint}>
+            {manualExposure ? 'AE divisor / ISO cap disabled in manual mode' : 'Optional request parameters'}
+          </Text>
         </View>
       </View>
       <OptionGroup label="ae divisor">
         <Chip
           active={aeExposureDivisor === null}
-          disabled={disabled}
+          disabled={scanExposureDisabled}
           value="Unset"
           onPress={() => onAeExposureDivisorChange(null)}
         />
@@ -1196,7 +1203,7 @@ function PhotoRequestTuningControl({
           <Chip
             key={option}
             active={aeExposureDivisor === option}
-            disabled={disabled}
+            disabled={scanExposureDisabled}
             value={`÷${option}`}
             onPress={() => onAeExposureDivisorChange(option)}
           />
@@ -1205,7 +1212,7 @@ function PhotoRequestTuningControl({
       <OptionGroup label="iso cap">
         <Chip
           active={isoCap === null}
-          disabled={disabled}
+          disabled={scanExposureDisabled}
           value="Unset"
           onPress={() => onIsoCapChange(null)}
         />
@@ -1213,7 +1220,7 @@ function PhotoRequestTuningControl({
           <Chip
             key={option}
             active={isoCap === option}
-            disabled={disabled}
+            disabled={scanExposureDisabled}
             value={String(option)}
             onPress={() => onIsoCapChange(option)}
           />

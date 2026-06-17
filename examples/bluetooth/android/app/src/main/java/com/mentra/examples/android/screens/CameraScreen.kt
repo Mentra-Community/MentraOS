@@ -603,7 +603,7 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
         }
         if (state.scanMode) {
             Text(
-                "Applies the barcode capture preset and keeps the glasses button preset in sync. Tune the live request fields below.",
+                "Applies the AE-divisor / ISO-cap barcode preset and keeps the glasses button preset in sync.",
                 color = AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
@@ -625,9 +625,9 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("EXPOSURE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text("MANUAL EXPOSURE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                 Text(
-                    if (state.photoExposureManual) exposureLabel(state.photoExposureTimeNs) else "Auto exposure",
+                    if (state.photoExposureManual) exposureLabel(state.photoExposureTimeNs) else "Auto metered by glasses",
                     color = AppColor.greenAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -666,7 +666,7 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("ISO", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
             Text(
-                if (state.photoExposureManual) "ISO ${state.photoIso}" else "Auto ISO",
+                if (state.photoExposureManual) "ISO ${state.photoIso}" else "Auto / derived ISO",
                 color = AppColor.greenAccent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -705,6 +705,7 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
 @Composable
 private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) {
     val state = controller.state
+    val scanExposureEnabled = !state.photoExposureManual
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -715,20 +716,25 @@ private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) 
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-            Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (state.photoExposureManual) "AE divisor / ISO cap disabled in manual mode" else "Optional request parameters",
+                color = AppColor.greenAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
         CameraOptionGroup("ae divisor") {
-            OptionChip("Unset", state.photoAeExposureDivisor == null) { controller.setPhotoAeExposureDivisor(null) }
+            OptionChip("Unset", state.photoAeExposureDivisor == null, enabled = scanExposureEnabled) { controller.setPhotoAeExposureDivisor(null) }
             photoAeExposureDivisorOptions.forEach { divisor ->
-                OptionChip("÷$divisor", state.photoAeExposureDivisor == divisor) {
+                OptionChip("÷$divisor", state.photoAeExposureDivisor == divisor, enabled = scanExposureEnabled) {
                     controller.setPhotoAeExposureDivisor(divisor)
                 }
             }
         }
         CameraOptionGroup("iso cap") {
-            OptionChip("Unset", state.photoIsoCap == null) { controller.setPhotoIsoCap(null) }
+            OptionChip("Unset", state.photoIsoCap == null, enabled = scanExposureEnabled) { controller.setPhotoIsoCap(null) }
             photoIsoCapOptions.forEach { isoCap ->
-                OptionChip("$isoCap", state.photoIsoCap == isoCap) { controller.setPhotoIsoCap(isoCap) }
+                OptionChip("$isoCap", state.photoIsoCap == isoCap, enabled = scanExposureEnabled) { controller.setPhotoIsoCap(isoCap) }
             }
         }
         TuningFlagOptionGroup("noise reduction", state.photoNoiseReduction, controller::setPhotoNoiseReduction)
@@ -1263,13 +1269,28 @@ private fun CameraOptionGroup(label: String, content: @Composable RowScope.() ->
 
 @Composable
 private fun OptionChip(value: String, active: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val backgroundColor = when {
+        !enabled -> Color.White.copy(alpha = 0.32f)
+        active -> AppColor.greenAccent.copy(alpha = 0.16f)
+        else -> Color.White.copy(alpha = 0.6f)
+    }
+    val borderColor = when {
+        !enabled -> AppColor.ink.copy(alpha = 0.04f)
+        active -> AppColor.greenAccent.copy(alpha = 0.32f)
+        else -> AppColor.ink.copy(alpha = 0.06f)
+    }
+    val textColor = when {
+        !enabled -> AppColor.muted.copy(alpha = 0.7f)
+        active -> AppColor.greenAccent
+        else -> AppColor.ink
+    }
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(if (active) AppColor.greenAccent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.6f))
+            .background(backgroundColor)
             .border(
                 1.dp,
-                if (active) AppColor.greenAccent.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.06f),
+                borderColor,
                 RoundedCornerShape(999.dp)
             )
             .clickable(enabled = enabled) { onClick() }
@@ -1278,6 +1299,6 @@ private fun OptionChip(value: String, active: Boolean, enabled: Boolean = true, 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(value, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }

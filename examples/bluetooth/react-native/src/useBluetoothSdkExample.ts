@@ -286,8 +286,6 @@ const photoTuningFlagFromPreset = (value: boolean): Exclude<PhotoTuningFlag, 'un
   value ? 'on' : 'off';
 export const BARCODE_SCAN_PHOTO_PRESET = {
   ...SCAN_MODE_BUTTON_PRESET,
-  exposureTimeNs: PHOTO_EXPOSURE_DEFAULT_NS,
-  iso: PHOTO_ISO_DEFAULT,
   aeExposureDivisor: SCAN_DEFAULT_AE_DIVISOR,
   isoCap: SCAN_DEFAULT_ISO_CAP,
   noiseReduction: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.noiseReduction),
@@ -1365,10 +1363,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   function addRequestTuningFields(
     fields: Omit<PhotoRequestParams, 'requestId' | 'appId' | 'webhookUrl' | 'authToken'>,
   ) {
-    if (photoAeExposureDivisor !== null) {
+    if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
     }
-    if (photoIsoCap !== null) {
+    if (!photoExposureManual && photoIsoCap !== null) {
       fields.isoCap = photoIsoCap;
     }
     const noiseReduction = optionalTuningFlag(photoNoiseReduction);
@@ -2366,10 +2364,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoCompression(BARCODE_SCAN_PHOTO_PRESET.compress);
     setScanAeDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
     setScanIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
-    // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
-    setPhotoExposureManual(true);
-    setPhotoExposureTimeNsState(BARCODE_SCAN_PHOTO_PRESET.exposureTimeNs);
-    setPhotoIsoState(BARCODE_SCAN_PHOTO_PRESET.iso);
+    // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
+    setPhotoExposureManual(false);
     setPhotoAeExposureDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
     setPhotoIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
     setPhotoNoiseReduction(BARCODE_SCAN_PHOTO_PRESET.noiseReduction);

@@ -772,12 +772,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func applyBarcodeScanPhotoPreset() {
-        // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
+        // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
         photoSize = .max
         photoCompression = .none
-        photoExposureManual = true
-        photoExposureTimeNs = photoExposureDefaultNs
-        photoIso = photoIsoDefault
+        photoExposureManual = false
         scanAeDivisor = 3
         scanIsoCap = 800
         photoAeExposureDivisor = 3
@@ -926,8 +924,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             sound: !scanMode,
             exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
             iso: photoExposureManual ? photoIso : nil,
-            aeExposureDivisor: photoAeExposureDivisor,
-            isoCap: photoIsoCap,
+            aeExposureDivisor: photoExposureManual ? nil : photoAeExposureDivisor,
+            isoCap: photoExposureManual ? nil : photoIsoCap,
             noiseReduction: photoNoiseReduction,
             edgeEnhancement: photoEdgeEnhancement,
             mfnr: photoMfnr,
