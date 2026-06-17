@@ -67,7 +67,7 @@ class MentraBluetoothSdk private constructor(
     fun setHeadUpAngle(angleDegrees: Int)
     fun setScreenDisabled(disabled: Boolean)
     fun setGalleryModeEnabled(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
-    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings): CompletableFuture<MentraSettingsAckEvent>
+    fun setPhotoCaptureDefaults(defaults: MentraPhotoCaptureDefaults): CompletableFuture<MentraSettingsAckEvent>
     fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings): CompletableFuture<MentraSettingsAckEvent>
     fun setButtonCameraLed(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
     fun setButtonMaxRecordingTime(minutes: Int): CompletableFuture<MentraSettingsAckEvent>
@@ -163,8 +163,8 @@ Add typed public models before exposing the facade:
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
 - `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
-- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
-- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `FULL` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `NONE` / `MEDIUM` / `HEAVY`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
+- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraPhotoCaptureDefaults`, `MentraPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` uses the current `LOW` / `MEDIUM` / `HIGH` / `MAX` tiers, `MentraPhotoCompression` is `NONE` / `MEDIUM` / `HEAVY`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 For Java ergonomics, models with many optional fields should have builders instead of huge constructors.
 

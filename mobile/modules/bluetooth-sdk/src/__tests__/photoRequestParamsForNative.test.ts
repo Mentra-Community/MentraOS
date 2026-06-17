@@ -31,6 +31,12 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.iso).toBe(402)
   })
 
+  it("includes save only when explicitly set", () => {
+    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("save")
+    expect(photoRequestParamsForNative({...baseParams, save: true}).save).toBe(true)
+    expect(photoRequestParamsForNative({...baseParams, save: false}).save).toBe(false)
+  })
+
   it("includes scan-mode booleans when explicitly set", () => {
     const payload = photoRequestParamsForNative({
       ...baseParams,

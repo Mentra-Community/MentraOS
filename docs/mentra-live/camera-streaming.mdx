@@ -73,9 +73,35 @@ print("photo delivered: \(photo.requestId)")
 
 `requestPhoto(...)` resolves when the full photo action reaches terminal success: capture completed and the JPEG was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. It rejects or throws when the glasses report a terminal `photo_response` error, when phone-side fallback upload fails, when the SDK cannot send the command, or when no terminal response arrives before the command timeout. Use `photo_status` for intermediate progress such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_response` is the final success/error result. The returned success includes `uploadUrl`, and may include webhook-returned metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`.
 
-The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. React Native enables the capture light for photo requests; native Android and iOS expose a `flash` request option that defaults to `true`.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
+
+### Photo Parameters
+
+`requestPhoto(...)` is a one-shot request. Its capture fields apply only to that request and do not change the action-button photo defaults used by gallery mode.
+
+| Parameter | Applies to | Behavior |
+| --- | --- | --- |
+| `requestId` | React Native, Android, iOS | Required caller-generated ID used to correlate status and final response events. |
+| `appId` | React Native, Android, iOS | Required app/package identifier for the request. |
+| `size` | React Native, Android, iOS | JPEG size tier: `low`, `medium`, `high`, or `max`. |
+| `webhookUrl` | React Native, Android, iOS | Upload URL that receives the multipart `photo` file and `requestId`. |
+| `authToken` | React Native, Android, iOS | Optional bearer token for the upload request. Omit it or pass `null` / `nil` to send no `Authorization` header. |
+| `compress` | React Native, Android, iOS | Upload compression: `none`, `medium`, or `heavy`. Omitted native values default to `none`. |
+| `save` | React Native, Android, iOS | Keeps the captured photo in the glasses gallery after delivery when `true`. When `false`, the photo is only used for the requested delivery. Defaults to `false`. |
+| `sound` | React Native, Android, iOS | Plays the shutter sound when `true`; defaults to `true`. |
+| `flash` | Android, iOS | Enables the capture flash/privacy light for this request; defaults to `true`. React Native always sends `true`. |
+| `exposureTimeNs` | React Native, Android, iOS | Optional manual sensor exposure time in nanoseconds. Omit or pass `null` / `nil` for auto exposure. |
+| `iso` | React Native, Android, iOS | Optional manual ISO. Used only when `exposureTimeNs` enables manual exposure. |
+| `aeExposureDivisor` | React Native, Android, iOS | Optional scan-style auto-exposure divisor. Values must be greater than `1`. |
+| `isoCap` | React Native, Android, iOS | Optional scan-style ISO cap. Values must be greater than `0`. |
+| `mfnr` | React Native, Android, iOS | Optional per-request multi-frame noise reduction preference. |
+| `zsl` | React Native, Android, iOS | Optional per-request zero-shutter-lag preference. |
+| `noiseReduction` | React Native, Android, iOS | Optional per-request noise-reduction preference. Some firmware may report that this tuning is not implemented. |
+| `edgeEnhancement` | React Native, Android, iOS | Optional per-request edge-enhancement preference. Some firmware may report that this tuning is not implemented. |
+| `ispDigitalGain` | React Native, Android, iOS | Optional per-request ISP digital gain hint. Some firmware may report that this tuning is not implemented. |
+| `ispAnalogGain` | React Native, Android, iOS | Optional per-request ISP analog gain hint. Some firmware may report that this tuning is not implemented. |
 
 Listen for `photo_status` to render progress and inspect the effective settings the glasses used:
 
@@ -200,7 +226,7 @@ Mentra Live has gallery mode for the right action button. When gallery mode is e
 
 ```ts
 await BluetoothSdk.setGalleryModeEnabled(true);
-await BluetoothSdk.setButtonPhotoSettings('medium');
+await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'});
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
 const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
@@ -212,7 +238,7 @@ console.log(`Camera ready at ${cameraFov.fov}°`);
 
 ```kotlin
 sdk.setGalleryModeEnabled(true)
-sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
+sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM))
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonMaxRecordingTime(minutes = 3)
 val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
@@ -224,7 +250,7 @@ println("Camera ready at ${cameraFov.fov}°")
 
 ```swift
 try await sdk.setGalleryModeEnabled(true)
-try await sdk.setButtonPhotoSettings(size: .medium)
+try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium))
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
 let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
@@ -237,6 +263,23 @@ print("Camera ready at \(cameraFov.fov)°")
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
 
 Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
+
+`setPhotoCaptureDefaults(...)` controls action-button photo defaults. Omitted fields leave the existing defaults unchanged. Pass `resetCaptureTuning: true` to restore the optional tuning fields to standard capture behavior; this does not change photo size unless you also pass `size`. If you include other fields in the same call, those fields become the new defaults after the reset.
+
+| Default field | Behavior |
+| --- | --- |
+| `size` | Action-button photo size tier: `low`, `medium`, `high`, or `max`. |
+| `mfnr` | Multi-frame noise reduction preference for action-button photos. |
+| `zsl` | Zero-shutter-lag preference for action-button photos. |
+| `noiseReduction` | Noise-reduction preference for action-button photos. |
+| `edgeEnhancement` | Edge-enhancement preference for action-button photos. |
+| `ispDigitalGain` | ISP digital gain hint for action-button photos. |
+| `ispAnalogGain` | ISP analog gain hint for action-button photos. |
+| `aeExposureDivisor` | Scan-style auto-exposure divisor for action-button photos. Values must be greater than `1`. |
+| `isoCap` | Scan-style ISO cap for action-button photos. Values must be greater than `0`. |
+| `compress` | Upload compression for action-button photos: `none`, `medium`, or `heavy`. |
+| `sound` | Shutter sound preference for action-button photos. |
+| `resetCaptureTuning` | Restores optional tuning fields to standard capture behavior before applying any fields included in the same call. |
 
 `setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`; presets map to 82, 102, and 118 degrees with center ROI. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only when the setting has been applied to camera hardware after the restart cooldown, and the promise rejects on glasses-side error, persist-only/no hardware-application ack, or timeout. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
