@@ -3616,7 +3616,7 @@ class G2 : SGCManager() {
         val fields = reader.parseFields()
 
         // print raw payload:
-        // Bridge.log("G2: EvenHub response payload: ${payload.joinToString("") { String.format("%02X", it) }}")
+        // Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
@@ -3684,8 +3684,6 @@ class G2 : SGCManager() {
                     pendingImgAck?.complete(errorCode == 4)
                 }
             }
-            // print the raw payload:
-            Bridge.log("G2: img_res: ${payload.joinToString("") { String.format("%02X", it) }}")
             
             val timestamp = System.currentTimeMillis()
             val lastResponse = lastEvenHubResponseTimestamp
