@@ -25,7 +25,6 @@ import {
   saveState,
 } from './state.js';
 import type { ReviewSlot } from './types.js';
-import { MARKER_HANDOFF } from './types.js';
 
 const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
 const owner = process.env.GITHUB_REPOSITORY_OWNER!;
@@ -33,10 +32,6 @@ const repo = process.env.GITHUB_REPOSITORY?.split('/')[1]!;
 const prNumber = Number(process.env.PR_NUMBER);
 const headSha = process.env.HEAD_SHA ?? '';
 const baseRef = process.env.BASE_REF ?? 'main';
-
-function env() {
-  return { owner, repo, prNumber, headSha, baseRef, repoRoot };
-}
 
 async function cmdPlan() {
   const plan = await runPlan(repoRoot);
@@ -95,10 +90,6 @@ async function cmdAggregate() {
   };
 
   const result = aggregateCycle(repoRoot, state, reviews, ciChecks, activePair);
-
-  if (result.shouldFix) {
-    result.state.fixRound = state.fixRound;
-  }
 
   await saveState(octokit, owner, repo, prNumber, result.state, commentId);
 

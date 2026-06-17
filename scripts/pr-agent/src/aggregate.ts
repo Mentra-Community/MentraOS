@@ -40,11 +40,11 @@ export function aggregateCycle(
   activePair: ReviewSlot[],
 ): AggregateOutput {
   const config = loadConfig(repoRoot);
-  let cycle = state.cycle;
+  const cycle = state.cycle;
   let openFindings = [...state.openFindings];
   let resolvedFindings = [...state.resolvedFindings];
   let nitFindings = [...state.nitFindings];
-  let newBlockingFingerprints: string[] = [];
+  const newBlockingFingerprints: string[] = [];
   let allApproved = true;
 
   const ingest = (

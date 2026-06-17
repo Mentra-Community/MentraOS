@@ -10,10 +10,6 @@ export function pairForCycle(cycle: number): ReviewSlot[] {
   return ROTATION_PAIRS[((cycle % 3) + 3) % 3]!;
 }
 
-export function pairIncludes(pair: ReviewSlot[], slot: ReviewSlot): boolean {
-  return pair.includes(slot);
-}
-
 export function frozenPairFromFindings(
   counts: Record<ReviewSlot, number>,
 ): ReviewSlot[] {

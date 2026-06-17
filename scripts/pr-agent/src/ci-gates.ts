@@ -61,9 +61,6 @@ export async function fetchWorkflowStatuses(
   });
 }
 
-/** @deprecated Use fetchWorkflowStatuses */
-export const fetchCheckStatuses = fetchWorkflowStatuses;
-
 function requiredChecks(checks: CiCheckStatus[]): CiCheckStatus[] {
   return checks.filter((c) => c.required);
 }
@@ -123,16 +120,6 @@ export async function getPrHeadSha(
 ): Promise<string> {
   const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
   return data.head.sha;
-}
-
-export async function getPrHeadRef(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  pullNumber: number,
-): Promise<string> {
-  const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
-  return data.head.ref;
 }
 
 export async function getChangedFiles(

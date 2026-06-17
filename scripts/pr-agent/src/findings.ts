@@ -59,9 +59,12 @@ export function mergeFindings(
   for (const f of incoming) {
     const prev = byFp.get(f.fingerprint);
     if (prev) {
-      prev.lastSeenCycle = cycle;
-      prev.message = f.message;
-      if (f.line) prev.line = f.line;
+      byFp.set(f.fingerprint, {
+        ...prev,
+        lastSeenCycle: cycle,
+        message: f.message,
+        line: f.line ?? prev.line,
+      });
     } else {
       byFp.set(f.fingerprint, {
         ...f,
@@ -114,21 +117,47 @@ export function sourceCounts(findings: Finding[]): Record<ReviewSlot, number> {
 }
 
 export function parseVerdictFromText(text: string): Verdict | null {
-  const lines = text.trim().split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!.trim();
-    if (!line.startsWith('{')) continue;
+  // Extract every balanced top-level JSON object (string-aware), then return the
+  // last one that validates as a verdict. Handles compact, pretty-printed, and
+  // fenced (```json) payloads regardless of surrounding prose.
+  const candidates = extractJsonObjects(text);
+  for (let i = candidates.length - 1; i >= 0; i--) {
     try {
-      return VerdictSchema.parse(JSON.parse(line));
+      return VerdictSchema.parse(JSON.parse(candidates[i]!));
     } catch {
       continue;
     }
   }
-  const match = text.match(/\{[\s\S]*"verdict"[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    return VerdictSchema.parse(JSON.parse(match[0]));
-  } catch {
-    return null;
+  return null;
+}
+
+function extractJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
   }
+  return objects;
 }
