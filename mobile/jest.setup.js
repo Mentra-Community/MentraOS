@@ -249,6 +249,7 @@ jest.mock("@mentra/island", () => {
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
+  const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -286,10 +287,12 @@ jest.mock("@mentra/island", () => {
       configure: jest.fn(),
       start: jest.fn(() => {
         realGlassesSettingsSync.startGlassesSettingsSync()
+        realPhoneNotificationsSync.startPhoneNotificationsSync()
         return Promise.resolve()
       }),
       stop: jest.fn(() => {
         realGlassesSettingsSync.stopGlassesSettingsSync()
+        realPhoneNotificationsSync.stopPhoneNotificationsSync()
         return Promise.resolve()
       }),
       glasses: {
