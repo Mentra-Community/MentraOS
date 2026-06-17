@@ -655,7 +655,7 @@ export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra
 
 // These settings are automatically synced to the Bluetooth SDK.
 // Keep this list hardware-facing; app/UI/cloud-only preferences should stay in JS/Crust.
-const BLUETOOTH_SETTING_KEYS: string[] = [
+export const BLUETOOTH_SETTING_KEYS: string[] = [
   // Bluetooth settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,

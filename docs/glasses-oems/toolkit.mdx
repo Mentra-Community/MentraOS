@@ -120,6 +120,35 @@ const off = toolkit.glasses.wifi.onStatus((status) => { … })  // subscribe
 `connect()` propagates the bluetooth layer's coded errors (`bluetooth_powered_off`,
 `request_timeout`, …) unchanged, so your UI keeps its own error mapping.
 
+### `toolkit.glasses.settings`
+
+Keyed **device** settings (brightness, head-up angle, dashboard, camera/button,
+sensing, …). `set()` persists *and* auto-syncs to the connected glasses.
+
+```ts
+toolkit.glasses.settings.get(key)
+toolkit.glasses.settings.set(key, value)        // also pushes to the device
+toolkit.glasses.settings.onChanged(key, (v) => { … })
+toolkit.glasses.settings.descriptor(key)
+toolkit.glasses.settings.available()            // the device-setting keys
+```
+
+## `toolkit.pairing`
+
+First-time glasses discovery + pairing. (Reconnecting the already-paired default is
+`toolkit.glasses.connectDefault()`.)
+
+```ts
+toolkit.pairing.scan()                          // start scanning
+toolkit.pairing.scanning()                      // is a scan in progress?
+toolkit.pairing.searchResults()                 // discovered devices (snapshot)
+const off = toolkit.pairing.onFound((r) => { … }) // subscribe; returns unsubscribe
+await toolkit.pairing.pair(deviceId)            // connect to a discovered device
+await toolkit.pairing.setDefault(deviceId)      // make it the connectDefault() target
+toolkit.pairing.onPairFailure((e) => { … })
+toolkit.pairing.onGlassesNotReady((e) => { … })
+```
+
 ## `toolkit.speech`
 
 On-device STT/TTS model management.
