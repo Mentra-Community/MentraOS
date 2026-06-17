@@ -62,7 +62,7 @@ const SWITCHER_COMMIT_VELOCITY = -500
 // How far the overlay shrinks while the bottom swipe-up follows the finger.
 const SWIPE_UP_SCALE_TO = 0.5
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 450 : 1200
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 850 : 1200
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
@@ -82,6 +82,10 @@ export default function Compositor() {
   // null the instant clearForeground runs, but we hold `renderedApp` until the
   // fade-out completes so the overlay can animate off-screen before unmount.
   const [renderedApp, setRenderedApp] = useState(foregroundApp)
+  // The capsule (house/X button) is hidden during the open animation and only
+  // revealed once the fade-in/zoom-in completes, so it doesn't pop in while the
+  // overlay is still growing into place.
+  const [capsuleVisible, setCapsuleVisible] = useState(false)
   const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
   useEffect(() => {
     if (foregroundApp) {
@@ -263,6 +267,7 @@ export default function Compositor() {
   useEffect(() => {
     if (isForeground) {
       didSwipeToExit.current = false // reset the flag so we can animate out again
+      setCapsuleVisible(false) // hide the capsule until the open animation finishes
       swipeTranslateX.value = 0
       swipeTranslateY.value = 0
       // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
@@ -289,15 +294,25 @@ export default function Compositor() {
         fadeScale.value = withSequence(
           withTiming(GLASS_WARMUP_SCALE, {duration: GLASS_WARMUP_MS}),
           withTiming(FADE_IN_SCALE_FROM, {duration: 0}),
-          withTiming(1, {duration: FADE_IN_DURATION_MS}), // normal zoom-in
+          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
+            // Reveal the capsule only after the open animation completes.
+            if (finished) runOnJS(setCapsuleVisible)(true)
+          }), // normal zoom-in
         )
       } else {
         fadeOpacity.value = 0
         // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
         // opacity fade so the app surface grows into place.
         fadeScale.value = FADE_IN_SCALE_FROM
+        fadeOpacity.value = 0.5
         fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
-        fadeScale.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+        fadeScale.value = withDelay(
+          FADE_IN_DELAY_MS,
+          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
+            // Reveal the capsule only after the open animation completes.
+            if (finished) runOnJS(setCapsuleVisible)(true)
+          }),
+        )
       }
     } else {
       // only animate out if we didn't swipe to exit:
@@ -332,6 +347,8 @@ export default function Compositor() {
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
             onShouldCapture={handleShouldCapture}
+            // show capsule once the open animation is complete:
+            showCapsule={capsuleVisible}
           />
         ) : (
           <LocalMiniappView
@@ -343,6 +360,8 @@ export default function Compositor() {
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
             onShouldCapture={handleShouldCapture}
+            // show capsule once the open animation is complete:
+            showCapsule={capsuleVisible}
           />
         )}
       </Screen>
