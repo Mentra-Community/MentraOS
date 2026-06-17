@@ -1,4 +1,5 @@
-import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
+import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
+import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -37,8 +38,8 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    BluetoothSdk.disconnectController()
-    BluetoothSdk.forgetController()
+    toolkit.glasses.controller.disconnect()
+    toolkit.glasses.controller.forget()
     goBack()
   }, true)
 
@@ -53,7 +54,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await BluetoothSdk.startScan(deviceModel)
+        await toolkit.pairing.scan(deviceModel)
       } catch (error) {
         console.error("Failed to start controller scan:", error)
       }
@@ -92,7 +93,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     setTimeout(() => {
-      BluetoothSdk.connect(device).catch((error) => {
+      toolkit.pairing.pair(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
       })
     }, 2000)

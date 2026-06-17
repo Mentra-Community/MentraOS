@@ -12,7 +12,7 @@ import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {toolkit} from "@mentra/island"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -195,7 +195,7 @@ export default function PairingPrepScreen() {
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await BluetoothSdk.connectSimulated()
+      await toolkit.glasses.connectSimulated()
       clearHistoryAndGoHome()
       return
     }

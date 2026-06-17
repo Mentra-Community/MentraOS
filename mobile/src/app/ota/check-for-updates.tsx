@@ -1,7 +1,6 @@
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -14,7 +13,7 @@ import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
 import {translate} from "@/i18n/translate"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {BgTimer} from "@mentra/island"
+import {BgTimer, toolkit} from "@mentra/island"
 
 type CheckState = "checking" | "update_available" | "no_update" | "error"
 
@@ -101,7 +100,7 @@ export default function OtaCheckForUpdatesScreen() {
 
           // Request version info since we don't have it yet
           console.log("OTA: Requesting version_info from glasses")
-          void BluetoothSdk.requestVersionInfo().catch((error) => {
+          void toolkit.glasses.requestVersionInfo().catch((error) => {
             console.warn("OTA: Failed to request version_info from glasses:", error)
           })
 
@@ -122,7 +121,7 @@ export default function OtaCheckForUpdatesScreen() {
       }
 
       // Match OtaUpdateChecker home path: BES often arrives late in version_info_3 (chip init after reflash).
-      void BluetoothSdk.requestVersionInfo().catch((error) => {
+      void toolkit.glasses.requestVersionInfo().catch((error) => {
         console.warn("OTA: Failed to refresh version_info before BES wait:", error)
       })
 
@@ -175,7 +174,7 @@ export default function OtaCheckForUpdatesScreen() {
         // Refresh version_info (build / fw) in case the store still held values from a prior session
         // before the native clear-on-connect + glasses_ready re-query completed.
         console.log("OTA: Requesting fresh version_info from glasses before HTTP compare")
-        void BluetoothSdk.requestVersionInfo().catch((error) => {
+        void toolkit.glasses.requestVersionInfo().catch((error) => {
           console.warn("OTA: Failed to refresh version_info before OTA compare:", error)
         })
 

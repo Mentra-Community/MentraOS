@@ -4,7 +4,7 @@ import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/Onboardin
 import {translate} from "@/i18n"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {useCoreStore} from "@/stores/core"
@@ -24,7 +24,7 @@ export default function BtClassicPairingScreen() {
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    BluetoothSdk.connectDefault().catch((error) => {
+    toolkit.glasses.connectDefault().catch((error) => {
       console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
     })
     pushPrevious()

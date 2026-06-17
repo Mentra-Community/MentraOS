@@ -14,7 +14,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
@@ -74,7 +74,7 @@ export function DeviceSettingsSection() {
       options: {allowDismiss: false},
     })
     if (result === 1) {
-      BluetoothSdk.forget()
+      toolkit.glasses.forget()
     }
   }
 
@@ -87,7 +87,7 @@ export function DeviceSettingsSection() {
     })
 
     if (result === 1) {
-      BluetoothSdk.disconnect()
+      toolkit.glasses.disconnect()
     }
   }
 

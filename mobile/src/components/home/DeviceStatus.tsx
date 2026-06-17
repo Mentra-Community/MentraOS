@@ -7,7 +7,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {decideConnectButtonAction, BluetoothSdk} from "@mentra/island"
+import {decideConnectButtonAction, toolkit, BluetoothSdk} from "@mentra/island"
 import {isGlassesConnected, isGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -130,7 +130,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
-      await BluetoothSdk.connectDefault()
+      await toolkit.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -140,7 +140,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy: searching || nativeLinkBusy})
     if (action === "cancel") {
-      await BluetoothSdk.disconnect()
+      await toolkit.glasses.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
     } else {
@@ -260,9 +260,9 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
 
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await BluetoothSdk.disconnectController()
+      await toolkit.glasses.controller.disconnect()
     } else {
-      await BluetoothSdk.connectDefaultController()
+      await toolkit.glasses.controller.connectDefault()
     }
   }
 
