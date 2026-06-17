@@ -68,16 +68,16 @@ export class DisplayManager {
   }
 
   /**
-   * Large map shown on swipe-up: a square bitmap centered on the 576×288 canvas.
-   * NOTE: a single G2 image container maxes out ~200px wide; wider needs
-   * (unimplemented) quad-mode tiling and may render nothing — but we pass the
-   * requested size through unclamped so larger sizes can be tested on-device.
+   * Large map shown on swipe-up: a W×H bitmap centered on the 576×288 canvas.
+   * Bounded only to the canvas (not the ~200px container limit) so the requested
+   * size — e.g. 288×140 — passes through as-is.
    */
-  showLargeBitmap(base64Bmp: string, size = 200): void {
-    const s = Math.max(8, Math.min(size, 288)) // cap to canvas height, not 200
-    const x = Math.round((576 - s) / 2)
-    const y = Math.round((288 - s) / 2)
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: s, height: s}))
+  showLargeBitmap(base64Bmp: string, width = 288, height = 140): void {
+    const w = Math.max(8, Math.min(width, 576))
+    const h = Math.max(8, Math.min(height, 288))
+    const x = Math.round((576 - w) / 2)
+    const y = Math.round((288 - h) / 2)
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
   }
 
 

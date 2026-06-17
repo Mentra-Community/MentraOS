@@ -54,7 +54,8 @@ export class NavigationController {
   // text even when unchanged (recovers from G2 EvenHub page teardowns).
   private lastHudAt = 0
   private lastMinimapPng: string | null = null
-  private showMinimap = false
+  // Glasses minimap bitmap — ON by default.
+  private showMinimap = true
   // Last trip-stats string pushed to the bottom-left label, so we only re-send
   // when distance/ETA actually changes (avoids churning the G2 text container).
   private lastTripStats = ""
@@ -651,8 +652,7 @@ export class NavigationController {
     )
 
     this.unsubs.push(
-      this.ui.handle("test:show-large-map", async (req) => {
-        const size = req?.size
+      this.ui.handle("test:show-large-map", async () => {
         if (!this.coords) return {ok: false, error: "no GPS fix yet"}
         const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
         // Fetch roads if we don't have any cached yet, then render the large map.
@@ -664,7 +664,7 @@ export class NavigationController {
             return {ok: false, error: err instanceof Error ? err.message : String(err)}
           }
         }
-        this.renderLargeMap(me, size)
+        this.renderLargeMap(me)
         return {ok: true}
       }),
     )
@@ -785,9 +785,8 @@ export class NavigationController {
         // Toggle: any swipe shows the box; any swipe while it's showing dismisses
         // it and brings back the original HUD.
         if (!this.largeMapShown) {
-          console.log(`[TOUCH] swipe → showing 288×140 test box`)
-          this.largeMapShown = true // suppress the HUD pump while the box shows
-          this.display.showTestBox(288, 140)
+          console.log(`[TOUCH] swipe → showing large route map`)
+          this.showLargeMap() // sets largeMapShown, clears, fetches + draws the route map
         } else {
           console.log(`[TOUCH] swipe → dismissing box, clear → wait 1s → HUD`)
           this.largeMapShown = false
@@ -818,17 +817,29 @@ export class NavigationController {
     if (!this.coords) return
     const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
 
-    // 2. Render the large map from cached OSM roads + the route. The roads cache
-    //    is normally populated by the minimap pump — but the user may swipe up
-    //    with the minimap toggle OFF, so fetch on-demand if it's empty, then
-    //    re-render once roads arrive.
+    // 2. Render immediately with whatever roads we already have (zoomed to fit
+    //    the whole route — see renderLargeMap).
     this.renderLargeMap(me)
-    if (!this.osmRoadsCache && !this.osmFetchInFlight) {
+
+    // 3. The minimap road cache only covers a tight radius around the user, so
+    //    the far end of the route would have no background streets. Fetch roads
+    //    covering the ENTIRE route bounding box, then re-render.
+    const route = this.trip.routePoints
+    if (route && route.length >= 2 && !this.osmFetchInFlight) {
+      const lats = [...route, me].map((p) => p.lat)
+      const lngs = [...route, me].map((p) => p.lng)
+      const center: LatLng = {
+        lat: (Math.min(...lats) + Math.max(...lats)) / 2,
+        lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+      }
+      const halfH = haversineMeters({lat: Math.min(...lats), lng: center.lng}, {lat: Math.max(...lats), lng: center.lng}) / 2
+      const halfW = haversineMeters({lat: center.lat, lng: Math.min(...lngs)}, {lat: center.lat, lng: Math.max(...lngs)}) / 2
+      const fetchRadius = Math.max(halfH, halfW) * 1.3 + 50
       this.osmFetchInFlight = true
-      fetchOsmRoads(me, this.OSM_MINIMAP_RADIUS_M * 2)
+      fetchOsmRoads(center, fetchRadius)
         .then((roads) => {
           this.osmRoadsCache = roads
-          this.osmRoadsCenter = me
+          this.osmRoadsCenter = center
           if (this.largeMapShown && this.coords) {
             this.renderLargeMap({lat: this.coords.lat, lng: this.coords.lng})
           }
@@ -841,20 +852,48 @@ export class NavigationController {
   }
 
   /** Render + push the large centered map for the current position. */
-  private renderLargeMap(me: LatLng, size?: number): void {
-    const s = size ?? this.OSM_LARGE_MAP_SIZE
-    const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
+  private renderLargeMap(me: LatLng): void {
+    const w = this.OSM_LARGE_MAP_W
+    const h = this.OSM_LARGE_MAP_H
+    const route = this.trip.routePoints
+
+    // Zoom to fit the WHOLE route: center on the route's bounding-box midpoint
+    // and pick a radius that contains every route point (plus the user), with
+    // some padding. Falls back to the minimap radius around the user if there's
+    // no usable route yet.
+    let center = me
+    let viewRadiusMeters = this.OSM_MINIMAP_RADIUS_M
+    if (route && route.length >= 2) {
+      const pts = [...route, me]
+      const lats = pts.map((p) => p.lat)
+      const lngs = pts.map((p) => p.lng)
+      const minLat = Math.min(...lats)
+      const maxLat = Math.max(...lats)
+      const minLng = Math.min(...lngs)
+      const maxLng = Math.max(...lngs)
+      center = {lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2}
+      // Half-extent in meters of the larger axis (renderOsmLineMap fits 2×radius
+      // into the smaller pixel axis), padded 15% so the path isn't edge-to-edge.
+      const halfH = haversineMeters({lat: minLat, lng: center.lng}, {lat: maxLat, lng: center.lng}) / 2
+      const halfW = haversineMeters({lat: center.lat, lng: minLng}, {lat: center.lat, lng: maxLng}) / 2
+      viewRadiusMeters = Math.max(80, Math.max(halfH, halfW) * 1.15)
+    }
+
+    const routeBearing = nextSegmentBearing(me, route)
     const markerHeading = routeBearing ?? this.heading
     const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
-      center: me,
-      width: s,
-      height: s,
-      viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
+      center,
+      width: w,
+      height: h,
+      viewRadiusMeters,
       lineWidthPx: 2,
-      route: this.trip.routePoints,
+      route,
       marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
     })
-    if (png) this.display.showLargeBitmap(png, s)
+    console.log(
+      `[LARGE-MAP] render: roads=${this.osmRoadsCache?.length ?? 0} routePts=${route?.length ?? 0} radius=${Math.round(viewRadiusMeters)}m size=${w}x${h} png=${png ? png.length + "b" : "NULL"}`,
+    )
+    if (png) this.display.showLargeBitmap(png, w, h)
   }
 
   private refreshHUD(): void {
@@ -1030,7 +1069,9 @@ export class NavigationController {
   private readonly OSM_MINIMAP_RADIUS_M = 133
   // Large map shown on swipe-up. Capped at 200px: a single G2 image container
   // maxes out ~200px wide before it needs (unimplemented) quad-mode tiling.
-  private readonly OSM_LARGE_MAP_SIZE = 200
+  // Large map render dimensions (swipe-up view): 288×140.
+  private readonly OSM_LARGE_MAP_W = 288
+  private readonly OSM_LARGE_MAP_H = 140
   private readonly OSM_REFETCH_THRESHOLD_M = 120
   // Walking speed for the ETA fallback when the SDK hasn't sent a remaining-time
   // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
