@@ -2702,7 +2702,7 @@ func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
 }
 
 func otaSessionKey(_ status: OtaStatusEvent) -> String {
-    status.sessionId.isEmpty ? "\(status.currentStep):\(status.totalSteps):\(status.stepType)" : status.sessionId
+    status.sessionId.isEmpty ? "current-ota" : status.sessionId
 }
 
 func modelLabel(_ status: GlassesRuntimeState?) -> String {

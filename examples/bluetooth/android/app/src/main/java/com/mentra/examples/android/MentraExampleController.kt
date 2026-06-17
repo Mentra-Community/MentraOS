@@ -3513,7 +3513,7 @@ fun isDisplayableOtaStatus(status: OtaStatusEvent): Boolean =
     status.status != "idle" || !status.errorMessage.isNullOrBlank()
 
 fun OtaStatusEvent.otaSessionKey(): String =
-    sessionId.ifBlank { "$currentStep:$totalSteps:$stepType" }
+    sessionId.ifBlank { "current-ota" }
 
 fun connectedWifiStatus(status: GlassesRuntimeState?): WifiStatus.Connected? =
     status?.wifi as? WifiStatus.Connected

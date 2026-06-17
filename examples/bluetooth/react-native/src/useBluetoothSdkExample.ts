@@ -1044,7 +1044,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function updateOtaDisplayPercent(payload: OtaStatusEvent) {
     const incomingPercent = Math.max(0, Math.min(payload.overall_percent ?? 0, 100));
-    const sessionId = payload.session_id || `${payload.current_step}:${payload.total_steps}:${payload.step_type}`;
+    const sessionId = otaStatusSessionKey(payload);
     const previous =
       otaDisplayProgressRef.current?.sessionId === sessionId
         ? otaDisplayProgressRef.current.percent
@@ -1064,7 +1064,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (payload.status !== 'complete') {
       return;
     }
-    const sessionId = payload.session_id || `${payload.current_step}:${payload.total_steps}:${payload.step_type}`;
+    const sessionId = otaStatusSessionKey(payload);
     if (postOtaCheckInProgressRef.current || postOtaCheckedSessionRef.current === sessionId) {
       return;
     }
@@ -3975,6 +3975,10 @@ function clampRounded(value: number, min: number, max: number) {
 
 function roiPositionLabel(roiPosition: CameraRoiPosition) {
   return CAMERA_ROI_POSITIONS.find((option) => option.value === roiPosition)?.label ?? 'Center';
+}
+
+function otaStatusSessionKey(status: OtaStatusEvent) {
+  return status.session_id || 'current-ota';
 }
 
 function formatError(error: unknown) {
