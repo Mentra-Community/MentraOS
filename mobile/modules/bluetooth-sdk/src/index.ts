@@ -88,7 +88,6 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setPhotoCaptureDefaults: PrivateBluetoothSdkModule.setPhotoCaptureDefaults.bind(PrivateBluetoothSdkModule),
   setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) =>
     PrivateBluetoothSdkModule.setVideoRecordingDefaults(width, height, fps),
-  setCaptureLedEnabled: PrivateBluetoothSdkModule.setCaptureLedEnabled.bind(PrivateBluetoothSdkModule),
   setMaxVideoRecordingDuration: PrivateBluetoothSdkModule.setMaxVideoRecordingDuration.bind(PrivateBluetoothSdkModule),
   setCameraFov: PrivateBluetoothSdkModule.setCameraFov.bind(PrivateBluetoothSdkModule),
   queryGalleryStatus: PrivateBluetoothSdkModule.queryGalleryStatus.bind(PrivateBluetoothSdkModule),

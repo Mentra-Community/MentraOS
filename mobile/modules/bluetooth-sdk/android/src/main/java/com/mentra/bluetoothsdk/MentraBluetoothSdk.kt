@@ -540,13 +540,6 @@ class MentraBluetoothSdk private constructor(
             },
         )
 
-    fun setCaptureLedEnabled(enabled: Boolean): SettingsAckEvent =
-        performSettingsCommand(
-            setting = "button_camera_led",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
-            send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
-        )
-
     fun setMaxVideoRecordingDuration(minutes: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_max_recording_time",

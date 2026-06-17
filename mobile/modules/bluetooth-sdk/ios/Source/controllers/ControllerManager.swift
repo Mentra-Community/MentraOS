@@ -22,7 +22,7 @@ protocol ControllerManager {
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -30,7 +30,6 @@ protocol ControllerManager {
     func sendButtonPhotoSettings()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
-    func sendButtonCameraLedSetting()
 
     // MARK: - Display Control
 

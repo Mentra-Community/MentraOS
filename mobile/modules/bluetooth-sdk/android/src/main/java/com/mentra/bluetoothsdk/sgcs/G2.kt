@@ -2660,7 +2660,6 @@ class G2 : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
         Bridge.log("G2: startVideoRecording - not supported")
@@ -2681,10 +2680,6 @@ class G2 : SGCManager() {
 
     override fun sendButtonMaxRecordingTime() {
         Bridge.log("G2: sendButtonMaxRecordingTime")
-    }
-
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("G2: sendButtonCameraLedSetting")
     }
 
     override fun sendCameraFovSetting() {

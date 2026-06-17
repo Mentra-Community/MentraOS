@@ -366,7 +366,7 @@ These are the supported React Native app developer entrypoints:
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setCaptureLedEnabled`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
@@ -426,9 +426,8 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Video resolution and frame rate | `setVideoRecordingDefaults({width, height, fps})` |
 | Maximum local video length | `setMaxVideoRecordingDuration(minutes)` |
 | Camera field of view | `setCameraFov(...)` |
-| Local capture LED preference | `setCaptureLedEnabled(...)` |
 
-`requestPhoto(...)` accepts `requestId`, `appId`, `size`, `webhookUrl`, `authToken`, `compress`, `save`, `sound`, `exposureTimeNs`, `iso`, `aeExposureDivisor`, `isoCap`, `mfnr`, `zsl`, `noiseReduction`, `edgeEnhancement`, `ispDigitalGain`, and `ispAnalogGain`. Native Android and iOS also expose `flash`; React Native always sends the capture light enabled. Manual `iso` is used only when `exposureTimeNs` enables manual exposure.
+`requestPhoto(...)` accepts `requestId`, `appId`, `size`, `webhookUrl`, `authToken`, `compress`, `save`, `sound`, `exposureTimeNs`, `iso`, `aeExposureDivisor`, `isoCap`, `mfnr`, `zsl`, `noiseReduction`, `edgeEnhancement`, `ispDigitalGain`, and `ispAnalogGain`. Photo, video, and stream capture always enable the camera light as a privacy indicator. Manual `iso` is used only when `exposureTimeNs` enables manual exposure.
 
 `setPhotoCaptureDefaults(...)` accepts `size`, `mfnr`, `zsl`, `noiseReduction`, `edgeEnhancement`, `ispDigitalGain`, `ispAnalogGain`, `aeExposureDivisor`, `isoCap`, `compress`, `sound`, and `resetCaptureTuning`. Omitted fields leave existing action-button photo defaults unchanged. `resetCaptureTuning: true` restores optional tuning fields to standard capture behavior and does not change photo size unless `size` is also provided.
 

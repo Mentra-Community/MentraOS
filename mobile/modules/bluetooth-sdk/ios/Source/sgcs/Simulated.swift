@@ -80,7 +80,7 @@ class Simulated: SGCManager {
     // MARK: - Camera & Media
 
     func requestPhoto(_ request: PhotoRequest) {
-        Bridge.log("requestPhoto flash=\(request.flash) save=\(request.save) sound=\(request.sound)")
+        Bridge.log("requestPhoto save=\(request.save) sound=\(request.sound)")
     }
 
     func startStream(_: [String: Any]) {
@@ -95,7 +95,7 @@ class Simulated: SGCManager {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {
         Bridge.log("startVideoRecording")
     }
 
@@ -111,10 +111,6 @@ class Simulated: SGCManager {
 
     func sendButtonVideoRecordingSettings() {
         Bridge.log("sendButtonVideoRecordingSettings")
-    }
-
-    func sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
     }
 
     func sendCameraFovSetting() {

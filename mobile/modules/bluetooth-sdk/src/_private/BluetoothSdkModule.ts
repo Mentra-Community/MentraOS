@@ -123,7 +123,6 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setCaptureLedEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
