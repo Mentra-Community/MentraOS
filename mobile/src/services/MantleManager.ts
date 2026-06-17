@@ -8,7 +8,6 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@mentra/island"
@@ -339,9 +338,8 @@ class MantleManager {
         // Route compute + reverse geocoding now run in the v2 cloud maps service
         // (cloud.runtime.maps); the device no longer calls Mapbox REST directly.
       },
-      heading: {
-        addListener: (l) => headingService.addListener(l),
-      },
+      // heading / compass moved into island (HeadingService, subscribed directly by
+      // the runtime) — no longer a host hook.
       locationTier: {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },
