@@ -14,7 +14,7 @@
  * "cloud-rest" so a miniapp sees exactly where and on which leg it broke.
  */
 
-import {cloudClient} from "@/services/cloudClient"
+import {cloudClientService as cloudClient} from "./CloudClientService"
 
 /**
  * Restream destination. The full stream key is part of the URL — Cloudflare

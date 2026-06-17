@@ -28,14 +28,15 @@
  * the legacy path.
  */
 
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {
   KeepAliveAckEvent,
   StreamResolvedConfig,
   StreamStartRequest,
   StreamStatusEvent,
-} from "@mentra/bluetooth-sdk-internal"
-import {getRuntimeHooks} from "@mentra/island"
+} from "@mentra/bluetooth-sdk/internal"
+import {isGlassesConnected} from "./GlassesReadiness"
+import {useGlassesStore} from "../stores/glasses"
 
 import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
 import {
@@ -179,8 +180,7 @@ export class StreamConflictError extends Error {
  * tear the input down again: a slow, billable no-op with a confusing error.
  */
 function assertGlassesConnected(): void {
-  const glasses = getRuntimeHooks().glassesStatus?.get()
-  if (!glasses?.connected) {
+  if (!isGlassesConnected(useGlassesStore.getState().connection)) {
     throw new StreamConflictError(
       "GLASSES_NOT_CONNECTED",
       "Glasses are not connected",

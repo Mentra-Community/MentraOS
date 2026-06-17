@@ -2,7 +2,7 @@
 
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
-import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
+import {StreamLifecycleController, type LifecycleLogger} from "../StreamLifecycleController"
 
 const noopLogger: LifecycleLogger = {
   child: () => noopLogger,

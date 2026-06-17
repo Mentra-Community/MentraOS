@@ -15,7 +15,7 @@ const startExternallyManagedStream = mock(async (req: unknown) => streamStatusFo
 const stopStream = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
-mock.module("@mentra/bluetooth-sdk-internal", () => ({
+mock.module("../../../../bluetooth-sdk/build/_internal", () => ({
   default: {startStream, startExternallyManagedStream, stopStream, sendExternallyManagedStreamKeepAlive},
 }))
 
@@ -35,17 +35,22 @@ const getManagedStreamStatus = mock(async (_id: string) => ({
 }))
 const teardownManagedStream = mock(async (_id: string) => {})
 
-mock.module("./cloudStreamApi", () => ({
+mock.module("../cloudStreamApi", () => ({
   provisionManagedStream,
   getManagedStreamStatus,
   teardownManagedStream,
 }))
 
-// The coordinator's glasses-connected precheck reads island runtime hooks;
-// mocking the module also keeps bun from parsing react-native's flow types.
-mock.module("@mentra/island", () => ({
-  getRuntimeHooks: () => ({glassesStatus: {get: () => ({connected: true})}}),
+// The coordinator's glasses-connected precheck reads the island glasses store via
+// isGlassesConnected. Mock both (the real store transitively drags react-native,
+// which bun can't parse) so the precheck passes deterministically.
+mock.module("../../stores/glasses", () => ({
+  useGlassesStore: {getState: () => ({connection: {state: "connected"}})},
 }))
+mock.module("../GlassesReadiness", () => ({
+  isGlassesConnected: () => true,
+}))
+
 
 // Patch global fetch so the HLS readiness HEAD probe is deterministic.
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
@@ -70,7 +75,7 @@ afterEach(() => {
   ;(globalThis as {fetch: typeof fetch}).fetch = realFetch
 })
 
-const {PhoneStreamCoordinator, StreamConflictError} = await import("./PhoneStreamCoordinator")
+const {PhoneStreamCoordinator, StreamConflictError} = await import("../PhoneStreamCoordinator")
 
 describe("PhoneStreamCoordinator", () => {
   describe("unmanaged", () => {
