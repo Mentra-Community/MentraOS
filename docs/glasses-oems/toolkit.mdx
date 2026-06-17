@@ -1,14 +1,13 @@
 ---
 title: "Runtime Toolkit"
-description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, status, wifi, speech, and display, over a device-agnostic runtime."
+description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, pairing, device + user settings, wifi, speech, display, cloud session, miniapps, permissions, notifications, and incidents, over a device-agnostic runtime."
 ---
 
 <Note>
-**Status: preview (Phase 1).** The runtime toolkit is being built domain by domain.
-The surface documented here is shipped and stable; more domains (settings,
-permissions, gallery, session) are landing behind the same patterns. The runtime is
-not yet packaged for external install — reach out to
-[help@mentra.glass](mailto:help@mentra.glass) to integrate today.
+**Status: preview (Phase 1).** The runtime toolkit covers the full Phase-1 surface
+documented below. Firmware **OTA** and the media **gallery** are intentionally
+deferred to a later phase. The runtime is not yet packaged for external install —
+reach out to [help@mentra.glass](mailto:help@mentra.glass) to integrate today.
 </Note>
 
 ## What it is
@@ -151,8 +150,8 @@ toolkit.pairing.scan()                          // start scanning
 toolkit.pairing.scanning()                      // is a scan in progress?
 toolkit.pairing.searchResults()                 // discovered devices (snapshot)
 const off = toolkit.pairing.onFound((r) => { … }) // subscribe; returns unsubscribe
-await toolkit.pairing.pair(deviceId)            // connect to a discovered device
-await toolkit.pairing.setDefault(deviceId)      // make it the connectDefault() target
+await toolkit.pairing.pair(device)              // connect to a discovered device (from searchResults)
+await toolkit.pairing.setDefault(device)        // make it the connectDefault() target
 toolkit.pairing.onPairFailure((e) => { … })
 toolkit.pairing.onGlassesNotReady((e) => { … })
 ```
@@ -282,11 +281,31 @@ const off = toolkit.notifications.onNotification((n) => {
 })
 ```
 
+## `toolkit.miniapps`
+
+Miniapp lifecycle. The miniapp **WebView is a host component** — island ships the
+bridge primitives (`buildMiniappGlobalsScript`, `buildMentraUiShim`, the MentraJS
+router), exported from `@mentra/island` directly; your app mounts the `<WebView>` and
+wires it to those. This facade is the lifecycle half.
+
+```ts
+toolkit.miniapps.list()                          // installed miniapps (snapshot)
+const off = toolkit.miniapps.onChanged((apps) => { … }) // subscribe; returns unsubscribe
+await toolkit.miniapps.refresh()                 // re-fetch the installed list
+await toolkit.miniapps.start(app, opts?)         // start + foreground a miniapp
+await toolkit.miniapps.stop(packageName)
+await toolkit.miniapps.setForeground(packageName)
+toolkit.miniapps.clearForeground()
+await toolkit.miniapps.stopAll()
+await toolkit.miniapps.install(url, opts?)
+await toolkit.miniapps.uninstall(packageName, version?)
+```
+
 ## `toolkit.stores.*` — escape hatch (not the OEM contract)
 
 The raw device-state stores are also exposed under `toolkit.stores`
-(`glasses`, `display`, `core`, `connection`, `gallerySync`) so the first-party Mentra
-app can keep using them directly during migration.
+(`glasses`, `display`, `core`, `connection`, `gallerySync`, `cloudClientStatus`,
+`settings`) so the first-party Mentra app can keep using them directly during migration.
 
 <Warning>
 `toolkit.stores.*` is a **Mentra-app convenience, not the OEM contract.** It exposes
@@ -294,12 +313,17 @@ the internal store shape, which can change. OEMs should use the typed facades ab
 prefer a facade wherever one exists.
 </Warning>
 
-## How a host wires in (the adapter seam)
+## What the host provides
 
-A few runtime services need things only the host can provide (persistent storage, the
-backend client, audio playback). The toolkit never imports host code; instead it
-declares small typed **ports**, and the host injects **adapters** at boot through a
-single dependency-injection seam. The host implements the interface; the toolkit owns
-the behavior. OEM hosts implement the same ports with their own backing — that is what
-keeps the runtime device- and host-agnostic. (This seam is what the remaining
-domains — settings, permissions, gallery — land behind.)
+The boundary is small and explicit: the host provides its **UI**, its **login**, and
+optional **config** — island owns the entire runtime. The only required seam is
+`auth.getSubjectToken` (passed to `configure()`); island owns token exchange, refresh,
+storage, the cloud client, glasses/BLE, settings, speech, display, and the miniapp
+runtime from there.
+
+<Note>
+You may see internal `configureRuntime(...)` wiring in the first-party Mentra app —
+that's **transitional** scaffolding for migrating Mentra's own screens, not part of
+the OEM contract. It deletes itself as each domain lands in island. An OEM only ever
+calls `configure({auth, config?})` + `start()`.
+</Note>
