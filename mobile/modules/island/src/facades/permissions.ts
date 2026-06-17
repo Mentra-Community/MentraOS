@@ -75,10 +75,12 @@ export const permissions = {
     if (Platform.OS === "android") {
       const perms = androidPerms(feature)
       if (perms.length === 0) return true // nothing to ask on this OS/version
+      // Every permission in the group must be granted (e.g. bluetooth =
+      // scan+connect+advertise, calendar = read+write) — matches the iOS branch.
       for (const p of perms) {
-        if (await PermissionsAndroid.check(p)) return true
+        if (!(await PermissionsAndroid.check(p))) return false
       }
-      return false
+      return true
     }
     const perms = iosPerms(feature)
     if (perms.length === 0) return true
@@ -95,7 +97,8 @@ export const permissions = {
       const perms = androidPerms(feature)
       if (perms.length === 0) return true
       const results = await PermissionsAndroid.requestMultiple(perms)
-      return perms.some((p) => results[p] === PermissionsAndroid.RESULTS.GRANTED)
+      // Granted only when EVERY permission in the group was granted.
+      return perms.every((p) => results[p] === PermissionsAndroid.RESULTS.GRANTED)
     }
     const perms = iosPerms(feature)
     if (perms.length === 0) return true
