@@ -594,6 +594,15 @@ jest.mock("@mentra/island", () => {
       handlePhotoError: jest.fn(),
       takePhoto: jest.fn(() => Promise.resolve({photoUrl: "", mimeType: "image/jpeg", size: 0, requestId: "x"})),
     },
+    phoneStreamCoordinator: {
+      owns: jest.fn(() => false),
+      handleGlassesStatus: jest.fn(),
+      handleKeepAliveAck: jest.fn(),
+      startUnmanaged: jest.fn(() => Promise.resolve({streamId: "x", status: "streaming"})),
+      startManaged: jest.fn(() => Promise.resolve({streamId: "x", status: "streaming"})),
+      stop: jest.fn(() => Promise.resolve()),
+      setStatusSubscriber: jest.fn(),
+    },
     localMiniappRuntime: {
       cleanup: jest.fn(),
       forwardEvent: jest.fn(),

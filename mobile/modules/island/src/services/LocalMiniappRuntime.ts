@@ -37,6 +37,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
+import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {
   getRuntimeHooks,
@@ -672,10 +673,8 @@ class LocalMiniappRuntime {
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
     // so glasses publishing and managed Cloudflare inputs do not leak.
-    void getRuntimeHooks()
-      .streaming?.stop(packageName)
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
+    void phoneStreamCoordinator.stop(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
       })
 
     // Stop any phone-owned video recordings for this app. A miniapp that
@@ -2099,8 +2098,8 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Stream handlers — dispatched to the host's StreamingAdapter. For managed
-   * streams the adapter additionally calls the v2 client REST route to
+   * Stream handlers — dispatched to the island PhoneStreamCoordinator. For managed
+   * streams the coordinator additionally calls the v2 client REST route to
    * provision Cloudflare. Cloud-SDK apps (third-party developers) use a
    * separate cloud-side path that does not pass through here.
    */
@@ -2109,7 +2108,7 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const streaming = getRuntimeHooks().streaming
+    const streaming = phoneStreamCoordinator
     if (!streaming) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_IMPLEMENTED,
@@ -2140,7 +2139,7 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const streaming = getRuntimeHooks().streaming
+    const streaming = phoneStreamCoordinator
     if (!streaming) {
       // No adapter wired — treat as already-stopped.
       this.sendResult(packageName, requestId, true)
@@ -2164,7 +2163,7 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const streaming = getRuntimeHooks().streaming
+    const streaming = phoneStreamCoordinator
     if (!streaming) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_IMPLEMENTED,
@@ -2200,12 +2199,12 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Wire the StreamingAdapter's status callback so coordinator-emitted
+   * Wire the PhoneStreamCoordinator's status callback so coordinator-emitted
    * updates become `EVENT { streamType: "stream_status" }` envelopes on the
    * subscribing miniapp(s).
    */
   public wireStreamingStatusFanout(): void {
-    const streaming = getRuntimeHooks().streaming
+    const streaming = phoneStreamCoordinator
     if (!streaming) return
     streaming.setStatusSubscriber((packageName, update) => {
       this.sendToMiniapp(packageName, {

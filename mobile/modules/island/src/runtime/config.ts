@@ -305,61 +305,8 @@ export interface LocationTierAdapter {
   setLocationTier: (rate: "off" | "passive" | "low" | "high" | "realtime") => void
 }
 
-/**
- * Streaming adapter — owns RTMP/SRT/WHIP publishing on the phone for local
- * miniapps. The runtime calls these from its stream request handlers; the
- * host's PhoneStreamCoordinator implements them.
- */
-export interface StreamingAdapter {
-  /** Glasses-confirmed publisher start result. */
-  startUnmanaged: (
-    packageName: string,
-    opts: {
-      streamUrl: string
-      video?: unknown
-      audio?: unknown
-      sound?: boolean
-    },
-  ) => Promise<StreamPublisherStartResult>
-  startManaged: (
-    packageName: string,
-    opts: {
-      restreamDestinations?: Array<string | {url: string; name?: string}>
-      video?: unknown
-      audio?: unknown
-      sound?: boolean
-      /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
-      ingest?: "srt" | "whip"
-    },
-  ) => Promise<ManagedStreamStartResult>
-  stop: (packageName: string, streamId?: string) => Promise<void>
-  /**
-   * Subscribe to status updates produced by the coordinator (BLE-originated
-   * status, Cloudflare poll, lifecycle errors). Called per-(packageName,
-   * update) pair so the runtime can fan an EVENT into the right miniapp(s).
-   */
-  setStatusSubscriber: (
-    cb: (
-      packageName: string,
-      update: {streamId: string; status: string; data?: Record<string, unknown>; source: string},
-    ) => void,
-  ) => void
-}
-
-export interface StreamPublisherStartResult {
-  streamId: string
-  status: string
-  resolvedConfig?: Record<string, unknown>
-}
-
-export interface ManagedStreamStartResult extends StreamPublisherStartResult {
-  liveInputId: string
-  /** "hls" (SRT/RTMP ingest) or "webrtc" (WHIP ingest -> WHEP playback). */
-  mode: "hls" | "webrtc"
-  hlsUrl: string
-  dashUrl: string
-  webrtcUrl?: string
-}
+// Streaming (RTMP/SRT/WHIP publishing) moved into island (PhoneStreamCoordinator,
+// called directly by the runtime) — no longer a host-provided hook.
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraFovPreset = "narrow" | "standard" | "wide"
@@ -490,8 +437,6 @@ export interface RuntimeHooks {
   // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
   /** Phone-orchestrated camera settings (session.camera.setFov). */
   cameraSettings?: CameraSettingsAdapter
-  /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
-  streaming?: StreamingAdapter
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
   interop?: InteropAdapter
 }

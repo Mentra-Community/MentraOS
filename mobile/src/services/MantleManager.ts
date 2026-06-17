@@ -11,7 +11,7 @@ import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@mentra/island"
-import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
+import {phoneStreamCoordinator} from "@mentra/island"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
@@ -283,14 +283,11 @@ class MantleManager {
       locationTier: {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },
-      streaming: {
-        startUnmanaged: (pkg, opts) => phoneStreamCoordinator.startUnmanaged(pkg, opts),
-        startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
-        stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
-        setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
-      },
+      // streaming (RTMP/SRT/WHIP) moved into island (PhoneStreamCoordinator, called
+      // directly by the runtime) — no longer a host hook. (The stream_status /
+      // keep_alive_ack listeners below still route events to the coordinator.)
     })
-    // Wire the runtime's status fanout now that the streaming hook is in.
+    // Wire the runtime's status fanout (now subscribes the island coordinator directly).
     localMiniappRuntime.wireStreamingStatusFanout()
 
     // DisplayProcessor's singleton was constructed at module load — before runtime

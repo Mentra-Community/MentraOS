@@ -48,6 +48,7 @@ export {
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
+export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 export {
   default as sttModelManager,
   STTModelManager,
@@ -164,7 +165,6 @@ export {
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
-  type StreamingAdapter,
   type InteropAdapter,
   type InteropAuditEvent,
 } from "./runtime/config"
