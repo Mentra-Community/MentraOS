@@ -229,6 +229,14 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
   writeFile: jest.fn(() => Promise.resolve()),
 }))
 
+// LocalMiniappRuntime pulls heavy native modules (react-native-share, expo-*).
+// requireActual'd island services that import it (e.g. GlassesStatusProjection)
+// only need its forwardEvent side-effect, so stub it light here.
+jest.mock("./modules/island/src/services/LocalMiniappRuntime", () => ({
+  __esModule: true,
+  default: {forwardEvent: jest.fn()},
+}))
+
 // Mock @mentra/island — its barrel pulls in many native modules
 // (react-native-share, expo-battery/clipboard/location, etc.). Tests that
 // only need a handful of exports get stubs here; specific tests can override.
@@ -249,6 +257,7 @@ jest.mock("@mentra/island", () => {
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
+  const realGlassesStatusProjection = jest.requireActual("./modules/island/src/services/GlassesStatusProjection")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
@@ -294,11 +303,13 @@ jest.mock("@mentra/island", () => {
     toolkit: {
       configure: jest.fn(),
       start: jest.fn(() => {
+        realGlassesStatusProjection.startGlassesStatusProjection()
         realGlassesSettingsSync.startGlassesSettingsSync()
         realPhoneNotificationsSync.startPhoneNotificationsSync()
         return Promise.resolve()
       }),
       stop: jest.fn(() => {
+        realGlassesStatusProjection.stopGlassesStatusProjection()
         realGlassesSettingsSync.stopGlassesSettingsSync()
         realPhoneNotificationsSync.stopPhoneNotificationsSync()
         return Promise.resolve()

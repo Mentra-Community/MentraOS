@@ -1,4 +1,4 @@
-import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk, {ButtonPressEvent, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
@@ -533,24 +533,10 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    // Forward Bluetooth SDK status changes to the zustand core store.
-    this.subs.push(
-      BluetoothSdk.onBluetoothStatus((changed: Partial<BluetoothStatus>) => {
-        // console.log("MANTLE: Bluetooth status changed", changed)
-        useCoreStore.getState().setCoreInfo(changed)
-      }),
-    )
-    this.subs.push(
-      BluetoothSdk.onGlassesStatus((changed) => {
-        // console.log("MANTLE: Glasses status changed", changed)
-        useGlassesStore.getState().setGlassesInfo(changed)
-        localMiniappRuntime.forwardEvent("glasses_connection_state", changed)
-        // TODO: this should be moved to the bluetooth sdk:
-        if (changed.connection?.state === "disconnected") {
-          useGlassesStore.getState().setOtaUpdateAvailable(null)
-        }
-      }),
-    )
+    // (The device-status projection — onBluetoothStatus -> core store and
+    // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
+    // started by toolkit.start(), so the device->store feed reaches ANY host. Removed
+    // here to avoid a double-projection.)
 
     // Subscribe to individual Bluetooth SDK events.
     {
