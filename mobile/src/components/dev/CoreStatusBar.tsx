@@ -10,8 +10,8 @@ import {useDebugStore} from "@/stores/debug"
 import {selectGlassesConnected, selectGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import BluetoothSdk, {TouchEvent} from "@mentra/bluetooth-sdk"
-import {BgTimer} from "@mentra/island"
+import {TouchEvent} from "@mentra/bluetooth-sdk"
+import {BgTimer, toolkit} from "@mentra/island"
 
 function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   const {theme} = useAppTheme()
@@ -57,7 +57,7 @@ export default function CoreStatusBar() {
 
   const touchEventTimer = useRef<number | null>(null)
   useEffect(() => {
-    let sub = BluetoothSdk.addListener("touch_event", (event: TouchEvent) => {
+    let unsub = toolkit.glasses.onTouchGesture((event: TouchEvent) => {
       setTouchEvent(event)
       BgTimer.clearTimeout(touchEventTimer.current ?? 0)
       touchEventTimer.current = BgTimer.setTimeout(() => {
@@ -66,7 +66,7 @@ export default function CoreStatusBar() {
       // console.log("touch_event", event)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [])
 

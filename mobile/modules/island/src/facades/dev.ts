@@ -8,6 +8,7 @@
  * still lives host-side in `@/services/cloudClient` during the migration; this
  * facade manages the explicit overrides + reconnect.
  */
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
@@ -57,4 +58,7 @@ export const dev = {
 
   /** Tear down + rebuild the live cloud client (the dev "reconnect" button). */
   reconnectCloud: (): void => applyCloudUrlReconnect(),
+
+  /** Current native (BLE-process) memory usage in MB — a dev/diagnostics gauge. */
+  getMemoryMB: (): number => BluetoothSdk.getMemoryMB(),
 }
