@@ -422,7 +422,8 @@ class MantleManager {
       // settings are now in native; safe to attempt auto-connect
       attemptReconnectToDefaultWearable()
     }, 1000)
-    await this.syncNotificationSettingsToCrust()
+    // (Initial notification-config push now happens in island's
+    // PhoneNotificationsSync, started by toolkit.start().)
 
     this.initServices()
     this.initMiniapps()
@@ -551,16 +552,6 @@ class MantleManager {
     }
   }
 
-  private async syncNotificationSettingsToCrust() {
-    const settings = useSettingsStore.getState()
-    const notificationsEnabled = Boolean(settings.getSetting(SETTINGS.notifications_enabled.key))
-    const notificationsBlocklist = settings.getSetting(SETTINGS.notifications_blocklist.key)
-    await CrustModule.setNotificationConfig(
-      notificationsEnabled,
-      Array.isArray(notificationsBlocklist) ? notificationsBlocklist : [],
-    )
-  }
-
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
@@ -621,20 +612,11 @@ class MantleManager {
       {equalityFn: shallow},
     )
 
-    // (Device-settings -> glasses BLE sync now lives in island's
-    // GlassesSettingsSync, started by toolkit.start(), so toolkit.glasses.settings.set()
-    // reaches the device for any host. Removed here to avoid a double-push.)
-
-    useSettingsStore.subscribe(
-      (state) => ({
-        notificationsEnabled: state.getSetting(SETTINGS.notifications_enabled.key),
-        notificationsBlocklist: state.getSetting(SETTINGS.notifications_blocklist.key),
-      }),
-      async () => {
-        await this.syncNotificationSettingsToCrust()
-      },
-      {equalityFn: shallow},
-    )
+    // (Device-settings -> glasses BLE sync AND phone-notification config -> the
+    // native listener now live in island's GlassesSettingsSync / PhoneNotificationsSync,
+    // started by toolkit.start(), so toolkit.glasses.settings.set() /
+    // toolkit.phoneNotifications.* reach the device for any host. Removed here to
+    // avoid a double-sync.)
 
     // Remove old event subscriptions
     this.subs.forEach((sub) => sub.remove())

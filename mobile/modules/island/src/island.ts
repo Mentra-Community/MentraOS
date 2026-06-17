@@ -11,6 +11,7 @@
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
+import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
 import {speech} from "./facades/speech"
@@ -46,10 +47,13 @@ export const toolkit = {
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
+    // Same for phone-notification config -> the native listener (Android).
+    startPhoneNotificationsSync()
   },
   /** Stop the runtime: tear down the settings sync + cloud client + mark stopped. */
   async stop() {
     stopGlassesSettingsSync()
+    stopPhoneNotificationsSync()
     cloudClientService.stop()
     await bootstrapStop()
   },
