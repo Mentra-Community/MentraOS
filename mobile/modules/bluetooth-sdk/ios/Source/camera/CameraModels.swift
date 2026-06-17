@@ -111,7 +111,7 @@ public struct PhotoCaptureDefaults {
     }
 }
 
-public struct ButtonVideoRecordingSettings {
+public struct VideoRecordingDefaults {
     public let width: Int
     public let height: Int
     public let fps: Int

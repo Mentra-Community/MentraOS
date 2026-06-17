@@ -527,30 +527,27 @@ class MentraBluetoothSdk private constructor(
             send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, settings) },
         )
 
-    fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
+    fun setVideoRecordingDefaults(defaults: VideoRecordingDefaults): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_video_recording",
             updateStore = { _ ->
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", defaults.width)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", defaults.height)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", defaults.fps)
             },
             send = { requestId ->
-                deviceManager.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+                deviceManager.sendButtonVideoRecordingSettings(requestId, defaults.width, defaults.height, defaults.fps)
             },
         )
 
-    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings): SettingsAckEvent =
-        setButtonVideoRecordingSettings(width = settings.width, height = settings.height, fps = settings.fps)
-
-    fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent =
+    fun setCaptureLedEnabled(enabled: Boolean): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_camera_led",
             updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
             send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
         )
 
-    fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent =
+    fun setMaxVideoRecordingDuration(minutes: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_max_recording_time",
             updateStore = { _ ->
