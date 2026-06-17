@@ -349,7 +349,7 @@ struct DeviceScreen: View {
                 }
                 Spacer()
                 if let status = model.otaStatus {
-                    Text("\(status.overallPercent)%")
+                    Text("\(otaDisplayPercent(model: model, status: status))%")
                         .font(.system(size: 20, weight: .heavy))
                         .foregroundColor(AppColor.greenInk)
                 }
@@ -360,7 +360,7 @@ struct DeviceScreen: View {
                         Capsule().fill(AppColor.greenInk.opacity(0.08))
                         Capsule()
                             .fill(AppColor.greenPrimary)
-                            .frame(width: geometry.size.width * CGFloat(min(max(status.overallPercent, 0), 100)) / 100.0)
+                            .frame(width: geometry.size.width * CGFloat(min(max(otaDisplayPercent(model: model, status: status), 0), 100)) / 100.0)
                     }
                 }
                 .frame(height: 6)
@@ -450,7 +450,7 @@ private func isOtaInProgress(model: BluetoothViewModel) -> Bool {
 @MainActor
 private func otaStatusLine(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus {
-        return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(status.overallPercent)%"
+        return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(otaDisplayPercent(model: model, status: status))%"
     }
     if model.otaUpdateAvailable {
         return "Update required"
@@ -459,6 +459,11 @@ private func otaStatusLine(model: BluetoothViewModel) -> String {
         return message
     }
     return model.glassesConnected ? "Check not run" : "Connect glasses"
+}
+
+@MainActor
+private func otaDisplayPercent(model: BluetoothViewModel, status: OtaStatusEvent) -> Int {
+    model.otaDisplayPercent ?? status.overallPercent
 }
 
 @MainActor
