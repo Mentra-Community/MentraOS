@@ -259,35 +259,6 @@ export default function Compositor() {
       }
     })
 
-  //   // Register a capsule handler whenever a miniapp is foregrounded so the
-  // // global house/X button reflects the Compositor-managed app. The X press
-  // // backgrounds the app (clearForeground), same as the swipe gesture.
-  // useEffect(() => {
-  //   if (!foregroundApp) return
-  //   const {setActive} = useCapsuleStore.getState()
-  //   setActive({
-  //     packageName: foregroundApp.packageName,
-  //     viewShotRef: {current: null},
-  //     appNameOverride: foregroundApp.name,
-  //     iconUrlOverride: foregroundApp.logoUrl,
-  //     handleLeftPress: () => {
-  //       handleBack()
-  //     },
-  //     handleRightPress: () => {
-  //       handleBack()
-  //       BgTimer.setTimeout(() => {
-  //         useAppStatusStore.getState().stop(foregroundApp.packageName)
-  //       }, 100)
-  //     },
-  //   })
-  //   return () => {
-  //     const current = useCapsuleStore.getState().active
-  //     if (current?.packageName === foregroundApp.packageName) {
-  //       setActive(null)
-  //     }
-  //   }
-  // }, [foregroundApp, viewShotRef])
-
   // Drive fade-in(foreground) and fade-out + shrink (clear).
   useEffect(() => {
     if (isForeground) {
