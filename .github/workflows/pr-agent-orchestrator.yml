@@ -62,6 +62,23 @@ jobs:
             let ciFailed = 'false';
             let workflowRunSha = null;
 
+            if (
+              pr &&
+              context.eventName === 'pull_request' &&
+              context.payload.action === 'labeled'
+            ) {
+              const label = context.payload.label?.name;
+              const internalLabels = [
+                'agent-in-progress',
+                'ready-for-human-review',
+                'agent-needs-human',
+              ];
+              if (internalLabels.includes(label)) {
+                core.setOutput('pr_number', '');
+                return;
+              }
+            }
+
             if (context.eventName === 'workflow_run') {
               workflowRunSha = context.payload.workflow_run.head_sha;
             }
@@ -77,13 +94,16 @@ jobs:
               }
               ciFailed = String(isFailure);
               core.setOutput('ci_recheck_only', String(isSuccess));
+              const headOwner =
+                run.head_repository?.owner?.login ?? context.repo.owner;
               const pulls = await github.rest.pulls.list({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                head: `${context.repo.owner}:${run.head_branch}`,
+                head: `${headOwner}:${run.head_branch}`,
                 state: 'open',
               });
-              pr = pulls.data[0];
+              pr =
+                pulls.data.find((p) => p.head.sha === run.head_sha) ?? pulls.data[0];
             } else {
               core.setOutput('ci_recheck_only', 'false');
             }
@@ -243,6 +263,7 @@ jobs:
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_bugbot == 'true'
     runs-on: ubuntu-latest
     outputs:
+      bugbot_completed: ${{ steps.poll.outputs.bugbot_completed }}
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
     steps:
       - uses: actions/checkout@v4
@@ -307,6 +328,7 @@ jobs:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
           ACTIVE_PAIR: ${{ needs.plan.outputs.active_pair }}
+          BUGBOT_COMPLETED: ${{ needs.review-bugbot.outputs.bugbot_completed || 'false' }}
           BUGBOT_SUCCESS: ${{ needs.review-bugbot.outputs.bugbot_success || 'false' }}
           CI_TRIGGER_FAILED: ${{ needs.resolve-context.outputs.ci_trigger_failed }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -428,11 +450,50 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli finalize
 
+  cleanup-progress-label:
+    name: Clear progress label on stop
+    needs: [resolve-context, plan, finalize]
+    if: |
+      always() && needs.resolve-context.outputs.pr_number != '' && (
+        failure() ||
+        needs.plan.outputs.should_skip == 'true' ||
+        needs.finalize.result == 'success'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove agent-in-progress
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = parseInt('${{ needs.resolve-context.outputs.pr_number }}', 10);
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr,
+                name: 'agent-in-progress',
+              });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
   notify-failure:
     name: Notify on failure
-    needs: [plan, aggregate, fix, recheck-handoff, finalize]
-    if: failure() && needs.plan.outputs.should_skip != 'true'
-    uses: ./.github/workflows/reusable-pr-comment.yml
-    with:
-      message: |
-        PR Agent Orchestrator failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    needs: [resolve-context, plan, aggregate, fix, recheck-handoff, finalize]
+    if: failure() && needs.resolve-context.outputs.pr_number != '' && needs.plan.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = parseInt('${{ needs.resolve-context.outputs.pr_number }}', 10);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+              body: `PR Agent Orchestrator failed. See run: ${runUrl}`,
+            });

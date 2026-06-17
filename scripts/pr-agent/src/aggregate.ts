@@ -19,6 +19,7 @@ export type ReviewOutputs = {
   standards?: string;
   depth?: string;
   bugbot?: string;
+  bugbotCheckCompleted?: boolean;
   bugbotCheckSuccess?: boolean;
 };
 
@@ -27,7 +28,7 @@ function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean 
     const text = slot === 'standards' ? reviews.standards : reviews.depth;
     return !!text && !!parseVerdictFromText(text);
   }
-  if (reviews.bugbotCheckSuccess !== true) return false;
+  if (reviews.bugbotCheckCompleted !== true) return false;
   return !!reviews.bugbot && !!parseVerdictFromText(reviews.bugbot);
 }
 
@@ -46,7 +47,11 @@ export function aggregateCycle(
   let newBlockingFingerprints: string[] = [];
   let allApproved = true;
 
-  const ingest = (text: string | undefined, source: ReviewSlot) => {
+  const ingest = (
+    text: string | undefined,
+    source: ReviewSlot,
+    options?: { resolveOnApprove?: boolean },
+  ) => {
     if (!text) return;
     const verdict = parseVerdictFromText(text);
     if (!verdict) return;
@@ -57,7 +62,8 @@ export function aggregateCycle(
     newBlockingFingerprints.push(...mergedOpen.newFingerprints);
     const mergedNits = mergeFindings(nitFindings, nits, cycle);
     nitFindings = mergedNits.merged;
-    if (verdict.verdict === 'approve' && blocking.length === 0) {
+    const resolveOnApprove = options?.resolveOnApprove ?? true;
+    if (verdict.verdict === 'approve' && blocking.length === 0 && resolveOnApprove) {
       const resolved = resolveOpenFindingsFromSource(
         openFindings,
         resolvedFindings,
@@ -72,10 +78,12 @@ export function aggregateCycle(
   if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
   if (activePair.includes('depth')) ingest(reviews.depth, 'depth');
   if (activePair.includes('bugbot')) {
-    if (reviews.bugbotCheckSuccess === true && reviews.bugbot) {
-      ingest(reviews.bugbot, 'bugbot');
+    if (reviews.bugbotCheckCompleted === true && reviews.bugbot) {
+      ingest(reviews.bugbot, 'bugbot', {
+        resolveOnApprove: reviews.bugbotCheckSuccess === true,
+      });
     }
-    if (reviews.bugbotCheckSuccess === false) {
+    if (reviews.bugbotCheckCompleted === false) {
       allApproved = false;
     }
   }

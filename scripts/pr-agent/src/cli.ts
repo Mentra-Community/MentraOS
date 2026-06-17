@@ -90,6 +90,7 @@ async function cmdAggregate() {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
+    bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
   };
 
