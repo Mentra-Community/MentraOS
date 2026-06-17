@@ -5197,7 +5197,9 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
-        let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as? String
+        let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
+            rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
+        }
         let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
         let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
@@ -5209,8 +5211,8 @@ extension MentraLive {
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
         let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
 
-        let settings = ButtonPhotoSettings(
-            size: ButtonPhotoSize(normalizedRawValue: size ?? "medium"),
+        let settings = PhotoCaptureDefaults(
+            size: size,
             mfnr: mfnr,
             zsl: zsl,
             noiseReduction: noiseReduction,
@@ -5228,10 +5230,10 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings(requestId: String?, size: String) {
-        sendButtonPhotoSettings(requestId: requestId, settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size)))
+        sendButtonPhotoSettings(requestId: requestId, settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size)))
     }
 
-    func sendButtonPhotoSettings(requestId: String?, settings: ButtonPhotoSettings) {
+    func sendButtonPhotoSettings(requestId: String?, settings: PhotoCaptureDefaults) {
         var details = settings.size.map { "size=\($0.rawValue)" } ?? "size=unchanged"
         if let mfnr = settings.mfnr {
             details += ", mfnr=\(mfnr)"

@@ -431,8 +431,8 @@ export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
-export type ButtonPhotoSettings = {
-  size: ButtonPhotoSize
+export type PhotoCaptureDefaults = {
+  size?: PhotoSize
   mfnr?: boolean
   zsl?: boolean
   noiseReduction?: boolean
@@ -946,7 +946,7 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
+  setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>

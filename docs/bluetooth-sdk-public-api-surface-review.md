@@ -117,7 +117,7 @@ forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
 setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
 setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
-setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
+setPhotoCaptureDefaults(defaults: PhotoCaptureDefaults): Promise<SettingsAckEvent>
 setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
 setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
 setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
@@ -278,8 +278,7 @@ fun setHeadUpAngle(angleDegrees: Int)
 fun setScreenDisabled(disabled: Boolean)
 
 fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent
-fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent
-fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent
+fun setPhotoCaptureDefaults(defaults: PhotoCaptureDefaults): SettingsAckEvent
 fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent
 fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent
 fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent
@@ -409,8 +408,7 @@ public func setHeadUpAngle(_ angleDegrees: Int) async throws
 public func setScreenDisabled(_ disabled: Bool) async throws
 
 public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent
-public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent
-public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent
+public func setPhotoCaptureDefaults(_ defaults: PhotoCaptureDefaults) async throws -> SettingsAckEvent
 public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent
 public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent
 public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent

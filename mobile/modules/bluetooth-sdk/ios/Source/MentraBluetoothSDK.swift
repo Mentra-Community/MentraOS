@@ -482,11 +482,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
-    public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent {
-        try await setButtonPhotoSettings(ButtonPhotoSettings(size: size))
-    }
-
-    public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent {
+    public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
             updateStore: { _ in

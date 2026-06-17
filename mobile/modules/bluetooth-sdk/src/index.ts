@@ -3,7 +3,6 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
-  ButtonPhotoSettings,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
@@ -85,15 +84,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: (settings: ButtonPhotoSettings) => {
-    // setButtonPhotoCaptureSettings is available in SDK 0.1.13+. Guard for OTA version-skew
-    // where a new JS bundle runs against an older native module that only has the string form.
-    if (typeof PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings === "function") {
-      return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings)
-    }
-    // Legacy fallback: old native bridge only accepts a size string
-    return PrivateBluetoothSdkModule.setButtonPhotoSettings({size: settings.size ?? "max"} as any)
-  },
+  setPhotoCaptureDefaults: PrivateBluetoothSdkModule.setPhotoCaptureDefaults.bind(PrivateBluetoothSdkModule),
   setButtonVideoRecordingSettings:
     PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
   setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
@@ -155,7 +146,7 @@ export type {
   BluetoothSdkPublicModule as BluetoothSdkModule,
   BluetoothSdkSubscription,
   ButtonPhotoSize,
-  ButtonPhotoSettings,
+  PhotoCaptureDefaults,
   ButtonPressEvent,
   CameraFovPreset,
   CameraFovRequest,
