@@ -147,17 +147,17 @@ The current keys, their types, and defaults:
 |---|---|---|---|
 | `brightness` | number | `50` | display brightness, `0`–`100` |
 | `auto_brightness` | boolean | `true` | auto-adjust brightness |
-| `head_up_angle` | number | `45` | head-up activation angle (degrees) |
+| `head_up_angle` | number | `45` | head-up activation angle in degrees, `0`–`60` |
 | `screen_disabled` | boolean | `false` | turn the display off |
 | `contextual_dashboard` | boolean | `true` | show the dashboard on head-up |
 | `dashboard_height` | number | `4` | dashboard vertical position |
 | `dashboard_depth` | number | `2` | dashboard distance |
 | `use_native_dashboard` | boolean | `true` | native dashboard vs JS |
 | `menu_apps` | `string[] \| null` | `null` | button-menu app package names |
-| `button_photo_size` | enum | `"max"` | `small` \| `medium` \| `large` \| `max` |
+| `button_photo_size` | enum | `"max"` | `low` (960×720) \| `medium` (1440×1088) \| `high` (3264×2448) \| `max` (camera maximum) |
 | `button_video_settings` | object | `{ width: 1920, height: 1080, fps: 30 }` | button video recording |
 | `button_camera_led` | boolean | `true` | capture LED indicator |
-| `button_max_recording_time` | number | `10` | max button video length (seconds) |
+| `button_max_recording_time` | number | `10` | max button-triggered video length, in **minutes** (e.g. `3`, `5`, `10`, `15`, `20`) |
 | `camera_fov` | object | `{ fov: 118, roi_position: 0 }` | camera field of view |
 | `preferred_mic` | enum | `"auto"` | `auto` \| `glasses` \| `phone` |
 | `lc3_frame_size` | enum (bytes) | `60` | `20` \| `40` \| `60` |
@@ -165,7 +165,7 @@ The current keys, their types, and defaults:
 | `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
 | `power_saving_mode` | boolean | `false` | low-power mode |
 | `offline_mode` | boolean | `false` | offline operation |
-| `gallery_mode` | boolean | `true` | on-device gallery |
+| `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra app auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |
 | `calendar_events` | array | `[]` | synced calendar events |
 | `twelve_hour_time` | boolean | `true` | 12-hour vs 24-hour clock |
 | `metric_system` | boolean | `false` | metric vs imperial |
