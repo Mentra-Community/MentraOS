@@ -203,6 +203,7 @@ class DeviceManager {
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
     private var lastSystemTimeSyncConnectionKey: String = ""
+    private var glassesMicDegradedUntilMs: Long = 0L
 
     private var systemMicUnavailable: Boolean
         get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
@@ -354,8 +355,19 @@ class DeviceManager {
         // actually attempt recovery (was 0 before, which made the watchdog a no-op).
         val timeSinceLastLc3Event = System.currentTimeMillis() - (lastLc3Event ?: 0L)
         if (timeSinceLastLc3Event > 5000) {
-            Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
-            sgc?.setMicEnabled(true)
+            if (currentMic == MicTypes.GLASSES_CUSTOM &&
+                            preferredMic != "glasses" &&
+                            micRanking.any { it != MicTypes.GLASSES_CUSTOM }
+            ) {
+                glassesMicDegradedUntilMs = System.currentTimeMillis() + 15_000
+                Bridge.log(
+                        "MAN: No audio activity in the last 5 seconds from glasses, temporarily falling back from glasses mic"
+                )
+                updateMicState()
+            } else {
+                Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
+                sgc?.setMicEnabled(true)
+            }
         }
     }
 
@@ -708,6 +720,7 @@ class DeviceManager {
      */
     fun handleGlassesMicData(rawLC3Data: ByteArray, frameSize: Int = 40) {
         lastLc3Event = System.currentTimeMillis()
+        glassesMicDegradedUntilMs = 0L
         val pcmData: ByteArray?
         synchronized(lc3Lock) {
             if (lc3DecoderPtr == 0L) {
@@ -809,6 +822,20 @@ class DeviceManager {
                 }
 
                 if (micMode == MicTypes.GLASSES_CUSTOM) {
+                    val glassesConnected =
+                            DeviceStore.get("glasses", "connected") as? Boolean ?: false
+                    if (!glassesConnected) {
+                        Bridge.log("MAN: glasses mic skipped because glasses are not connected")
+                        continue
+                    }
+
+                    if (glassesMicDegradedUntilMs > System.currentTimeMillis() &&
+                                    preferredMic != "glasses" &&
+                                    micRanking.any { it != MicTypes.GLASSES_CUSTOM }
+                    ) {
+                        Bridge.log("MAN: glasses mic temporarily skipped due to missing LC3 frames")
+                        continue
+                    }
                     if (sgc?.hasMic == true) {
                         // enable the mic if it's not already on:
                         if (sgc?.micEnabled == false) {

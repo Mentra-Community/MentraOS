@@ -296,6 +296,7 @@ struct ViewState {
     /// Last time we received an LC3 frame from the glasses (used by the mic
     /// inactivity watchdog).
     private var lastLc3Event: Date?
+    private var glassesMicDegradedUntil: Date?
     private var micReinitTimer: Timer?
 
     /// STT:
@@ -394,6 +395,7 @@ struct ViewState {
      */
     func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20) {
         lastLc3Event = Date()
+        glassesMicDegradedUntil = nil
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
             return
@@ -464,6 +466,20 @@ struct ViewState {
                 }
 
                 if micMode == MicTypes.GLASSES_CUSTOM {
+                    let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+                    if !glassesConnected {
+                        Bridge.log("MAN: glasses mic skipped because glasses are not connected")
+                        continue
+                    }
+
+                    if let degradedUntil = glassesMicDegradedUntil,
+                       degradedUntil > Date(),
+                       preferredMic != "glasses",
+                       micRanking.contains(where: { $0 != MicTypes.GLASSES_CUSTOM })
+                    {
+                        Bridge.log("MAN: glasses mic temporarily skipped due to missing LC3 frames")
+                        continue
+                    }
                     // Bridge.log(
                     //     "MAN: glasses custom mic found - hasMic: \(sgc?.hasMic ?? false), micEnabled: \(sgc?.micEnabled ?? false)"
                     // )
@@ -775,10 +791,21 @@ struct ViewState {
             return
         }
 
-        let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
+        let timeSinceLastLc3Event = lastLc3Event.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
         if timeSinceLastLc3Event > 5 {
-            Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
-            sgc?.setMicEnabled(true)
+            if currentMic == MicTypes.GLASSES_CUSTOM,
+               preferredMic != "glasses",
+               micRanking.contains(where: { $0 != MicTypes.GLASSES_CUSTOM })
+            {
+                glassesMicDegradedUntil = Date().addingTimeInterval(15)
+                Bridge.log(
+                    "MAN: No audio activity in the last 5 seconds from glasses, temporarily falling back from glasses mic"
+                )
+                updateMicState()
+            } else {
+                Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
+                sgc?.setMicEnabled(true)
+            }
         }
     }
 
