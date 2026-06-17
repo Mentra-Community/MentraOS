@@ -384,3 +384,6 @@ MEMORY.md
 
 # Nested starter-kit repo (separate git history)
 Mentra-Bluetooth-SDK-Starter-Kit/
+
+# Navigation miniapp build output
+miniapps/navigation/build/
