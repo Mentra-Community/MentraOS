@@ -71,9 +71,12 @@ const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
 
 // JWKS key ids. Each published public key carries a stable `kid` so verifiers
 // (developer backends, internal services) select the right key by header,
-// which is what makes key rotation a no-coordination change. Access tokens and
-// miniapp tokens are signed with separate keys, so they get separate kids.
+// which is what makes key rotation a no-coordination change. Access and
+// Core-brokered runtime tokens share the Core signing key but have distinct kids
+// because they are distinct token kinds/audiences; miniapp tokens use their own
+// signing key.
 const ACCESS_TOKEN_KID = "mentra-access-1";
+const RUNTIME_TOKEN_KID = "cloud-core-runtime-1";
 const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
 
 // === Public API ===
@@ -341,7 +344,7 @@ export async function issueRuntimeToken(args: {
     oemId: args.oemId,
     jti: ulid(),
     expiresInSeconds: RUNTIME_TOKEN_TTL_SEC,
-    kid: "cloud-core-runtime-1",
+    kid: RUNTIME_TOKEN_KID,
   });
   return { token, expiresAt };
 }
@@ -532,6 +535,7 @@ async function loadMiniappKeys() {
  * Contains both public keys, each tagged with its `kid` (and `alg`/`use`), so
  * a verifier picks the right key by the JWT header's `kid`:
  *   - the access-token key, used by internal services to verify access tokens
+ *   - the Core-brokered runtime-token key, used by Runtime when it trusts Core
  *   - the miniapp-token key, used by developer backends to verify miniapp tokens
  *
  * Publishing both from day one is what makes key rotation a no-coordination
@@ -546,6 +550,7 @@ export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
   return {
     keys: [
       { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
+      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
       { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
     ],
   };

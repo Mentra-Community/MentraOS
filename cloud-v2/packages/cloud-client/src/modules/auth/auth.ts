@@ -53,7 +53,8 @@ export interface AuthModule {
   getCoreToken(opts?: { forceRefresh?: boolean }): Promise<string>;
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>;
-  // the user/oem identity read off the access token's claims
+  // Core-owned user/oem identity, read from the Core access token.
+  // Runtime-only deployments do not expose this surface.
   readonly identity: { mentraUserId: string; oemId: string };
   // refresh failed; the host must send the user back through login
   onExpired(handler: () => void): () => void;
@@ -118,22 +119,21 @@ interface RuntimeTokenEntry {
 }
 
 export class Auth implements AuthModule {
-  private readonly http: HttpClient;
+  private readonly http?: HttpClient;
   private readonly store: TokenStore;
   private readonly coreConfig?: CoreAuthConfig;
   private readonly runtimeConfig: RuntimeAuthConfig;
   private readonly logger: Logger;
   /**
-   * Base URL for the form-encoded `/exchange` and `/refresh` calls.
+   * Core base URL for the form-encoded `/exchange` and `/refresh` calls.
    *
    * These two endpoints take `application/x-www-form-urlencoded` bodies and
    * present the subject/refresh token in the body (not as a Bearer), so they go
-   * through `fetch` directly rather than the JSON-only injected `HttpClient`.
-   * The Bearer-authenticated, JSON `/miniapp-token` call uses the injected
-   * `http` as designed. See the deviation note in the structured output: this
-   * is the one place `client.ts` must pass `endpoints.core`.
+   * through `fetch` directly rather than the JSON-only injected `HttpClient`. In
+   * runtime-only mode this is absent by design: Core identity, miniapp token
+   * minting, and miniapp auto-auth are Core-backed features.
    */
-  private readonly baseUrl: string;
+  private readonly baseUrl?: string;
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>();
@@ -150,11 +150,11 @@ export class Auth implements AuthModule {
   private expiredFired = false;
 
   constructor(deps: {
-    http: HttpClient;
+    http?: HttpClient;
     store: TokenStore;
     config: AuthConfig;
     logger: Logger;
-    baseUrl: string;
+    baseUrl?: string;
   }) {
     this.http = deps.http;
     this.store = deps.store;
@@ -230,7 +230,8 @@ export class Auth implements AuthModule {
       }
 
       const accessToken = await this.getCoreToken();
-      const res = await this.http.post<MiniappTokenEntry>(
+      const http = this.requireCoreHttp();
+      const res = await http.post<MiniappTokenEntry>(
         MINIAPP_TOKEN_PATH,
         { packageName },
         { bearer: accessToken },
@@ -244,16 +245,22 @@ export class Auth implements AuthModule {
   }
 
   /**
-   * The user + OEM identity, read straight off the access token's claims.
+   * The user + OEM identity, read straight off the Core access token's claims.
+   *
+   * Core owns client identity. Runtime-only tokens may carry identity claims for
+   * Runtime authorization/logging, but `cloud.auth.identity`, miniapp token
+   * minting, and miniapp auto-auth are intentionally unavailable without
+   * `auth.core` + `endpoints.core`.
    *
    * The claims are unverified base64 JSON (the cloud verifies the signature on
-   * every call, so the client need not). Throws if no access token has been
-   * obtained yet, since identity is meaningless before the first exchange.
+   * every call, so the client need not). Throws if no Core access token has been
+   * obtained yet, since Core identity is meaningless before the first exchange.
    */
   get identity(): { mentraUserId: string; oemId: string } {
+    this.requireCoreConfig();
     const current = this.store.current();
     if (!current) {
-      throw new AuthExpiredError("identity is unavailable before first sign-in");
+      throw new AuthExpiredError("Core identity is unavailable before first Core sign-in");
     }
     const claims = decodeClaims(current.accessToken);
     return { mentraUserId: claims.sub, oemId: claims.oem_id };
@@ -397,9 +404,16 @@ export class Auth implements AuthModule {
 
   private requireCoreConfig(): CoreAuthConfig {
     if (!this.coreConfig) {
-      throw new AuthExpiredError("core auth is not configured");
+      throw new AuthExpiredError("core auth is not configured; this API is unavailable in runtime-only mode");
     }
     return this.coreConfig;
+  }
+
+  private requireCoreHttp(): HttpClient {
+    if (!this.http) {
+      throw new AuthExpiredError("core endpoint is not configured; this API is unavailable in runtime-only mode");
+    }
+    return this.http;
   }
 
   private async obtainCoreBrokeredRuntimeToken(): Promise<string> {
@@ -409,7 +423,8 @@ export class Auth implements AuthModule {
     }
 
     const coreToken = await this.getCoreToken();
-    const res = await this.http.post<RuntimeTokenResponse>(
+    const http = this.requireCoreHttp();
+    const res = await http.post<RuntimeTokenResponse>(
       RUNTIME_TOKEN_PATH,
       {},
       { bearer: coreToken },
@@ -462,6 +477,9 @@ export class Auth implements AuthModule {
    * proxy mount point) is preserved, matching the shared HTTP helper's joining.
    */
   private joinUrl(path: string): string {
+    if (!this.baseUrl) {
+      throw new AuthExpiredError("core endpoint is not configured; this API is unavailable in runtime-only mode");
+    }
     const base = this.baseUrl.replace(/\/+$/, "");
     const suffix = path.replace(/^\/+/, "");
     return `${base}/${suffix}`;

@@ -110,10 +110,7 @@ class MergeController {
   }
 
   stop(): void {
-    if (this.displayTimer) {
-      clearTimeout(this.displayTimer)
-      this.displayTimer = null
-    }
+    this.clearDisplayTimer()
     if (this.transcriptionCleanup) {
       this.transcriptionCleanup()
       this.transcriptionCleanup = null
@@ -145,10 +142,7 @@ class MergeController {
         this.lastInterimAnalysisAtByUtterance.clear()
         this.recentInsightKeys = []
         this.activeDisplayUntil = 0
-        if (this.displayTimer) {
-          clearTimeout(this.displayTimer)
-          this.displayTimer = null
-        }
+        this.clearDisplayTimer()
         this.lastError = null
         this.backendStatus = "idle"
         this.session.display.clear()
@@ -448,9 +442,16 @@ class MergeController {
   }
 
   private showInsight(insight: MergeInsight): void {
+    this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
     this.session.display.showTextWall(`// Merge\n${insight.text}`, {durationMs: DISPLAY_DURATION_MS})
     this.scheduleNextQueuedDisplay()
+  }
+
+  private clearDisplayTimer(): void {
+    if (!this.displayTimer) return
+    clearTimeout(this.displayTimer)
+    this.displayTimer = null
   }
 
   private scheduleNextQueuedDisplay(): void {
