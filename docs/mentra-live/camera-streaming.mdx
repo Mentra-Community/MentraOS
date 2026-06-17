@@ -134,7 +134,7 @@ Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallba
 
 ## Video Recording
 
-Use `startVideoRecording(...)` when your app needs a clip instead of a still image. Pass per-recording settings only when you want to override the saved button-video defaults; `maxRecordingTimeMinutes` is an auto-stop guard, and `0` or an omitted value records until your app stops recording or the glasses interrupt it.
+Use `startVideoRecording(...)` when your app needs a clip instead of a still image. Pass per-recording settings only when you want to override the saved video recording defaults; `maxRecordingTimeMinutes` is an auto-stop guard, and `0` or an omitted value records until your app stops recording or the glasses interrupt it.
 
 <Tabs>
   <Tab title="React Native">
@@ -227,8 +227,8 @@ Mentra Live has gallery mode for the right action button. When gallery mode is e
 ```ts
 await BluetoothSdk.setGalleryModeEnabled(true);
 await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'});
-await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
-await BluetoothSdk.setButtonMaxRecordingTime(3);
+await BluetoothSdk.setVideoRecordingDefaults({width: 1280, height: 720, fps: 30});
+await BluetoothSdk.setMaxVideoRecordingDuration(3);
 const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
 console.log(`Camera ready at ${cameraFov.fov}°`);
 ```
@@ -239,8 +239,8 @@ console.log(`Camera ready at ${cameraFov.fov}°`);
 ```kotlin
 sdk.setGalleryModeEnabled(true)
 sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM))
-sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
-sdk.setButtonMaxRecordingTime(minutes = 3)
+sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width = 1280, height = 720, fps = 30))
+sdk.setMaxVideoRecordingDuration(minutes = 3)
 val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
 println("Camera ready at ${cameraFov.fov}°")
 ```
@@ -251,8 +251,8 @@ println("Camera ready at ${cameraFov.fov}°")
 ```swift
 try await sdk.setGalleryModeEnabled(true)
 try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium))
-try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
-try await sdk.setButtonMaxRecordingTime(minutes: 3)
+try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: 1280, height: 720, fps: 30))
+try await sdk.setMaxVideoRecordingDuration(minutes: 3)
 let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
 print("Camera ready at \(cameraFov.fov)°")
 ```

@@ -3,6 +3,7 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
+  VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
@@ -85,10 +86,10 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
   setPhotoCaptureDefaults: PrivateBluetoothSdkModule.setPhotoCaptureDefaults.bind(PrivateBluetoothSdkModule),
-  setButtonVideoRecordingSettings:
-    PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
-  setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
-  setButtonMaxRecordingTime: PrivateBluetoothSdkModule.setButtonMaxRecordingTime.bind(PrivateBluetoothSdkModule),
+  setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) =>
+    PrivateBluetoothSdkModule.setVideoRecordingDefaults(width, height, fps),
+  setCaptureLedEnabled: PrivateBluetoothSdkModule.setCaptureLedEnabled.bind(PrivateBluetoothSdkModule),
+  setMaxVideoRecordingDuration: PrivateBluetoothSdkModule.setMaxVideoRecordingDuration.bind(PrivateBluetoothSdkModule),
   setCameraFov: PrivateBluetoothSdkModule.setCameraFov.bind(PrivateBluetoothSdkModule),
   queryGalleryStatus: PrivateBluetoothSdkModule.queryGalleryStatus.bind(PrivateBluetoothSdkModule),
   requestPhoto: PrivateBluetoothSdkModule.requestPhoto.bind(PrivateBluetoothSdkModule),
@@ -217,6 +218,7 @@ export type {
   SwipeVolumeStatusEvent,
   SwitchStatusEvent,
   TouchEvent,
+  VideoRecordingDefaults,
   VideoRecordingStartedStatusEvent,
   VideoRecordingStatusEvent,
   VideoRecordingStatusState,

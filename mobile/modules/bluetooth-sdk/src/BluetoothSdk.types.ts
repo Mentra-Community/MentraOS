@@ -448,9 +448,15 @@ export type PhotoCaptureDefaults = {
 }
 export type PhotoCompression = "none" | "medium" | "heavy"
 
+export type VideoRecordingDefaults = {
+  width: number
+  height: number
+  fps: number
+}
+
 /**
  * Optional per-recording video settings for {@link startVideoRecording}. When
- * omitted, the glasses fall back to their saved button-video settings. Any
+ * omitted, the glasses fall back to their saved video recording defaults. Any
  * field left undefined is omitted from the BLE command (glasses default applies).
  */
 export interface VideoRecordingSettings {
@@ -947,9 +953,9 @@ export interface BluetoothSdkPublicModule {
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
+  setCaptureLedEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
