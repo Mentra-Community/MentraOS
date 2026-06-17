@@ -46,7 +46,29 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-87, y: 288-87, width: 87, height: 87}))
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-87, y: 0, width: 87, height: 87}))
+  }
+
+
+  /**
+   * Live trip-stats label in the very bottom-left of the 576×288 canvas:
+   * distance remaining + ETA, which decrement as the user nears the
+   * destination. Rendered in a rounded-border positioned text container (G2).
+   */
+  showTripStats(text: string): void {
+    // Very bottom-left edge of the 576×288 canvas: a 160×87 container at (0, 201).
+    const w = 160
+    const h = 87
+    this.safeCall(() =>
+      this.session.display.showTextAt(text, {
+        x: 0,
+        y: 288 - h,
+        width: w,
+        height: h,
+        borderWidth: 2,
+        borderRadius: 6,
+      }),
+    )
   }
 
   /**

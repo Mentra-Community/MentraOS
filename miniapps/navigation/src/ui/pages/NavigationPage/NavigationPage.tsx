@@ -929,6 +929,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 me={me}
                 routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
                 routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
+                routePoints={running ? routePoints : null}
                 onStop={handleStop}
                 onClose={() => setDestination(null)}
               />

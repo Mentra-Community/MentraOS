@@ -1466,7 +1466,12 @@ class G2: NSObject, SGCManager {
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
     private var evenHubQueueTask: Task<Void, Never>?
-    private var pendingTextMsg: Data?
+    // FIFO of pending text-container updates. A single-slot var here used to let
+    // a later update (e.g. the constantly-refreshing maneuver text) overwrite an
+    // earlier one for a DIFFERENT container (e.g. the bottom-left trip stats),
+    // so the second container's content never reached the glasses. A queue lets
+    // updates to distinct containers each get drained.
+    private var pendingTextMsgs: [Data] = []
     private var lastEvenHubMsg: Data?
     private var lastEvenHubResendsRemaining: Int = 0
     private let EVEN_HUB_RESEND_COUNT: Int = 1
@@ -1878,7 +1883,7 @@ class G2: NSObject, SGCManager {
         evenHubQueueTask?.cancel()
         evenHubQueueTask = nil
         evenHubQueueLock.lock()
-        pendingTextMsg = nil
+        pendingTextMsgs.removeAll()
         lastEvenHubMsg = nil
         lastEvenHubResendsRemaining = 0
         evenHubQueueLock.unlock()
@@ -1945,6 +1950,16 @@ class G2: NSObject, SGCManager {
         await sendTextWall(text)
     }
 
+    func sendPositionedText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32
+    ) async {
+        await sendTextAt(
+            text, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius
+        )
+    }
+
     func sendTextAt(
         _ text: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil, height: Int32? = nil,
         borderWidth: Int32? = nil, borderColor: Int32? = nil, borderRadius: Int32? = nil,
@@ -1963,10 +1978,10 @@ class G2: NSObject, SGCManager {
         let ry = y ?? G2.defaultTextContainer.y
         let rw = width ?? G2.defaultTextContainer.width
         let rh = height ?? G2.defaultTextContainer.height
-        let borderWidth = G2.defaultTextContainer.borderWidth
-        let borderColor = G2.defaultTextContainer.borderColor
-        let borderRadius = G2.defaultTextContainer.borderRadius
-        let paddingLength = G2.defaultTextContainer.paddingLength
+        let borderWidth = borderWidth ?? G2.defaultTextContainer.borderWidth
+        let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
+        let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
+        let paddingLength = paddingLength ?? G2.defaultTextContainer.paddingLength
         let content = text.isEmpty ? " " : text
 
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
@@ -2664,16 +2679,22 @@ class G2: NSObject, SGCManager {
 
     private func queueEvenHubCommand(_ payload: Data) {
         evenHubQueueLock.lock()
-        pendingTextMsg = payload
+        // Append rather than overwrite so updates to different text containers
+        // (maneuver text + bottom-left trip stats) all survive. Cap the backlog
+        // so a stall can't grow it unbounded; dropping the oldest is fine since
+        // text updates are idempotent (the next frame re-pushes current content).
+        pendingTextMsgs.append(payload)
+        if pendingTextMsgs.count > 8 {
+            pendingTextMsgs.removeFirst(pendingTextMsgs.count - 8)
+        }
         evenHubQueueLock.unlock()
     }
 
     private func drainEvenHubQueue() {
         evenHubQueueLock.lock()
-        let msg = pendingTextMsg
-        pendingTextMsg = nil
         let toSend: Data?
-        if let msg = msg {
+        if !pendingTextMsgs.isEmpty {
+            let msg = pendingTextMsgs.removeFirst()
             lastEvenHubMsg = msg
             lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
             toSend = msg

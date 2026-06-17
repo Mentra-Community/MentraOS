@@ -130,3 +130,113 @@ export function borderTestImageBase64(width: number, height: number, thickness =
   }
   return encodeBmpBase64(gray, width, height)
 }
+
+/* -------------------------------------------------------------------------- */
+/* Minimal 5×7 bitmap font — enough to draw short uppercase test labels into a */
+/* bitmap. Each glyph is 7 rows × 5 bits (MSB = leftmost column).             */
+
+const GLYPH_W = 5
+const GLYPH_H = 7
+const GLYPH_GAP = 1 // blank column between glyphs
+
+// Bit rows per glyph, top→bottom. 1 = on (white). Only the chars we need.
+const FONT: Record<string, number[]> = {
+  " ": [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+  A: [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+  B: [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
+  C: [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
+  D: [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
+  E: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
+  F: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
+  G: [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0e],
+  H: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+  I: [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
+  L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
+  M: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
+  N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+  O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+  P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
+  R: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
+  S: [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
+  T: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+  U: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+  W: [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11],
+  "0": [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
+  "1": [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
+  "2": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
+  "3": [0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e],
+}
+
+/** Width in px of a string rendered at `scale` (incl. inter-glyph gaps). */
+function measureText(text: string, scale: number): number {
+  const n = text.length
+  if (n === 0) return 0
+  return (n * GLYPH_W + (n - 1) * GLYPH_GAP) * scale
+}
+
+/** Blit a string into `gray` (8-bit, row-major) at top-left (ox, oy), `scale`×. */
+function drawText(
+  gray: Uint8Array,
+  imgW: number,
+  imgH: number,
+  text: string,
+  ox: number,
+  oy: number,
+  scale: number,
+  value = 255,
+): void {
+  let penX = ox
+  for (const ch of text.toUpperCase()) {
+    const glyph = FONT[ch] ?? FONT[" "]!
+    for (let row = 0; row < GLYPH_H; row++) {
+      const bits = glyph[row]!
+      for (let col = 0; col < GLYPH_W; col++) {
+        if ((bits >> (GLYPH_W - 1 - col)) & 1) {
+          // Scale up each lit cell into a scale×scale block.
+          for (let dy = 0; dy < scale; dy++) {
+            for (let dx = 0; dx < scale; dx++) {
+              const px = penX + col * scale + dx
+              const py = oy + row * scale + dy
+              if (px >= 0 && px < imgW && py >= 0 && py < imgH) gray[py * imgW + px] = value
+            }
+          }
+        }
+      }
+    }
+    penX += (GLYPH_W + GLYPH_GAP) * scale
+  }
+}
+
+/**
+ * Bordered box with `text` drawn centered inside it, as a base64 BMP. Same
+ * white-frame-on-black look as [borderTestImageBase64], but with a label baked
+ * into the bitmap (no separate positioned-text layout needed).
+ */
+export function labeledBoxImageBase64(
+  width: number,
+  height: number,
+  text: string,
+  thickness = 2,
+): string {
+  const t = Math.max(1, Math.min(thickness, Math.floor(Math.min(width, height) / 2)))
+  const gray = new Uint8Array(width * height) // 0 = black fill
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const onBorder = x < t || x >= width - t || y < t || y >= height - t
+      if (onBorder) gray[y * width + x] = 255
+    }
+  }
+  // Pick the largest integer scale that fits the text inside the border padding.
+  const padX = t + 2
+  const padY = t + 2
+  const maxW = width - padX * 2
+  const maxH = height - padY * 2
+  let scale = Math.max(1, Math.floor(maxH / GLYPH_H))
+  while (scale > 1 && measureText(text, scale) > maxW) scale--
+  const tw = measureText(text, scale)
+  const th = GLYPH_H * scale
+  const ox = Math.round((width - tw) / 2)
+  const oy = Math.round((height - th) / 2)
+  drawText(gray, width, height, text, ox, oy, scale, 255)
+  return encodeBmpBase64(gray, width, height)
+}

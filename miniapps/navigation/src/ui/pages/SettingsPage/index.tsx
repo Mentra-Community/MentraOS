@@ -7,6 +7,8 @@ import {useNavStore} from "@/ui/store/navStore"
 import {appVersion} from "@/ui/lib/env"
 import {safeHeadingAddPlaces} from "@/ui/components/SafeHeading/SafeHeading"
 import {BackChevronIcon} from "@/ui/components/icons"
+import {toggleDevOverride} from "@/ui/lib/devOverride"
+import {useToast} from "@/ui/components/Toast/Toast"
 
 type Props = {
   onClose: () => void
@@ -19,6 +21,14 @@ type Props = {
  */
 export function SettingsPage({onClose}: Props) {
   const unitSystem = useNavStore((s) => s.unitSystem)
+  const toast = useToast()
+
+  // Tap the version number to toggle the dev override (reveals the
+  // FloatingDevPanel). Mirrors the classic "tap the build number" gesture.
+  function onTapVersion() {
+    const on = toggleDevOverride()
+    toast(on ? "Debug mode activated" : "Debug mode deactivated")
+  }
 
   function setUnits(next: UnitSystem) {
     if (next === unitSystem) return
@@ -61,12 +71,15 @@ export function SettingsPage({onClose}: Props) {
 
         {/* ABOUT */}
         <Section title="ABOUT">
-          <div className="flex items-center h-13 px-4 gap-3">
+          <button
+            type="button"
+            onClick={onTapVersion}
+            className="flex items-center h-13 px-4 gap-3 w-full text-left active:bg-[#00000008]">
             <div className="grow tracking-[-0.01em] font-sans text-[#1A1A1A] text-sm/4.5">Version</div>
             <div className="tracking-[-0.01em] shrink-0 font-sans text-[#0000008C] text-sm/4.5">
               {appVersion ? `v${appVersion}` : "—"}
             </div>
-          </div>
+          </button>
         </Section>
       </div>
     </motion.div>

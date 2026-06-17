@@ -1864,6 +1864,32 @@ class G2 : SGCManager() {
         }
     }
 
+    override fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int
+    ) {
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText2(
+                        text,
+                        x = x,
+                        y = y,
+                        width = width,
+                        height = height,
+                        borderWidth = borderWidth,
+                        borderColor = defaultTextBorderColor,
+                        borderRadius = borderRadius,
+                        paddingLength = defaultTextPaddingLength
+                )
+            }
+        }
+    }
+
     private suspend fun sendText2(
             text: String,
             x: Int? = null,

@@ -634,11 +634,15 @@ class DeviceManager {
             var text: String,
             var data: String?,
             var animationData: Map<String, Any>?,
-            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            // Optional bitmap_view container position/size (used by G2; ignored by others).
+            // Reused by positioned_text for its container rect.
             var bmpX: Int? = null,
             var bmpY: Int? = null,
             var bmpWidth: Int? = null,
-            var bmpHeight: Int? = null
+            var bmpHeight: Int? = null,
+            // Optional positioned_text border (used by G2; ignored by others).
+            var borderWidth: Int? = null,
+            var borderRadius: Int? = null
     )
     // MARK: - End Unique
 
@@ -896,6 +900,17 @@ class DeviceManager {
                             currentViewState.bmpHeight
                     )
                 }
+            }
+            "positioned_text" -> {
+                sgc?.sendPositionedText(
+                        currentViewState.text,
+                        currentViewState.bmpX ?: 0,
+                        currentViewState.bmpY ?: 0,
+                        currentViewState.bmpWidth ?: 576,
+                        currentViewState.bmpHeight ?: 288,
+                        currentViewState.borderWidth ?: 0,
+                        currentViewState.borderRadius ?: 0
+                )
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1263,11 +1278,15 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        // Optional container position/size — used by bitmap_view and positioned_text (G2).
         val bmpX = (layout["x"] as? Number)?.toInt()
         val bmpY = (layout["y"] as? Number)?.toInt()
         val bmpWidth = (layout["width"] as? Number)?.toInt()
         val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        // Optional positioned_text border (G2).
+        val borderWidth = (layout["borderWidth"] as? Number)?.toInt()
+        val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
 
         var newViewState =
                 ViewState(
@@ -1281,7 +1300,9 @@ class DeviceManager {
                         bmpX,
                         bmpY,
                         bmpWidth,
-                        bmpHeight
+                        bmpHeight,
+                        borderWidth,
+                        borderRadius
                 )
 
         val currentState = viewStates[stateIndex]

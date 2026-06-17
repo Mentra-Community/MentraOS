@@ -4,7 +4,7 @@ import {useLayoutEffect, useRef, useState} from "react"
 import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
-import {haversineMeters} from "@/ui/lib/geometry"
+import {haversineMeters, remainingRouteMeters} from "@/ui/lib/geometry"
 import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
@@ -14,6 +14,9 @@ type Props = {
   routeDistanceMeters?: number | null
   /** Remaining route duration from the Nav SDK — mode-aware. */
   routeDurationSeconds?: number | null
+  /** Active route polyline — used to compute a route-following distance
+   *  fallback (matches the glasses) when the SDK value isn't in yet. */
+  routePoints?: LatLng[] | null
   onStop: () => void
   onClose: () => void
 }
@@ -27,19 +30,28 @@ export function NavigationRunningDrawer({
   me,
   routeDistanceMeters,
   routeDurationSeconds,
+  routePoints,
   onStop,
 }: Props) {
   const unitSystem = useNavStore((s) => s.unitSystem)
-  // Prefer the SDK's mode-correct, polyline-following remaining values;
-  // fall back to crow-flies + walking speed until the first event lands.
+  // Distance precedence (most → least accurate), matching the glasses HUD so the
+  // two screens agree:
+  //   1. SDK's mode-correct remaining distance (routeDistanceMeters)
+  //   2. route-following distance along the polyline (remainingRouteMeters)
+  //   3. crow-flies straight line (haversine) — last resort during startup
+  const routeRemaining = remainingRouteMeters(me, routePoints ?? null)
   const haversineDistance = destination && me ? haversineMeters(me, destination) : null
   const distanceMeters =
-    routeDistanceMeters != null && routeDistanceMeters > 0 ? routeDistanceMeters : haversineDistance
+    routeDistanceMeters != null && routeDistanceMeters > 0
+      ? routeDistanceMeters
+      : routeRemaining != null && routeRemaining > 0
+        ? routeRemaining
+        : haversineDistance
   const durationSeconds =
     routeDurationSeconds != null && routeDurationSeconds > 0
       ? routeDurationSeconds
-      : haversineDistance != null
-        ? haversineDistance / FALLBACK_WALKING_M_PER_S
+      : distanceMeters != null
+        ? distanceMeters / FALLBACK_WALKING_M_PER_S
         : null
   const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters, unitSystem) : "—"
   const etaLabel = durationSeconds != null ? formatEta(durationSeconds) : "—"

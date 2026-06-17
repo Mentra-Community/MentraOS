@@ -22,11 +22,14 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
-    // Optional bitmap_view container position/size (used by G2; ignored by others)
-    var bmpX: Int32?
-    var bmpY: Int32?
-    var bmpWidth: Int32?
-    var bmpHeight: Int32?
+    // Optional container position/size — used by bitmap_view and positioned_text (G2; ignored by others)
+    var bmpX: Int32? = nil
+    var bmpY: Int32? = nil
+    var bmpWidth: Int32? = nil
+    var bmpHeight: Int32? = nil
+    // Optional positioned_text border (used by G2; ignored by others)
+    var borderWidth: Int32? = nil
+    var borderRadius: Int32? = nil
 }
 
 @MainActor
@@ -714,6 +717,16 @@ struct ViewState {
                     width: currentViewState.bmpWidth,
                     height: currentViewState.bmpHeight
                 )
+            case "positioned_text":
+                await sgc?.sendPositionedText(
+                    currentViewState.text,
+                    x: currentViewState.bmpX ?? 0,
+                    y: currentViewState.bmpY ?? 0,
+                    width: currentViewState.bmpWidth ?? 576,
+                    height: currentViewState.bmpHeight ?? 288,
+                    borderWidth: currentViewState.borderWidth ?? 0,
+                    borderRadius: currentViewState.borderRadius ?? 0
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -1039,6 +1052,8 @@ struct ViewState {
         let bmpY = (layout["y"] as? NSNumber).map { $0.int32Value }
         let bmpWidth = (layout["width"] as? NSNumber).map { $0.int32Value }
         let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
+        let borderWidth = (layout["borderWidth"] as? NSNumber).map { $0.int32Value }
+        let borderRadius = (layout["borderRadius"] as? NSNumber).map { $0.int32Value }
 
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
@@ -1048,7 +1063,8 @@ struct ViewState {
         var newViewState = ViewState(
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
             text: text, data: data, animationData: nil,
-            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight
+            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight,
+            borderWidth: borderWidth, borderRadius: borderRadius
         )
 
         if layoutType == "bitmap_animation" {

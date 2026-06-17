@@ -18,6 +18,9 @@ import type {LatLng} from "./geometry"
 const BLACK = 0 // background
 const ROAD = 77 // road centerline (70% dimmer ≈ 30% brightness, barely visible so the route dominates)
 const ROUTE = 255 // active route overlay (white-hot)
+const MARKER = 255 // heading arrow fill (white-hot, drawn on top of everything)
+const MARKER_OUTLINE = 0 // heading arrow outline (black halo so it reads over the white route)
+const BORDER = 255 // corner-bracket edge marks (white, indicate the bitmap bounds)
 
 /** Equirectangular projection to local meters, origin-centered. */
 function toLocalMeters(p: LatLng, origin: LatLng): {x: number; y: number} {
@@ -54,6 +57,34 @@ class Raster {
       }
     }
   }
+  /** Filled triangle via barycentric coverage test (used for the heading arrow). */
+  triangle(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+    v: number,
+  ): void {
+    const minX = Math.max(0, Math.floor(Math.min(ax, bx, cx)))
+    const maxX = Math.min(this.w - 1, Math.ceil(Math.max(ax, bx, cx)))
+    const minY = Math.max(0, Math.floor(Math.min(ay, by, cy)))
+    const maxY = Math.min(this.h - 1, Math.ceil(Math.max(ay, by, cy)))
+    const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay)
+    if (area === 0) return // degenerate
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const px = x + 0.5
+        const py = y + 0.5
+        const w0 = ((bx - px) * (cy - py) - (cx - px) * (by - py)) / area
+        const w1 = ((cx - px) * (ay - py) - (ax - px) * (cy - py)) / area
+        const w2 = 1 - w0 - w1
+        if (w0 >= 0 && w1 >= 0 && w2 >= 0) this.set(x, y, v)
+      }
+    }
+  }
+
   /** Thick line via a disc brush stepped along the segment (Bresenham). */
   line(x0: number, y0: number, x1: number, y1: number, v: number, thickness: number): void {
     x0 = Math.round(x0)
@@ -95,6 +126,15 @@ export type OsmLineMapOptions = {
   route?: LatLng[] | null
   /** Width of the route overlay line (defaults to lineWidthPx + 2). */
   routeWidthPx?: number
+  /**
+   * "You are here" heading marker, drawn last (on top) as a filled arrow.
+   * `at` is projected like any other point; `headingDeg` is a compass bearing
+   * (0 = north/up, 90 = east/right) — pass the route's forward direction to
+   * point the arrow the way the user should go next.
+   */
+  marker?: {at: LatLng; headingDeg: number} | null
+  /** Arrow size in target pixels (tip-to-base length). Default 9. */
+  markerSizePx?: number
 }
 
 /**
@@ -192,6 +232,85 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
       const b = project(route[i + 1]!)
       raster.line(a.x, a.y, b.x, b.y, ROUTE, routeWidth * ss)
     }
+  }
+
+  // Heading marker: a filled arrowhead at the user's position, rotated to the
+  // route's forward bearing. Drawn last so it sits on top of roads + route.
+  const marker = opts.marker
+  if (marker) {
+    const c = project(marker.at)
+    const size = (opts.markerSizePx ?? 14) * ss
+    // Bearing 0 = north = up (−y). Rotate the arrow's local geometry by it.
+    const rad = (marker.headingDeg * Math.PI) / 180
+    const sin = Math.sin(rad)
+    const cos = Math.cos(rad)
+    // Local arrow (pointing up): tip ahead, two base corners behind.
+    const tip = {x: 0, y: -size * 0.6}
+    const left = {x: -size * 0.45, y: size * 0.4}
+    const right = {x: size * 0.45, y: size * 0.4}
+    const rot = (p: {x: number; y: number}) => ({
+      x: c.x + (p.x * cos - p.y * sin),
+      y: c.y + (p.x * sin + p.y * cos),
+    })
+    // Outline thickness in hi-res px (scales with supersample so it survives the
+    // downsample). Expand each vertex outward from the local centroid to grow the
+    // black halo triangle, then fill the white arrow inside it.
+    const outline = Math.max(1, Math.round(1.5 * ss))
+    const ctr = {x: 0, y: (tip.y + left.y + right.y) / 3}
+    const grow = (p: {x: number; y: number}) => {
+      const dx = p.x - ctr.x
+      const dy = p.y - ctr.y
+      const len = Math.hypot(dx, dy) || 1
+      return {x: p.x + (dx / len) * outline, y: p.y + (dy / len) * outline}
+    }
+    // Black outline first (enlarged), white fill on top.
+    const ot = rot(grow(tip))
+    const ol = rot(grow(left))
+    const or = rot(grow(right))
+    raster.triangle(ot.x, ot.y, ol.x, ol.y, or.x, or.y, MARKER_OUTLINE)
+    const t = rot(tip)
+    const l = rot(left)
+    const r = rot(right)
+    raster.triangle(t.x, t.y, l.x, l.y, r.x, r.y, MARKER)
+  }
+
+  // Corner brackets: short rounded L-shaped marks at each corner (not a full
+  // border). A small quarter-circle arc rounds the turn, with two straight arms
+  // running out along each edge. Drawn in hi-res so it survives the downsample.
+  {
+    const armLen = Math.round(width * 0.066) * ss // length of each bracket arm (70% shorter)
+    const r = Math.max(1, Math.round(2 * ss)) // corner radius (~2px)
+    const thick = Math.max(1, ss) // stroke thickness
+    const W = hiW - 1
+    const H = hiH - 1
+    const hLine = (x0: number, x1: number, y: number) => raster.line(x0, y, x1, y, BORDER, thick)
+    const vLine = (y0: number, y1: number, x: number) => raster.line(x, y0, x, y1, BORDER, thick)
+    // Quarter arc of radius r, centered (cx,cy), sweeping from a→b radians.
+    const arc = (cx: number, cy: number, a0: number, a1: number) => {
+      const steps = Math.max(4, Math.round(r * 2))
+      for (let i = 0; i <= steps; i++) {
+        const a = a0 + ((a1 - a0) * i) / steps
+        raster.line(cx + Math.cos(a) * r, cy + Math.sin(a) * r, cx + Math.cos(a) * r, cy + Math.sin(a) * r, BORDER, thick)
+      }
+    }
+    // Each corner: arc tangent to both edges (center r in from the corner),
+    // then straight arms from the arc's edge-tangent points outward.
+    // top-left — arc center (r,r), sweeps 180°→270°
+    arc(r, r, Math.PI, 1.5 * Math.PI)
+    hLine(r, r + armLen, 0)
+    vLine(r, r + armLen, 0)
+    // top-right — center (W-r,r), sweeps 270°→360°
+    arc(W - r, r, 1.5 * Math.PI, 2 * Math.PI)
+    hLine(W - r - armLen, W - r, 0)
+    vLine(r, r + armLen, W)
+    // bottom-left — center (r,H-r), sweeps 90°→180°
+    arc(r, H - r, 0.5 * Math.PI, Math.PI)
+    hLine(r, r + armLen, H)
+    vLine(H - r - armLen, H - r, 0)
+    // bottom-right — center (W-r,H-r), sweeps 0°→90°
+    arc(W - r, H - r, 0, 0.5 * Math.PI)
+    hLine(W - r - armLen, W - r, H)
+    vLine(H - r - armLen, H - r, W)
   }
 
   // Box-downsample hi-res → target: each output pixel is the average of its

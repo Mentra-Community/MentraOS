@@ -49,4 +49,40 @@ const deviceUdid = connected.hardwareProperties.udid
 const deviceName = connected.deviceProperties.name
 
 console.log(`Using device: ${deviceName} (${deviceUdid})`)
-await $({stdio: "inherit"})`bun expo run:ios --device ${deviceUdid}`
+
+// NOTE: We deliberately do NOT use `expo run:ios` for the install/launch.
+// Expo's bundled LockdowndClient crashes on newer iOS (26.x) with
+// "TypeError: Cannot convert object to primitive value" during the device
+// handshake. Instead we build with xcodebuild and install/launch with Apple's
+// own `devicectl`, which works reliably. (Expo still owns prebuild above.)
+
+const SCHEME = "Mentra"
+const WORKSPACE = "ios/Mentra.xcworkspace"
+const CONFIG = "Debug"
+const BUNDLE_ID = "com.mentra.mentra"
+
+// 1. Build for the connected device.
+await $({
+  stdio: "inherit",
+})`xcodebuild -workspace ${WORKSPACE} -scheme ${SCHEME} -configuration ${CONFIG} -destination ${`id=${deviceUdid}`} -allowProvisioningUpdates build`
+
+// 2. Resolve the built .app path from xcodebuild's settings (don't hardcode the
+//    DerivedData hash).
+const settingsJson = await $`xcodebuild -workspace ${WORKSPACE} -scheme ${SCHEME} -configuration ${CONFIG} -destination ${`id=${deviceUdid}`} -showBuildSettings -json`.quiet()
+const settings = JSON.parse(settingsJson.stdout)
+const build = settings.find((s) => s.buildSettings?.TARGET_BUILD_DIR && s.buildSettings?.FULL_PRODUCT_NAME)?.buildSettings
+if (!build) {
+  console.error("Could not resolve built .app path from xcodebuild settings")
+  process.exit(1)
+}
+const appPath = `${build.TARGET_BUILD_DIR}/${build.FULL_PRODUCT_NAME}`
+console.log(`Built app: ${appPath}`)
+
+// 3. Install + launch via devicectl (bypasses Expo's broken LockdowndClient).
+await $({stdio: "inherit"})`xcrun devicectl device install app --device ${deviceUdid} ${appPath}`
+await $({
+  stdio: "inherit",
+})`xcrun devicectl device process launch --device ${deviceUdid} ${BUNDLE_ID}`
+
+console.log("\n✅ Installed and launched on device.")
+console.log("If the app shows a Metro error, start the dev server with: bun start")

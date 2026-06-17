@@ -26,8 +26,8 @@ import {LocationManager} from "./managers/LocationManager"
 import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
-import {formatDistance} from "./lib/formatDistance"
-import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
+import {formatDistance, formatDuration} from "./lib/formatDistance"
+import {distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 
@@ -52,6 +52,9 @@ export class NavigationController {
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
   private showMinimap = false
+  // Last trip-stats string pushed to the bottom-left label, so we only re-send
+  // when distance/ETA actually changes (avoids churning the G2 text container).
+  private lastTripStats = ""
   // OSM-roads minimap cache: roads fetched around a center, reused while the
   // user stays near it (re-fetch only when they move past a threshold).
   private osmRoadsCache: LatLng[][] | null = null
@@ -848,6 +851,9 @@ export class NavigationController {
   private readonly OSM_MINIMAP_SIZE = 87 // matches the bottom-right container
   private readonly OSM_MINIMAP_RADIUS_M = 133
   private readonly OSM_REFETCH_THRESHOLD_M = 120
+  // Walking speed for the ETA fallback when the SDK hasn't sent a remaining-time
+  // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
+  private readonly FALLBACK_WALKING_M_PER_S = 1.4
 
   private refreshMinimap(): void {
     if (!this.showMinimap) return
@@ -877,6 +883,11 @@ export class NavigationController {
         })
     }
 
+    // Heading arrow points along the route's forward direction at the user's
+    // position (the way they should go next), falling back to the live compass
+    // heading when there's no route to follow.
+    const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
+    const markerHeading = routeBearing ?? this.heading
     const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
       center: me,
       width: this.OSM_MINIMAP_SIZE,
@@ -884,7 +895,40 @@ export class NavigationController {
       viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
       lineWidthPx: 2,
       route: this.trip.routePoints,
+      marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
     })
+    // Live trip stats in the bottom-left: distance remaining + ETA, both of which
+    // decrement as we approach the destination. Pushed BEFORE the minimap
+    // dedup-return below so a heading/position-only tick (where the map bitmap is
+    // unchanged) still refreshes the numbers — that's what makes it "stream".
+    // Positioned text uses its own G2 container, so it doesn't fight the bitmaps.
+    // Falls back to perpendicular route distance when the SDK hasn't populated
+    // distanceToDestinationMeters yet. Deduped on content.
+    const distM =
+      this.trip.maneuver?.distanceToDestinationMeters ??
+      remainingRouteMeters(me, this.trip.routePoints) ??
+      undefined
+    // ETA: prefer the SDK's mode-aware remaining time; fall back to a
+    // walking-speed estimate from the distance so the time still shows when the
+    // SDK value isn't in yet.
+    const etaS =
+      this.trip.maneuver?.timeToDestinationSeconds ??
+      (distM != null ? distM / this.FALLBACK_WALKING_M_PER_S : undefined)
+    console.log(`[TRIP-STATS] distM=${distM} etaS=${etaS} (will push: ${distM != null && distM >= 0})`)
+    if (distM != null && distM >= 0) {
+      const distStr = formatDistance(distM, this.unitSystem)
+      // U+2299 ⊙ — confirmed to render in the G2 font (the color clock emoji
+      // don't). Used as the "time" marker next to the ETA.
+      const etaStr = etaS != null && etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
+      // Distance and time side by side, e.g. "354 m · ⊙ 5 min".
+      const stats = etaStr ? `${distStr} · ${etaStr}` : distStr
+      if (stats !== this.lastTripStats) {
+        this.lastTripStats = stats
+        console.log(`[TRIP-STATS] → showTripStats("${stats}")`)
+        this.display.showTripStats(stats)
+      }
+    }
+
     if (!png || png === this.lastMinimapPng) return
     this.lastMinimapPng = png
     this.display.showBitmap(png)
