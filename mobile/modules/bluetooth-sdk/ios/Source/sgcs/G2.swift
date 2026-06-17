@@ -2096,7 +2096,7 @@ class G2: NSObject, SGCManager {
                 let ok = await awaitImageAck(sessionId: sessionId, fragmentIndex: fragmentIndex)
                 if !ok {
                     Bridge.log(
-                        "G2: sendImageData(\(containerName)) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                        "G2: img_sen: container=\(containerName) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
                     )
                     transferOk = false
                     break
@@ -2107,12 +2107,12 @@ class G2: NSObject, SGCManager {
             }
 
             if transferOk {
-                Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
+                // Bridge.log("G2: img_sen: container=\(containerName) - success=true")
                 return
             }
         }
 
-        Bridge.log("G2: WARN: sendImageData(\(containerName)) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
 
     /// Suspend until handleEvenHubResponse() resumes the pending ACK for this `(sessionId,

@@ -2257,12 +2257,12 @@ class G2 : SGCManager() {
             }
 
             if (transferOk) {
-                Bridge.log("G2: sendImageData($containerName) - acked on attempt $attempt")
+                // Bridge.log("G2: img_sen: container=$containerName - success=true")
                 return
             }
         }
 
-        Bridge.log("G2: WARN: sendImageData($containerName) - failed after $IMG_MAX_ATTEMPTS attempts")
+        Bridge.log("G2: img_sen: sendImageData($containerName) - failed after $IMG_MAX_ATTEMPTS attempts")
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -3684,9 +3684,9 @@ class G2 : SGCManager() {
                     pendingImgAck?.complete(errorCode == 4)
                 }
             }
+            // print the raw payload:
+            Bridge.log("G2: img_res: ${payload.joinToString("") { String.format("%02X", it) }}")
             
-            // Dedup only the non-critical logging path (img-success/error chatter), which L and R
-            // both deliver. Page-state resets above are intentionally outside this window.
             val timestamp = System.currentTimeMillis()
             val lastResponse = lastEvenHubResponseTimestamp
             if (lastResponse != null && timestamp - lastResponse < 100) {
