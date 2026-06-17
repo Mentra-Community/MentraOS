@@ -297,10 +297,13 @@ private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleStat
     state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
 
 private fun otaStatusLine(state: com.mentra.examples.android.MentraExampleState): String =
-    state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${it.overallPercent}%" }
+    state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${otaDisplayPercent(state)}%" }
         ?: if (state.otaUpdateAvailable) "Update required" else null
         ?: state.otaStatusMessage
         ?: if (isGlassesConnected(state.glassesStatus)) "Check not run" else "Connect glasses"
+
+private fun otaDisplayPercent(state: com.mentra.examples.android.MentraExampleState): Int =
+    state.otaDisplayPercent ?: state.otaStatus?.overallPercent ?: 0
 
 private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState): String =
     when {
@@ -325,7 +328,7 @@ private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState)
 private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Modifier) {
     val state = controller.state
     if (state.otaStatus == null && !state.otaUpdateAvailable) return
-    val percent = state.otaStatus?.overallPercent ?: 0
+    val percent = otaDisplayPercent(state)
     val updateRequired = state.otaUpdateAvailable && state.otaStatus == null
     Column(
         modifier = modifier

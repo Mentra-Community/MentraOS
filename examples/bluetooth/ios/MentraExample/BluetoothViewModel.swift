@@ -332,6 +332,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
+    @Published private(set) var otaDisplayPercent: Int?
     @Published private(set) var otaStatus: OtaStatusEvent?
     @Published private(set) var otaStatusMessage: String?
     @Published private(set) var otaUpdateAvailable = false
@@ -358,6 +359,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var autoOtaCheckedConnectionKey: String?
     private var autoOtaCheckInProgress = false
     private var latestOtaVersionInfoSignature: String?
+    private var otaDisplayProgressSessionKey: String?
+    private var otaDisplayOverallPercent: Int?
+    private var postOtaCheckInProgress = false
+    private var postOtaCheckedSessionKey: String?
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -576,6 +581,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction("Start OTA") { [self] in
             try requireConnected("start OTA")
             try requireGlassesWifi("start OTA updates")
+            postOtaCheckedSessionKey = nil
+            resetOtaDisplayProgress()
+            otaDisplayPercent = nil
             _ = try await mentraBluetoothSdk.startOtaUpdate()
             append(tag: "LIVE", text: "OTA start acknowledged")
         }
@@ -1670,8 +1678,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
             return updateAvailable
         }
+        resetOtaDisplayProgress()
         if updateAvailable {
             otaStatus = nil
+            otaDisplayPercent = nil
             otaStatusMessage = nil
             otaUpdateAvailable = true
             append(tag: "LIVE", text: "OTA update available")
@@ -1679,6 +1689,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         otaStatus = nil
+        otaDisplayPercent = nil
         otaStatusMessage = "Glasses firmware is up to date"
         otaUpdateAvailable = false
         append(tag: "LIVE", text: "OTA up to date")
@@ -1687,18 +1698,71 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func applyOtaStatus(_ event: OtaStatusEvent) {
         guard isDisplayableOtaStatus(event) else {
+            resetOtaDisplayProgress()
             otaStatus = nil
+            otaDisplayPercent = nil
             otaStatusMessage = "No active OTA"
             append(tag: "LIVE", text: "OTA idle")
             return
         }
 
+        otaDisplayPercent = updateOtaDisplayPercent(event)
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
             otaUpdateAvailable = false
         }
         append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
+        schedulePostOtaCheck(event)
+    }
+
+    private func updateOtaDisplayPercent(_ event: OtaStatusEvent) -> Int {
+        let sessionKey = otaSessionKey(event)
+        let incomingPercent = min(max(event.overallPercent, 0), 100)
+        let previousPercent = otaDisplayProgressSessionKey == sessionKey ? otaDisplayOverallPercent : nil
+        let displayPercent: Int
+        switch event.status {
+        case "complete":
+            displayPercent = 100
+        case "in_progress", "step_complete":
+            displayPercent = max(previousPercent ?? incomingPercent, incomingPercent)
+        default:
+            displayPercent = incomingPercent
+        }
+        otaDisplayProgressSessionKey = sessionKey
+        otaDisplayOverallPercent = min(max(displayPercent, 0), 100)
+        return otaDisplayOverallPercent ?? incomingPercent
+    }
+
+    private func resetOtaDisplayProgress() {
+        otaDisplayProgressSessionKey = nil
+        otaDisplayOverallPercent = nil
+    }
+
+    private func schedulePostOtaCheck(_ event: OtaStatusEvent) {
+        guard event.status == "complete" else { return }
+        let sessionKey = otaSessionKey(event)
+        guard !postOtaCheckInProgress, postOtaCheckedSessionKey != sessionKey else { return }
+
+        postOtaCheckedSessionKey = sessionKey
+        postOtaCheckInProgress = true
+        autoOtaCheckInProgress = true
+        runAsyncAction("Verify OTA") { [self] in
+            var checkSucceeded = false
+            defer {
+                postOtaCheckInProgress = false
+                autoOtaCheckInProgress = false
+                if checkSucceeded {
+                    autoOtaCheckedConnectionKey = otaAutoCheckKey(glassesValues, versionInfoSignature: latestOtaVersionInfoSignature)
+                }
+            }
+            guard glassesConnected, glassesWifiConnected else {
+                append(tag: "LIVE", text: "OTA complete; skipped verification because glasses Wi-Fi is unavailable")
+                return
+            }
+            _ = try await checkForOtaUpdateResult()
+            checkSucceeded = true
+        }
     }
 
     private func applyWifiStatus(_ event: WifiStatusEvent) {
@@ -1719,6 +1783,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             autoOtaCheckedConnectionKey = nil
             autoOtaCheckInProgress = false
             latestOtaVersionInfoSignature = nil
+            postOtaCheckInProgress = false
+            postOtaCheckedSessionKey = nil
             return
         }
         guard glassesWifiConnected, !autoOtaCheckInProgress, !isOtaInProgress() else { return }
@@ -2059,7 +2125,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         hotspotEnabled = false
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
+        resetOtaDisplayProgress()
         otaStatus = nil
+        otaDisplayPercent = nil
         otaStatusMessage = nil
         otaUpdateAvailable = false
         if activePhotoRequestId != nil {
@@ -2631,6 +2699,10 @@ func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
     .filter { !$0.isEmpty }
     .joined(separator: "|")
     return key.isEmpty ? "version-unknown" : key
+}
+
+func otaSessionKey(_ status: OtaStatusEvent) -> String {
+    status.sessionId.isEmpty ? "\(status.currentStep):\(status.totalSteps):\(status.stepType)" : status.sessionId
 }
 
 func modelLabel(_ status: GlassesRuntimeState?) -> String {
