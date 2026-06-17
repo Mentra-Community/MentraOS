@@ -11,6 +11,7 @@
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
+import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
 import {display} from "./facades/display"
@@ -44,6 +45,10 @@ export const toolkit = {
     // Mentra app has already called cloudClient.init() (synchronously, right after
     // start()), THIS call is the no-op.
     cloudClientService.init()
+    // Project native device status -> the island stores (the inbound feed the rest
+    // of the runtime reads). Established first so the stores are live before the
+    // syncs below react to them.
+    startGlassesStatusProjection()
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -53,6 +58,7 @@ export const toolkit = {
   /** Stop the runtime: tear down the settings sync + cloud client + mark stopped. */
   async stop() {
     stopGlassesSettingsSync()
+    stopGlassesStatusProjection()
     stopPhoneNotificationsSync()
     cloudClientService.stop()
     await bootstrapStop()
