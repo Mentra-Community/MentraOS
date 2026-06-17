@@ -1,6 +1,6 @@
 # PR Agent Orchestrator — Setup
 
-Automated PR review (Bugbot + Claude 4.6) and fix (Opus 4.8) via [`.github/workflows/pr-agent-orchestrator.yml`](../.github/workflows/pr-agent-orchestrator.yml).
+Automated PR review (Bugbot + Opus 4.8) and fix (Opus 4.8) via [`.github/workflows/pr-agent-orchestrator.yml`](../.github/workflows/pr-agent-orchestrator.yml).
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Install the [Cursor GitHub app](https://cursor.com/docs/integrations/github) on 
 
 | Secret | Required | Purpose |
 |--------|----------|---------|
-| `CURSOR_API_KEY` | Yes | Claude 4.6 reviews + Opus 4.8 fixer ([Cursor SDK](https://cursor.com/docs/sdk/typescript)) |
+| `CURSOR_API_KEY` | Yes | Opus 4.8 reviews + fixer ([Cursor SDK](https://cursor.com/docs/sdk/typescript)) |
 | `PR_AGENT_GITHUB_TOKEN` | Optional | Fine-grained PAT with `contents:write` + `pull-requests:write` if `GITHUB_TOKEN` cannot push fixes |
 
 Create a team service account key at [Cursor Dashboard → Integrations](https://cursor.com/dashboard/integrations).
@@ -29,7 +29,7 @@ Edit [`.github/pr-agent.yml`](../.github/pr-agent.yml):
 
 - `authors.mode` — start with `label_only` or `allowlist` for rollout
 - `dryRun` — set `false` after Phase A testing
-- `reviewModel` / `fixModel` — defaults: Claude 4.6 / Opus 4.8
+- `reviewModel` / `fixModel` — defaults: Opus 4.8 / Opus 4.8
 
 ## Rollout phases
 

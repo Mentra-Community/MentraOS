@@ -1,4 +1,4 @@
-# Standards review (Claude 4.6)
+# Standards review (Opus 4.8)
 
 You are reviewing a pull request for **MentraOS** standards and conventions.
 

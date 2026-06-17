@@ -196,7 +196,7 @@ jobs:
             });
 
   review-standards:
-    name: Review (Claude 4.6 standards)
+    name: Review (Opus 4.8 standards)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
     runs-on: ubuntu-latest
@@ -231,7 +231,7 @@ jobs:
           if-no-files-found: ignore
 
   review-depth:
-    name: Review (Claude 4.6 depth)
+    name: Review (Opus 4.8 depth)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
     runs-on: ubuntu-latest
