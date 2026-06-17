@@ -2205,7 +2205,7 @@ class G2 : SGCManager() {
             // reassembly buffer on MapSessionId, so every fragment reuses it with an incrementing
             // MapFragmentIndex. A retry uses a fresh session so a stale ACK from a prior attempt
             // can't match.
-            imageSessionCounter++
+            imageSessionCounter = (imageSessionCounter + 1) % 256
             val sessionId = imageSessionCounter
 
             var fragmentIndex = 0

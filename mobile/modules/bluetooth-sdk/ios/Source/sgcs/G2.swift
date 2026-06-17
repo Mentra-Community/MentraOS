@@ -2065,7 +2065,7 @@ class G2: NSObject, SGCManager {
             // same session id with an incrementing MapFragmentIndex; the per-fragment ACK is
             // correlated by the (session, fragmentIndex) pair. A retry uses a fresh session so a
             // stale ACK from a prior attempt can't match.
-            imageSessionCounter += 1
+            imageSessionCounter = (imageSessionCounter + 1) % 256
             let sessionId = imageSessionCounter
 
             var fragmentIndex: Int32 = 0
