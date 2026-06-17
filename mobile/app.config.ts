@@ -64,8 +64,11 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // through the cloud. Fail loudly in CI/EAS so a release build never ships
   // without it; warn (don't fail) in local-dev so contributors who don't
   // touch nav can still build.
+  // The China build (cn variant) ships without Mentra Map, so it has no nav
+  // key — don't fail CI on its absence. Mirrors includeFirebase: false.
+  const isChinaBuild = variant === VARIANTS.cn
   const googleNavApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_IOS ?? ""
-  if (!googleNavApiKey) {
+  if (!googleNavApiKey && !isChinaBuild) {
     const isCiOrEas =
       process.env.CI === "true" ||
       process.env.CI === "1" ||

@@ -379,38 +379,46 @@ function withAndroidManifestModifications(config: any) {
       // Inject Google Navigation SDK API key from env. Read at build time.
       // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
       //
-      // If the key is missing, navigation is broken at runtime with a
-      // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
-      // build never ships; warn (don't fail) in local-dev so new
-      // contributors who aren't touching nav can still build.
-      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID ?? ""
-      if (!navApiKey) {
-        const isCiOrEas =
-          process.env.CI === "true" ||
-          process.env.CI === "1" ||
-          process.env.EAS_BUILD === "true" ||
-          process.env.NODE_ENV === "production"
-        const msg =
-          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID is not set. Navigation will fail at runtime — " +
-          "set it in mobile/.env (see mobile/.env.example) before building."
-        if (isCiOrEas) {
-          throw new Error(msg)
+      // The China build (EXPO_PUBLIC_DEPLOYMENT_REGION=china) ships without the
+      // Nav SDK and Mentra Map (see modules/crust/android/build.gradle and
+      // MiniappCatalog), so skip the key entirely — there is no key to set and
+      // failing CI on its absence would break the China build. Mirrors the
+      // Firebase exclusion in app.config.ts (includeFirebase: false).
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+      if (!isChinaBuild) {
+        // If the key is missing, navigation is broken at runtime with a
+        // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
+        // build never ships; warn (don't fail) in local-dev so new
+        // contributors who aren't touching nav can still build.
+        const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID ?? ""
+        if (!navApiKey) {
+          const isCiOrEas =
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
+            process.env.EAS_BUILD === "true" ||
+            process.env.NODE_ENV === "production"
+          const msg =
+            "EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID is not set. Navigation will fail at runtime — " +
+            "set it in mobile/.env (see mobile/.env.example) before building."
+          if (isCiOrEas) {
+            throw new Error(msg)
+          }
+          console.warn(`[mobile/plugins/android] ${msg}`)
         }
-        console.warn(`[mobile/plugins/android] ${msg}`)
-      }
-      if (!app["meta-data"]) {
-        app["meta-data"] = []
-      }
-      const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
-      if (existing) {
-        existing.$["android:value"] = navApiKey
-      } else {
-        app["meta-data"].push({
-          $: {
-            "android:name": "com.google.android.geo.API_KEY",
-            "android:value": navApiKey,
-          },
-        })
+        if (!app["meta-data"]) {
+          app["meta-data"] = []
+        }
+        const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
+        if (existing) {
+          existing.$["android:value"] = navApiKey
+        } else {
+          app["meta-data"].push({
+            $: {
+              "android:name": "com.google.android.geo.API_KEY",
+              "android:value": navApiKey,
+            },
+          })
+        }
       }
     }
 

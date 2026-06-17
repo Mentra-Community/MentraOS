@@ -84,7 +84,21 @@ android {
 dependencies {
   // Google Navigation SDK for Android.
   // Used by NavigationManager.kt to drive headless turn-by-turn nav.
-  implementation 'com.google.android.libraries.navigation:navigation:6.0.0'
+  //
+  // The China build (EXPO_PUBLIC_DEPLOYMENT_REGION=china) ships without Mentra
+  // Map (see MiniappCatalog/MantleManager), and this SDK pulls in Google Maps /
+  // Play Services that aren't available there. Declare it `compileOnly` for
+  // China so NavigationManager.kt / CrustModule.kt still compile, but the SDK
+  // and its transitive Google deps are NOT packaged into the APK. Nav code is
+  // never invoked at runtime in China (the miniapp is gone), so the absent
+  // classes are harmless. Mirrors the Firebase exclusion in app.config.ts
+  // (includeFirebase: false for the cn variant).
+  def isChinaBuild = System.getenv("EXPO_PUBLIC_DEPLOYMENT_REGION") == "china"
+  if (isChinaBuild) {
+    compileOnly 'com.google.android.libraries.navigation:navigation:6.0.0'
+  } else {
+    implementation 'com.google.android.libraries.navigation:navigation:6.0.0'
+  }
 
   // Required by Google Nav SDK (Java 8+ APIs on minSdk < 26).
   coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'

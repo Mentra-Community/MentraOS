@@ -31,7 +31,9 @@ import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {
   cameraPackageName,
   captionsPackageName,
+  CHINA_HIDDEN_APPS,
   feedbackPackageName,
+  isChinaBuild,
   lmaInstallerPackageName,
   mirrorPackageName,
   notifyPackageName,
@@ -266,6 +268,11 @@ class MiniappCatalog {
 
   private async postProcessApps(apps: ClientApp[]): Promise<ClientApp[]> {
     let out = apps
+    // China build: hide Mentra Map, Offline Captions, Notify, and Feedback
+    // regardless of source (offline catalog, bundled local, or cloud).
+    if (isChinaBuild()) {
+      out = out.filter((a) => !CHINA_HIDDEN_APPS.includes(a.packageName))
+    }
     // Notify is not supported on iOS yet — drop entirely.
     if (Platform.OS === "ios") {
       out = out.filter((a) => a.packageName !== notifyPackageName)
@@ -537,6 +544,11 @@ class MiniappCatalog {
         logoUrl: require("@assets/applet-icons/store.png"),
         iconComponent: createElement(DevToolsIcon),
       })
+    }
+
+    // China build: don't register Offline Captions, Notify, or Feedback.
+    if (isChinaBuild()) {
+      return apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName))
     }
 
     return apps
