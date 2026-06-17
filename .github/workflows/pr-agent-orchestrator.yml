@@ -451,14 +451,19 @@ jobs:
         run: bun run cli finalize
 
   cleanup-progress-label:
-    name: Clear progress label on stop
-    needs: [resolve-context, plan, finalize]
-    if: |
-      always() && needs.resolve-context.outputs.pr_number != '' && (
-        failure() ||
-        needs.plan.outputs.should_skip == 'true' ||
-        needs.finalize.result == 'success'
-      )
+    name: Clear progress label
+    needs:
+      - resolve-context
+      - plan
+      - review-standards
+      - review-depth
+      - review-bugbot
+      - aggregate
+      - fix
+      - wait-ci
+      - recheck-handoff
+      - finalize
+    if: always() && needs.resolve-context.outputs.pr_number != ''
     runs-on: ubuntu-latest
     steps:
       - name: Remove agent-in-progress

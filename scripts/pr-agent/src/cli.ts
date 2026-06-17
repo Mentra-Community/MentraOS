@@ -118,8 +118,8 @@ async function cmdFix() {
   const octokit = createOctokit();
   const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
   const ciLog = process.env.CI_LOG_EXCERPT ?? '';
-  const committed = await runFix(repoRoot, state, ciLog);
-  if (committed) {
+  const { ran } = await runFix(repoRoot, state, ciLog);
+  if (ran) {
     const next = { ...state, fixRound: state.fixRound + 1 };
     await saveState(octokit, owner, repo, prNumber, next, commentId);
   }

@@ -6,18 +6,25 @@ import { loadConfig } from './config.js';
 import type { Finding, PrAgentState } from './types.js';
 import { openBlocking } from './findings.js';
 
+export type FixResult = {
+  /** Whether the fixer agent actually executed a turn (counts toward fix rounds). */
+  ran: boolean;
+  /** Whether the fixer produced and pushed a commit. */
+  committed: boolean;
+};
+
 export async function runFix(
   repoRoot: string,
   state: PrAgentState,
   ciLogExcerpt: string,
-): Promise<boolean> {
+): Promise<FixResult> {
   const config = loadConfig(repoRoot);
   const apiKey = process.env.CURSOR_API_KEY;
   if (!apiKey) throw new Error('CURSOR_API_KEY is required');
 
   if (config.dryRun) {
     console.log('[DRY_RUN] Skipping fixer commit/push');
-    return false;
+    return { ran: false, committed: false };
   }
 
   const promptPath = join(repoRoot, '.github/pr-agent/prompts/pr-fix.md');
@@ -61,7 +68,7 @@ Apply fixes in the working tree. Run relevant tests before finishing.
     const status = execSync('git status --porcelain', { cwd: repoRoot, encoding: 'utf8' });
     if (!status.trim()) {
       console.log('No file changes from fixer');
-      return false;
+      return { ran: true, committed: false };
     }
 
     execSync('git config user.name "github-actions[bot]"', { cwd: repoRoot });
@@ -79,7 +86,7 @@ Apply fixes in the working tree. Run relevant tests before finishing.
     }
     execSync(`git push origin HEAD:refs/heads/${headRef}`, { cwd: repoRoot });
     console.log('Pushed fix commit');
-    return true;
+    return { ran: true, committed: true };
   } catch (err) {
     if (err instanceof CursorAgentError) {
       console.error('Fix startup failed:', err.message);

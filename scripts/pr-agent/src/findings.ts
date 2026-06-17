@@ -2,20 +2,18 @@ import { createHash } from 'node:crypto';
 import { VerdictSchema, type Finding, type ReviewSlot, type Verdict } from './types.js';
 
 export function fingerprintFinding(file: string, message: string): string {
-  const category = categorize(message);
   const normalizedFile = file.replace(/\\/g, '/').toLowerCase();
-  return `${normalizedFile}:${category}`;
-}
-
-function categorize(message: string): string {
-  const m = message.toLowerCase();
-  if (m.includes('thread') || m.includes('main thread')) return 'thread-safety';
-  if (m.includes('null') || m.includes('npe')) return 'null-safety';
-  if (m.includes('test')) return 'tests';
-  if (m.includes('security') || m.includes('secret')) return 'security';
-  if (m.includes('memory') || m.includes('leak')) return 'memory';
-  if (m.includes('race')) return 'race';
-  return createHash('sha1').update(m.slice(0, 80)).digest('hex').slice(0, 8);
+  const normalizedMessage = message
+    .toLowerCase()
+    .replace(/[`'"]/g, '')
+    .replace(/\b\d+\b/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const messageHash = createHash('sha1')
+    .update(normalizedMessage)
+    .digest('hex')
+    .slice(0, 12);
+  return `${normalizedFile}:${messageHash}`;
 }
 
 export function shortId(fingerprint: string): string {
