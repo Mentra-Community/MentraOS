@@ -1326,7 +1326,7 @@ class G2 : SGCManager() {
     private var pendingImgAckSession: Int? = null
     private var pendingImgAckFragment: Int? = null
     private var pendingImgAck: CompletableDeferred<Boolean>? = null
-    private val IMG_ACK_TIMEOUT_MS = 1000L // matches Dart host
+    private val IMG_ACK_TIMEOUT_MS = 2000L // matches Dart host
     private val IMG_MAX_ATTEMPTS = 3
     private var authStarted: Boolean = false
     private var leftAuthenticated: Boolean = false

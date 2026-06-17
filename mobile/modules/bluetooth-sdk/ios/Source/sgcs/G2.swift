@@ -2093,7 +2093,7 @@ class G2: NSObject, SGCManager {
                     mapRawData: Data(fragment)
                 )
                 sendEvenHubCommand(msg)
-                Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
+                // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
                 // Timeout/img_failed → abandon the attempt and retry the whole image.
@@ -2116,7 +2116,7 @@ class G2: NSObject, SGCManager {
             }
         }
 
-        // Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
 
     /// Suspend until handleEvenHubResponse() resumes the pending ACK for this `(sessionId,
@@ -3545,7 +3545,7 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
+        // Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
         
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
@@ -3611,7 +3611,7 @@ class G2: NSObject, SGCManager {
                     // Bridge.log(
                     //     "G2: img_res: session=\(ackSession) fragment=\(ackFragment) errorCode=\(errorCode) success=\(errorCode == 4)"
                     // )
-                    Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
+                    // Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
                     completeImageAck(
                         session: Int(ackSession), fragmentIndex: ackFragment, success: errorCode == 4
                     )
