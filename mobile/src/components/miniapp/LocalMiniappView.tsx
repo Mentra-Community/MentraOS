@@ -285,12 +285,7 @@ function LocalMiniappView({
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
       if (devUrl) {
-        // Dev bundle couldn't be resolved at mount time — the dev server
-        // blipped between the entry-point pre-flight (decideDevLaunchRoute on
-        // /miniapp.json) and this resolve's second round-trip (re-probe +
-        // fetch of the background bundle), or the bg entry 404'd. Land on the
-        // dedicated offline screen (Try again / Re-scan) instead of the inline
-        // dead-end error card — the same fallback every entry point promises.
+        // failed to load the dev url (we probably are connected to a different wifi network)
         useAppStatusStore.getState().clearForeground()
         useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
         return

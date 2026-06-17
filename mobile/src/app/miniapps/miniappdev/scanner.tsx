@@ -126,7 +126,7 @@ export default function MiniappDeveloperScannerScreen() {
           name: DEV_APP_NAME,
           // name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
-          devUrl,
+          devUrl: devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],

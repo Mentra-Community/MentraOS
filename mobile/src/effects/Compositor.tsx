@@ -341,7 +341,7 @@ export default function Compositor() {
   }, [isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale])
 
   if (!renderedApp) return null
-
+    
   return (
     <Animated.View
       pointerEvents={isForeground ? "auto" : "box-none"}
