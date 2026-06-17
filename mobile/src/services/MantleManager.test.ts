@@ -203,6 +203,10 @@ describe("MantleManager", () => {
   it("syncs native status, routes events, and forwards Bluetooth SDK setting changes", async () => {
     jest.advanceTimersByTime(1000)
 
+    // island's GlassesSettingsSync pushes the FULL device-settings set on the glasses
+    // connect transition (previously a MantleManager boot push). Simulate the connect.
+    emitBluetoothSdkEvent("glasses_status", {connection: {state: "connected", fullyBooted: true}})
+
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         contextual_dashboard: true,
