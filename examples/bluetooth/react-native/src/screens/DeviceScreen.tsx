@@ -281,7 +281,7 @@ function isOtaInProgress(sdk: BluetoothSdkExampleModel) {
 
 function otaStatusLine(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaStatus) {
-    return `${sdk.otaStatus.status.replace(/_/g, ' ')} · ${sdk.otaStatus.overall_percent ?? 0}%`;
+    return `${sdk.otaStatus.status.replace(/_/g, ' ')} · ${otaDisplayPercent(sdk)}%`;
   }
   if (sdk.otaUpdateAvailable) {
     return 'Update required';
@@ -318,11 +318,15 @@ function otaCardDetail(sdk: BluetoothSdkExampleModel) {
   return 'Tap Check OTA to compare the current glasses version with the SDK OTA manifest.';
 }
 
+function otaDisplayPercent(sdk: BluetoothSdkExampleModel) {
+  return sdk.otaDisplayPercent ?? sdk.otaStatus?.overall_percent ?? 0;
+}
+
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   if (!sdk.otaStatus && !sdk.otaUpdateAvailable) {
     return null;
   }
-  const percent = sdk.otaStatus?.overall_percent ?? 0;
+  const percent = otaDisplayPercent(sdk);
   const updateRequired = sdk.otaUpdateAvailable && !sdk.otaStatus;
   return (
     <LinearGradient
