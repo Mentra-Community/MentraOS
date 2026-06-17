@@ -19,9 +19,9 @@
  *
  * Prereqs (same as the smoke test):
  *   - Local Mongo + Redis: `bun run setup:test`
- *   - For real transcripts: SONIOX_API_KEY in env and AUDIO_PROVIDER=soniox
+ *   - For real transcripts: SONIOX_API_KEY in env
  *     (run via `doppler run --config dev -- bun scripts/dev-stack.ts`).
- *     Defaults to the mock provider otherwise.
+ *   - For deterministic fake transcripts: AUDIO_PROVIDER=mock
  *
  * On boot it runs a one-shot self-check of the full external flow (incl.
  * `?token=` query auth) and logs PASS/FAIL, then keeps serving.
@@ -99,7 +99,24 @@ const { resetSigningKeyCache } = await import(
 resetMentraKeyCache();
 resetSigningKeyCache();
 
-const provider = process.env.AUDIO_PROVIDER ?? "mock";
+const provider = process.env.AUDIO_PROVIDER ?? "soniox";
+if (provider !== "soniox" && provider !== "mock") {
+  console.error(`[dev-stack] unknown AUDIO_PROVIDER: ${provider}`);
+  console.error("[dev-stack] expected AUDIO_PROVIDER=soniox or AUDIO_PROVIDER=mock");
+  process.exit(1);
+}
+
+if (provider === "soniox" && !process.env.SONIOX_API_KEY) {
+  console.error("[dev-stack] SONIOX_API_KEY is required for real local captions.");
+  console.error(
+    "[dev-stack] Run via Doppler or export SONIOX_API_KEY before starting dev-stack.",
+  );
+  console.error(
+    "[dev-stack] For deterministic fake transcripts, explicitly run AUDIO_PROVIDER=mock bun scripts/dev-stack.ts.",
+  );
+  process.exit(1);
+}
+
 // Worker threads read AUDIO_PROVIDER from process.env. If the user relies on
 // the dev-stack default, make that default explicit before startRuntime().
 process.env.AUDIO_PROVIDER = provider;

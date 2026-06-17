@@ -187,53 +187,67 @@ export default function CloudUrl() {
           editable={!isSaving}
         />
 
-        <View className="mt-3 flex-row justify-between">
+        <View className="mt-3 flex-row gap-3">
           <Button
             text={isSaving ? "Testing..." : "Save & Test"}
             onPress={handleSave}
             disabled={isSaving}
             preset="alternate"
             flexContainer={false}
+            flex
           />
-          <Button text="Reset" onPress={handleReset} disabled={isSaving} preset="alternate" flexContainer={false} />
+          <Button
+            text="Reset"
+            onPress={handleReset}
+            disabled={isSaving}
+            preset="alternate"
+            flexContainer={false}
+            flex
+          />
         </View>
 
         {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
-        <View className="mt-3 flex-row flex-wrap justify-between gap-3">
-          <Button
-            compact
-            text="Cloud Dev"
-            onPress={() => applyPreset(CLOUD_DEV_CORE_URL, CLOUD_DEV_RUNTIME_URL)}
-            flexContainer={false}
-            flex
-          />
-          <Button
-            compact
-            text="Cloud Debug"
-            onPress={() => applyPreset(CLOUD_DEBUG_CORE_URL, CLOUD_DEBUG_RUNTIME_URL)}
-            flexContainer={false}
-            flex
-          />
-          <Button
-            compact
-            text="Cloud Staging"
-            onPress={() => applyPreset(CLOUD_STAGING_CORE_URL, CLOUD_STAGING_RUNTIME_URL)}
-            flexContainer={false}
-            flex
-          />
-          {/* Only offered when a Metro dev server is actually detectable.
-              Fills both fields with the metro-auto sentinel: the SAVED value
-              is "my laptop", resolved live on every connect, so it follows
-              the laptop across networks instead of freezing today's IP. */}
-          {metroHost && (
+        <View className="mt-3 gap-3">
+          <View className="flex-row gap-3">
             <Button
               compact
-              text={`Local (auto: ${metroHost})`}
-              onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
+              text="Cloud Dev"
+              onPress={() => applyPreset(CLOUD_DEV_CORE_URL, CLOUD_DEV_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
-          )}
+            <Button
+              compact
+              text="Cloud Debug"
+              onPress={() => applyPreset(CLOUD_DEBUG_CORE_URL, CLOUD_DEBUG_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+          </View>
+          <View className="flex-row gap-3">
+            <Button
+              compact
+              text="Cloud Staging"
+              onPress={() => applyPreset(CLOUD_STAGING_CORE_URL, CLOUD_STAGING_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+            {/* Only offered when a Metro dev server is actually detectable.
+                Fills both fields with the metro-auto sentinel: the SAVED value
+                is "my laptop", resolved live on every connect, so it follows
+                the laptop across networks instead of freezing today's IP. */}
+            {metroHost ? (
+              <Button
+                compact
+                text={`Local (auto: ${metroHost})`}
+                onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
+                flexContainer={false}
+                flex
+              />
+            ) : (
+              <View className="flex-1" />
+            )}
+          </View>
         </View>
       </View>
     </GlassView>

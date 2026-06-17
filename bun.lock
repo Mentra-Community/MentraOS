@@ -28,23 +28,13 @@
       },
     },
     "miniapps/captions": {
-      "name": "captions-miniapp",
+      "name": "local-captions",
       "dependencies": {
         "@mentra/miniapp": "workspace:*",
-        "@radix-ui/react-alert-dialog": "^1.1.13",
-        "@radix-ui/react-checkbox": "^1.1.4",
-        "@radix-ui/react-dialog": "^1.1.7",
-        "@radix-ui/react-label": "^2.1.3",
-        "@radix-ui/react-radio-group": "^1.3.6",
-        "@radix-ui/react-select": "^2.1.6",
-        "@radix-ui/react-slot": "^1.2.2",
-        "@radix-ui/react-switch": "^1.1.3",
-        "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "lucide-react": "^0.511.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
-        "react-router-dom": "^7.14.1",
         "tailwind-merge": "^3.0.2",
         "tailwindcss": "^4.0.8",
       },
@@ -111,6 +101,23 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
+    "miniapps/merge": {
+      "name": "local-merge",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "hono": "^4.11.1",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
+        "bun-types": "^1.3.14",
+      },
+    },
     "miniapps/navigation": {
       "name": "navigation-miniapp",
       "version": "1.0.6",
@@ -131,6 +138,24 @@
         "bun-plugin-tailwind": "^0.1.2",
         "bun-types": "^1.3.14",
         "tailwindcss": "^4.2.4",
+      },
+    },
+    "miniapps/translation": {
+      "name": "local-translation",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.511.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwind-merge": "^3.0.2",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
       },
     },
     "mobile/modules/miniapp": {
@@ -480,8 +505,6 @@
 
     "callsites": ["callsites@3.1.0", "", {}, ""],
 
-    "captions-miniapp": ["captions-miniapp@workspace:miniapps/captions"],
-
     "ccount": ["ccount@2.0.1", "", {}, ""],
 
     "chalk": ["chalk@4.1.2", "", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, ""],
@@ -686,6 +709,8 @@
 
     "hasown": ["hasown@2.0.2", "", { "dependencies": { "function-bind": "^1.1.2" } }, ""],
 
+    "hono": ["hono@4.12.25", "", {}, "sha512-2NFaIyNVgJmBs/ecmtGzlmluTFs5cHEWGTdu0t1HBwYzoGXOL5nUQBRMXsXWla5i4KkG//QMzVP88m1+I3fdAQ=="],
+
     "husky": ["husky@9.1.7", "", { "bin": "bin.js" }, ""],
 
     "ignore": ["ignore@7.0.5", "", {}, "sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg=="],
@@ -787,6 +812,12 @@
     "liquid-glass-react": ["liquid-glass-react@1.1.1", "", { "peerDependencies": { "react": ">=19", "react-dom": ">=19" } }, "sha512-pKzaktaMAEztd93wpWcz2Z5Z9qdLJUNJdMX+n00Ca4XsnrLTQ5xJzm/+GQXZUeuFXe/PQ8ziVMZO6531PyaFJw=="],
 
     "listr2": ["listr2@9.0.5", "", { "dependencies": { "cli-truncate": "^5.0.0", "colorette": "^2.0.20", "eventemitter3": "^5.0.1", "log-update": "^6.1.0", "rfdc": "^1.4.1", "wrap-ansi": "^9.0.0" } }, "sha512-ME4Fb83LgEgwNw96RKNvKV4VTLuXfoKudAmm2lP8Kk87KaMK0/Xrx/aAkMWmT8mDb+3MlFDspfbCs7adjRxA2g=="],
+
+    "local-captions": ["local-captions@workspace:miniapps/captions"],
+
+    "local-merge": ["local-merge@workspace:miniapps/merge"],
+
+    "local-translation": ["local-translation@workspace:miniapps/translation"],
 
     "locate-path": ["locate-path@6.0.0", "", { "dependencies": { "p-locate": "^5.0.0" } }, ""],
 
