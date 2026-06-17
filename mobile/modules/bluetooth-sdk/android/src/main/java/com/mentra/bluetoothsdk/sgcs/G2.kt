@@ -1510,7 +1510,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets, left = true, right = true)
+        sendToGlasses(packets, left = false, right = true)
     }
 
     private fun sendDevSettingsCommand(
@@ -2192,7 +2192,7 @@ class G2 : SGCManager() {
         val totalSize = bmpData.size
         val fragmentCount = (bmpData.size + fragmentSize - 1) / fragmentSize
 
-        Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
+        // Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
 
         for (attempt in 1..IMG_MAX_ATTEMPTS) {
             // One session id per WHOLE image transfer (per attempt). The glasses key their
@@ -2205,9 +2205,9 @@ class G2 : SGCManager() {
             var fragmentIndex = 0
             var offset = 0
             var transferOk = true
-            if (attempt > 1) {
-                Bridge.log("G2: sendImageData($containerName) - attempt $attempt starting")
-            }
+            // if (attempt > 1) {
+            //     Bridge.log("G2: sendImageData($containerName) - attempt $attempt starting")
+            // }
             while (offset < bmpData.size) {
                 val end = minOf(offset + fragmentSize, bmpData.size)
                 val fragment = bmpData.copyOfRange(offset, end)
@@ -2216,6 +2216,8 @@ class G2 : SGCManager() {
                 pendingImgAckSession = sessionId
                 pendingImgAckFragment = fragmentIndex
                 pendingImgAck = ack
+
+                Bridge.log("G2: img_sen: session=$sessionId fragment=$fragmentIndex")
 
                 val msg =
                         EvenHubProto.updateImageRawDataMessage(
@@ -2240,12 +2242,10 @@ class G2 : SGCManager() {
                 }
                 if (ok != true) {
                     val reason = if (ok == null) "timeout" else "img_failed"
-                    Bridge.log("G2: sendImageData($containerName) - attempt $attempt fragment $fragmentIndex failed ($reason)")
+                    // Bridge.log("G2: sendImageData($containerName) - attempt $attempt fragment $fragmentIndex failed ($reason)")
                     transferOk = false
                     break
                 }
-                delay(50)
-
                 fragmentIndex++
                 offset = end
             }
@@ -3667,17 +3667,19 @@ class G2 : SGCManager() {
             // ErrorCode = field 8 (4=success, 5=failed).
             (fields[6] as? ByteArray)?.let { resData ->
                 val resFields = ProtobufReader(resData).parseFields()
-                val errorCode = resFields[8] as? Int
-                val ackSession = resFields[3] as? Int
+                val errorCode = resFields[8] as? Int ?: 0
+                val ackSession = resFields[3] as? Int ?: 0
                 val ackFragment = (resFields[6] as? Int) ?: 0
+                Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
                 if (errorCode != null && ackSession != null &&
                                 ackSession == pendingImgAckSession &&
                                 ackFragment == pendingImgAckFragment
                 ) {
-                    // Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
                     pendingImgAck?.complete(errorCode == 4)
                 }
             }
+
+            // Bridge.log("G2: img_res: fields=${fields.keys.sorted()}")
 
             // Dedup only the non-critical logging path (img-success/error chatter), which L and R
             // both deliver. Page-state resets above are intentionally outside this window.
@@ -3713,20 +3715,20 @@ class G2 : SGCManager() {
                 }
             }
 
-            for (resField in listOf(4, 6, 8, 10)) {
-                val resData = fields[resField] as? ByteArray ?: continue
-                val resReader = ProtobufReader(resData)
-                val resFields = resReader.parseFields()
-                (resFields[8] as? Int)?.let { errorCode ->
-                    // ImgResCmd ErrorCode in field 8 (the sendImageData ACK is completed above,
-                    // before the dedup window — this is just the deduped logging path).
-                    if (errorCode == 4) {
-                        Bridge.log("G2: img_success")
-                    } else {
-                        Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
-                    }
-                }
-            }
+            // for (resField in listOf(4, 6, 8, 10)) {
+            //     val resData = fields[resField] as? ByteArray ?: continue
+            //     val resReader = ProtobufReader(resData)
+            //     val resFields = resReader.parseFields()
+            //     (resFields[8] as? Int)?.let { errorCode ->
+            //         // ImgResCmd ErrorCode in field 8 (the sendImageData ACK is completed above,
+            //         // before the dedup window — this is just the deduped logging path).
+            //         if (errorCode == 4) {
+            //             Bridge.log("G2: img_success")
+            //         } else {
+            //             Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+            //         }
+            //     }
+            // }
         }
     }
 
