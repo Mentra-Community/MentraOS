@@ -2544,9 +2544,9 @@ class G2 : SGCManager() {
         val offsetX = (containerWidth - scaledW) / 2
         val offsetY = (containerHeight - scaledH) / 2
 
-        Bridge.log(
-                "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
-        )
+        // Bridge.log(
+        //         "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
+        // )
 
         // Render to container-sized bitmap with black background
         val destBitmap =
@@ -3616,7 +3616,12 @@ class G2 : SGCManager() {
         val fields = reader.parseFields()
 
         // print raw payload:
-        // Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
+        val payloadStr = payload.joinToString("") { String.format("%02X", it) }
+        if (payloadStr.contains("080C7A02100C")) {
+            // heartbeat response
+            return
+        }
+        Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
