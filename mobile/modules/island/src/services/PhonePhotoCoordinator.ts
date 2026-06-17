@@ -5,10 +5,10 @@
  *   miniapp → SDK → LocalMiniappRuntime → photo runtime hook
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
- *            ├── cloudClient.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
+ *            ├── cloudClientService.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
  *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, compress, sound)
  *            └── race:
- *                  - cloudClient.awaitManagedPhotoReady(requestId) resolves on photo.ready push
+ *                  - cloudClientService.awaitManagedPhotoReady(requestId) resolves on photo.ready push
  *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
  *                  - handlePhotoError(requestId, code, message) rejects if MantleManager observes
  *                    the same BLE photo_response error before the native promise crosses the bridge
@@ -18,12 +18,32 @@
  * etc.) instead of waiting 30s for cloud's timeout.
  */
 
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {getRuntimeHooks} from "@mentra/island"
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import type {PhotoSize} from "../../../bluetooth-sdk/build/_internal"
+import {cloudClientService} from "./CloudClientService"
+import {isGlassesConnected} from "./GlassesReadiness"
+import {useGlassesStore} from "../stores/glasses"
 
-import {normalizePhotoSize} from "@/services/SocketComms.normalizers"
-import {cloudClient} from "@/services/cloudClient"
-import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
+interface PhotoResult {
+  photoUrl: string
+  mimeType: string
+  size: number
+}
+
+/** Map legacy/cloud size names onto the native take_photo enum. */
+function normalizePhotoSize(value: unknown): PhotoSize {
+  if (typeof value !== "string") return "medium"
+  switch (value) {
+    case "small":
+      return "low"
+    case "large":
+      return "high"
+    case "full":
+      return "max"
+    default:
+      return (["low", "medium", "high", "max"] as const).includes(value as PhotoSize) ? (value as PhotoSize) : "medium"
+  }
+}
 
 export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
@@ -93,8 +113,7 @@ export class PhonePhotoCoordinator {
     // handler will return a photo_response error within ~1s and the gated
     // photo_response listener in MantleManager will short-circuit our
     // long-poll. Slower but correct.
-    const glasses = getRuntimeHooks().glassesStatus?.get()
-    if (!glasses?.connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
@@ -106,7 +125,7 @@ export class PhonePhotoCoordinator {
     let uploadUrl: string
     let readUrl: string
     try {
-      const r = await cloudClient.startManagedPhoto({size: opts.size ?? "medium"})
+      const r = await cloudClientService.startManagedPhoto({size: opts.size ?? "medium"})
       requestId = r.requestId
       uploadUrl = r.uploadUrl
       readUrl = r.readUrl
@@ -182,7 +201,7 @@ export class PhonePhotoCoordinator {
     // 4) Await the runtime's photo.ready push (replaces the legacy long-poll).
     //    handlePhotoError races against it and uses the same entry to reject
     //    first.
-    cloudClient
+    cloudClientService
       .awaitManagedPhotoReady(requestId)
       .then((res) => {
         const e = this.activeRequests.get(requestId)

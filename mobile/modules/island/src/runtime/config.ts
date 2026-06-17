@@ -486,40 +486,14 @@ export interface RuntimeHooks {
    * host's native Bluetooth bridge.
    */
   setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
-  /** Phone-orchestrated photo capture (session.camera.takePhoto). */
-  photo?: PhotoAdapter
-  // Video recording moved into island (PhoneVideoCoordinator, called directly by
-  // the runtime) — no longer a host-provided hook.
+  // Photo capture + video recording moved into island (PhonePhotoCoordinator /
+  // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
   /** Phone-orchestrated camera settings (session.camera.setFov). */
   cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
   interop?: InteropAdapter
-}
-
-/**
- * Photo adapter — end-to-end takePhoto(). The runtime calls `takePhoto`
- * from its handlePhoto handler; the host's PhonePhotoCoordinator implements
- * it (mints upload token via the v2 cloud route, drives glasses over BLE,
- * long-polls for the download URL).
- */
-export interface PhotoAdapter {
-  takePhoto: (
-    packageName: string,
-    opts: {
-      size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
-      compress?: "none" | "low" | "medium" | "high"
-      sound?: boolean
-      saveToGallery?: boolean
-      exposureTimeNs?: number
-    },
-  ) => Promise<{
-    photoUrl: string
-    mimeType: string
-    size: number
-    requestId: string
-  }>
 }
 
 let hooks: RuntimeHooks = {}

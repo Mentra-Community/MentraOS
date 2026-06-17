@@ -36,6 +36,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {
   getRuntimeHooks,
@@ -2018,17 +2019,8 @@ class LocalMiniappRuntime {
       return
     }
 
-    const photo = getRuntimeHooks().photo
-    if (!photo) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_IMPLEMENTED,
-        message: "Photo capture is not configured on this host",
-      })
-      return
-    }
-
     try {
-      const result = await photo.takePhoto(packageName, {
+      const result = await phonePhotoCoordinator.takePhoto(packageName, {
         size: payload.size as
           | "low"
           | "medium"

@@ -10,7 +10,7 @@ import audioPlaybackService from "@/services/AudioPlaybackService"
 import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
-import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
+import {phonePhotoCoordinator} from "@mentra/island"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
@@ -253,11 +253,9 @@ class MantleManager {
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
         }),
-      photo: {
-        takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
-      },
-      // videoRecording moved into island (PhoneVideoCoordinator, called directly by
-      // the runtime) — no longer injected as a host hook.
+      // photo capture + video recording moved into island (PhonePhotoCoordinator /
+      // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
+      // (The photo_response error-routing listener below still drives the coordinator.)
       cameraSettings: {
         setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
       },
