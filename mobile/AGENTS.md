@@ -1,7 +1,7 @@
 # MentraOS Manager Guidelines
 
 RULES:
-READ: mentraos-manager-guidelines.mdx
+READ: ../mintlify-docs/os-devs/contributing/mentraos-manager-guidelines.mdx
 
 ## Overview
 
