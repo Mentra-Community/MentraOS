@@ -13,6 +13,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {isGlassesReady} from "../services/GlassesReadiness"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
+import {glassesSettings} from "./glassesSettings"
 
 function projectStatus() {
   const s = useGlassesStore.getState()
@@ -84,4 +85,5 @@ export const glasses = {
 
   // --- sub-facades ---
   wifi: glassesWifi,
+  settings: glassesSettings,
 }

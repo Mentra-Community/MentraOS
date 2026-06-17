@@ -18,6 +18,7 @@ import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
 import {incidents} from "./facades/incidents"
 import {miniapps} from "./facades/miniapps"
+import {pairing} from "./facades/pairing"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -54,6 +55,8 @@ export const toolkit = {
   incidents,
   /** Miniapp lifecycle (the WebView bridge primitives are exported separately). */
   miniapps,
+  /** First-time glasses discovery + pairing. */
+  pairing,
   display: {
     mirror: displayMirror,
   },

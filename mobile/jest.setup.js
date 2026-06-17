@@ -301,6 +301,13 @@ jest.mock("@mentra/island", () => {
           status: jest.fn(() => ({state: "disconnected"})),
           onStatus: jest.fn(() => () => {}),
         },
+        settings: {
+          get: jest.fn(() => undefined),
+          set: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+          onChanged: jest.fn(() => () => {}),
+          descriptor: jest.fn(() => undefined),
+          available: jest.fn(() => []),
+        },
       },
       speech: {
         stt: {
@@ -331,6 +338,16 @@ jest.mock("@mentra/island", () => {
           view: jest.fn(() => "main"),
           setView: jest.fn(),
         },
+      },
+      pairing: {
+        scan: jest.fn(),
+        scanning: jest.fn(() => false),
+        searchResults: jest.fn(() => []),
+        onFound: jest.fn(() => () => {}),
+        pair: jest.fn(() => Promise.resolve()),
+        setDefault: jest.fn(() => Promise.resolve()),
+        onPairFailure: jest.fn(() => () => {}),
+        onGlassesNotReady: jest.fn(() => () => {}),
       },
       miniapps: {
         list: jest.fn(() => []),
