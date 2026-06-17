@@ -7,8 +7,11 @@
  * Read-models project the raw glasses store into the stable shape OEM UIs consume,
  * so the device store's field layout doesn't leak into every screen.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import type {ButtonPressEvent, TouchEvent} from "@mentra/bluetooth-sdk"
+// Internal btsdk surface — connectSimulated/reconnect/controller live on the full
+// surface, not the public entry. Relative path (the alias doesn't resolve in island's
+// standalone build); jest moduleNameMapper + tsconfig both resolve it.
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import type {ButtonPressEvent, TouchEvent} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesReady} from "../services/GlassesReadiness"
 import {getModelCapabilities, type DeviceTypes} from "../types"
@@ -53,6 +56,12 @@ export const glasses = {
   connectDefault: (): Promise<void> => BluetoothSdk.connectDefault(),
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
+  /** Connect to a specific (discovered) device. */
+  connect: (...args: Parameters<typeof BluetoothSdk.connect>) => BluetoothSdk.connect(...args),
+  /** Connect the built-in simulated glasses (dev/testing). */
+  connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
+  /** Set a device as the `connectDefault()` target. */
+  setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
 
   // --- read-model (projected from the island-owned glasses store) ---
   status: (): GlassesStatusSnapshot => projectStatus(),
@@ -81,6 +90,13 @@ export const glasses = {
   onTouchGesture: (cb: (event: TouchEvent) => void): (() => void) => {
     const sub = BluetoothSdk.addListener("touch_event", cb)
     return () => sub.remove()
+  },
+
+  // --- ring controller (optional input device) ---
+  controller: {
+    connectDefault: (): Promise<void> => BluetoothSdk.connectDefaultController(),
+    disconnect: (): Promise<void> => BluetoothSdk.disconnectController(),
+    forget: (): Promise<void> => BluetoothSdk.forgetController(),
   },
 
   // --- sub-facades ---
