@@ -222,6 +222,7 @@ jobs:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli review standards
 
       - name: Upload review output
@@ -256,6 +257,7 @@ jobs:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli review depth
 
       - name: Upload review output
