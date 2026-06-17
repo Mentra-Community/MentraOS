@@ -1,10 +1,10 @@
 ---
-title: "Runtime Toolkit"
+title: "Mentra OEM Integration Toolkit"
 description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, pairing, device + user settings, wifi, speech, display, cloud session, miniapps, permissions, notifications, and incidents, over a device-agnostic runtime."
 ---
 
 <Note>
-**Status: preview (Phase 1).** The runtime toolkit covers the full Phase-1 surface
+**Status: preview (Phase 1).** The Mentra OEM Integration Toolkit covers the full Phase-1 surface
 documented below. Firmware **OTA** and the media **gallery** are intentionally
 deferred to a later phase. The runtime is not yet packaged for external install —
 reach out to [help@mentra.glass](mailto:help@mentra.glass) to integrate today.
@@ -12,8 +12,8 @@ reach out to [help@mentra.glass](mailto:help@mentra.glass) to integrate today.
 
 ## What it is
 
-The **runtime toolkit** is the API an OEM host app (the phone-side app that talks to
-your glasses) calls to run MentraOS. It ships as the `@mentra/island` module and
+The **Mentra OEM Integration Toolkit** is the API an OEM host app (the phone-side app
+that talks to your glasses) calls to run MentraOS. It ships as the `@mentra/island` module and
 exposes a single namespaced object, **`toolkit`**:
 
 ```ts
@@ -137,8 +137,46 @@ toolkit.glasses.settings.get(key)
 toolkit.glasses.settings.set(key, value)        // also pushes to the device
 toolkit.glasses.settings.onChanged(key, (v) => { … })
 toolkit.glasses.settings.descriptor(key)
-toolkit.glasses.settings.available()            // the device-setting keys
+toolkit.glasses.settings.available()            // the device-setting keys (live list)
 ```
+
+`available()` is the authoritative list at runtime (it varies by model/capabilities).
+The current keys, their types, and defaults:
+
+| Key | Type | Default | Notes / values |
+|---|---|---|---|
+| `brightness` | number | `50` | display brightness, `0`–`100` |
+| `auto_brightness` | boolean | `true` | auto-adjust brightness |
+| `head_up_angle` | number | `45` | head-up activation angle (degrees) |
+| `screen_disabled` | boolean | `false` | turn the display off |
+| `contextual_dashboard` | boolean | `true` | show the dashboard on head-up |
+| `dashboard_height` | number | `4` | dashboard vertical position |
+| `dashboard_depth` | number | `2` | dashboard distance |
+| `use_native_dashboard` | boolean | `true` | native dashboard vs JS |
+| `menu_apps` | `string[] \| null` | `null` | button-menu app package names |
+| `button_photo_size` | enum | `"max"` | `small` \| `medium` \| `large` \| `max` |
+| `button_video_settings` | object | `{ width: 1920, height: 1080, fps: 30 }` | button video recording |
+| `button_camera_led` | boolean | `true` | capture LED indicator |
+| `button_max_recording_time` | number | `10` | max button video length (seconds) |
+| `camera_fov` | object | `{ fov: 118, roi_position: 0 }` | camera field of view |
+| `preferred_mic` | enum | `"auto"` | `auto` \| `glasses` \| `phone` |
+| `lc3_frame_size` | enum (bytes) | `60` | `20` \| `40` \| `60` |
+| `sensing_enabled` | boolean | `true` | onboard sensors |
+| `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
+| `power_saving_mode` | boolean | `false` | low-power mode |
+| `offline_mode` | boolean | `false` | offline operation |
+| `gallery_mode` | boolean | `true` | on-device gallery |
+| `calendar_events` | array | `[]` | synced calendar events |
+| `twelve_hour_time` | boolean | `true` | 12-hour vs 24-hour clock |
+| `metric_system` | boolean | `false` | metric vs imperial |
+| `nex_chinese_captions` | boolean | `false` | Mentra Nex: Chinese captions |
+| `nex_audio_playback` | boolean | `false` | Mentra Nex: audio playback |
+
+<Note>
+Device **identity** (paired-device id/name/address, controller address) and internal
+**runtime flags** (e.g. STT-fallback state) are intentionally *not* in this surface —
+read the connected device via `toolkit.glasses.info()`.
+</Note>
 
 ## `toolkit.pairing`
 
