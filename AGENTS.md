@@ -12,7 +12,7 @@ MentraOS is an open source operating system, app store, and development framewor
 - iOS native module: `mobile/ios`
 - Backend & web portals: `cloud` (includes developer portal & app store)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- MentraOS Store: `cloud/store/` (web app for app discovery)
+- MentraOS Store: `cloud/websites/store/` (web app for app discovery)
 - Developer Console: `cloud/websites/console/` (web app for app management)
 
 ## Monorepo Structure
@@ -28,7 +28,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the TypeScript SDK, and the store front end sit in `cloud/packages/`, with integration tests in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/`.
+Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/`.
 
 ## Build Commands
 
