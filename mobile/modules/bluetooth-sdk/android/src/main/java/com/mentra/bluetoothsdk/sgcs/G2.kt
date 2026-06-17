@@ -1510,7 +1510,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets, left = false, right = true)
+        sendToGlasses(packets)
     }
 
     private fun sendDevSettingsCommand(
@@ -2129,8 +2129,9 @@ class G2 : SGCManager() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        delay(300) // 300ms to settle
-        rebuildState()
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // delay(300) // 300ms to settle
+        // rebuildState()
     }
 
     /**
@@ -2191,6 +2192,11 @@ class G2 : SGCManager() {
         val fragmentSize = 4096
         val totalSize = bmpData.size
         val fragmentCount = (bmpData.size + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if (bmpData.size == 0) {
+            return
+        }
 
         // Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
 
@@ -3678,9 +3684,7 @@ class G2 : SGCManager() {
                     pendingImgAck?.complete(errorCode == 4)
                 }
             }
-
-            // Bridge.log("G2: img_res: fields=${fields.keys.sorted()}")
-
+            
             // Dedup only the non-critical logging path (img-success/error chatter), which L and R
             // both deliver. Page-state resets above are intentionally outside this window.
             val timestamp = System.currentTimeMillis()
