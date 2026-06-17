@@ -2049,6 +2049,11 @@ class G2: NSObject, SGCManager {
         let fragmentSize = 4096
         let totalSize = Int32(bmpData.count)
         let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if bmpData.count == 0 {
+            return
+        }
 
         Bridge.log(
             "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
@@ -2060,15 +2065,15 @@ class G2: NSObject, SGCManager {
             // same session id with an incrementing MapFragmentIndex; the per-fragment ACK is
             // correlated by the (session, fragmentIndex) pair. A retry uses a fresh session so a
             // stale ACK from a prior attempt can't match.
-            imageSessionCounter += 1
+            imageSessionCounter = (imageSessionCounter + 1) % 256
             let sessionId = imageSessionCounter
 
             var fragmentIndex: Int32 = 0
             var offset = 0
             var transferOk = true
-            if attempt > 1 {
-                Bridge.log("G2: sendImageData(\(containerName)) - attempt \(attempt) starting")
-            }
+            // if attempt > 1 {
+            //     Bridge.log("G2: sendImageData(\(containerName)) - attempt \(attempt) starting")
+            // }
             while offset < bmpData.count {
                 let end = min(offset + fragmentSize, bmpData.count)
                 let fragment = bmpData[offset..<end]
@@ -2084,16 +2089,14 @@ class G2: NSObject, SGCManager {
                     mapRawData: Data(fragment)
                 )
                 sendEvenHubCommand(msg)
-                // Bridge.log(
-                //     "G2: sendImageData(\(containerName)) - attempt \(attempt) sent fragment \(fragmentIndex)"
-                // )
+                // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
                 // Timeout/img_failed → abandon the attempt and retry the whole image.
                 let ok = await awaitImageAck(sessionId: sessionId, fragmentIndex: fragmentIndex)
                 if !ok {
                     Bridge.log(
-                        "G2: sendImageData(\(containerName)) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                        "G2: img_sen: container=\(containerName) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
                     )
                     transferOk = false
                     break
@@ -2104,12 +2107,12 @@ class G2: NSObject, SGCManager {
             }
 
             if transferOk {
-                Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
+                // Bridge.log("G2: img_sen: container=\(containerName) - success=true")
                 return
             }
         }
 
-        Bridge.log("G2: WARN: sendImageData(\(containerName)) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
 
     /// Suspend until handleEvenHubResponse() resumes the pending ACK for this `(sessionId,
@@ -2263,7 +2266,8 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        await rebuildState()
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // await rebuildState()
     }
 
     // re-creates the containers and sends all images and text again to the glasses:
@@ -3595,6 +3599,7 @@ class G2: NSObject, SGCManager {
                     // Bridge.log(
                     //     "G2: img_res: session=\(ackSession) fragment=\(ackFragment) errorCode=\(errorCode) success=\(errorCode == 4)"
                     // )
+                    // Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
                     completeImageAck(
                         session: Int(ackSession), fragmentIndex: ackFragment, success: errorCode == 4
                     )

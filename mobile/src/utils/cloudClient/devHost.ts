@@ -64,13 +64,14 @@ function scriptURL(): string | undefined {
 }
 
 /**
- * The dev machine's host (no port), or undefined outside Metro-served builds.
+ * The dev machine's LAN host (no port), or undefined when no non-loopback
+ * candidate is available.
  *
- * A loopback answer is real, not a failure: over USB + `adb reverse` the
- * bundle is served via localhost, and the local cloud is reachable the same
- * way (reverse tcp:3000/3001). Over Wi-Fi the scriptURL carries the laptop's
- * LAN IP. We prefer a LAN candidate when one exists because other consumers
- * (the dev-miniapp WebView) may not ride the reverse tunnel.
+ * Over Wi-Fi the scriptURL carries the laptop's LAN IP, which is what we want:
+ * other consumers (the dev-miniapp WebView) may not ride the `adb reverse`
+ * tunnel, so a loopback address would be useless to them. Over USB the bundle
+ * is served via localhost, but we deliberately do NOT fall back to it here —
+ * in order to use the loopback address with adb reverse should set the environment variable instead to force it
  */
 export function devServerHost(): string | undefined {
   const candidates = [
@@ -79,5 +80,5 @@ export function devServerHost(): string | undefined {
     hostOf((Constants as {expoGoConfig?: {debuggerHost?: string}}).expoGoConfig?.debuggerHost),
   ].filter((h): h is string => !!h)
 
-  return candidates.find((h) => !isLoopback(h)) ?? candidates[0]
+  return candidates.find((h) => !isLoopback(h))
 }

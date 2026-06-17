@@ -284,12 +284,12 @@ function LocalMiniappView({
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
-      if (devUrl) {
-        // failed to load the dev url (we probably are connected to a different wifi network)
-        useAppStatusStore.getState().clearForeground()
-        useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
-        return
-      }
+      // if (devUrl) {
+      //   // failed to load the dev url (we probably are connected to a different wifi network)
+      //   useAppStatusStore.getState().clearForeground()
+      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
+      //   return
+      // }
       fail(e.message)
     })
 
