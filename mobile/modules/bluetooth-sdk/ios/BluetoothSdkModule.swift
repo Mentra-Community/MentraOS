@@ -326,14 +326,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("setButtonPhotoSettings") { (size: String) in
+        AsyncFunction("setPhotoCaptureDefaults") { (params: [String: Any]) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setButtonPhotoSettings(size: ButtonPhotoSize(rawValue: size) ?? .medium).values
-        }
-
-        AsyncFunction("setButtonPhotoCaptureSettings") { (params: [String: Any]) in
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setButtonPhotoSettings(ButtonPhotoSettings.from(params: params)).values
+            return try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults.from(params: params)).values
         }
 
         AsyncFunction("setButtonVideoRecordingSettings") { (width: Int, height: Int, fps: Int) in

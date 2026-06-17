@@ -1435,10 +1435,10 @@ class DeviceManager {
     }
 
     fun sendButtonPhotoSettings(requestId: String, size: String) {
-        sendButtonPhotoSettings(requestId, ButtonPhotoSettings(ButtonPhotoSize.fromValue(size)))
+        sendButtonPhotoSettings(requestId, PhotoCaptureDefaults(PhotoSize.fromValue(size)))
     }
 
-    fun sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) {
+    fun sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonPhotoSettings(
             requestId,

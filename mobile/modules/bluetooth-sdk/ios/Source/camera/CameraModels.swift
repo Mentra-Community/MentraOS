@@ -47,8 +47,8 @@ public enum PhotoCompression: String {
     case heavy
 }
 
-public struct ButtonPhotoSettings {
-    public let size: ButtonPhotoSize?
+public struct PhotoCaptureDefaults {
+    public let size: PhotoSize?
     public let mfnr: Bool?
     public let zsl: Bool?
     public let noiseReduction: Bool?
@@ -62,7 +62,7 @@ public struct ButtonPhotoSettings {
     public let resetCaptureTuning: Bool?
 
     public init(
-        size: ButtonPhotoSize?,
+        size: PhotoSize? = nil,
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         noiseReduction: Bool? = nil,
@@ -89,12 +89,12 @@ public struct ButtonPhotoSettings {
         self.resetCaptureTuning = resetCaptureTuning
     }
 
-    static func from(params: [String: Any]) -> ButtonPhotoSettings {
-        let size = (params["size"] as? String).map { ButtonPhotoSize(normalizedRawValue: $0) }
+    static func from(params: [String: Any]) -> PhotoCaptureDefaults {
+        let size = (params["size"] as? String).map { PhotoSize(normalizedRawValue: $0) }
         let aeExposureDivisor =
             optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
-        return ButtonPhotoSettings(
+        return PhotoCaptureDefaults(
             size: size,
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
