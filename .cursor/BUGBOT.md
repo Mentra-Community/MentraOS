@@ -21,7 +21,7 @@ When the PR agent orchestrator triggers this review, end with a top-level PR com
 
 1. Human-readable summary
 2. HTML marker `<!-- pr-agent-bugbot-verdict -->`
-3. JSON footer (same schema as Claude 4.6 reviewers):
+3. JSON footer (same schema as the other reviewers):
 
 ```json
 {"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"..."}]}
