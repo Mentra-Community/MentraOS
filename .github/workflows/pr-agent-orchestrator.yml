@@ -60,6 +60,11 @@ jobs:
           script: |
             let pr = context.payload.pull_request;
             let ciFailed = 'false';
+            let workflowRunSha = null;
+
+            if (context.eventName === 'workflow_run') {
+              workflowRunSha = context.payload.workflow_run.head_sha;
+            }
 
             if (!pr && context.eventName === 'workflow_run') {
               const run = context.payload.workflow_run;
@@ -99,7 +104,7 @@ jobs:
             }
 
             core.setOutput('pr_number', String(pr.number));
-            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_sha', workflowRunSha ?? pr.head.sha);
             core.setOutput('head_ref', pr.head.ref);
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('pr_author', pr.user.login);

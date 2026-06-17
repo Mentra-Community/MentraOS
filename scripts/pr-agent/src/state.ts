@@ -18,8 +18,8 @@ export async function listAllIssueComments(
   owner: string,
   repo: string,
   issueNumber: number,
-): Promise<Array<{ id: number; body?: string | null }>> {
-  const all: Array<{ id: number; body?: string | null }> = [];
+): Promise<Array<{ id: number; body?: string | null; created_at?: string | null }>> {
+  const all: Array<{ id: number; body?: string | null; created_at?: string | null }> = [];
   let page = 1;
   for (;;) {
     const { data } = await octokit.issues.listComments({

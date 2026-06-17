@@ -83,7 +83,8 @@ async function cmdAggregate() {
 
   const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
   const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
-  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, headSha, required);
+  const ref = (await getPrHeadSha(octokit, owner, repo, prNumber)) || headSha;
+  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
 
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),

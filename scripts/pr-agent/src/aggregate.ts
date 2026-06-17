@@ -27,8 +27,8 @@ function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean 
     const text = slot === 'standards' ? reviews.standards : reviews.depth;
     return !!text && !!parseVerdictFromText(text);
   }
-  if (reviews.bugbot && parseVerdictFromText(reviews.bugbot)) return true;
-  return reviews.bugbotCheckSuccess === true;
+  if (reviews.bugbotCheckSuccess !== true) return false;
+  return !!reviews.bugbot && !!parseVerdictFromText(reviews.bugbot);
 }
 
 export function aggregateCycle(
@@ -72,7 +72,7 @@ export function aggregateCycle(
   if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
   if (activePair.includes('depth')) ingest(reviews.depth, 'depth');
   if (activePair.includes('bugbot')) {
-    if (reviews.bugbot) {
+    if (reviews.bugbotCheckSuccess === true && reviews.bugbot) {
       ingest(reviews.bugbot, 'bugbot');
     }
     if (reviews.bugbotCheckSuccess === false) {
@@ -189,8 +189,27 @@ export async function loadBugbotVerdict(
   issueNumber: number,
 ): Promise<string | undefined> {
   const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
+
+  const triggerComments = comments.filter(
+    (c) => c.body?.trim() === 'bugbot run' || c.body?.includes('bugbot run'),
+  );
+  const latestTrigger = [...triggerComments].sort(
+    (a, b) =>
+      new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+  )[0];
+  if (!latestTrigger?.created_at) return undefined;
+
+  const triggerTime = new Date(latestTrigger.created_at).getTime();
   const verdictComment = [...comments]
-    .reverse()
-    .find((c) => c.body?.includes(MARKER_BUGBOT_VERDICT));
+    .filter(
+      (c) =>
+        c.body?.includes(MARKER_BUGBOT_VERDICT) &&
+        new Date(c.created_at ?? 0).getTime() >= triggerTime,
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+    )[0];
+
   return verdictComment?.body ?? undefined;
 }
