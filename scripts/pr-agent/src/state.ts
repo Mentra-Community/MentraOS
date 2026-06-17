@@ -13,6 +13,30 @@ export function createOctokit(token?: string): Octokit {
   return new Octokit({ auth });
 }
 
+export async function listAllIssueComments(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<Array<{ id: number; body?: string | null }>> {
+  const all: Array<{ id: number; body?: string | null }> = [];
+  let page = 1;
+  for (;;) {
+    const { data } = await octokit.issues.listComments({
+      owner,
+      repo,
+      issue_number: issueNumber,
+      per_page: 100,
+      page,
+    });
+    if (data.length === 0) break;
+    all.push(...data);
+    if (data.length < 100) break;
+    page++;
+  }
+  return all;
+}
+
 export function parseStateFromComment(body: string): PrAgentState | null {
   if (!body.includes(MARKER_ORCHESTRATOR)) return null;
   const jsonMatch = body.match(/```json\s*([\s\S]*?)\s*```/);
@@ -44,12 +68,7 @@ export async function loadOrCreateState(
   repo: string,
   issueNumber: number,
 ): Promise<{ state: PrAgentState; commentId?: number }> {
-  const { data: comments } = await octokit.issues.listComments({
-    owner,
-    repo,
-    issue_number: issueNumber,
-    per_page: 100,
-  });
+  const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
 
   const markerComment = comments.find((c) => c.body?.includes(MARKER_ORCHESTRATOR));
   if (markerComment?.body) {

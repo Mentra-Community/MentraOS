@@ -10,6 +10,7 @@ import {
   verdictToFindings,
 } from './findings.js';
 import { frozenPairFromFindings } from './rotate.js';
+import { listAllIssueComments } from './state.js';
 import { MARKER_BUGBOT_VERDICT, type AggregateOutput, type PrAgentState, type ReviewSlot } from './types.js';
 import { isCiFailed, isCiGreen, type CiCheckStatus } from './ci-gates.js';
 
@@ -19,6 +20,15 @@ export type ReviewOutputs = {
   bugbot?: string;
   bugbotCheckSuccess?: boolean;
 };
+
+function slotReviewSucceeded(slot: ReviewSlot, reviews: ReviewOutputs): boolean {
+  if (slot === 'standards' || slot === 'depth') {
+    const text = slot === 'standards' ? reviews.standards : reviews.depth;
+    return !!text && !!parseVerdictFromText(text);
+  }
+  if (reviews.bugbot && parseVerdictFromText(reviews.bugbot)) return true;
+  return reviews.bugbotCheckSuccess === true;
+}
 
 export function aggregateCycle(
   repoRoot: string,
@@ -58,13 +68,15 @@ export function aggregateCycle(
     }
   }
 
+  const allSlotsSucceeded = activePair.every((slot) => slotReviewSucceeded(slot, reviews));
+
   const newBlockingCount = newBlockingFingerprints.length;
   const ciFailed =
     isCiFailed(ciChecks) || process.env.CI_TRIGGER_FAILED === 'true';
   const ciGreen = isCiGreen(ciChecks);
 
   let consecutiveNoNewReviews = state.consecutiveNoNewReviews;
-  if (newBlockingCount === 0 && allApproved) {
+  if (newBlockingCount === 0 && allApproved && allSlotsSucceeded) {
     consecutiveNoNewReviews += 1;
   } else {
     consecutiveNoNewReviews = 0;
@@ -163,12 +175,7 @@ export async function loadBugbotVerdict(
   repo: string,
   issueNumber: number,
 ): Promise<string | undefined> {
-  const { data: comments } = await octokit.issues.listComments({
-    owner,
-    repo,
-    issue_number: issueNumber,
-    per_page: 100,
-  });
+  const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
   const verdictComment = [...comments]
     .reverse()
     .find((c) => c.body?.includes(MARKER_BUGBOT_VERDICT));

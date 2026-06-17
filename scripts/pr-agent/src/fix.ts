@@ -10,14 +10,14 @@ export async function runFix(
   repoRoot: string,
   state: PrAgentState,
   ciLogExcerpt: string,
-): Promise<void> {
+): Promise<boolean> {
   const config = loadConfig(repoRoot);
   const apiKey = process.env.CURSOR_API_KEY;
   if (!apiKey) throw new Error('CURSOR_API_KEY is required');
 
   if (config.dryRun) {
     console.log('[DRY_RUN] Skipping fixer commit/push');
-    return;
+    return false;
   }
 
   const promptPath = join(repoRoot, '.github/pr-agent/prompts/pr-fix.md');
@@ -61,7 +61,7 @@ Apply fixes in the working tree. Run relevant tests before finishing.
     const status = execSync('git status --porcelain', { cwd: repoRoot, encoding: 'utf8' });
     if (!status.trim()) {
       console.log('No file changes from fixer');
-      return;
+      return false;
     }
 
     execSync('git config user.name "github-actions[bot]"', { cwd: repoRoot });
@@ -75,6 +75,7 @@ Apply fixes in the working tree. Run relevant tests before finishing.
     );
     execSync('git push', { cwd: repoRoot });
     console.log('Pushed fix commit');
+    return true;
   } catch (err) {
     if (err instanceof CursorAgentError) {
       console.error('Fix startup failed:', err.message);

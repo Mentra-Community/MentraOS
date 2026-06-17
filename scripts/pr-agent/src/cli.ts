@@ -112,12 +112,13 @@ async function cmdAggregate() {
 
 async function cmdFix() {
   const octokit = createOctokit();
-  const { state } = await loadOrCreateState(octokit, owner, repo, prNumber);
+  const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
   const ciLog = process.env.CI_LOG_EXCERPT ?? '';
-  await runFix(repoRoot, state, ciLog);
-  const next = { ...state, fixRound: state.fixRound + 1 };
-  const { commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
-  await saveState(octokit, owner, repo, prNumber, next, commentId);
+  const committed = await runFix(repoRoot, state, ciLog);
+  if (committed) {
+    const next = { ...state, fixRound: state.fixRound + 1 };
+    await saveState(octokit, owner, repo, prNumber, next, commentId);
+  }
 }
 
 async function cmdWaitCi() {

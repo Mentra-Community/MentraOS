@@ -6,6 +6,8 @@ on:
   workflow_run:
     workflows:
       - "🧪 Test Cloud build"
+      - "Run Cloud Tests ☁️"
+      - "🧪 Test SDK build"
       - "Mobile App Quality Checks"
       - "MentraOS ASG Client Build"
       - "Mobile App Android Build"
@@ -111,6 +113,8 @@ jobs:
       run_depth: ${{ steps.plan.outputs.run_depth }}
       active_pair: ${{ steps.plan.outputs.active_pair }}
       is_dry_run: ${{ steps.plan.outputs.is_dry_run }}
+      should_handoff: ${{ steps.plan.outputs.should_handoff }}
+      handoff_reason: ${{ steps.plan.outputs.handoff_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -352,8 +356,10 @@ jobs:
     name: Finalize handoff
     needs: [resolve-context, plan, aggregate]
     if: |
-      always() && needs.plan.outputs.should_skip != 'true' &&
-      needs.aggregate.outputs.should_handoff == 'true'
+      always() && (
+        needs.plan.outputs.should_handoff == 'true' ||
+        (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -368,7 +374,7 @@ jobs:
         env:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
-          HANDOFF_REASON: ${{ needs.aggregate.outputs.handoff_reason || 'human_handoff' }}
+          HANDOFF_REASON: ${{ needs.plan.outputs.should_handoff == 'true' && needs.plan.outputs.handoff_reason || needs.aggregate.outputs.handoff_reason || 'human_handoff' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli finalize
 

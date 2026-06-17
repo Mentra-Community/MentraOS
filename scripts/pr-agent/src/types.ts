@@ -67,6 +67,8 @@ export type PlanOutput = {
   state: PrAgentState;
   shouldSkip: boolean;
   skipReason?: string;
+  shouldHandoff?: boolean;
+  handoffReason?: 'human_handoff' | 'budget_exhausted' | 'diverging';
 };
 
 export type AggregateOutput = {

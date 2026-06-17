@@ -4,6 +4,7 @@ import {
   createOctokit,
   loadOrCreateState,
   prHasLabel,
+  removeLabel,
   saveState,
 } from './state.js';
 import { getChangedFiles } from './ci-gates.js';
@@ -65,9 +66,27 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     return skipPlan(octokit, owner, repo, prNumber, 'draft PR');
   }
 
-  const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
+  const { state: loadedState, commentId } = await loadOrCreateState(
+    octokit,
+    owner,
+    repo,
+    prNumber,
+  );
+  let state = loadedState;
 
-  if (state.status !== 'in_progress' && !labelNames.includes('agent-resume')) {
+  if (labelNames.includes('agent-resume')) {
+    state = {
+      ...state,
+      status: 'in_progress',
+      consecutiveNoNewReviews: 0,
+    };
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-resume');
+    await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
+    await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
+    await saveState(octokit, owner, repo, prNumber, state, commentId);
+  }
+
+  if (state.status !== 'in_progress') {
     return {
       runBugbot: false,
       runStandards: false,
@@ -80,14 +99,18 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   }
 
   if (state.cycle >= config.limits.maxOrchestratorCycles) {
+    const exhausted = { ...state, status: 'budget_exhausted' as const };
+    await saveState(octokit, owner, repo, prNumber, exhausted, commentId);
     return {
       runBugbot: false,
       runStandards: false,
       runDepth: false,
       activePair: [],
-      state: { ...state, status: 'budget_exhausted' },
+      state: exhausted,
       shouldSkip: true,
       skipReason: 'max cycles',
+      shouldHandoff: true,
+      handoffReason: 'budget_exhausted',
     };
   }
 
@@ -144,6 +167,8 @@ export async function writePlanOutputs(plan: PlanOutput): Promise<void> {
   set('run_depth', String(plan.runDepth));
   set('active_pair', plan.activePair.join(','));
   set('is_dry_run', String(loadConfig(process.cwd()).dryRun));
+  set('should_handoff', String(plan.shouldHandoff ?? false));
+  set('handoff_reason', plan.handoffReason ?? '');
 }
 
 export { getChangedFiles };
