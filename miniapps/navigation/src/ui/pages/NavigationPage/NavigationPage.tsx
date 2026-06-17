@@ -247,6 +247,9 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  // Dynamic bitmap-size test inputs (dev panel).
+  const [bmpWidth, setBmpWidth] = useState("200")
+  const [bmpHeight, setBmpHeight] = useState("88")
   const [rawMapOpen, setRawMapOpen] = useState(false)
   const [showPivots, setShowPivots] = useState(false)
   const [showOffRouteLine, setShowOffRouteLine] = useState(false)
@@ -990,29 +993,35 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap width (h=88)</span>
-                  <div className="flex gap-1.5">
-                    {/* Vary WIDTH, height locked at 88 (the max visible height on the
-                        G2's 200px-tall panel). Probing for the max usable width. */}
-                    {([50, 100, 150, 200] as const).map((size) => (
-                      <button
-                        key={size}
-                        type="button"
-                        onClick={() => mentra.request("test:show-bitmap-size", {size, height: 88})}
-                        className="flex items-center gap-0.5 text-[11px] px-2 py-1 rounded-lg font-semibold bg-red-600 text-white">
-                        <svg width="9" height="9" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path
-                            d="M12 5V19M5 12H19"
-                            fill="none"
-                            stroke="#FFFFFF"
-                            strokeWidth="3"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                        {size}
-                      </button>
-                    ))}
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-neutral-700 shrink-0">Test bitmap (W×H)</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      value={bmpWidth}
+                      onChange={(e) => setBmpWidth(e.target.value)}
+                      placeholder="W"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <span className="text-[11px] text-neutral-400">×</span>
+                    <input
+                      type="number"
+                      value={bmpHeight}
+                      onChange={(e) => setBmpHeight(e.target.value)}
+                      placeholder="H"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const size = parseInt(bmpWidth, 10)
+                        const height = parseInt(bmpHeight, 10)
+                        if (!Number.isFinite(size) || !Number.isFinite(height)) return
+                        mentra.request("test:show-bitmap-size", {size, height})
+                      }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white shrink-0">
+                      Send
+                    </button>
                   </div>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -1068,6 +1077,23 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
                     Send
                   </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Large map (center)</span>
+                  <div className="flex gap-1.5">
+                    {[200, 270].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={async () => {
+                          const res = await mentra.request("test:show-large-map", {size})
+                          console.log(`[LARGE-MAP] ${size}:`, res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                        }}
+                        className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                        {size}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>

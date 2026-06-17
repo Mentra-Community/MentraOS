@@ -46,28 +46,65 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-87, y: 0, width: 87, height: 87}))
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-100, y: 0, width: 100, height: 100}))
+  }
+
+  /**
+   * Swipe test box: a plain bordered W×H bitmap centered on the 576×288 canvas.
+   * Clears EVERYTHING first, then draws the box immediately.
+   * Note widths >200 may not render on the G2 (single-container limit).
+   */
+  showTestBox(width: number, height: number): void {
+    const w = Math.max(8, Math.min(width, 576))
+    const h = Math.max(8, Math.min(height, 288))
+    const base64Bmp = borderTestImageBase64(w, h)
+    const x = Math.round((576 - w) / 2)
+    const y = Math.round((288 - h) / 2)
+    // Clear first, wait 2s so old containers tear down, THEN draw the box.
+    this.safeCall(() => this.session.display.clear())
+    setTimeout(() => {
+      this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
+    }, 1000)
+  }
+
+  /**
+   * Large map shown on swipe-up: a square bitmap centered on the 576×288 canvas.
+   * NOTE: a single G2 image container maxes out ~200px wide; wider needs
+   * (unimplemented) quad-mode tiling and may render nothing — but we pass the
+   * requested size through unclamped so larger sizes can be tested on-device.
+   */
+  showLargeBitmap(base64Bmp: string, size = 200): void {
+    const s = Math.max(8, Math.min(size, 288)) // cap to canvas height, not 200
+    const x = Math.round((576 - s) / 2)
+    const y = Math.round((288 - s) / 2)
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: s, height: s}))
   }
 
 
+  // ── Two stacked text containers ──────────────────────────────────────
+  // The G2's single full-screen (576×288) text wall only fits ~5 lines. To get
+  // more usable vertical text we split into two stacked positioned-text
+  // containers: maneuver/directions on top, trip stats below.
+  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 190}
+  private static readonly STATS_REGION = {x: 0, y: 195, width: 576, height: 93}
+
   /**
-   * Live trip-stats label in the very bottom-left of the 576×288 canvas:
-   * distance remaining + ETA, which decrement as the user nears the
-   * destination. Rendered in a rounded-border positioned text container (G2).
+   * Maneuver / direction text in the TOP region of the canvas (its own G2 text
+   * container), leaving the bottom region free for the stats container.
+   */
+  showManeuver(text: string): void {
+    this.safeCall(() =>
+      this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}),
+    )
+  }
+
+  /**
+   * Live trip-stats (distance + ETA) in the BOTTOM region, in its own G2 text
+   * container stacked under the maneuver box.
    */
   showTripStats(text: string): void {
-    // Very bottom-left edge of the 576×288 canvas: a 160×87 container at (0, 201).
-    const w = 160
-    const h = 87
     this.safeCall(() =>
-      this.session.display.showTextAt(text, {
-        x: 0,
-        y: 288 - h,
-        width: w,
-        height: h,
-        borderWidth: 2,
-        borderRadius: 6,
-      }),
+      this.session.display.showTextAt(text, {...DisplayManager.STATS_REGION}),
     )
   }
 
@@ -90,21 +127,23 @@ export class DisplayManager {
    * "quad mode" once width>200 or height>100 (see miniapp SDK display.ts).
    */
   showBitmapSize(size: number, height?: number): void {
-    // Clamp width to ≤200: a single G2 image container maxes out ~200px wide
-    // (defaultImgWidth in G2.kt). Containers wider than that need quad-mode
-    // tiling, which isn't implemented — they silently render nothing.
-    const w = Math.max(8, Math.min(size, 200))
+    // Pass the requested size through UNCLAMPED (only bounded to the 576×288
+    // canvas) so the dev panel can probe what the G2 actually renders past the
+    // ~200px single-container limit. >200 wide may render nothing (quad mode).
+    const w = Math.max(8, Math.min(size, 576))
     const h = Math.max(8, Math.min(height ?? size, 288))
     if (size > 200) {
-      console.log(`[NAV-MINI] bitmap width ${size} clamped to 200 (G2 single-container limit)`)
+      console.log(`[NAV-MINI] bitmap width ${size} > 200 — may not render (G2 quad-mode limit)`)
     }
     const base64Bmp = borderTestImageBase64(w, h)
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
-    this.safeCall(() => {
-      this.session.display.clear()
-      this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h})
-    })
+    // Clear first, wait 3s so the old container fully tears down, THEN draw the
+    // new bitmap — avoids the G2 reusing/overlapping a stale image container.
+    this.safeCall(() => this.session.display.clear())
+    setTimeout(() => {
+      this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
+    }, 3000)
   }
 
   /**

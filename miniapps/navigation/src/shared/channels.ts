@@ -79,6 +79,8 @@ export interface Channels {
   "test:pan-osm-map": Rpc<{dir: "up" | "down" | "left" | "right"}, {ok: boolean; error?: string}>
   "test:count-1-to-10": Rpc<void, void>
   "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
+  /** Test: render the large centered map bitmap at a given size on demand. */
+  "test:show-large-map": Rpc<{size?: number}, {ok: boolean; error?: string}>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

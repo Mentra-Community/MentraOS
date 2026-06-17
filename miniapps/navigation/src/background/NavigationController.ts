@@ -50,11 +50,20 @@ export class NavigationController {
   private started = false
   private logSeq = 0
   private lastHudKey = ""
+  // Timestamp of the last HUD push, so we can periodically re-push the maneuver
+  // text even when unchanged (recovers from G2 EvenHub page teardowns).
+  private lastHudAt = 0
   private lastMinimapPng: string | null = null
   private showMinimap = false
   // Last trip-stats string pushed to the bottom-left label, so we only re-send
   // when distance/ETA actually changes (avoids churning the G2 text container).
   private lastTripStats = ""
+  // Timestamp of the last bottom-left trip-stats push, so we can periodically
+  // re-send even when the content is unchanged (recovers from G2 page teardowns).
+  private lastTripStatsAt = 0
+  // True while the swipe-up large-map view is showing. Suppresses the normal HUD
+  // pump so it doesn't repaint the minimap/text over the large map.
+  private largeMapShown = false
   // OSM-roads minimap cache: roads fetched around a center, reused while the
   // user stays near it (re-fetch only when they move past a threshold).
   private osmRoadsCache: LatLng[][] | null = null
@@ -168,6 +177,7 @@ export class NavigationController {
     this.wireRpcHandlers()
     this.wireUIBroadcasts()
     this.wireHUDPump()
+    this.wireTouchGestures()
     this.primeNavigationPermission()
     this.seedInitialFix()
     this.loadUnitSystem()
@@ -641,6 +651,25 @@ export class NavigationController {
     )
 
     this.unsubs.push(
+      this.ui.handle("test:show-large-map", async (req) => {
+        const size = req?.size
+        if (!this.coords) return {ok: false, error: "no GPS fix yet"}
+        const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
+        // Fetch roads if we don't have any cached yet, then render the large map.
+        if (!this.osmRoadsCache) {
+          try {
+            this.osmRoadsCache = await fetchOsmRoads(me, this.OSM_MINIMAP_RADIUS_M * 2)
+            this.osmRoadsCenter = me
+          } catch (err) {
+            return {ok: false, error: err instanceof Error ? err.message : String(err)}
+          }
+        }
+        this.renderLargeMap(me, size)
+        return {ok: true}
+      }),
+    )
+
+    this.unsubs.push(
       this.ui.handle("test:pan-osm-map", async ({dir}) => {
         // Small nudge: shift the center by ~1/4 of the visible span. The visible
         // span is 2×radius meters, so a quarter is radius/2 meters.
@@ -719,7 +748,118 @@ export class NavigationController {
     this.unsubs.push(() => clearTimeout(handle))
   }
 
+  // ── G2 touch gestures ────────────────────────────────────────────────
+  // Swipe-up DURING live navigation → clear the HUD (minimap + stats + text)
+  // and show the large full map. (Swipe-down / tap returns to the HUD.)
+  private wireTouchGestures(): void {
+    this.unsubs.push(
+      this.session.input.onTouch((data) => {
+        // The miniapp `TouchData.kind` field arrives undefined on G2 — the native
+        // side labels the gesture under a different key. Log the WHOLE payload so
+        // we can see the real field name, and read the gesture from whichever of
+        // the likely keys is populated.
+        const d = data as unknown as Record<string, unknown>
+        const gesture = String(d.kind ?? d.gestureName ?? d.gesture ?? d.type ?? "")
+        console.log(`[TOUCH] payload=${JSON.stringify(data)} → gesture="${gesture}"`)
+
+        // system_exit = the glasses tore down our EvenHub page (dashboard etc).
+        // Do NOT touch largeMapShown here — it fires constantly and would
+        // repaint the HUD over the user's swipe box immediately. The HUD
+        // recovers on its own via the periodic re-push in refreshHUD.
+        if (gesture === "system_exit") return
+
+        // Only react while actually navigating.
+        if (!this.trip.running) {
+          console.log(`[TOUCH] ignored — not in live navigation`)
+          return
+        }
+
+        // G2 swipe-up arrives as scroll_top / swipe_up (native mapping varies).
+        const isSwipe =
+          gesture === "scroll_top" ||
+          gesture === "swipe_up" ||
+          gesture === "scroll_bottom" ||
+          gesture === "swipe_down"
+        if (!isSwipe) return
+
+        // Toggle: any swipe shows the box; any swipe while it's showing dismisses
+        // it and brings back the original HUD.
+        if (!this.largeMapShown) {
+          console.log(`[TOUCH] swipe → showing 288×140 test box`)
+          this.largeMapShown = true // suppress the HUD pump while the box shows
+          this.display.showTestBox(288, 140)
+        } else {
+          console.log(`[TOUCH] swipe → dismissing box, clear → wait 1s → HUD`)
+          this.largeMapShown = false
+          // Clear the big bitmap, wait 1s so its container fully tears down, THEN
+          // repaint the main screen — else it lingers under/over the HUD text.
+          this.display.clear()
+          this.lastHudKey = "" // force a fresh HUD repaint (directions text box)
+          this.lastMinimapPng = null
+          setTimeout(() => {
+            this.lastHudKey = "" // re-force in case state changed during the wait
+            this.lastMinimapPng = null
+            this.refreshHUD()
+          }, 1000)
+        }
+      }),
+    )
+  }
+
+  /**
+   * Clear the current HUD (minimap bitmap + stats text + maneuver text), then
+   * render the large map. Sets `largeMapShown` so the HUD pump stops repainting
+   * over it until the user swipes back down.
+   */
+  private showLargeMap(): void {
+    this.largeMapShown = true
+    // 1. Clear whatever's on the glasses (bitmaps + text containers).
+    this.display.clear()
+    if (!this.coords) return
+    const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
+
+    // 2. Render the large map from cached OSM roads + the route. The roads cache
+    //    is normally populated by the minimap pump — but the user may swipe up
+    //    with the minimap toggle OFF, so fetch on-demand if it's empty, then
+    //    re-render once roads arrive.
+    this.renderLargeMap(me)
+    if (!this.osmRoadsCache && !this.osmFetchInFlight) {
+      this.osmFetchInFlight = true
+      fetchOsmRoads(me, this.OSM_MINIMAP_RADIUS_M * 2)
+        .then((roads) => {
+          this.osmRoadsCache = roads
+          this.osmRoadsCenter = me
+          if (this.largeMapShown && this.coords) {
+            this.renderLargeMap({lat: this.coords.lat, lng: this.coords.lng})
+          }
+        })
+        .catch((err) => console.log("[LARGE-MAP] road fetch failed:", err))
+        .finally(() => {
+          this.osmFetchInFlight = false
+        })
+    }
+  }
+
+  /** Render + push the large centered map for the current position. */
+  private renderLargeMap(me: LatLng, size?: number): void {
+    const s = size ?? this.OSM_LARGE_MAP_SIZE
+    const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
+    const markerHeading = routeBearing ?? this.heading
+    const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
+      center: me,
+      width: s,
+      height: s,
+      viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
+      lineWidthPx: 2,
+      route: this.trip.routePoints,
+      marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
+    })
+    if (png) this.display.showLargeBitmap(png, s)
+  }
+
   private refreshHUD(): void {
+    // While the swipe-up large map is showing, don't repaint the HUD over it.
+    if (this.largeMapShown) return
     const {status, running, activeDestinationName, maneuver, arrivalSide} = this.trip
 
     // Minimap runs first so heading-only updates still refresh the map
@@ -737,9 +877,10 @@ export class NavigationController {
       const side = arrivalSide ? `, on your ${arrivalSide}` : ""
       next = `You have arrived${at}${side}`
       durationMs = 10_000
-    } else if (!running && !this.hasCompletedTrip) {
-      next = "Welcome to Mentra Maps!\nPick a destination to get started."
-      durationMs = 5_000
+      // Welcome message disabled — don't show "Welcome to Mentra Maps!".
+      // } else if (!running && !this.hasCompletedTrip) {
+      //   next = "Welcome to Mentra Maps!\nPick a destination to get started."
+      //   durationMs = 5_000
     } else if (status === "rerouting") {
       next = "Rebuilding route…"
     } else if (this.offRouteAdvisory && running) {
@@ -833,11 +974,48 @@ export class NavigationController {
       }
       return
     }
-    // Coalesce — don't spam the glasses with the same frame.
-    const key = `${next} ${durationMs ?? 0}`
-    if (key === this.lastHudKey) return
+    // Two stacked text containers: maneuver/directions on top, trip stats below.
+    // The single full-screen text wall only fits ~5 lines on the G2; splitting
+    // into two containers gives each its own region so more text is visible.
+    const stats = running ? this.buildTripStats() : null
+
+    // Coalesce on the combined frame so we don't re-push identical content.
+    const key = `${next}${stats ?? ""}${durationMs ?? 0}`
+    // Re-push every ~3s even when unchanged: the G2 frequently tears down our
+    // EvenHub page (system_exit / dashboard), swallowing a one-time send.
+    const nowHud = Date.now()
+    if (key === this.lastHudKey && nowHud - this.lastHudAt <= 3000) return
+    this.lastHudAt = nowHud
+
+    // When leaving the idle "Welcome to Mentra Maps!" frame for live navigation,
+    // the welcome text container can linger. Clear first so the directions
+    // cleanly replace it.
+    if (this.lastHudKey.startsWith("Welcome to Mentra Maps") && running) {
+      this.display.clear()
+    }
     this.lastHudKey = key
-    this.display.showText(next, durationMs)
+
+    this.display.showManeuver(next)
+    if (stats) this.display.showTripStats(stats)
+  }
+
+  /**
+   * Build the trip-stats line: distance remaining + ETA, e.g.
+   * "273 m · ⊙ 4 min". Returns null when there's no usable distance.
+   */
+  private buildTripStats(): string | null {
+    const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    const distM =
+      this.trip.maneuver?.distanceToDestinationMeters ??
+      remainingRouteMeters(me, this.trip.routePoints) ??
+      undefined
+    if (distM == null || distM < 0) return null
+    const distStr = formatDistance(distM, this.unitSystem)
+    const etaS =
+      this.trip.maneuver?.timeToDestinationSeconds ??
+      distM / this.FALLBACK_WALKING_M_PER_S
+    const etaStr = etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
+    return etaStr ? `${distStr} · ${etaStr}` : distStr
   }
 
   /**
@@ -848,14 +1026,18 @@ export class NavigationController {
   // OSM-roads minimap: street network around the user's live position, with the
   // active route drawn on top. Roads are cached and only re-fetched from Overpass
   // when the user moves past a threshold (PoC: fetch-on-move, ~1s lag accepted).
-  private readonly OSM_MINIMAP_SIZE = 87 // matches the bottom-right container
+  private readonly OSM_MINIMAP_SIZE = 100 // matches the top-right container
   private readonly OSM_MINIMAP_RADIUS_M = 133
+  // Large map shown on swipe-up. Capped at 200px: a single G2 image container
+  // maxes out ~200px wide before it needs (unimplemented) quad-mode tiling.
+  private readonly OSM_LARGE_MAP_SIZE = 200
   private readonly OSM_REFETCH_THRESHOLD_M = 120
   // Walking speed for the ETA fallback when the SDK hasn't sent a remaining-time
   // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
   private readonly FALLBACK_WALKING_M_PER_S = 1.4
 
   private refreshMinimap(): void {
+    if (this.largeMapShown) return // large map owns the screen; don't overdraw
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
 
@@ -922,10 +1104,19 @@ export class NavigationController {
       const etaStr = etaS != null && etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
       // Distance and time side by side, e.g. "354 m · ⊙ 5 min".
       const stats = etaStr ? `${distStr} · ${etaStr}` : distStr
-      if (stats !== this.lastTripStats) {
+      // Re-push when the content changes OR every ~3s even if unchanged. The G2
+      // EvenHub page is frequently torn down/rebuilt ("Glasses shutdown our
+      // EvenHub page"), which can swallow a one-time send — so a change-only
+      // dedup leaves the stats container blank until the value next changes
+      // (which, while stationary, can be a long time). Periodic re-push recovers.
+      const now = Date.now()
+      const changed = stats !== this.lastTripStats
+      const stale = now - this.lastTripStatsAt > 3000
+      if (changed || stale) {
         this.lastTripStats = stats
-        console.log(`[TRIP-STATS] → showTripStats("${stats}")`)
-        this.display.showTripStats(stats)
+        this.lastTripStatsAt = now
+        // Bottom-left trip stats disabled — no longer pushed to the glasses.
+        // this.display.showTripStats(stats)
       }
     }
 

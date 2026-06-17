@@ -718,6 +718,9 @@ struct ViewState {
                     height: currentViewState.bmpHeight
                 )
             case "positioned_text":
+                Bridge.log(
+                    "MAN: positioned_text → text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                )
                 await sgc?.sendPositionedText(
                     currentViewState.text,
                     x: currentViewState.bmpX ?? 0,
@@ -1083,6 +1086,27 @@ struct ViewState {
             } else {
                 Bridge.log("MAN: ERROR: bitmap_animation missing frames or interval")
             }
+        }
+
+        // positioned_text is a sticky overlay container (e.g. the nav trip-stats
+        // label) that lives ALONGSIDE the main view. It must NOT flow through the
+        // single replaceable viewState[stateIndex] — otherwise the constantly-
+        // refreshing main text_wall (maneuver text) and the minimap bitmap_view
+        // overwrite it every frame and it never renders. Route it straight to the
+        // SGC, which keeps its own persistent text container for that rect.
+        if layoutType == "positioned_text" {
+            Bridge.log(
+                "MAN: positioned_text (sticky) → text='\(text)' rect=\(bmpX ?? 0),\(bmpY ?? 0) \(bmpWidth ?? 576)x\(bmpHeight ?? 288)"
+            )
+            Task { [weak self] in
+                await self?.sgc?.sendPositionedText(
+                    text,
+                    x: bmpX ?? 0, y: bmpY ?? 0,
+                    width: bmpWidth ?? 576, height: bmpHeight ?? 288,
+                    borderWidth: borderWidth ?? 0, borderRadius: borderRadius ?? 0
+                )
+            }
+            return
         }
 
         let cS = viewStates[stateIndex]
