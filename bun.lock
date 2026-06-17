@@ -27,6 +27,13 @@
         "typescript-eslint": "^8.44.1",
       },
     },
+    "cloud-v2/packages/auth": {
+      "name": "@mentra/auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "jose": "^5.9.6",
+      },
+    },
     "miniapps/captions": {
       "name": "local-captions",
       "dependencies": {
@@ -104,9 +111,9 @@
     "miniapps/merge": {
       "name": "local-merge",
       "dependencies": {
+        "@mentra/auth": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "hono": "^4.11.1",
-        "jose": "^5.10.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "tailwindcss": "^4.0.8",
@@ -253,6 +260,8 @@
     "@humanwhocodes/momoa": ["@humanwhocodes/momoa@3.3.10", "", {}, "sha512-KWiFQpSAqEIyrTXko3hFNLeQvSK8zXlJQzhhxsyVn58WFRYXST99b3Nqnu+ttOtjds2Pl2grUHGpe2NzhPynuQ=="],
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, ""],
+
+    "@mentra/auth": ["@mentra/auth@workspace:cloud-v2/packages/auth"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:mobile/modules/miniapp"],
 

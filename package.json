@@ -1,6 +1,7 @@
 {
   "workspaces": [
     "miniapps/*",
+    "cloud-v2/packages/auth",
     "sdk/miniapp-cli",
     "mobile/modules/miniapp"
   ],

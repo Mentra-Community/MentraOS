@@ -13,9 +13,9 @@
     "pack": "bun run miniapp:build && bun run miniapp:pack"
   },
   "dependencies": {
+    "@mentra/auth": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "hono": "^4.11.1",
-    "jose": "^5.10.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.0.8"

@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/shared" },
+    { "path": "./packages/auth" },
     { "path": "./packages/core" },
     { "path": "./packages/runtime" },
     { "path": "./packages/cloud-client" },

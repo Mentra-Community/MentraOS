@@ -1,17 +1,21 @@
 import {Hono, type Context} from "hono"
+import {MiniappAuthError, createMiniappAuthVerifier} from "@mentra/auth"
 
 import {
   InsightServiceError,
   insightsService,
   type InsightRequest,
 } from "../services/insights/insights.service"
-import {MiniappAuthError, verifyMiniappAuthHeader} from "../services/auth/miniapp-auth.service"
 
 export const insightsApi = new Hono()
 
+const miniappAuth = createMiniappAuthVerifier({
+  packageName: process.env.MERGE_PACKAGE_NAME ?? "com.mentra.local-merge",
+})
+
 insightsApi.post("/", async (c) => {
   try {
-    const auth = await verifyMiniappAuthHeader(c.req.header("Authorization"))
+    const auth = await miniappAuth.verifyAuthHeader(c.req.header("Authorization"))
     const body = (await c.req.json()) as InsightRequest
     return c.json(await insightsService.createInsight({...body, userId: auth.mentraUserId}))
   } catch (error) {
