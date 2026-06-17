@@ -36,6 +36,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
@@ -679,11 +680,9 @@ class LocalMiniappRuntime {
     // Stop any phone-owned video recordings for this app. A miniapp that
     // closes/crashes mid-recording loses its recordingId, so without this the
     // glasses keep recording until the max-recording timeout or thermal shutdown.
-    void getRuntimeHooks()
-      .videoRecording?.stopForApp?.(packageName)
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
-      })
+    void phoneVideoCoordinator.stopForApp(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
+    })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -2074,17 +2073,8 @@ class LocalMiniappRuntime {
       return
     }
 
-    const video = getRuntimeHooks().videoRecording
-    if (!video) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_IMPLEMENTED,
-        message: "Video recording is not configured on this host",
-      })
-      return
-    }
-
     try {
-      const result = await video.startRecording(packageName, {
+      const result = await phoneVideoCoordinator.startRecording(packageName, {
         width: payload.width as number | undefined,
         height: payload.height as number | undefined,
         fps: payload.fps as number | undefined,
@@ -2105,17 +2095,8 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const video = getRuntimeHooks().videoRecording
-    if (!video) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_IMPLEMENTED,
-        message: "Video recording is not configured on this host",
-      })
-      return
-    }
-
     try {
-      await video.stopRecording(packageName, payload.recordingId as string | undefined)
+      await phoneVideoCoordinator.stopRecording(packageName, payload.recordingId as string | undefined)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {

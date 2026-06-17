@@ -11,7 +11,6 @@ import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
-import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
@@ -257,11 +256,8 @@ class MantleManager {
       photo: {
         takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
       },
-      videoRecording: {
-        startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),
-        stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
-        stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
-      },
+      // videoRecording moved into island (PhoneVideoCoordinator, called directly by
+      // the runtime) — no longer injected as a host hook.
       cameraSettings: {
         setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
       },
