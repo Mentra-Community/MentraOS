@@ -23,4 +23,4 @@ yarn-error.log*
 bun.lock
 
 # Backups
-docs/intro.md.backup
+intro.md.backup

@@ -24,7 +24,7 @@ public class OtaSessionManager {
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
-     * Spec: docs/ota-rearchitecture-spec.md §A / EC-5 — ~10s from process start so the old process can exit.
+     * Spec: notes/ota-rearchitecture-spec.md §A / EC-5 — ~10s from process start so the old process can exit.
      * Must not reuse {@link #SESSION_EXPIRY_MS} (that is idle-session staleness, not restart pacing).
      */
     private static final long APK_RESTART_GUARD_MS = 10_000L;
