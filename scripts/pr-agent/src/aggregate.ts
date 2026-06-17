@@ -77,18 +77,6 @@ export function aggregateCycle(
     }
     if (reviews.bugbotCheckSuccess === false) {
       allApproved = false;
-    } else if (
-      reviews.bugbotCheckSuccess === true &&
-      (!reviews.bugbot || !parseVerdictFromText(reviews.bugbot))
-    ) {
-      const resolved = resolveOpenFindingsFromSource(
-        openFindings,
-        resolvedFindings,
-        'bugbot',
-        cycle,
-      );
-      openFindings = resolved.open;
-      resolvedFindings = resolved.resolved;
     }
   }
 

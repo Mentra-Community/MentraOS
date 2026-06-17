@@ -175,9 +175,8 @@ async function skipPlan(
   };
 }
 
-export async function writePlanOutputs(plan: PlanOutput): Promise<void> {
-  const { appendFileSync, mkdirSync } = await import('node:fs');
-  const { join } = await import('node:path');
+export async function writePlanOutputs(repoRoot: string, plan: PlanOutput): Promise<void> {
+  const { appendFileSync } = await import('node:fs');
   const out = process.env.GITHUB_OUTPUT;
   if (!out) return;
 
@@ -189,7 +188,7 @@ export async function writePlanOutputs(plan: PlanOutput): Promise<void> {
   set('run_standards', String(plan.runStandards));
   set('run_depth', String(plan.runDepth));
   set('active_pair', plan.activePair.join(','));
-  set('is_dry_run', String(loadConfig(process.cwd()).dryRun));
+  set('is_dry_run', String(loadConfig(repoRoot).dryRun));
   set('should_handoff', String(plan.shouldHandoff ?? false));
   set('handoff_reason', plan.handoffReason ?? '');
   set('recheck_only', String(plan.recheckOnly ?? false));

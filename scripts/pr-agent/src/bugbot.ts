@@ -26,9 +26,15 @@ export async function pollBugbotCheck(
   const deadline = Date.now() + maxWaitMin * 60_000;
   while (Date.now() < deadline) {
     const { data } = await octokit.checks.listForRef({ owner, repo, ref, per_page: 100 });
-    const run = data.check_runs.find((r) => r.name === BUGBOT_CHECK_NAME);
-    if (run?.status === 'completed') {
-      return { completed: true, success: run.conclusion === 'success' };
+    const matching = data.check_runs.filter((r) => r.name === BUGBOT_CHECK_NAME);
+    if (matching.length > 0) {
+      const latest = [...matching].sort(
+        (a, b) =>
+          new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime() || b.id - a.id,
+      )[0]!;
+      if (latest.status === 'completed') {
+        return { completed: true, success: latest.conclusion === 'success' };
+      }
     }
     await sleep(20_000);
   }

@@ -43,9 +43,9 @@ export async function fetchWorkflowStatuses(
     if (runs.length === 0) {
       return {
         name: workflowName,
-        status: 'not_required',
+        status: 'pending',
         conclusion: null,
-        required: false,
+        required: true,
       };
     }
     const latest = [...runs].sort(

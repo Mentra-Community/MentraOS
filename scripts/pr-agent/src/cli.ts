@@ -41,7 +41,7 @@ function env() {
 async function cmdPlan() {
   const plan = await runPlan(repoRoot);
   console.log(JSON.stringify(plan, null, 2));
-  await writePlanOutputs(plan);
+  await writePlanOutputs(repoRoot, plan);
 }
 
 async function cmdReview(slot: string) {
@@ -166,9 +166,10 @@ async function cmdFinalize() {
     | 'diverging';
   const octokit = createOctokit();
   const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
+  const ref = (await getPrHeadSha(octokit, owner, repo, prNumber)) || headSha;
   const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
   const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
-  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, headSha, required);
+  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
 
   const finalState = { ...state, status: reason };
   await saveState(octokit, owner, repo, prNumber, finalState, commentId);
