@@ -1,11 +1,12 @@
 import * as jose from "jose";
 
-const DEFAULT_CORE_URL = "http://localhost:3000";
-const DEFAULT_ISSUER = "mentra";
+const DEFAULT_JWKS_URL = "https://core.mentraglass.com/.well-known/jwks.json";
+const DEFAULT_ISSUER = "cloud-core";
 const DEFAULT_CLOCK_TOLERANCE = "2 minutes";
 const DEFAULT_ALGORITHMS = ["EdDSA"] as const;
+const DEFAULT_CONTEXT_KEY = "mentraAuth";
 
-export interface VerifiedMiniappToken {
+export interface VerifiedMentraAuth {
   mentraUserId: string;
   oemId?: string;
   packageName: string;
@@ -15,25 +16,21 @@ export interface VerifiedMiniappToken {
   claims: jose.JWTPayload;
 }
 
-export interface MiniappAuthOptions {
+export interface MentraAuthOptions {
   /**
    * The packageName this backend serves. Miniapp auth tokens are audience-pinned
    * to exactly one packageName, so this should be the miniapp's packageName.
    */
   packageName?: string;
   /**
-   * Core base URL used to discover /.well-known/jwks.json. Ignored when
-   * jwksUrl is set. Defaults to MENTRA_CORE_URL or http://localhost:3000.
-   */
-  coreUrl?: string;
-  /**
-   * Explicit JWKS URL. Useful for proxies, tests, or non-standard hosting.
+   * Explicit JWKS URL. Defaults to the production Cloud Core JWKS endpoint.
+   * Override for local, staging, test, or self-hosted Core deployments.
    */
   jwksUrl?: string;
   /**
-   * Expected token issuer. Core currently mints miniapp tokens with iss=mentra.
+   * Expected token issuer.
    */
-  issuer?: string;
+  issuer?: string | string[];
   /**
    * Allowed signature algorithms. Defaults to EdDSA.
    */
@@ -56,24 +53,50 @@ export interface MiniappAuthOptions {
   cooldownMs?: number;
 }
 
-export class MiniappAuthError extends Error {
+export interface MentraAuthVariables {
+  mentraAuth: VerifiedMentraAuth;
+}
+
+export interface MentraHonoOptions {
+  /**
+   * Hono context variable key. Defaults to "mentraAuth".
+   */
+  contextKey?: string;
+  /**
+   * Custom response for missing or rejected auth. Defaults to JSON 401.
+   */
+  onUnauthorized?: (error: MentraAuthError, c: HonoLikeContext) => Response | Promise<Response>;
+}
+
+export interface HonoLikeContext {
+  req: {
+    header(name: string): string | undefined;
+  };
+  set(key: string, value: unknown): void;
+  json(body: unknown, status?: number): Response;
+}
+
+export type HonoLikeNext = () => Promise<void>;
+export type HonoLikeMiddleware = (c: HonoLikeContext, next: HonoLikeNext) => Promise<Response | void>;
+
+export class MentraAuthError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "MiniappAuthError";
+    this.name = "MentraAuthError";
   }
 }
 
-export class MiniappAuthVerifier {
+export class MentraAuth {
   private readonly packageName: string;
-  private readonly issuer: string;
+  private readonly issuer: string | string[];
   private readonly algorithms: string[];
   private readonly clockTolerance: string | number;
   private readonly jwksUrl: string;
   private jwks: ReturnType<typeof jose.createRemoteJWKSet> | null = null;
 
-  constructor(options: MiniappAuthOptions = {}) {
+  constructor(options: MentraAuthOptions = {}) {
     this.packageName = resolvePackageName(options.packageName);
-    this.issuer = options.issuer ?? env("MENTRA_MINIAPP_TOKEN_ISSUER") ?? DEFAULT_ISSUER;
+    this.issuer = resolveIssuer(options.issuer);
     this.algorithms = options.algorithms ?? [...DEFAULT_ALGORITHMS];
     this.clockTolerance = options.clockTolerance ?? DEFAULT_CLOCK_TOLERANCE;
     this.jwksUrl = resolveJwksUrl(options);
@@ -84,7 +107,7 @@ export class MiniappAuthVerifier {
     });
   }
 
-  async verifyToken(token: string): Promise<VerifiedMiniappToken> {
+  async verifyToken(token: string): Promise<VerifiedMentraAuth> {
     let payload: jose.JWTPayload;
     try {
       const result = await jose.jwtVerify(token, this.getJwks(), {
@@ -95,12 +118,12 @@ export class MiniappAuthVerifier {
       });
       payload = result.payload;
     } catch (err) {
-      throw new MiniappAuthError(`miniapp token rejected: ${(err as Error).message}`);
+      throw new MentraAuthError(`miniapp token rejected: ${(err as Error).message}`);
     }
 
     const subject = stringClaim(payload.sub);
     if (!subject) {
-      throw new MiniappAuthError("miniapp token missing subject");
+      throw new MentraAuthError("miniapp token missing subject");
     }
 
     return {
@@ -114,8 +137,27 @@ export class MiniappAuthVerifier {
     };
   }
 
-  async verifyAuthHeader(header: string | undefined | null): Promise<VerifiedMiniappToken> {
+  async verifyAuthHeader(header: string | undefined | null): Promise<VerifiedMentraAuth> {
     return this.verifyToken(extractBearerToken(header));
+  }
+
+  async verifyRequest(request: Request): Promise<VerifiedMentraAuth> {
+    return this.verifyAuthHeader(request.headers.get("Authorization"));
+  }
+
+  hono(options: MentraHonoOptions = {}): HonoLikeMiddleware {
+    const contextKey = options.contextKey ?? DEFAULT_CONTEXT_KEY;
+    return async (c, next) => {
+      try {
+        c.set(contextKey, await this.verifyAuthHeader(c.req.header("Authorization")));
+        return await next();
+      } catch (error) {
+        if (error instanceof MentraAuthError) {
+          return options.onUnauthorized?.(error, c) ?? c.json({ error: error.message }, 401);
+        }
+        throw error;
+      }
+    };
   }
 
   private getJwks(): ReturnType<typeof jose.createRemoteJWKSet> {
@@ -126,33 +168,33 @@ export class MiniappAuthVerifier {
   }
 }
 
-export function createMiniappAuthVerifier(options: MiniappAuthOptions = {}): MiniappAuthVerifier {
-  return new MiniappAuthVerifier(options);
+export function createMentraAuth(options: MentraAuthOptions = {}): MentraAuth {
+  return new MentraAuth(options);
 }
 
-export async function verifyMiniappToken(
+export async function verifyMentraToken(
   token: string,
-  options: MiniappAuthOptions = {},
-): Promise<VerifiedMiniappToken> {
-  return createMiniappAuthVerifier(options).verifyToken(token);
+  options: MentraAuthOptions = {},
+): Promise<VerifiedMentraAuth> {
+  return createMentraAuth(options).verifyToken(token);
 }
 
-export async function verifyMiniappAuthHeader(
+export async function verifyMentraAuthHeader(
   header: string | undefined | null,
-  options: MiniappAuthOptions = {},
-): Promise<VerifiedMiniappToken> {
-  return createMiniappAuthVerifier(options).verifyAuthHeader(header);
+  options: MentraAuthOptions = {},
+): Promise<VerifiedMentraAuth> {
+  return createMentraAuth(options).verifyAuthHeader(header);
 }
 
 export function extractBearerToken(header: string | undefined | null): string {
   const match = /^Bearer\s+(.+)$/i.exec(header ?? "");
   if (!match?.[1]) {
-    throw new MiniappAuthError("missing bearer token");
+    throw new MentraAuthError("missing bearer token");
   }
   return match[1];
 }
 
-export function miniappJwksUrl(options: Pick<MiniappAuthOptions, "coreUrl" | "jwksUrl"> = {}): string {
+export function mentraJwksUrl(options: Pick<MentraAuthOptions, "jwksUrl"> = {}): string {
   return resolveJwksUrl(options);
 }
 
@@ -163,26 +205,31 @@ function resolvePackageName(packageName?: string): string {
     env("MINIAPP_PACKAGE_NAME") ??
     env("PACKAGE_NAME");
   if (!value) {
-    throw new MiniappAuthError("packageName is required");
+    throw new MentraAuthError("packageName is required");
   }
   return value;
 }
 
-function resolveJwksUrl(options: Pick<MiniappAuthOptions, "coreUrl" | "jwksUrl">): string {
-  const explicit = options.jwksUrl ?? env("MENTRA_JWKS_URL");
-  if (explicit) return explicit;
+function resolveJwksUrl(options: Pick<MentraAuthOptions, "jwksUrl">): string {
+  return options.jwksUrl ?? env("MENTRA_AUTH_JWKS_URL") ?? DEFAULT_JWKS_URL;
+}
 
-  const coreUrl = trimTrailingSlash(options.coreUrl ?? env("MENTRA_CORE_URL") ?? DEFAULT_CORE_URL);
-  return `${coreUrl}/.well-known/jwks.json`;
+function resolveIssuer(issuer?: string | string[]): string | string[] {
+  if (Array.isArray(issuer)) return issuer;
+  if (issuer) return issuer;
+
+  const issuers = env("MENTRA_AUTH_ISSUERS")
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (issuers && issuers.length > 0) return issuers;
+
+  return env("MENTRA_AUTH_ISSUER") ?? DEFAULT_ISSUER;
 }
 
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
 }
 
 function stringClaim(value: unknown): string | undefined {

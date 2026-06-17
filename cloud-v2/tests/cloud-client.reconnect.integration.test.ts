@@ -200,7 +200,10 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
     // live socket on demand while subscription PUTs still reach the real server.
     // The runtime derives the ws URL from this (http -> ws, + /ws/session).
     endpoints: { core: coreHandle.url, runtime: `http://localhost:${RELAY_PORT}` },
-    auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    auth: {
+      core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+      runtime: { source: "core" },
+    },
     audio: { codec: "pcm", sampleRate: 16000 },
     // Fast, jitter-free backoff so the reconnect happens within the test window.
     reconnect: { baseMs: 50, maxMs: 200, jitter: false },

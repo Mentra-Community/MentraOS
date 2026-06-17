@@ -32,6 +32,8 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
+  DEV_APP_PACKAGE_NAME,
+  getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
@@ -187,7 +189,11 @@ class MantleManager {
       },
       cloud,
       miniappAuth: {
-        getToken: (packageName) => cloudClient.getMiniappAuthToken(packageName),
+        getToken: (packageName) => {
+          const authPackageName =
+            packageName === DEV_APP_PACKAGE_NAME ? (getDevAppSourcePackage() ?? packageName) : packageName
+          return cloudClient.getMiniappAuthToken(authPackageName)
+        },
       },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),

@@ -193,7 +193,10 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
 
   return new CloudClient({
     endpoints: { core: coreHandle.url, runtime: `http://localhost:${AUDIO_HTTP_PORT}` },
-    auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    auth: {
+      core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+      runtime: { source: "core" },
+    },
     // Feed raw PCM (the say-generated audio) rather than LC3.
     audio: { codec: "pcm", sampleRate: 16000 },
   });

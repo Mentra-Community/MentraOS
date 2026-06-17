@@ -25,6 +25,16 @@ cd miniapps/merge
 bun run dev
 ```
 
+To run the miniapp against the stable Cloudflare tunnel URL:
+
+```bash
+cd miniapps/merge
+bun run dev:tunnel
+```
+
+The tunnel hostname is `https://local-merge-isaiah.mentraglass.com` and should
+point at the backend port `3130`, not the miniapp dev sidecar.
+
 For USB testing on Android, reverse the backend port:
 
 ```bash
@@ -34,10 +44,11 @@ adb reverse tcp:3130 tcp:3130
 The miniapp dev sidecar uses `3123`, so the backend uses `3130` in dev.
 
 The `/api/insights` route requires a Mentra miniapp token. In local development
-the backend verifies that token against Cloud Core's JWKS:
+the backend verifies that token against Cloud Core's JWKS. The production JWKS
+is the default, so only override it when testing against local/staging Core:
 
 ```bash
-MENTRA_CORE_URL=http://localhost:3000
+MENTRA_AUTH_JWKS_URL=http://localhost:3000/.well-known/jwks.json
 MERGE_PACKAGE_NAME=com.mentra.local-merge
 ```
 

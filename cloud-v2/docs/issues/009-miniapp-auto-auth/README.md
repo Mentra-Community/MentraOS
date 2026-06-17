@@ -87,14 +87,35 @@ all other request options intact.
 
 ## Backend Verification
 
-A miniapp backend verifies:
+Most miniapp backends should use `@mentra/auth`:
+
+```ts
+import {createMentraAuth, type MentraAuthVariables} from "@mentra/auth"
+import {Hono} from "hono"
+
+const mentraAuth = createMentraAuth({packageName: "com.example.miniapp"})
+const app = new Hono<{Variables: MentraAuthVariables}>()
+
+app.use("/api/*", mentraAuth.hono())
+
+app.post("/api/endpoint", async (c) => {
+  const auth = c.get("mentraAuth")
+  return c.json({userId: auth.mentraUserId})
+})
+```
+
+The helper verifies:
 
 1. `Authorization: Bearer <token>` exists.
-2. JWT signature verifies against Core's `/.well-known/jwks.json`.
-3. `iss === "mentra"`.
+2. JWT signature verifies against the configured JWKS.
+3. `iss === "cloud-core"` by default.
 4. `aud === <this backend packageName>`.
 5. `exp` has not passed.
 6. `sub` is present and becomes the Mentra user id.
+
+`@mentra/auth` defaults to the production Core JWKS:
+`https://core.mentraglass.com/.well-known/jwks.json`. Local, staging, test, or
+self-hosted deployments can pass `jwksUrl` or set `MENTRA_AUTH_JWKS_URL`.
 
 ## First Implementation Target
 
@@ -112,4 +133,3 @@ Local Merge is the first protected backend:
 4. Miniapp starts even if Core token minting is slow; auth arrives later via
    `miniapp_auth_update`.
 5. Local captions and local translation still connect without backend auth.
-

@@ -54,10 +54,10 @@ contract is tracked in issue 007.
 ### Miniapp-scoped token
 
 Ed25519 JWT, signed with a **separate miniapp-token key**. Claims:
-`sub = mentraUserId`, `oemId`, `aud = <packageName>`, `iss = "mentra"`, `iat`,
-`exp` (configurable, default 1h), `jti`. Audience-pinned to one miniapp; only ever
-valid against that miniapp's developer backend, which verifies it via JWKS. This
-is the only token a miniapp ever holds.
+`sub = mentraUserId`, `oemId`, `aud = <packageName>`, `iss = "cloud-core"`,
+`iat`, `exp` (configurable, default 1h), `jti`. Audience-pinned to one miniapp;
+only ever valid against that miniapp's developer backend, which verifies it via
+JWKS. This is the only token a miniapp ever holds.
 
 ## Endpoints
 

@@ -10,6 +10,7 @@ export {
   registerDevApp,
   unregisterDevApp,
   getDevAppRecords,
+  getDevAppSourcePackage,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
 } from "./services/AppRegistry"
