@@ -102,8 +102,17 @@ jobs:
                 head: `${headOwner}:${run.head_branch}`,
                 state: 'open',
               });
-              pr =
-                pulls.data.find((p) => p.head.sha === run.head_sha) ?? pulls.data[0];
+              if (pulls.data.length === 1) {
+                // Unambiguous branch: use it even if the head advanced past the CI sha.
+                pr = pulls.data[0];
+              } else {
+                // Multiple open PRs share this branch: require an exact head_sha
+                // match. Never guess — bail if it is ambiguous or absent.
+                const shaMatches = pulls.data.filter(
+                  (p) => p.head.sha === run.head_sha,
+                );
+                pr = shaMatches.length === 1 ? shaMatches[0] : undefined;
+              }
             } else {
               core.setOutput('ci_recheck_only', 'false');
             }

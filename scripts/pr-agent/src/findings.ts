@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import { VerdictSchema, type Finding, type ReviewSlot, type Verdict } from './types.js';
+import {
+  VerdictSchema,
+  type Finding,
+  type PrAgentState,
+  type ReviewSlot,
+  type Verdict,
+} from './types.js';
 
 export function fingerprintFinding(file: string, message: string): string {
   const normalizedFile = file.replace(/\\/g, '/').toLowerCase();
@@ -101,6 +107,53 @@ export function resolveOpenFindingsFromSource(
 
 export function openBlocking(findings: Finding[]): Finding[] {
   return findings.filter((f) => f.severity === 'blocking' && f.status === 'open');
+}
+
+/** Extract finding ids from `agent-resolve <id>` human comments. */
+export function parseResolveIds(commentBodies: Array<string | null | undefined>): string[] {
+  const ids = new Set<string>();
+  const re = /agent-resolve\s+([a-zA-Z0-9]{4,16})/gi;
+  for (const body of commentBodies) {
+    if (!body) continue;
+    for (const m of body.matchAll(re)) {
+      ids.add(m[1]!.toLowerCase());
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Apply human `agent-resolve <id>` commands: move matching open findings to
+ * resolved and mute their fingerprints so later re-reports stay suppressed.
+ */
+export function applyResolvedIds(
+  state: PrAgentState,
+  ids: string[],
+  cycle: number,
+): {
+  openFindings: Finding[];
+  resolvedFindings: Finding[];
+  mutedFingerprints: string[];
+  changed: boolean;
+} {
+  const idSet = new Set(ids.map((i) => i.toLowerCase()));
+  const toResolve = state.openFindings.filter((f) => idSet.has(f.id.toLowerCase()));
+  if (toResolve.length === 0) {
+    return {
+      openFindings: state.openFindings,
+      resolvedFindings: state.resolvedFindings,
+      mutedFingerprints: state.mutedFingerprints,
+      changed: false,
+    };
+  }
+  const resolveFps = new Set(toResolve.map((f) => f.fingerprint));
+  const openFindings = state.openFindings.filter((f) => !resolveFps.has(f.fingerprint));
+  const resolvedFindings = [
+    ...state.resolvedFindings,
+    ...toResolve.map((f) => ({ ...f, status: 'resolved' as const, lastSeenCycle: cycle })),
+  ];
+  const mutedFingerprints = [...new Set([...state.mutedFingerprints, ...resolveFps])];
+  return { openFindings, resolvedFindings, mutedFingerprints, changed: true };
 }
 
 export function sourceCounts(findings: Finding[]): Record<ReviewSlot, number> {

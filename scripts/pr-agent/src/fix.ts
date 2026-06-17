@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
-import { Agent, CursorAgentError } from '@cursor/sdk';
+import { Agent, CursorAgentError, type Run } from '@cursor/sdk';
 import { loadConfig } from './config.js';
 import type { Finding, PrAgentState } from './types.js';
 import { openBlocking } from './findings.js';
@@ -46,6 +46,7 @@ Apply fixes in the working tree. Run relevant tests before finishing.
 `;
 
   const fixModel = process.env.PR_AGENT_FIX_MODEL ?? config.fixModel;
+  const maxTurns = config.limits.maxFixAgentTurns;
 
   try {
     await using agent = await Agent.create({
@@ -54,13 +55,37 @@ Apply fixes in the working tree. Run relevant tests before finishing.
       local: { cwd: repoRoot, settingSources: [] },
     });
 
-    const run = await agent.send(`${basePrompt}\n\n---\n\n${context}`);
+    let assistantTurns = 0;
+    let cancelledForTurns = false;
+    let activeRun: Run | undefined;
+
+    const run = await agent.send(`${basePrompt}\n\n---\n\n${context}`, {
+      onStep: async ({ step }) => {
+        if (step.type !== 'assistantMessage') return;
+        assistantTurns += 1;
+        if (assistantTurns >= maxTurns && !cancelledForTurns && activeRun) {
+          cancelledForTurns = true;
+          console.warn(
+            `Fixer hit maxFixAgentTurns (${maxTurns}); cancelling run to commit progress.`,
+          );
+          try {
+            await activeRun?.cancel();
+          } catch (e) {
+            console.warn('Run cancel failed:', (e as Error).message);
+          }
+        }
+      },
+    });
+    activeRun = run;
     console.log('Fix agent run id:', run.id);
 
     const result = await run.wait();
     if (result.status === 'error') {
       console.error('Fix run failed:', result.id);
       process.exit(2);
+    }
+    if (cancelledForTurns) {
+      console.warn(`Fixer stopped after ${assistantTurns} turns (cap ${maxTurns}).`);
     }
 
     console.log(result.result?.slice(0, 2000) ?? '(no text)');

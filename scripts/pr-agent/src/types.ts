@@ -35,6 +35,8 @@ export const PrAgentStateSchema = z.object({
   stagnationFixRounds: z.number().default(0),
   lastOpenCount: z.number().optional(),
   fingerprintReopenCounts: z.record(z.number()).default({}),
+  /** Fingerprints a human marked as false positive via `agent-resolve <id>`. */
+  mutedFingerprints: z.array(z.string()).default([]),
 });
 
 export type PrAgentState = z.infer<typeof PrAgentStateSchema>;

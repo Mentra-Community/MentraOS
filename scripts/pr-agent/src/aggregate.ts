@@ -47,6 +47,8 @@ export function aggregateCycle(
   const newBlockingFingerprints: string[] = [];
   let allApproved = true;
 
+  const muted = new Set(state.mutedFingerprints);
+
   const ingest = (
     text: string | undefined,
     source: ReviewSlot,
@@ -56,7 +58,9 @@ export function aggregateCycle(
     const verdict = parseVerdictFromText(text);
     if (!verdict) return;
     if (verdict.verdict !== 'approve') allApproved = false;
-    const { blocking, nits } = verdictToFindings(verdict, source, cycle);
+    const { blocking: rawBlocking, nits } = verdictToFindings(verdict, source, cycle);
+    // Drop findings a human marked as false positive via `agent-resolve`.
+    const blocking = rawBlocking.filter((b) => !muted.has(b.fingerprint));
     const mergedOpen = mergeFindings(openFindings, blocking, cycle);
     openFindings = mergedOpen.merged;
     newBlockingFingerprints.push(...mergedOpen.newFingerprints);

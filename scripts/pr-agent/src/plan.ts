@@ -1,7 +1,9 @@
 import { loadConfig } from './config.js';
 import { resolveActivePair } from './rotate.js';
+import { applyResolvedIds, parseResolveIds } from './findings.js';
 import {
   createOctokit,
+  listAllIssueComments,
   loadOrCreateState,
   prHasLabel,
   removeLabel,
@@ -84,6 +86,23 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
     await removeLabel(octokit, owner, repo, prNumber, 'agent-needs-human');
     await saveState(octokit, owner, repo, prNumber, state, commentId);
+  }
+
+  const resolveIds = parseResolveIds(
+    (await listAllIssueComments(octokit, owner, repo, prNumber)).map((c) => c.body),
+  );
+  if (resolveIds.length > 0) {
+    const applied = applyResolvedIds(state, resolveIds, state.cycle);
+    if (applied.changed) {
+      state = {
+        ...state,
+        openFindings: applied.openFindings,
+        resolvedFindings: applied.resolvedFindings,
+        mutedFingerprints: applied.mutedFingerprints,
+      };
+      await saveState(octokit, owner, repo, prNumber, state, commentId);
+      console.log(`Resolved findings via agent-resolve: ${resolveIds.join(', ')}`);
+    }
   }
 
   if (process.env.CI_RECHECK_ONLY === 'true') {
