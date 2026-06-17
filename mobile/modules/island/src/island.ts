@@ -37,8 +37,9 @@ export const toolkit = {
   async start() {
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
-    // lifecycle yields a live toolkit.session. Idempotent — the Mentra app's
-    // explicit cloudClient.init() is then a no-op.
+    // lifecycle yields a live toolkit.session for OEMs. Idempotent — when the
+    // Mentra app has already called cloudClient.init() (synchronously, right after
+    // start()), THIS call is the no-op.
     cloudClientService.init()
   },
   /** Stop the runtime: tear down the cloud client + mark stopped. */

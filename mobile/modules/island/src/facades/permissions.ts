@@ -37,7 +37,9 @@ function iosPerms(feature: string): Permission[] {
     case PermissionFeatures.LOCATION:
       return [PERMISSIONS.IOS.LOCATION_WHEN_IN_USE]
     case PermissionFeatures.BACKGROUND_LOCATION:
-      return [PERMISSIONS.IOS.LOCATION_ALWAYS]
+      // iOS won't grant ALWAYS without WHEN_IN_USE first — request both (matches
+      // the host PermissionsUtils mapping), else a cold request can't escalate.
+      return [PERMISSIONS.IOS.LOCATION_WHEN_IN_USE, PERMISSIONS.IOS.LOCATION_ALWAYS]
     case PermissionFeatures.BLUETOOTH:
       return [PERMISSIONS.IOS.BLUETOOTH]
     default:
