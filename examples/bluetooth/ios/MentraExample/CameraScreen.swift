@@ -14,10 +14,23 @@ private enum CameraCaptureMode {
     case video
 }
 
+private func boolTuningLine(_ name: String, _ value: Bool?) -> String? {
+    guard let value else { return nil }
+    return "      \(name): \(value),"
+}
+
 private func cameraSdkCall(
     mode: CameraCaptureMode,
     size: String,
     compression: String,
+    aeExposureDivisor: Int?,
+    isoCap: Int?,
+    noiseReduction: Bool?,
+    edgeEnhancement: Bool?,
+    mfnr: Bool?,
+    zsl: Bool?,
+    ispDigitalGain: Int?,
+    ispAnalogGain: String?,
     exposureManual: Bool,
     exposureTimeNs: Int,
     iso: Int,
@@ -38,7 +51,15 @@ private func cameraSdkCall(
           size: .max,
           webhookUrl: uploadUrl,
           compress: PhotoCompression.none,
-          sound: false
+          sound: false,
+          aeExposureDivisor: \(scanAeDivisor),
+          isoCap: \(scanIsoCap),
+          noiseReduction: false,
+          edgeEnhancement: false,
+          mfnr: false,
+          zsl: false,
+          ispDigitalGain: 0,
+          ispAnalogGain: "low"
         )
     )
     print("Scan photo delivered: \\(photo.requestId)")
@@ -50,6 +71,17 @@ private func cameraSdkCall(
     let isoLine = exposureManual
         ? "      iso: \(iso)"
         : "      iso: nil // auto ISO"
+    let tuningLines = [
+        aeExposureDivisor.map { "      aeExposureDivisor: \($0)," },
+        isoCap.map { "      isoCap: \($0)," },
+        boolTuningLine("noiseReduction", noiseReduction),
+        boolTuningLine("edgeEnhancement", edgeEnhancement),
+        boolTuningLine("mfnr", mfnr),
+        boolTuningLine("zsl", zsl),
+        ispDigitalGain.map { "      ispDigitalGain: \($0)," },
+        ispAnalogGain.map { "      ispAnalogGain: \"\($0)\"," },
+    ].compactMap { $0 }.joined(separator: "\n")
+    let optionalTuningLines = tuningLines.isEmpty ? "" : "\n\(tuningLines)"
     let prefix = """
     let cameraFovResult = try await mentraBluetoothSdk.setCameraFov(
         CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
@@ -84,7 +116,7 @@ private func cameraSdkCall(
           compress: .\(compression),
           sound: true,
     \(exposureLine)
-    \(isoLine)
+    \(isoLine)\(optionalTuningLines)
         )
     )
     print("Photo delivered: \\(photo.requestId)")
@@ -387,6 +419,14 @@ struct CameraScreen: View {
             mode: captureMode,
             size: model.photoSize.rawValue,
             compression: model.photoCompression.rawValue,
+            aeExposureDivisor: model.photoAeExposureDivisor,
+            isoCap: model.photoIsoCap,
+            noiseReduction: model.photoNoiseReduction,
+            edgeEnhancement: model.photoEdgeEnhancement,
+            mfnr: model.photoMfnr,
+            zsl: model.photoZsl,
+            ispDigitalGain: model.photoIspDigitalGain,
+            ispAnalogGain: model.photoIspAnalogGain,
             exposureManual: model.photoExposureManual,
             exposureTimeNs: model.photoExposureTimeNs,
             iso: model.photoIso,
@@ -572,7 +612,10 @@ struct CameraScreen: View {
                         }
                     }
 
-                    ExposureSettingsCard(model: model)
+                    if !model.scanMode {
+                        ExposureSettingsCard(model: model)
+                        PhotoRequestTuningSettingsCard(model: model)
+                    }
                 }
                 CameraFovSettingsCard(model: model)
             }
@@ -696,20 +739,17 @@ private struct ScanModeSettingsCard: View {
                 Text("Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
-                Text("AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.")
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(AppColor.muted)
                 HStack(spacing: 8) {
                     CameraOptionChip(value: "AE ÷3", highlight: model.scanAeDivisor == 3)
-                        .opacity(0.5)
+                        .onTapGesture { model.setScanAeDivisor(3) }
                     CameraOptionChip(value: "AE ÷5", highlight: model.scanAeDivisor == 5)
-                        .opacity(0.5)
+                        .onTapGesture { model.setScanAeDivisor(5) }
                 }
                 HStack(spacing: 8) {
                     CameraOptionChip(value: "ISO 800", highlight: model.scanIsoCap == 800)
-                        .opacity(0.5)
+                        .onTapGesture { model.setScanIsoCap(800) }
                     CameraOptionChip(value: "ISO 400", highlight: model.scanIsoCap == 400)
-                        .opacity(0.5)
+                        .onTapGesture { model.setScanIsoCap(400) }
                 }
             }
         }
@@ -742,36 +782,36 @@ private struct ExposureSettingsCard: View {
                 .labelsHidden()
                 .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
-            HStack(spacing: 10) {
-                CameraSliderNudgeButton(label: "-", disabled: !model.photoExposureManual || model.photoExposureTimeNs <= photoExposureMinNs) {
-                    model.setPhotoExposureTimeNs(model.photoExposureTimeNs - 500_000)
+            if model.photoExposureManual {
+                HStack(spacing: 10) {
+                    CameraSliderNudgeButton(label: "-", disabled: model.photoExposureTimeNs <= photoExposureMinNs) {
+                        model.setPhotoExposureTimeNs(model.photoExposureTimeNs - 500_000)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.photoExposureTimeNs) },
+                            set: { model.setPhotoExposureTimeNs(Int(($0 / 500_000).rounded()) * 500_000) }
+                        ),
+                        in: Double(photoExposureMinNs) ... Double(photoExposureMaxNs),
+                        step: 500_000
+                    )
+                    .tint(AppColor.greenAccent)
+                    CameraSliderNudgeButton(label: "+", disabled: model.photoExposureTimeNs >= photoExposureMaxNs) {
+                        model.setPhotoExposureTimeNs(model.photoExposureTimeNs + 500_000)
+                    }
                 }
-                Slider(
-                    value: Binding(
-                        get: { Double(model.photoExposureTimeNs) },
-                        set: { model.setPhotoExposureTimeNs(Int(($0 / 500_000).rounded()) * 500_000) }
-                    ),
-                    in: Double(photoExposureMinNs) ... Double(photoExposureMaxNs),
-                    step: 500_000
-                )
-                .tint(AppColor.greenAccent)
-                .disabled(!model.photoExposureManual)
-                CameraSliderNudgeButton(label: "+", disabled: !model.photoExposureManual || model.photoExposureTimeNs >= photoExposureMaxNs) {
-                    model.setPhotoExposureTimeNs(model.photoExposureTimeNs + 500_000)
+                HStack {
+                    Text("1/1000s")
+                    Spacer()
+                    Button("Preset 1/120s") { model.setPhotoExposureTimeNs(photoExposureDefaultNs) }
+                        .buttonStyle(.plain)
+                        .foregroundColor(AppColor.greenAccent)
+                    Spacer()
+                    Text("1/30s")
                 }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(AppColor.muted)
             }
-            .opacity(model.photoExposureManual ? 1 : 0.45)
-            HStack {
-                Text("1/1000s")
-                Spacer()
-                Button("Default 1/120s") { model.setPhotoExposureTimeNs(photoExposureDefaultNs) }
-                    .buttonStyle(.plain)
-                    .foregroundColor(AppColor.greenAccent)
-                Spacer()
-                Text("1/30s")
-            }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(AppColor.muted)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("ISO")
@@ -783,40 +823,119 @@ private struct ExposureSettingsCard: View {
                     .foregroundColor(AppColor.greenAccent)
             }
             .padding(.top, 4)
-            HStack(spacing: 10) {
-                CameraSliderNudgeButton(label: "-", disabled: !model.photoExposureManual || model.photoIso <= photoIsoMin) {
-                    model.setPhotoIso(model.photoIso - 50)
+            if model.photoExposureManual {
+                HStack(spacing: 10) {
+                    CameraSliderNudgeButton(label: "-", disabled: model.photoIso <= photoIsoMin) {
+                        model.setPhotoIso(model.photoIso - 50)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(model.photoIso) },
+                            set: { model.setPhotoIso(Int(($0 / 50).rounded()) * 50) }
+                        ),
+                        in: Double(photoIsoMin) ... Double(photoIsoMax),
+                        step: 50
+                    )
+                    .tint(AppColor.greenAccent)
+                    CameraSliderNudgeButton(label: "+", disabled: model.photoIso >= photoIsoMax) {
+                        model.setPhotoIso(model.photoIso + 50)
+                    }
                 }
-                Slider(
-                    value: Binding(
-                        get: { Double(model.photoIso) },
-                        set: { model.setPhotoIso(Int(($0 / 50).rounded()) * 50) }
-                    ),
-                    in: Double(photoIsoMin) ... Double(photoIsoMax),
-                    step: 50
-                )
-                .tint(AppColor.greenAccent)
-                .disabled(!model.photoExposureManual)
-                CameraSliderNudgeButton(label: "+", disabled: !model.photoExposureManual || model.photoIso >= photoIsoMax) {
-                    model.setPhotoIso(model.photoIso + 50)
+                HStack {
+                    Text("ISO \(photoIsoMin)")
+                    Spacer()
+                    Button("Preset ISO \(photoIsoDefault)") { model.setPhotoIso(photoIsoDefault) }
+                        .buttonStyle(.plain)
+                        .foregroundColor(AppColor.greenAccent)
+                    Spacer()
+                    Text("ISO \(photoIsoMax)")
                 }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(AppColor.muted)
             }
-            .opacity(model.photoExposureManual ? 1 : 0.45)
-            HStack {
-                Text("ISO \(photoIsoMin)")
-                Spacer()
-                Button("Default ISO \(photoIsoDefault)") { model.setPhotoIso(photoIsoDefault) }
-                    .buttonStyle(.plain)
-                    .foregroundColor(AppColor.greenAccent)
-                Spacer()
-                Text("ISO \(photoIsoMax)")
-            }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(AppColor.muted)
         }
         .padding(14)
         .background(AppColor.ink.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct PhotoRequestTuningSettingsCard: View {
+    @ObservedObject var model: BluetoothViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PHOTO REQUEST TUNING")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundColor(AppColor.muted)
+                Text("Optional request parameters")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(AppColor.greenAccent)
+            }
+
+            CameraOptionGroup(label: "ae divisor") {
+                CameraOptionChip(value: "Unset", highlight: model.photoAeExposureDivisor == nil)
+                    .onTapGesture { model.setPhotoAeExposureDivisor(nil) }
+                ForEach(photoAeExposureDivisorOptions, id: \.self) { divisor in
+                    CameraOptionChip(value: "÷\(divisor)", highlight: model.photoAeExposureDivisor == divisor)
+                        .onTapGesture { model.setPhotoAeExposureDivisor(divisor) }
+                }
+            }
+
+            CameraOptionGroup(label: "iso cap") {
+                CameraOptionChip(value: "Unset", highlight: model.photoIsoCap == nil)
+                    .onTapGesture { model.setPhotoIsoCap(nil) }
+                ForEach(photoIsoCapOptions, id: \.self) { isoCap in
+                    CameraOptionChip(value: "\(isoCap)", highlight: model.photoIsoCap == isoCap)
+                        .onTapGesture { model.setPhotoIsoCap(isoCap) }
+                }
+            }
+
+            BoolTuningOptionGroup(label: "noise reduction", value: model.photoNoiseReduction, onChange: model.setPhotoNoiseReduction)
+            BoolTuningOptionGroup(label: "edge enhancement", value: model.photoEdgeEnhancement, onChange: model.setPhotoEdgeEnhancement)
+            BoolTuningOptionGroup(label: "mfnr", value: model.photoMfnr, onChange: model.setPhotoMfnr)
+            BoolTuningOptionGroup(label: "zsl", value: model.photoZsl, onChange: model.setPhotoZsl)
+
+            CameraOptionGroup(label: "isp digital gain") {
+                CameraOptionChip(value: "Unset", highlight: model.photoIspDigitalGain == nil)
+                    .onTapGesture { model.setPhotoIspDigitalGain(nil) }
+                ForEach(photoIspDigitalGainOptions, id: \.self) { gain in
+                    CameraOptionChip(value: "\(gain)", highlight: model.photoIspDigitalGain == gain)
+                        .onTapGesture { model.setPhotoIspDigitalGain(gain) }
+                }
+            }
+
+            CameraOptionGroup(label: "isp analog gain") {
+                CameraOptionChip(value: "Unset", highlight: model.photoIspAnalogGain == nil)
+                    .onTapGesture { model.setPhotoIspAnalogGain(nil) }
+                ForEach(photoIspAnalogGainOptions, id: \.self) { gain in
+                    CameraOptionChip(value: gain, highlight: model.photoIspAnalogGain == gain)
+                        .onTapGesture { model.setPhotoIspAnalogGain(gain) }
+                }
+            }
+        }
+        .padding(14)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct BoolTuningOptionGroup: View {
+    let label: String
+    let value: Bool?
+    let onChange: (Bool?) -> Void
+
+    var body: some View {
+        CameraOptionGroup(label: label) {
+            CameraOptionChip(value: "Unset", highlight: value == nil)
+                .onTapGesture { onChange(nil) }
+            CameraOptionChip(value: "On", highlight: value == true)
+                .onTapGesture { onChange(true) }
+            CameraOptionChip(value: "Off", highlight: value == false)
+                .onTapGesture { onChange(false) }
+        }
     }
 }
 
@@ -870,7 +989,7 @@ private struct CameraFovSettingsCard: View {
             HStack {
                 Text("\(cameraFovMin)°")
                 Spacer()
-                Button("Default \(cameraFovDefault)°") { model.setCameraFov(cameraFovDefault) }
+                Button("Preset \(cameraFovDefault)°") { model.setCameraFov(cameraFovDefault) }
                     .buttonStyle(.plain)
                     .foregroundColor(controlsDisabled ? AppColor.muted : AppColor.greenAccent)
                     .disabled(controlsDisabled)

@@ -65,7 +65,11 @@ import com.mentra.examples.android.cameraRoiPositions
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.isGlassesWifiConnected
+import com.mentra.examples.android.photoAeExposureDivisorOptions
 import com.mentra.examples.android.photoCompressionOptions
+import com.mentra.examples.android.photoIspAnalogGainOptions
+import com.mentra.examples.android.photoIspDigitalGainOptions
+import com.mentra.examples.android.photoIsoCapOptions
 import com.mentra.examples.android.photoSizeOptions
 import com.mentra.examples.android.roiPositionLabel
 import com.mentra.examples.android.ui.AppColor
@@ -104,6 +108,14 @@ fun CameraScreen(controller: MentraExampleController) {
         if (videoMode) "video" else "photo",
         state.photoSize,
         state.photoCompression,
+        state.photoAeExposureDivisor,
+        state.photoIsoCap,
+        state.photoNoiseReduction,
+        state.photoEdgeEnhancement,
+        state.photoMfnr,
+        state.photoZsl,
+        state.photoIspDigitalGain,
+        state.photoIspAnalogGain,
         state.photoExposureManual,
         state.photoExposureTimeNs,
         state.photoIso,
@@ -557,7 +569,10 @@ fun CameraScreen(controller: MentraExampleController) {
                             }
                         }
                     }
-                    ExposureSettingsCard(controller)
+                    if (!state.scanMode) {
+                        ExposureSettingsCard(controller)
+                        PhotoRequestTuningSettingsCard(controller)
+                    }
                 }
                 CameraFovSettingsCard(controller)
             }
@@ -597,19 +612,13 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                "AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.",
-                color = AppColor.muted,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Normal,
-            )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("AE ÷3", state.scanAeDivisor == 3, enabled = false) { controller.setScanAeDivisor(3) }
-                OptionChip("AE ÷5", state.scanAeDivisor == 5, enabled = false) { controller.setScanAeDivisor(5) }
+                OptionChip("AE ÷3", state.scanAeDivisor == 3) { controller.setScanAeDivisor(3) }
+                OptionChip("AE ÷5", state.scanAeDivisor == 5) { controller.setScanAeDivisor(5) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("ISO 800", state.scanIsoCap == 800, enabled = false) { controller.setScanIsoCap(800) }
-                OptionChip("ISO 400", state.scanIsoCap == 400, enabled = false) { controller.setScanIsoCap(400) }
+                OptionChip("ISO 800", state.scanIsoCap == 800) { controller.setScanIsoCap(800) }
+                OptionChip("ISO 400", state.scanIsoCap == 400) { controller.setScanIsoCap(400) }
             }
         }
     }
@@ -638,31 +647,32 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
             }
             Switch(checked = state.photoExposureManual, onCheckedChange = controller::setPhotoExposureManual)
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoExposureTimeNs > PHOTO_EXPOSURE_MIN_NS) {
-                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs - 500_000)
+        if (state.photoExposureManual) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SliderNudgeButton("-", enabled = state.photoExposureTimeNs > PHOTO_EXPOSURE_MIN_NS) {
+                    controller.setPhotoExposureTimeNs(state.photoExposureTimeNs - 500_000)
+                }
+                Slider(
+                    value = state.photoExposureTimeNs.toFloat(),
+                    onValueChange = { controller.setPhotoExposureTimeNs((it / 500_000f).roundToInt() * 500_000) },
+                    valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
+                    modifier = Modifier.weight(1f),
+                )
+                SliderNudgeButton("+", enabled = state.photoExposureTimeNs < PHOTO_EXPOSURE_MAX_NS) {
+                    controller.setPhotoExposureTimeNs(state.photoExposureTimeNs + 500_000)
+                }
             }
-            Slider(
-                enabled = state.photoExposureManual,
-                value = state.photoExposureTimeNs.toFloat(),
-                onValueChange = { controller.setPhotoExposureTimeNs((it / 500_000f).roundToInt() * 500_000) },
-                valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoExposureTimeNs < PHOTO_EXPOSURE_MAX_NS) {
-                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs + 500_000)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Preset 1/120s",
+                    color = AppColor.greenAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
+                )
+                Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Default 1/120s",
-                color = AppColor.greenAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
-            )
-            Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(4.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -674,32 +684,90 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
                 fontWeight = FontWeight.Bold,
             )
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoIso > PHOTO_ISO_MIN) {
-                controller.setPhotoIso(state.photoIso - 50)
+        if (state.photoExposureManual) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SliderNudgeButton("-", enabled = state.photoIso > PHOTO_ISO_MIN) {
+                    controller.setPhotoIso(state.photoIso - 50)
+                }
+                Slider(
+                    value = state.photoIso.toFloat(),
+                    onValueChange = { controller.setPhotoIso((it / 50f).roundToInt() * 50) },
+                    valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
+                    modifier = Modifier.weight(1f),
+                )
+                SliderNudgeButton("+", enabled = state.photoIso < PHOTO_ISO_MAX) {
+                    controller.setPhotoIso(state.photoIso + 50)
+                }
             }
-            Slider(
-                enabled = state.photoExposureManual,
-                value = state.photoIso.toFloat(),
-                onValueChange = { controller.setPhotoIso((it / 50f).roundToInt() * 50) },
-                valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoIso < PHOTO_ISO_MAX) {
-                controller.setPhotoIso(state.photoIso + 50)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Preset ISO $PHOTO_ISO_DEFAULT",
+                    color = AppColor.greenAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { controller.setPhotoIso(PHOTO_ISO_DEFAULT) }
+                )
+                Text("ISO $PHOTO_ISO_MAX", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Default ISO $PHOTO_ISO_DEFAULT",
-                color = AppColor.greenAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { controller.setPhotoIso(PHOTO_ISO_DEFAULT) }
-            )
-            Text("ISO $PHOTO_ISO_MAX", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+            Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
+        CameraOptionGroup("ae divisor") {
+            OptionChip("Unset", state.photoAeExposureDivisor == null) { controller.setPhotoAeExposureDivisor(null) }
+            photoAeExposureDivisorOptions.forEach { divisor ->
+                OptionChip("÷$divisor", state.photoAeExposureDivisor == divisor) {
+                    controller.setPhotoAeExposureDivisor(divisor)
+                }
+            }
+        }
+        CameraOptionGroup("iso cap") {
+            OptionChip("Unset", state.photoIsoCap == null) { controller.setPhotoIsoCap(null) }
+            photoIsoCapOptions.forEach { isoCap ->
+                OptionChip("$isoCap", state.photoIsoCap == isoCap) { controller.setPhotoIsoCap(isoCap) }
+            }
+        }
+        TuningFlagOptionGroup("noise reduction", state.photoNoiseReduction, controller::setPhotoNoiseReduction)
+        TuningFlagOptionGroup("edge enhancement", state.photoEdgeEnhancement, controller::setPhotoEdgeEnhancement)
+        TuningFlagOptionGroup("mfnr", state.photoMfnr, controller::setPhotoMfnr)
+        TuningFlagOptionGroup("zsl", state.photoZsl, controller::setPhotoZsl)
+        CameraOptionGroup("isp digital gain") {
+            OptionChip("Unset", state.photoIspDigitalGain == null) { controller.setPhotoIspDigitalGain(null) }
+            photoIspDigitalGainOptions.forEach { gain ->
+                OptionChip("$gain", state.photoIspDigitalGain == gain) { controller.setPhotoIspDigitalGain(gain) }
+            }
+        }
+        CameraOptionGroup("isp analog gain") {
+            OptionChip("Unset", state.photoIspAnalogGain == null) { controller.setPhotoIspAnalogGain(null) }
+            photoIspAnalogGainOptions.forEach { gain ->
+                OptionChip(gain, state.photoIspAnalogGain == gain) { controller.setPhotoIspAnalogGain(gain) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TuningFlagOptionGroup(label: String, value: Boolean?, onChange: (Boolean?) -> Unit) {
+    CameraOptionGroup(label) {
+        OptionChip("Unset", value == null) { onChange(null) }
+        OptionChip("On", value == true) { onChange(true) }
+        OptionChip("Off", value == false) { onChange(false) }
     }
 }
 
@@ -758,7 +826,7 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("${CAMERA_FOV_MIN}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Default ${CAMERA_FOV_DEFAULT}°",
+                "Preset ${CAMERA_FOV_DEFAULT}°",
                 color = if (controlsEnabled) AppColor.greenAccent else AppColor.muted,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,

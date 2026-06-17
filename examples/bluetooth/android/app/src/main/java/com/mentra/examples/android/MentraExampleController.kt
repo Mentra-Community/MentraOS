@@ -195,6 +195,10 @@ const val PHOTO_ISO_DEFAULT = 200
 const val CAMERA_FOV_MIN = 62
 const val CAMERA_FOV_MAX = 118
 const val CAMERA_FOV_DEFAULT = 102
+val photoAeExposureDivisorOptions = listOf(2, 3, 5)
+val photoIsoCapOptions = listOf(400, 800, 1600)
+val photoIspDigitalGainOptions = listOf(0, 1, 2, 4)
+val photoIspAnalogGainOptions = listOf("low")
 val cameraRoiPositions = listOf("Center" to 0, "Bottom" to 1, "Top" to 2)
 
 data class MentraExampleState(
@@ -239,6 +243,14 @@ data class MentraExampleState(
     val scanMode: Boolean = false,
     val scanAeDivisor: Int = 3,
     val scanIsoCap: Int = 800,
+    val photoAeExposureDivisor: Int? = null,
+    val photoIsoCap: Int? = null,
+    val photoNoiseReduction: Boolean? = null,
+    val photoEdgeEnhancement: Boolean? = null,
+    val photoMfnr: Boolean? = null,
+    val photoZsl: Boolean? = null,
+    val photoIspDigitalGain: Int? = null,
+    val photoIspAnalogGain: String? = null,
     val photoExposureManual: Boolean = false,
     val photoExposureTimeNs: Int = PHOTO_EXPOSURE_DEFAULT_NS,
     val photoIso: Int = PHOTO_ISO_DEFAULT,
@@ -529,9 +541,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             // Keep hardware-button captures at max detail while scan mode is enabled.
             val settings =
                 if (enabled) {
-                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
+                    scanButtonPreset(state.scanAeDivisor, state.scanIsoCap)
                 } else {
-                    ButtonPhotoSettings(size = buttonPhotoSizeToSdk(state.photoSize))
+                    ButtonPhotoSettings(
+                        size = buttonPhotoSizeToSdk(state.photoSize),
+                        mfnr = true,
+                        zsl = true,
+                        resetCaptureTuning = true,
+                    )
                 }
             withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
         }
@@ -553,6 +570,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
+    private fun scanButtonPreset(aeDivisor: Int, isoCap: Int) =
+        ButtonPhotoSettings(
+            size = ButtonPhotoSize.MAX,
+            mfnr = false,
+            zsl = false,
+            noiseReduction = false,
+            edgeEnhancement = false,
+            ispDigitalGain = 0,
+            ispAnalogGain = "low",
+            aeExposureDivisor = aeDivisor,
+            isoCap = isoCap,
+            compress = "none",
+            sound = false,
+        )
+
     private fun pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
         if (!isGlassesConnected()) {
             return
@@ -562,10 +594,42 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             requireConnected("sync photo capture settings")
             withContext(Dispatchers.IO) {
                 mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX),
+                    scanButtonPreset(aeDivisor, isoCap),
                 )
             }
         }
+    }
+
+    fun setPhotoAeExposureDivisor(divisor: Int?) {
+        state = state.copy(photoAeExposureDivisor = divisor?.takeIf { it in photoAeExposureDivisorOptions })
+    }
+
+    fun setPhotoIsoCap(isoCap: Int?) {
+        state = state.copy(photoIsoCap = isoCap?.takeIf { it in photoIsoCapOptions })
+    }
+
+    fun setPhotoNoiseReduction(value: Boolean?) {
+        state = state.copy(photoNoiseReduction = value)
+    }
+
+    fun setPhotoEdgeEnhancement(value: Boolean?) {
+        state = state.copy(photoEdgeEnhancement = value)
+    }
+
+    fun setPhotoMfnr(value: Boolean?) {
+        state = state.copy(photoMfnr = value)
+    }
+
+    fun setPhotoZsl(value: Boolean?) {
+        state = state.copy(photoZsl = value)
+    }
+
+    fun setPhotoIspDigitalGain(gain: Int?) {
+        state = state.copy(photoIspDigitalGain = gain?.takeIf { it in photoIspDigitalGainOptions })
+    }
+
+    fun setPhotoIspAnalogGain(gain: String?) {
+        state = state.copy(photoIspAnalogGain = gain?.takeIf { it in photoIspAnalogGainOptions })
     }
 
     fun setPhotoExposureManual(enabled: Boolean) {
@@ -721,6 +785,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 webhookUrl = webhookUrl,
                 compress = PhotoCompression.NONE,
                 sound = false,
+                aeExposureDivisor = state.scanAeDivisor,
+                isoCap = state.scanIsoCap,
+                noiseReduction = false,
+                edgeEnhancement = false,
+                mfnr = false,
+                zsl = false,
+                ispDigitalGain = 0,
+                ispAnalogGain = "low",
             )
         }
         return PhotoRequest(
@@ -732,6 +804,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             sound = true,
             exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
             iso = if (state.photoExposureManual) state.photoIso else null,
+            aeExposureDivisor = state.photoAeExposureDivisor,
+            isoCap = state.photoIsoCap,
+            noiseReduction = state.photoNoiseReduction,
+            edgeEnhancement = state.photoEdgeEnhancement,
+            mfnr = state.photoMfnr,
+            zsl = state.photoZsl,
+            ispDigitalGain = state.photoIspDigitalGain,
+            ispAnalogGain = state.photoIspAnalogGain,
         )
     }
 
@@ -2953,6 +3033,14 @@ fun cameraSdkCall(
     mode: String,
     size: String,
     compression: String,
+    aeExposureDivisor: Int?,
+    isoCap: Int?,
+    noiseReduction: Boolean?,
+    edgeEnhancement: Boolean?,
+    mfnr: Boolean?,
+    zsl: Boolean?,
+    ispDigitalGain: Int?,
+    ispAnalogGain: String?,
     exposureManual: Boolean,
     exposureTimeNs: Int,
     iso: Int,
@@ -3001,11 +3089,25 @@ val photo = mentraBluetoothSdk.requestPhoto(
       noiseReduction = false,
       edgeEnhancement = false,
       mfnr = false,
+      zsl = false,
+      ispDigitalGain = 0,
+      ispAnalogGain = "low",
     )
 )
 println("Scan photo delivered: ${'$'}{photo.response.requestId}")
 """.trimIndent()
     }
+    val tuningLines = listOfNotNull(
+        aeExposureDivisor?.let { "      aeExposureDivisor = $it," },
+        isoCap?.let { "      isoCap = $it," },
+        noiseReduction?.let { "      noiseReduction = $it," },
+        edgeEnhancement?.let { "      edgeEnhancement = $it," },
+        mfnr?.let { "      mfnr = $it," },
+        zsl?.let { "      zsl = $it," },
+        ispDigitalGain?.let { "      ispDigitalGain = $it," },
+        ispAnalogGain?.let { "      ispAnalogGain = \"$it\"," },
+    ).joinToString("\n")
+    val optionalTuningLines = if (tuningLines.isBlank()) "" else "\n$tuningLines"
     return """
 $prefix
 val photo = mentraBluetoothSdk.requestPhoto(
@@ -3018,6 +3120,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
       sound = true,
       exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
       iso = ${if (exposureManual) iso else "null"},
+$optionalTuningLines
     )
 )
 println("Photo delivered: ${'$'}{photo.response.requestId}")

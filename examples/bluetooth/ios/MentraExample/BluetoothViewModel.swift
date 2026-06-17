@@ -64,6 +64,10 @@ let photoIsoDefault = 200
 let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
+let photoAeExposureDivisorOptions = [2, 3, 5]
+let photoIsoCapOptions = [400, 800, 1600]
+let photoIspDigitalGainOptions = [0, 1, 2, 4]
+let photoIspAnalogGainOptions = ["low"]
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
@@ -287,6 +291,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var scanAeDivisor = 3
     @Published private(set) var scanIsoCap = 800
     @Published private(set) var photoCompression: PhotoCompression = .none
+    @Published private(set) var photoAeExposureDivisor: Int?
+    @Published private(set) var photoIsoCap: Int?
+    @Published private(set) var photoNoiseReduction: Bool?
+    @Published private(set) var photoEdgeEnhancement: Bool?
+    @Published private(set) var photoMfnr: Bool?
+    @Published private(set) var photoZsl: Bool?
+    @Published private(set) var photoIspDigitalGain: Int?
+    @Published private(set) var photoIspAnalogGain: String?
     @Published private(set) var photoExposureManual = false
     @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
     @Published private(set) var photoIso = photoIsoDefault
@@ -625,12 +637,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 if enabled {
                     // Keep hardware-button captures at max detail while scan mode is enabled.
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(size: .max)
+                        scanButtonPreset(aeDivisor: scanAeDivisor, isoCap: scanIsoCap)
                     )
                 } else {
                     let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(size: size)
+                        ButtonPhotoSettings(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
                     )
                 }
             } catch {
@@ -661,12 +673,60 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         Task {
             do {
                 _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(size: .max)
+                    scanButtonPreset(aeDivisor: aeDivisor, isoCap: isoCap)
                 )
             } catch {
                 cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
             }
         }
+    }
+
+    private func scanButtonPreset(aeDivisor: Int, isoCap: Int) -> ButtonPhotoSettings {
+        ButtonPhotoSettings(
+            size: .max,
+            mfnr: false,
+            zsl: false,
+            noiseReduction: false,
+            edgeEnhancement: false,
+            ispDigitalGain: 0,
+            ispAnalogGain: "low",
+            aeExposureDivisor: aeDivisor,
+            isoCap: isoCap,
+            compress: "none",
+            sound: false
+        )
+    }
+
+    func setPhotoAeExposureDivisor(_ divisor: Int?) {
+        photoAeExposureDivisor = divisor.flatMap { photoAeExposureDivisorOptions.contains($0) ? $0 : nil }
+    }
+
+    func setPhotoIsoCap(_ isoCap: Int?) {
+        photoIsoCap = isoCap.flatMap { photoIsoCapOptions.contains($0) ? $0 : nil }
+    }
+
+    func setPhotoNoiseReduction(_ value: Bool?) {
+        photoNoiseReduction = value
+    }
+
+    func setPhotoEdgeEnhancement(_ value: Bool?) {
+        photoEdgeEnhancement = value
+    }
+
+    func setPhotoMfnr(_ value: Bool?) {
+        photoMfnr = value
+    }
+
+    func setPhotoZsl(_ value: Bool?) {
+        photoZsl = value
+    }
+
+    func setPhotoIspDigitalGain(_ gain: Int?) {
+        photoIspDigitalGain = gain.flatMap { photoIspDigitalGainOptions.contains($0) ? $0 : nil }
+    }
+
+    func setPhotoIspAnalogGain(_ gain: String?) {
+        photoIspAnalogGain = gain.flatMap { photoIspAnalogGainOptions.contains($0) ? $0 : nil }
     }
 
     func setPhotoExposureManual(_ enabled: Bool) {
@@ -805,7 +865,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 size: .max,
                 webhookUrl: webhookUrl,
                 compress: PhotoCompression.none,
-                sound: false
+                sound: false,
+                aeExposureDivisor: scanAeDivisor,
+                isoCap: scanIsoCap,
+                noiseReduction: false,
+                edgeEnhancement: false,
+                mfnr: false,
+                zsl: false,
+                ispDigitalGain: 0,
+                ispAnalogGain: "low"
             )
         }
         return PhotoRequest(
@@ -816,7 +884,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             compress: photoCompression,
             sound: true,
             exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-            iso: photoExposureManual ? photoIso : nil
+            iso: photoExposureManual ? photoIso : nil,
+            aeExposureDivisor: photoAeExposureDivisor,
+            isoCap: photoIsoCap,
+            noiseReduction: photoNoiseReduction,
+            edgeEnhancement: photoEdgeEnhancement,
+            mfnr: photoMfnr,
+            zsl: photoZsl,
+            ispDigitalGain: photoIspDigitalGain,
+            ispAnalogGain: photoIspAnalogGain
         )
     }
 

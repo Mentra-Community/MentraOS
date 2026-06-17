@@ -208,6 +208,11 @@ type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type PhotoAeExposureDivisor = 2 | 3 | 5;
+export type PhotoIsoCap = 400 | 800 | 1600;
+export type PhotoIspDigitalGain = 0 | 1 | 2 | 4;
+export type PhotoIspAnalogGain = 'low';
+export type PhotoTuningFlag = 'unset' | 'on' | 'off';
 export type ScanAeDivisor = 3 | 5;
 export const SCAN_AE_DIVISOR_OPTIONS: ScanAeDivisor[] = [3, 5];
 export const SCAN_ISO_CAP_OPTIONS = [400, 800] as const;
@@ -263,6 +268,11 @@ type PersistedCloudUrls = {
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['low', 'medium', 'high', 'max'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS: PhotoAeExposureDivisor[] = [2, 3, 5];
+export const PHOTO_ISO_CAP_OPTIONS: PhotoIsoCap[] = [400, 800, 1600];
+export const PHOTO_ISP_DIGITAL_GAIN_OPTIONS: PhotoIspDigitalGain[] = [0, 1, 2, 4];
+export const PHOTO_ISP_ANALOG_GAIN_OPTIONS: PhotoIspAnalogGain[] = ['low'];
+export const PHOTO_TUNING_FLAG_OPTIONS: PhotoTuningFlag[] = ['unset', 'on', 'off'];
 export const STREAM_MIN_FPS = 1;
 export const STREAM_MAX_FPS = 24;
 export const STREAM_DEFAULT_FPS = 15;
@@ -340,6 +350,14 @@ export type BluetoothSdkExampleState = {
   phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
+  photoAeExposureDivisor: PhotoAeExposureDivisor | null;
+  photoIsoCap: PhotoIsoCap | null;
+  photoNoiseReduction: PhotoTuningFlag;
+  photoEdgeEnhancement: PhotoTuningFlag;
+  photoMfnr: PhotoTuningFlag;
+  photoZsl: PhotoTuningFlag;
+  photoIspDigitalGain: PhotoIspDigitalGain | null;
+  photoIspAnalogGain: PhotoIspAnalogGain | null;
   photoExposureManual: boolean;
   photoIso: number;
   photoExposureTimeNs: number;
@@ -405,6 +423,14 @@ export type BluetoothSdkExampleActions = {
   setGalleryModeEnabled: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
+  setPhotoAeExposureDivisor: (divisor: PhotoAeExposureDivisor | null) => void;
+  setPhotoIsoCap: (isoCap: PhotoIsoCap | null) => void;
+  setPhotoNoiseReduction: (value: PhotoTuningFlag) => void;
+  setPhotoEdgeEnhancement: (value: PhotoTuningFlag) => void;
+  setPhotoMfnr: (value: PhotoTuningFlag) => void;
+  setPhotoZsl: (value: PhotoTuningFlag) => void;
+  setPhotoIspDigitalGain: (gain: PhotoIspDigitalGain | null) => void;
+  setPhotoIspAnalogGain: (gain: PhotoIspAnalogGain | null) => void;
   setPhotoExposureManual: (enabled: boolean) => void;
   setPhotoIso: (iso: number) => void;
   setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
@@ -501,6 +527,17 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [scanMode, setScanMode] = useState(false);
   const [scanAeDivisor, setScanAeDivisor] = useState<ScanAeDivisor>(SCAN_DEFAULT_AE_DIVISOR);
   const [scanIsoCap, setScanIsoCap] = useState(SCAN_DEFAULT_ISO_CAP);
+  const [photoAeExposureDivisor, setPhotoAeExposureDivisor] =
+    useState<PhotoAeExposureDivisor | null>(null);
+  const [photoIsoCap, setPhotoIsoCap] = useState<PhotoIsoCap | null>(null);
+  const [photoNoiseReduction, setPhotoNoiseReduction] = useState<PhotoTuningFlag>('unset');
+  const [photoEdgeEnhancement, setPhotoEdgeEnhancement] = useState<PhotoTuningFlag>('unset');
+  const [photoMfnr, setPhotoMfnr] = useState<PhotoTuningFlag>('unset');
+  const [photoZsl, setPhotoZsl] = useState<PhotoTuningFlag>('unset');
+  const [photoIspDigitalGain, setPhotoIspDigitalGain] =
+    useState<PhotoIspDigitalGain | null>(null);
+  const [photoIspAnalogGain, setPhotoIspAnalogGain] =
+    useState<PhotoIspAnalogGain | null>(null);
   const [photoExposureManual, setPhotoExposureManual] = useState(false);
   const [photoExposureTimeNs, setPhotoExposureTimeNsState] = useState(PHOTO_EXPOSURE_DEFAULT_NS);
   const [photoIso, setPhotoIsoState] = useState(PHOTO_ISO_DEFAULT);
@@ -1126,6 +1163,47 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
   }
 
+  function optionalTuningFlag(value: PhotoTuningFlag) {
+    if (value === 'unset') {
+      return undefined;
+    }
+    return value === 'on';
+  }
+
+  function addRequestTuningFields(
+    fields: Omit<PhotoRequestParams, 'requestId' | 'appId' | 'webhookUrl' | 'authToken'>,
+  ) {
+    if (photoAeExposureDivisor !== null) {
+      fields.aeExposureDivisor = photoAeExposureDivisor;
+    }
+    if (photoIsoCap !== null) {
+      fields.isoCap = photoIsoCap;
+    }
+    const noiseReduction = optionalTuningFlag(photoNoiseReduction);
+    if (noiseReduction !== undefined) {
+      fields.noiseReduction = noiseReduction;
+    }
+    const edgeEnhancement = optionalTuningFlag(photoEdgeEnhancement);
+    if (edgeEnhancement !== undefined) {
+      fields.edgeEnhancement = edgeEnhancement;
+    }
+    const mfnr = optionalTuningFlag(photoMfnr);
+    if (mfnr !== undefined) {
+      fields.mfnr = mfnr;
+    }
+    const zsl = optionalTuningFlag(photoZsl);
+    if (zsl !== undefined) {
+      fields.zsl = zsl;
+    }
+    if (photoIspDigitalGain !== null) {
+      fields.ispDigitalGain = photoIspDigitalGain;
+    }
+    if (photoIspAnalogGain !== null) {
+      fields.ispAnalogGain = photoIspAnalogGain;
+    }
+    return fields;
+  }
+
   function buildPhotoRequestFields(): Omit<
     PhotoRequestParams,
     'requestId' | 'appId' | 'webhookUrl' | 'authToken'
@@ -1147,13 +1225,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         ispAnalogGain: 'low',
       };
     }
-    return {
+    return addRequestTuningFields({
       size: photoSize,
       compress: photoCompression,
       sound: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
       iso: photoExposureManual ? photoIso : null,
-    };
+    });
   }
 
   async function captureAndUpload() {
@@ -3006,6 +3084,14 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     phonePhotoUploadUrl,
     photoCompression,
     photoCloudServerEnabled,
+    photoAeExposureDivisor,
+    photoIsoCap,
+    photoNoiseReduction,
+    photoEdgeEnhancement,
+    photoMfnr,
+    photoZsl,
+    photoIspDigitalGain,
+    photoIspAnalogGain,
     photoExposureManual,
     photoIso,
     photoExposureTimeNs,
@@ -3034,6 +3120,14 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setGalleryModeEnabled: setGalleryModeEnabledAction,
     setPhotoCompression,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
+    setPhotoAeExposureDivisor,
+    setPhotoIsoCap,
+    setPhotoNoiseReduction,
+    setPhotoEdgeEnhancement,
+    setPhotoMfnr,
+    setPhotoZsl,
+    setPhotoIspDigitalGain,
+    setPhotoIspAnalogGain,
     setPhotoExposureManual,
     setPhotoIso: setPhotoIsoAction,
     setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,
