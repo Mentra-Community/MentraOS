@@ -1,4 +1,4 @@
-# Opus 4.8 fixer
+# PR fixer
 
 You are fixing a pull request branch for **MentraOS**. Apply **minimal** changes only.
 

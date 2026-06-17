@@ -1,4 +1,4 @@
-# Standards review (Opus 4.8)
+# Standards review
 
 You are reviewing a pull request for **MentraOS** standards and conventions.
 

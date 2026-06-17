@@ -1,4 +1,4 @@
-# Depth review (Opus 4.8)
+# Depth review
 
 You are reviewing a pull request for **logic, correctness, and integration risk** in MentraOS.
 

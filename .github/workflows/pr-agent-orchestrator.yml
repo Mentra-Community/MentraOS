@@ -196,7 +196,7 @@ jobs:
             });
 
   review-standards:
-    name: Review (Opus 4.8 standards)
+    name: Review (standards)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
     runs-on: ubuntu-latest
@@ -231,7 +231,7 @@ jobs:
           if-no-files-found: ignore
 
   review-depth:
-    name: Review (Opus 4.8 depth)
+    name: Review (depth)
     needs: [resolve-context, plan]
     if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
     runs-on: ubuntu-latest
@@ -343,7 +343,7 @@ jobs:
         run: bun run cli aggregate
 
   fix:
-    name: Fix (Opus 4.8)
+    name: Fix
     needs: [resolve-context, plan, aggregate]
     if: |
       needs.aggregate.outputs.should_handoff != 'true' &&
@@ -363,7 +363,7 @@ jobs:
       - working-directory: scripts/pr-agent
         run: bun install --frozen-lockfile || bun install
 
-      - name: Run Opus fixer
+      - name: Run fixer
         working-directory: scripts/pr-agent
         env:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
