@@ -560,14 +560,6 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setCaptureLedEnabled(_ enabled: Bool) async throws -> SettingsAckEvent {
-        try await performSettingsCommand(
-            setting: "button_camera_led",
-            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_camera_led", enabled) },
-            send: { requestId in try DeviceManager.shared.sendButtonCameraLedSetting(requestId: requestId, enabled: enabled) }
-        )
-    }
-
     public func setMaxVideoRecordingDuration(minutes: Int) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_max_recording_time",

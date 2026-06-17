@@ -29,7 +29,6 @@ export function photoRequestParamsForNative(
     size: normalizePhotoSizeTier(params.size),
     webhookUrl: params.webhookUrl ?? "",
     compress: params.compress,
-    flash: true,
     sound: params.sound,
   }
   if (params.save != null) {

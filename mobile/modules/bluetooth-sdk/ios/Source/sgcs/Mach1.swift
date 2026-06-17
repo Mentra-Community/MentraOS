@@ -34,8 +34,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func sendButtonMaxRecordingTime(_: Int) {}
 
-    func sendButtonCameraLedSetting() {}
-
     func sendCameraFovSetting() {}
 
     func exit() {}
@@ -87,7 +85,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 

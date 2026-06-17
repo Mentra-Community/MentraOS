@@ -123,8 +123,8 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
             return;
         }
 
-        // Get LED setting
-        boolean ledEnabled = serviceManager.getAsgSettings().getButtonCameraLedEnabled();
+        // Capture light is mandatory for privacy.
+        boolean ledEnabled = true;
 
         // Get current battery level (with null check)
         int batteryLevel = -1;

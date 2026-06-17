@@ -59,7 +59,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -68,8 +68,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime() {}
-
-    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 
