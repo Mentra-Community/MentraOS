@@ -250,6 +250,14 @@ jest.mock("@mentra/island", () => {
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
+  // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
+  // addListener wrappers in the real toolkit, so the mock delegates to the shared
+  // bluetoothSdkMock — emitBluetoothSdkEvent() + listener-leak counts keep working.
+  const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
+  const subscribeVia = (eventName) => jest.fn((cb) => {
+    const sub = bluetoothSdkMock.addListener(eventName, cb)
+    return () => sub.remove()
+  })
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -312,8 +320,8 @@ jest.mock("@mentra/island", () => {
         info: jest.fn(() => ({})),
         capabilities: jest.fn(() => ({})),
         requestVersionInfo: jest.fn(() => Promise.resolve()),
-        onButtonPress: jest.fn(() => () => {}),
-        onTouchGesture: jest.fn(() => () => {}),
+        onButtonPress: subscribeVia("button_press"),
+        onTouchGesture: subscribeVia("touch_event"),
         wifi: {
           scan: jest.fn(() => Promise.resolve([])),
           connect: jest.fn(() => Promise.resolve()),
@@ -384,8 +392,8 @@ jest.mock("@mentra/island", () => {
         onFound: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
-        onPairFailure: jest.fn(() => () => {}),
-        onGlassesNotReady: jest.fn(() => () => {}),
+        onPairFailure: subscribeVia("pair_failure"),
+        onGlassesNotReady: subscribeVia("glasses_not_ready"),
       },
       miniapps: {
         list: jest.fn(() => []),
@@ -423,6 +431,7 @@ jest.mock("@mentra/island", () => {
         setCloudUrls: jest.fn(),
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
+        getMemoryMB: jest.fn(() => 0),
       },
       incidents: {
         file: jest.fn(() => Promise.resolve({incidentId: "test"})),

@@ -1,7 +1,7 @@
 import {act, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
@@ -123,7 +123,7 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(BluetoothSdk.forget).toHaveBeenCalled()
+      expect(toolkit.glasses.forget).toHaveBeenCalled()
       expect(replace).toHaveBeenCalledWith("/pairing/failure", {
         error: "pairing:failed",
         deviceModel: "Mentra Live",

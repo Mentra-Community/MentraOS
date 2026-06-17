@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View} from "react-native"
@@ -30,7 +30,7 @@ export default function PairingFailureScreen() {
   }, [])
 
   const handleRetry = () => {
-    BluetoothSdk.forget()
+    toolkit.glasses.forget()
     clearHistoryAndGoHome()
     push("/pairing/select-glasses-model")
   }

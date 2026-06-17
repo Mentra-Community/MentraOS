@@ -7,7 +7,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {decideConnectButtonAction, toolkit, BluetoothSdk} from "@mentra/island"
+import {decideConnectButtonAction, toolkit} from "@mentra/island"
 import {isGlassesConnected, isGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -79,11 +79,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Listen for glasses_not_ready event to know when glasses are actually booting
   useEffect(() => {
-    const sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+    const unsub = toolkit.pairing.onGlassesNotReady((_event: GlassesNotReadyEvent) => {
       setShowGlassesBooting(true)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [])
 
