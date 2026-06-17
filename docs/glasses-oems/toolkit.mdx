@@ -72,9 +72,17 @@ discrete input events.
 ### Connection
 
 ```ts
-await toolkit.glasses.connectDefault() // connect the last-paired glasses
+await toolkit.glasses.connectDefault()   // connect the last-paired glasses
+await toolkit.glasses.connect(device)    // connect a specific (discovered) device
+await toolkit.glasses.connectSimulated() // built-in simulated glasses (dev)
+await toolkit.glasses.setDefault(device) // make it the connectDefault() target
 await toolkit.glasses.disconnect()
 await toolkit.glasses.forget()
+
+// optional ring controller:
+await toolkit.glasses.controller.connectDefault()
+await toolkit.glasses.controller.disconnect()
+await toolkit.glasses.controller.forget()
 ```
 
 ### Status & info (read-models)
@@ -235,6 +243,43 @@ toolkit.dev.backendUrl(); toolkit.dev.setBackendUrl(url)
 toolkit.dev.cloudUrls(); toolkit.dev.setCloudUrls({core, runtime}) // sets + reconnects
 toolkit.dev.savedUrls()
 toolkit.dev.reconnectCloud()
+```
+
+## `toolkit.permissions`
+
+OS permissions — the raw check/request ops (your UI adds the rationale dialogs).
+
+```ts
+await toolkit.permissions.check("microphone")   // granted?
+await toolkit.permissions.request("location")   // -> granted?
+await toolkit.permissions.openSettings()        // open OS settings
+await toolkit.permissions.requirementsForMiniapp(pkg) // -> AppletPermission[]
+```
+
+Feature keys: `microphone · camera · calendar · location · background_location · bluetooth · phone_state · post_notifications`.
+
+## `toolkit.phoneNotifications`
+
+Forward phone notifications to the glasses, with a per-app blocklist. **Android-only**
+(getters return safe defaults on iOS).
+
+```ts
+toolkit.phoneNotifications.enabled(); toolkit.phoneNotifications.setEnabled(true)
+await toolkit.phoneNotifications.installedApps()      // [{packageName, appName, icon}]
+toolkit.phoneNotifications.blocklist(); toolkit.phoneNotifications.setBlocklist([...])
+await toolkit.phoneNotifications.hasListenerPermission()
+await toolkit.phoneNotifications.requestListenerPermission()
+```
+
+## `toolkit.notifications`
+
+Inbound alerts island→host — conditions island detects, your UI renders.
+
+```ts
+const off = toolkit.notifications.onNotification((n) => {
+  // n.kind: "miniapp_crashloop" | "version_incompatible" | "connection_failed_persistent"
+  // n.packageName, n.reason, n.timestamp, n.metadata
+})
 ```
 
 ## `toolkit.stores.*` — escape hatch (not the OEM contract)
