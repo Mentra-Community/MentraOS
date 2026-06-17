@@ -7,7 +7,11 @@ reviewModel: claude-sonnet-4-6
 fixModel: claude-opus-4-8
 
 authors:
-  mode: label_only # allowlist | all | label_only
+  # allowlist | all | label_only
+  # Draft PRs are reviewed like any other PR. In label_only mode the
+  # agent-review label implicitly gates drafts; in all/allowlist modes drafts
+  # are processed automatically once the author/mode check passes.
+  mode: label_only
   allowlist: []
 
 limits:
