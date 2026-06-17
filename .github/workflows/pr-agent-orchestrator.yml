@@ -33,6 +33,7 @@ permissions:
   pull-requests: write
   issues: write
   checks: read
+  actions: read
 
 env:
   FORCE_ROTATION: ${{ github.event.inputs.force_rotation || 'false' }}
@@ -44,11 +45,13 @@ jobs:
     outputs:
       pr_number: ${{ steps.ctx.outputs.pr_number }}
       head_sha: ${{ steps.ctx.outputs.head_sha }}
+      head_ref: ${{ steps.ctx.outputs.head_ref }}
       base_ref: ${{ steps.ctx.outputs.base_ref }}
       pr_author: ${{ steps.ctx.outputs.pr_author }}
       pr_draft: ${{ steps.ctx.outputs.pr_draft }}
       pr_is_fork: ${{ steps.ctx.outputs.pr_is_fork }}
       ci_trigger_failed: ${{ steps.ctx.outputs.ci_trigger_failed }}
+      ci_recheck_only: ${{ steps.ctx.outputs.ci_recheck_only }}
     steps:
       - name: Resolve from event
         id: ctx
@@ -60,11 +63,15 @@ jobs:
 
             if (!pr && context.eventName === 'workflow_run') {
               const run = context.payload.workflow_run;
-              if (run.conclusion !== 'failure' && run.conclusion !== 'cancelled') {
+              const isFailure =
+                run.conclusion === 'failure' || run.conclusion === 'cancelled';
+              const isSuccess = run.conclusion === 'success';
+              if (!isFailure && !isSuccess) {
                 core.setOutput('pr_number', '');
                 return;
               }
-              ciFailed = 'true';
+              ciFailed = String(isFailure);
+              core.setOutput('ci_recheck_only', String(isSuccess));
               const pulls = await github.rest.pulls.list({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -72,6 +79,8 @@ jobs:
                 state: 'open',
               });
               pr = pulls.data[0];
+            } else {
+              core.setOutput('ci_recheck_only', 'false');
             }
 
             if (!pr && context.eventName === 'workflow_dispatch') {
@@ -91,6 +100,7 @@ jobs:
 
             core.setOutput('pr_number', String(pr.number));
             core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_ref', pr.head.ref);
             core.setOutput('base_ref', pr.base.ref);
             core.setOutput('pr_author', pr.user.login);
             core.setOutput('pr_draft', String(pr.draft));
@@ -115,6 +125,7 @@ jobs:
       is_dry_run: ${{ steps.plan.outputs.is_dry_run }}
       should_handoff: ${{ steps.plan.outputs.should_handoff }}
       handoff_reason: ${{ steps.plan.outputs.handoff_reason }}
+      recheck_only: ${{ steps.plan.outputs.recheck_only }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,6 +144,7 @@ jobs:
           PR_AUTHOR: ${{ needs.resolve-context.outputs.pr_author }}
           PR_DRAFT: ${{ needs.resolve-context.outputs.pr_draft }}
           PR_IS_FORK: ${{ needs.resolve-context.outputs.pr_is_fork }}
+          CI_RECHECK_ONLY: ${{ needs.resolve-context.outputs.ci_recheck_only }}
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli plan
         working-directory: scripts/pr-agent
@@ -155,7 +167,7 @@ jobs:
   review-standards:
     name: Review (Claude 4.6 standards)
     needs: [resolve-context, plan]
-    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.run_standards == 'true'
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -189,7 +201,7 @@ jobs:
   review-depth:
     name: Review (Claude 4.6 depth)
     needs: [resolve-context, plan]
-    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.run_depth == 'true'
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +235,7 @@ jobs:
   review-bugbot:
     name: Review (Bugbot)
     needs: [resolve-context, plan]
-    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.run_bugbot == 'true'
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_bugbot == 'true'
     runs-on: ubuntu-latest
     outputs:
       bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
@@ -258,7 +270,7 @@ jobs:
       - review-standards
       - review-depth
       - review-bugbot
-    if: always() && needs.plan.outputs.should_skip != 'true'
+    if: always() && needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true'
     runs-on: ubuntu-latest
     outputs:
       should_fix: ${{ steps.agg.outputs.should_fix }}
@@ -307,7 +319,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          ref: ${{ needs.resolve-context.outputs.head_ref }}
           fetch-depth: 0
           token: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -320,6 +332,7 @@ jobs:
         working-directory: scripts/pr-agent
         env:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          PR_HEAD_REF: ${{ needs.resolve-context.outputs.head_ref }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           CI_LOG_EXCERPT: ${{ github.event.workflow_run && format('Failed workflow: {0}', github.event.workflow_run.html_url) || '' }}
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -352,13 +365,45 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli wait-ci
 
+  recheck-handoff:
+    name: Recheck handoff after CI
+    needs: [resolve-context, plan, aggregate, fix, wait-ci]
+    if: |
+      always() && needs.plan.outputs.should_skip != 'true' &&
+      (needs.plan.outputs.recheck_only == 'true' ||
+        (needs.aggregate.result == 'success' &&
+          needs.aggregate.outputs.should_handoff != 'true' &&
+          (needs.wait-ci.result == 'success' || needs.wait-ci.result == 'skipped') &&
+          needs.wait-ci.outputs.ci_green == 'true'))
+    runs-on: ubuntu-latest
+    outputs:
+      should_handoff: ${{ steps.recheck.outputs.should_handoff }}
+      handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Recheck clean handoff
+        id: recheck
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli recheck-handoff
+
   finalize:
     name: Finalize handoff
-    needs: [resolve-context, plan, aggregate]
+    needs: [resolve-context, plan, aggregate, recheck-handoff]
     if: |
       always() && (
         needs.plan.outputs.should_handoff == 'true' ||
-        (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true')
+        (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true') ||
+        (needs.recheck-handoff.result == 'success' && needs.recheck-handoff.outputs.should_handoff == 'true')
       )
     runs-on: ubuntu-latest
     steps:
@@ -374,13 +419,13 @@ jobs:
         env:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
-          HANDOFF_REASON: ${{ needs.plan.outputs.should_handoff == 'true' && needs.plan.outputs.handoff_reason || needs.aggregate.outputs.handoff_reason || 'human_handoff' }}
+          HANDOFF_REASON: ${{ needs.plan.outputs.should_handoff == 'true' && needs.plan.outputs.handoff_reason || needs.aggregate.outputs.handoff_reason || needs.recheck-handoff.outputs.handoff_reason || 'human_handoff' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run cli finalize
 
   notify-failure:
     name: Notify on failure
-    needs: [plan, aggregate, fix, finalize]
+    needs: [plan, aggregate, fix, recheck-handoff, finalize]
     if: failure() && needs.plan.outputs.should_skip != 'true'
     uses: ./.github/workflows/reusable-pr-comment.yml
     with:

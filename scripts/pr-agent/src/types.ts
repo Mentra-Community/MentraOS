@@ -69,6 +69,7 @@ export type PlanOutput = {
   skipReason?: string;
   shouldHandoff?: boolean;
   handoffReason?: 'human_handoff' | 'budget_exhausted' | 'diverging';
+  recheckOnly?: boolean;
 };
 
 export type AggregateOutput = {

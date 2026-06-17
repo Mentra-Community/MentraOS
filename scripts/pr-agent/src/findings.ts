@@ -77,6 +77,27 @@ export function mergeFindings(
   return { merged: [...byFp.values()], newFingerprints };
 }
 
+export function resolveOpenFindingsFromSource(
+  openFindings: Finding[],
+  resolvedFindings: Finding[],
+  source: string,
+  cycle: number,
+): { open: Finding[]; resolved: Finding[] } {
+  const toResolve = openFindings.filter(
+    (f) => f.source === source && f.severity === 'blocking' && f.status === 'open',
+  );
+  if (toResolve.length === 0) {
+    return { open: openFindings, resolved: resolvedFindings };
+  }
+  const resolvedIds = new Set(toResolve.map((f) => f.fingerprint));
+  const open = openFindings.filter((f) => !resolvedIds.has(f.fingerprint));
+  const resolved = [
+    ...resolvedFindings,
+    ...toResolve.map((f) => ({ ...f, status: 'resolved' as const, lastSeenCycle: cycle })),
+  ];
+  return { open, resolved };
+}
+
 export function openBlocking(findings: Finding[]): Finding[] {
   return findings.filter((f) => f.severity === 'blocking' && f.status === 'open');
 }

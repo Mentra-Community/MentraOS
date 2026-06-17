@@ -23,40 +23,71 @@ export function requiredWorkflowsForPaths(changedFiles: string[], repoRoot: stri
   return [...required];
 }
 
-export async function fetchCheckStatuses(
+/** Match configured workflow `name:` values via Actions workflow runs for the commit. */
+export async function fetchWorkflowStatuses(
   octokit: Octokit,
   owner: string,
   repo: string,
   ref: string,
-  requiredNames: string[],
+  requiredWorkflowNames: string[],
 ): Promise<CiCheckStatus[]> {
-  const { data } = await octokit.checks.listForRef({ owner, repo, ref, per_page: 100 });
-  const runs = data.check_runs;
+  const { data } = await octokit.actions.listWorkflowRunsForRepo({
+    owner,
+    repo,
+    head_sha: ref,
+    per_page: 100,
+  });
 
-  return requiredNames.map((name) => {
-    const run = runs.find((r) => r.name === name);
+  return requiredWorkflowNames.map((workflowName) => {
+    const runs = data.workflow_runs.filter((r) => r.name === workflowName);
+    if (runs.length === 0) {
+      return {
+        name: workflowName,
+        status: 'not_required',
+        conclusion: null,
+        required: false,
+      };
+    }
+    const latest = [...runs].sort(
+      (a, b) =>
+        new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
+    )[0]!;
     return {
-      name,
-      status: run?.status ?? 'missing',
-      conclusion: run?.conclusion ?? null,
+      name: workflowName,
+      status: latest.status ?? 'missing',
+      conclusion: latest.conclusion ?? null,
       required: true,
     };
   });
 }
 
+/** @deprecated Use fetchWorkflowStatuses */
+export const fetchCheckStatuses = fetchWorkflowStatuses;
+
+function requiredChecks(checks: CiCheckStatus[]): CiCheckStatus[] {
+  return checks.filter((c) => c.required);
+}
+
 export function isCiGreen(checks: CiCheckStatus[]): boolean {
-  if (checks.length === 0) return true;
-  return checks.every(
-    (c) => c.status === 'completed' && (c.conclusion === 'success' || c.conclusion === 'skipped'),
-  );
+  const required = requiredChecks(checks);
+  if (required.length === 0) return true;
+  return required.every((c) => {
+    if (['in_progress', 'queued', 'waiting', 'pending'].includes(c.status)) {
+      return false;
+    }
+    if (c.status === 'completed') {
+      return c.conclusion === 'success' || c.conclusion === 'skipped';
+    }
+    return false;
+  });
 }
 
 export function isCiFailed(checks: CiCheckStatus[]): boolean {
-  return checks.some(
+  return requiredChecks(checks).some(
     (c) =>
       c.status === 'completed' &&
       c.conclusion != null &&
-      !['success', 'skipped', 'neutral'].includes(c.conclusion),
+      !['success', 'skipped'].includes(c.conclusion),
   );
 }
 
@@ -70,14 +101,14 @@ export async function pollCiUntilSettled(
 ): Promise<CiCheckStatus[]> {
   const deadline = Date.now() + maxWaitMin * 60_000;
   while (Date.now() < deadline) {
-    const checks = await fetchCheckStatuses(octokit, owner, repo, ref, requiredNames);
-    const allCompleted = checks.every(
-      (c) => c.status === 'completed' || c.status === 'missing',
-    );
-    if (allCompleted) return checks;
+    const checks = await fetchWorkflowStatuses(octokit, owner, repo, ref, requiredNames);
+    const required = requiredChecks(checks);
+    if (required.length === 0) return checks;
+    const allSettled = required.every((c) => c.status === 'completed');
+    if (allSettled) return checks;
     await sleep(30_000);
   }
-  return fetchCheckStatuses(octokit, owner, repo, ref, requiredNames);
+  return fetchWorkflowStatuses(octokit, owner, repo, ref, requiredNames);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -93,6 +124,17 @@ export async function getPrHeadSha(
   const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
   return data.head.sha;
 }
+
+export async function getPrHeadRef(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<string> {
+  const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
+  return data.head.ref;
+}
+
 export async function getChangedFiles(
   octokit: Octokit,
   owner: string,

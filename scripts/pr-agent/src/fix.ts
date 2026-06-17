@@ -73,7 +73,11 @@ Apply fixes in the working tree. Run relevant tests before finishing.
       `git commit -m "fix(pr-agent): round ${state.fixRound + 1} [pr-agent-fix]"`,
       { cwd: repoRoot },
     );
-    execSync('git push', { cwd: repoRoot });
+    const headRef = process.env.PR_HEAD_REF;
+    if (!headRef) {
+      throw new Error('PR_HEAD_REF is required to push fix commits to the PR branch');
+    }
+    execSync(`git push origin HEAD:refs/heads/${headRef}`, { cwd: repoRoot });
     console.log('Pushed fix commit');
     return true;
   } catch (err) {

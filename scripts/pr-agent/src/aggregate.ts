@@ -6,6 +6,7 @@ import {
   mergeFindings,
   openBlocking,
   parseVerdictFromText,
+  resolveOpenFindingsFromSource,
   sourceCounts,
   verdictToFindings,
 } from './findings.js';
@@ -40,6 +41,7 @@ export function aggregateCycle(
   const config = loadConfig(repoRoot);
   let cycle = state.cycle;
   let openFindings = [...state.openFindings];
+  let resolvedFindings = [...state.resolvedFindings];
   let nitFindings = [...state.nitFindings];
   let newBlockingFingerprints: string[] = [];
   let allApproved = true;
@@ -55,6 +57,16 @@ export function aggregateCycle(
     newBlockingFingerprints.push(...mergedOpen.newFingerprints);
     const mergedNits = mergeFindings(nitFindings, nits, cycle);
     nitFindings = mergedNits.merged;
+    if (verdict.verdict === 'approve' && blocking.length === 0) {
+      const resolved = resolveOpenFindingsFromSource(
+        openFindings,
+        resolvedFindings,
+        source,
+        cycle,
+      );
+      openFindings = resolved.open;
+      resolvedFindings = resolved.resolved;
+    }
   };
 
   if (activePair.includes('standards')) ingest(reviews.standards, 'standards');
@@ -65,6 +77,18 @@ export function aggregateCycle(
     }
     if (reviews.bugbotCheckSuccess === false) {
       allApproved = false;
+    } else if (
+      reviews.bugbotCheckSuccess === true &&
+      (!reviews.bugbot || !parseVerdictFromText(reviews.bugbot))
+    ) {
+      const resolved = resolveOpenFindingsFromSource(
+        openFindings,
+        resolvedFindings,
+        'bugbot',
+        cycle,
+      );
+      openFindings = resolved.open;
+      resolvedFindings = resolved.resolved;
     }
   }
 
@@ -143,6 +167,7 @@ export function aggregateCycle(
     cycle: cycle + 1,
     totalReviewerRuns: state.totalReviewerRuns + 1,
     openFindings,
+    resolvedFindings,
     nitFindings,
     consecutiveNoNewReviews,
     phase,

@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { aggregateCycle, loadBugbotVerdict, loadReviewOutput } from './aggregate.js';
 import { pollBugbotCheck, triggerBugbot } from './bugbot.js';
 import {
-  fetchCheckStatuses,
+  fetchWorkflowStatuses,
   getChangedFiles,
   getPrHeadSha,
+  isCiGreen,
   pollCiUntilSettled,
   requiredWorkflowsForPaths,
 } from './ci-gates.js';
@@ -14,6 +15,7 @@ import { loadConfig } from './config.js';
 import { runFix } from './fix.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
+import { recheckHandoff } from './recheck-handoff.js';
 import { runReview } from './review.js';
 import {
   createOctokit,
@@ -81,7 +83,7 @@ async function cmdAggregate() {
 
   const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
   const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
-  const ciChecks = await fetchCheckStatuses(octokit, owner, repo, headSha, required);
+  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, headSha, required);
 
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
@@ -138,16 +140,23 @@ async function cmdWaitCi() {
   );
   const out = process.env.GITHUB_OUTPUT;
   if (out) {
-    const green = checks.every((c) => {
-      if (c.status === 'missing') return true;
-      return (
-        c.status === 'completed' &&
-        (c.conclusion === 'success' || c.conclusion === 'skipped')
-      );
-    });
-    appendFileSync(out, `ci_green=${green}\n`);
+    appendFileSync(out, `ci_green=${isCiGreen(checks)}\n`);
   }
   console.log(JSON.stringify(checks, null, 2));
+}
+
+async function cmdRecheckHandoff() {
+  const octokit = createOctokit();
+  const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
+  const result = await recheckHandoff(repoRoot, octokit, owner, repo, prNumber, state);
+  await saveState(octokit, owner, repo, prNumber, result.state, commentId);
+
+  const out = process.env.GITHUB_OUTPUT;
+  if (out) {
+    appendFileSync(out, `should_handoff=${result.shouldHandoff}\n`);
+    appendFileSync(out, `handoff_reason=${result.handoffReason ?? ''}\n`);
+  }
+  console.log(JSON.stringify(result, null, 2));
 }
 
 async function cmdFinalize() {
@@ -159,7 +168,7 @@ async function cmdFinalize() {
   const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
   const changedFiles = await getChangedFiles(octokit, owner, repo, prNumber);
   const required = requiredWorkflowsForPaths(changedFiles, repoRoot);
-  const ciChecks = await fetchCheckStatuses(octokit, owner, repo, headSha, required);
+  const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, headSha, required);
 
   const finalState = { ...state, status: reason };
   await saveState(octokit, owner, repo, prNumber, finalState, commentId);
@@ -203,6 +212,9 @@ async function main() {
     case 'wait-ci':
       await cmdWaitCi();
       break;
+    case 'recheck-handoff':
+      await cmdRecheckHandoff();
+      break;
     case 'finalize':
       await cmdFinalize();
       break;
@@ -210,7 +222,7 @@ async function main() {
     default:
       console.log(`Usage: cli.ts <command>
   plan | review <standards|depth> | bugbot-trigger | bugbot-poll
-  aggregate | fix | wait-ci | finalize`);
+  aggregate | fix | wait-ci | recheck-handoff | finalize`);
   }
 }
 

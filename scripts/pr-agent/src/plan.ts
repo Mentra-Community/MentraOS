@@ -86,6 +86,29 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
     await saveState(octokit, owner, repo, prNumber, state, commentId);
   }
 
+  if (process.env.CI_RECHECK_ONLY === 'true') {
+    if (state.status !== 'in_progress') {
+      return {
+        runBugbot: false,
+        runStandards: false,
+        runDepth: false,
+        activePair: [],
+        state,
+        shouldSkip: true,
+        skipReason: `ci recheck skipped: status ${state.status}`,
+      };
+    }
+    return {
+      runBugbot: false,
+      runStandards: false,
+      runDepth: false,
+      activePair: [],
+      state,
+      shouldSkip: false,
+      recheckOnly: true,
+    };
+  }
+
   if (state.status !== 'in_progress') {
     return {
       runBugbot: false,
@@ -169,6 +192,7 @@ export async function writePlanOutputs(plan: PlanOutput): Promise<void> {
   set('is_dry_run', String(loadConfig(process.cwd()).dryRun));
   set('should_handoff', String(plan.shouldHandoff ?? false));
   set('handoff_reason', plan.handoffReason ?? '');
+  set('recheck_only', String(plan.recheckOnly ?? false));
 }
 
 export { getChangedFiles };
