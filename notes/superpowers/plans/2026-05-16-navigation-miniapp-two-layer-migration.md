@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (strict), Bun (test runner + bundler), React 19, Zustand, react-native-webview (host bridge), JSContext (iOS) / Hermes-equivalent JSContext (Android) for background, Tailwind 4, motion, Google Maps JS API (UI-only), Google Places REST (background-only).
 
-**Spec source of truth:** `docs/superpowers/specs/2026-05-16-navigation-miniapp-two-layer-migration-design.md`
+**Spec source of truth:** `notes/superpowers/specs/2026-05-16-navigation-miniapp-two-layer-migration-design.md`
 
 ---
 

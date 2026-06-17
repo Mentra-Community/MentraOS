@@ -1,5 +1,5 @@
 # PR Agent Orchestrator configuration
-# See docs/pr-agent-orchestrator-setup.md
+# See notes/pr-agent-orchestrator-setup.md
 
 dryRun: true
 
