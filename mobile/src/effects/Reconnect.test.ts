@@ -1,4 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {toolkit} from "@mentra/island"
 
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useCoreStore} from "@/stores/core"
@@ -33,9 +34,11 @@ describe("attemptReconnectToDefaultWearable", () => {
         voice_activity_detection_enabled: true,
       }),
     )
-    expect(BluetoothSdk.connectDefault).toHaveBeenCalled()
+    // connectDefault now routes through the island facade (toolkit.glasses), while
+    // the settings seed still calls BluetoothSdk directly — assert the seed lands first.
+    expect(toolkit.glasses.connectDefault).toHaveBeenCalled()
     expect((BluetoothSdk.updateBluetoothSettings as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
-      (BluetoothSdk.connectDefault as jest.Mock).mock.invocationCallOrder[0],
+      (toolkit.glasses.connectDefault as jest.Mock).mock.invocationCallOrder[0],
     )
   })
 })

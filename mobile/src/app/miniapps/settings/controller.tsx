@@ -13,7 +13,7 @@ import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {toolkit} from "@mentra/island"
 
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {showAlert} from "@/contexts/ModalContext"
@@ -35,7 +35,7 @@ function DeviceSettings() {
     })
     if (result === 1) {
       try {
-        BluetoothSdk.forgetController()
+        toolkit.glasses.controller.forget()
       } catch (e) {
         console.log(e)
       }
@@ -55,7 +55,7 @@ function DeviceSettings() {
     })
 
     if (result === 1) {
-      BluetoothSdk.disconnectController()
+      toolkit.glasses.controller.disconnect()
     }
   }
 

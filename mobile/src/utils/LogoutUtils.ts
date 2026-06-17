@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {Session} from "@supabase/supabase-js"
 
 import restComms from "@/services/RestComms"
@@ -51,7 +51,7 @@ export class LogoutUtils {
 
     try {
       // First try to disconnect any connected glasses
-      await BluetoothSdk.disconnect()
+      await toolkit.glasses.disconnect()
       console.log(`${this.TAG}: Disconnected glasses`)
     } catch (error) {
       console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
@@ -59,7 +59,7 @@ export class LogoutUtils {
 
     try {
       // Then forget the glasses completely
-      await BluetoothSdk.forget()
+      await toolkit.glasses.forget()
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
