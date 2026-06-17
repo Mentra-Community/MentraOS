@@ -125,7 +125,7 @@ asg_client/
 │   ├── utils/          # Utility classes
 │   ├── di/             # Dependency injection
 │   └── receiver/       # Broadcast receivers
-├── agents/             # Feature documentation
+├── docs/               # ASG documentation, including feature docs and agent scratchpad
 ├── StreamPackLite/     # RTMP streaming library (external)
 ├── credentials/        # Debug keystore (not committed)
 ├── AGENTS.md           # Development guide
@@ -182,13 +182,11 @@ asg_client/
 ## Documentation Reference
 
 - **README.md** - Project overview and quick start
-- **agents/BES_OTA_README.md** - BES OTA update system
-- **agents/CAMERA_WEBSERVER_README.md** - Camera web server documentation
-- **agents/CUSTOM_GATT_AUDIO.md** - Custom GATT audio implementation
-- **agents/DELETE_FILES_ENDPOINT.md** - File deletion endpoint documentation
-- **agents/K900_LED_CONTROL.md** - K900 LED control system
-- **agents/PHOTO_TESTING_GUIDE.md** - Photo capture testing guide
-- **agents/RGB_LED_CONTROL_IMPLEMENTATION.md** - RGB LED control details
+- **docs/features/bes-ota.md** - BES OTA update system
+- **docs/features/camera-web-server.md** - Camera web server documentation, including the `/api/delete-files` endpoint
+- **docs/ASG_CLIENT_API.md** - ASG command surface, including audio and RGB LED commands
+- **docs/agents/PHOTO_TESTING_GUIDE.md** - Photo capture testing guide
+- **docs/features/led-control.md** - K900 local LED and RGB LED control details
 - **app/src/main/java/com/mentra/asg_client/reporting/SENTRY_CONFIGURATION.md** - Sentry error reporting setup
 - **app/src/main/java/com/mentra/asg_client/reporting/README.md** - Comprehensive reporting system guide
 
