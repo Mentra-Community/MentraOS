@@ -589,6 +589,11 @@ jest.mock("@mentra/island", () => {
       WIFI: "wifi",
     },
     localDisplayManager: {},
+    phonePhotoCoordinator: {
+      owns: jest.fn(() => false),
+      handlePhotoError: jest.fn(),
+      takePhoto: jest.fn(() => Promise.resolve({photoUrl: "", mimeType: "image/jpeg", size: 0, requestId: "x"})),
+    },
     localMiniappRuntime: {
       cleanup: jest.fn(),
       forwardEvent: jest.fn(),

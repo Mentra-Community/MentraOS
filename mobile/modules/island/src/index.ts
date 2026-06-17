@@ -49,6 +49,7 @@ export {
 } from "./services/MentraJSLogPipeline"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
+export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {
   default as sttModelManager,
   STTModelManager,
@@ -160,7 +161,6 @@ export {
   type StoreAccessor,
   type GlassesSnapshot,
   type StreamingAdapter,
-  type PhotoAdapter,
   type InteropAdapter,
   type InteropAuditEvent,
 } from "./runtime/config"

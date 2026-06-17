@@ -39,6 +39,7 @@ import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
+import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {
   getRuntimeHooks,
@@ -2392,18 +2393,17 @@ class LocalMiniappRuntime {
       return
     }
 
-    const photo = getRuntimeHooks().photo
-    if (!photo) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_IMPLEMENTED,
-        message: "Photo capture is not configured on this host",
-      })
-      return
-    }
-
     try {
-      const result = await photo.takePhoto(packageName, {
-        size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
+      const result = await phonePhotoCoordinator.takePhoto(packageName, {
+        size: payload.size as
+          | "low"
+          | "medium"
+          | "high"
+          | "max"
+          | "small"
+          | "large"
+          | "full"
+          | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
