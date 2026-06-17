@@ -14,6 +14,7 @@ services:
     type: web
     run: bun packages/core/src/index.ts
     port: 3000
+    instances: 1
     cpuCores: 0.25
     ramMegabytes: 1024
     domains:
@@ -39,11 +40,14 @@ services:
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
+    instances: 1
     cpuCores: 0.5
     ramMegabytes: 2048
     domains:
       - name: runtime.us-west-2.mentraglass.com
       - name: runtime.mentraglass.com
+    env:
+      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

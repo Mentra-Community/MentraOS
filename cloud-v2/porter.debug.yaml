@@ -14,7 +14,8 @@ services:
     type: web
     run: bun packages/core/src/index.ts
     port: 3000
-    cpuCores: 1
+    instances: 1
+    cpuCores: 0.25
     ramMegabytes: 1024
     domains:
       - name: core.debug.us-west-2.mentraglass.com
@@ -39,10 +40,12 @@ services:
     run: bun packages/runtime/src/index.ts
     port: 3001
     instances: 1
-    cpuCores: 1
+    cpuCores: 0.5
     ramMegabytes: 2048
     domains:
       - name: runtime.debug.us-west-2.mentraglass.com
+    env:
+      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz
