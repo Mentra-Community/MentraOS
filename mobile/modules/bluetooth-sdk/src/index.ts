@@ -41,7 +41,6 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "mic_pcm",
   "mic_lc3",
   "stream_status",
-  "ota_update_available",
   "ota_start_ack",
   "ota_status",
   "version_info",
@@ -53,6 +52,10 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
     throw new Error(`Unsupported BluetoothSdk event "${eventName}". Use @mentra/bluetooth-sdk/react for status state.`)
   }
   return PrivateBluetoothSdkModule.addListener(eventName, listener as BluetoothSdkEventListener<BluetoothSdkEventName>)
+}
+
+const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
+  return PrivateBluetoothSdkModule.startOtaUpdate()
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
@@ -109,9 +112,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: PrivateBluetoothSdkModule.setGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
   rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
   requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
-  checkForOtaUpdate: PrivateBluetoothSdkModule.sendOtaQueryStatus.bind(PrivateBluetoothSdkModule),
-  startOtaUpdate: PrivateBluetoothSdkModule.sendOtaStart.bind(PrivateBluetoothSdkModule),
-  retryOtaVersionCheck: PrivateBluetoothSdkModule.retryOtaVersionCheck.bind(PrivateBluetoothSdkModule),
+  checkForOtaUpdate: PrivateBluetoothSdkModule.checkForOtaUpdate.bind(PrivateBluetoothSdkModule),
+  startOtaUpdate,
   setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
   getSttModelPath: PrivateBluetoothSdkModule.getSttModelPath.bind(PrivateBluetoothSdkModule),
   checkSttModelAvailable: PrivateBluetoothSdkModule.checkSttModelAvailable.bind(PrivateBluetoothSdkModule),

@@ -11,7 +11,7 @@ import {useCoreStore} from "@/stores/core"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 export default function BtClassicPairingScreen() {
   const {goBack} = useNavigationStore.getState()

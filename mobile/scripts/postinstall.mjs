@@ -6,10 +6,6 @@ console.log('Running postinstall...');
 // is no longer needed and re-introduced duplicate react/react-native copies.
 
 await $({ stdio: 'inherit', cwd: 'modules/bluetooth-sdk' })`bun run prepare`;
-// jspolyfill emits assets/startup.js and mirrors it into the gitignored
-// crust/ios/Resources/startup.js that crust's pod globs for MentraJSRuntime.bundle.
-// We invoke its build here (not via workspace `prepare`) because bun skips cached
-// workspace prepares on no-change installs, which would leave the mirror missing.
 // crust declares @mentra/jspolyfill as a dep so this runs before crust.
 await $({ stdio: 'inherit', cwd: 'modules/jspolyfill' })`bun run build`;
 await $({ stdio: 'inherit', cwd: 'modules/crust' })`bun run prepare`;

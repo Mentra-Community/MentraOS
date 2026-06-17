@@ -6,7 +6,7 @@
  */
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {asgCameraApi} from "@/services/asg/asgCameraApi"
 import {localStorageService} from "@/services/asg/localStorageService"

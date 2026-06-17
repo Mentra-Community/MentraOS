@@ -257,6 +257,14 @@ rsync "${source_rsync_args[@]}" \
   "$sdk_root/ios/Source/" \
   "$target_root/ios/Source/"
 
+perl -0pi -e "s/__MENTRA_BLUETOOTH_SDK_VERSION__/${sdk_version}/g" \
+  "$target_root/ios/Source/BluetoothSdkDefaults.swift"
+
+if grep -R "__MENTRA_BLUETOOTH_SDK_VERSION__" "$target_root/ios/Source" >/dev/null; then
+  echo "SwiftPM export still contains the Bluetooth SDK version placeholder." >&2
+  exit 1
+fi
+
 rsync -a \
   --exclude='CoreObjC.xcodeproj' \
   --exclude='makefile.mk' \

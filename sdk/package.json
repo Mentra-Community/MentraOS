@@ -2,13 +2,11 @@
   "private": true,
   "workspaces": [
     "*",
-    "../cloud-v2/packages/cloud-client",
-    "../cloud-v2/packages/runtime",
-    "../cloud-v2/packages/shared",
+    "../cloud-v2/packages/*",
     "../mobile/modules/miniapp",
-    "../miniapps/*",
     "../mobile/modules/island",
-    "../mobile/modules/bluetooth-sdk"
+    "../mobile/modules/bluetooth-sdk",
+    "../miniapps/*"
   ],
   "scripts": {
     "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",
