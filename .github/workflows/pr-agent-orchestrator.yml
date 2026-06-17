@@ -370,7 +370,7 @@ jobs:
           PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
           PR_HEAD_REF: ${{ needs.resolve-context.outputs.head_ref }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          CI_LOG_EXCERPT: ${{ github.event.workflow_run && format('Failed workflow: {0}', github.event.workflow_run.html_url) || '' }}
+          CI_LOG_EXCERPT: "${{ github.event.workflow_run && format('Failed workflow: {0}', github.event.workflow_run.html_url) || '' }}"
           GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: bun run cli fix
 
