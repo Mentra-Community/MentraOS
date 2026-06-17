@@ -1219,47 +1219,67 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       compress: overrides.compress ?? photoCompression,
       sound: false,
     };
+    let shouldResetCaptureTuning = false;
     const aeExposureDivisor = hasOverride('aeExposureDivisor')
       ? overrides.aeExposureDivisor
       : photoAeExposureDivisor;
     if (aeExposureDivisor != null) {
       settings.aeExposureDivisor = aeExposureDivisor;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const isoCap = hasOverride('isoCap') ? overrides.isoCap : photoIsoCap;
     if (isoCap != null) {
       settings.isoCap = isoCap;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const noiseReduction = hasOverride('noiseReduction')
       ? overrides.noiseReduction
       : optionalTuningFlag(photoNoiseReduction);
     if (noiseReduction != null) {
       settings.noiseReduction = noiseReduction;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const edgeEnhancement = hasOverride('edgeEnhancement')
       ? overrides.edgeEnhancement
       : optionalTuningFlag(photoEdgeEnhancement);
     if (edgeEnhancement != null) {
       settings.edgeEnhancement = edgeEnhancement;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const mfnr = hasOverride('mfnr') ? overrides.mfnr : optionalTuningFlag(photoMfnr);
     if (mfnr != null) {
       settings.mfnr = mfnr;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const zsl = hasOverride('zsl') ? overrides.zsl : optionalTuningFlag(photoZsl);
     if (zsl != null) {
       settings.zsl = zsl;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const ispDigitalGain = hasOverride('ispDigitalGain')
       ? overrides.ispDigitalGain
       : photoIspDigitalGain;
     if (ispDigitalGain != null) {
       settings.ispDigitalGain = ispDigitalGain;
+    } else {
+      shouldResetCaptureTuning = true;
     }
     const ispAnalogGain = hasOverride('ispAnalogGain')
       ? overrides.ispAnalogGain
       : photoIspAnalogGain;
     if (ispAnalogGain != null) {
       settings.ispAnalogGain = ispAnalogGain;
+    } else {
+      shouldResetCaptureTuning = true;
+    }
+    if (shouldResetCaptureTuning) {
+      settings.resetCaptureTuning = true;
     }
     return settings;
   }
