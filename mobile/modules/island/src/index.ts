@@ -82,6 +82,7 @@ export {
 // The namespaced OEM-facing toolkit API (the "(A) host API"). Additive — grows one
 // facade at a time alongside the flat exports below. See ./island.
 export {toolkit} from "./island"
+export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {

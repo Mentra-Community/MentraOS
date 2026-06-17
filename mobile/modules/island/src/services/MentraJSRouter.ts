@@ -41,6 +41,7 @@ import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
+import {islandNotifications} from "./NotificationsEmitter"
 import type {MentraUIRouter} from "./MentraUIRouter"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
@@ -288,6 +289,7 @@ export class MentraJSRouter {
     const outcome = controller.onCrash(packageName, reason)
     if (outcome.surfaceCrashloopBanner) {
       this.onCrashloop?.(packageName, reason)
+      islandNotifications.emit({kind: "miniapp_crashloop", packageName, reason, timestamp: Date.now()})
       return
     }
     if (outcome.showRestartToast) {

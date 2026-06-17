@@ -347,6 +347,9 @@ jest.mock("@mentra/island", () => {
           setView: jest.fn(),
         },
       },
+      notifications: {
+        onNotification: jest.fn(() => () => {}),
+      },
       permissions: {
         check: jest.fn(() => Promise.resolve(false)),
         request: jest.fn(() => Promise.resolve(false)),
