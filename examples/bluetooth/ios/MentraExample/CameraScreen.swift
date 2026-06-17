@@ -68,9 +68,6 @@ private func cameraSdkCall(
     let exposureLine = exposureManual
         ? "      exposureTimeNs: \(exposureTimeNs),"
         : "      exposureTimeNs: nil, // auto exposure"
-    let isoLine = exposureManual
-        ? "      iso: \(iso)"
-        : "      iso: nil // auto ISO"
     let tuningLines = [
         aeExposureDivisor.map { "      aeExposureDivisor: \($0)," },
         isoCap.map { "      isoCap: \($0)," },
@@ -81,7 +78,11 @@ private func cameraSdkCall(
         ispDigitalGain.map { "      ispDigitalGain: \($0)," },
         ispAnalogGain.map { "      ispAnalogGain: \"\($0)\"," },
     ].compactMap { $0 }.joined(separator: "\n")
-    let optionalTuningLines = tuningLines.isEmpty ? "" : "\n\(tuningLines)"
+    let hasTuningLines = !tuningLines.isEmpty
+    let isoLine = exposureManual
+        ? "      iso: \(iso)\(hasTuningLines ? "," : "")"
+        : "      iso: nil\(hasTuningLines ? "," : "") // auto ISO"
+    let optionalTuningLines = hasTuningLines ? "\n\(tuningLines)" : ""
     let prefix = """
     let cameraFovResult = try await mentraBluetoothSdk.setCameraFov(
         CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
