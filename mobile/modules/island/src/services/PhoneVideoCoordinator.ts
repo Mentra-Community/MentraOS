@@ -15,8 +15,9 @@
  * closed/crashed miniapp be cleaned up on unregister.
  */
 
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {getRuntimeHooks} from "@mentra/island"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected} from "./GlassesReadiness"
 
 export interface VideoRecordingOpts {
   width?: number
@@ -57,8 +58,7 @@ export class PhoneVideoCoordinator {
   async startRecording(packageName: string, opts: VideoRecordingOpts): Promise<VideoRecordingStarted> {
     // Fail fast if glasses aren't connected — the BLE command would otherwise
     // be sent into the void.
-    const glasses = getRuntimeHooks().glassesStatus?.get()
-    if (!glasses?.connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       throw new VideoError("GLASSES_NOT_CONNECTED", "Glasses are not connected")
     }
 

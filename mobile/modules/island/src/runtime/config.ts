@@ -524,8 +524,8 @@ export interface RuntimeHooks {
   setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
   /** Phone-orchestrated photo capture (session.camera.takePhoto). */
   photo?: PhotoAdapter
-  /** Phone-orchestrated video recording (session.camera.startVideoRecording). */
-  videoRecording?: VideoRecordingAdapter
+  // Video recording moved into island (PhoneVideoCoordinator, called directly by
+  // the runtime) — no longer a host-provided hook.
   /** Phone-orchestrated camera settings (session.camera.setFov). */
   cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
@@ -534,37 +534,6 @@ export interface RuntimeHooks {
   wifiSetup?: WifiSetupAdapter
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
   interop?: InteropAdapter
-}
-
-/**
- * Video recording adapter — start/stop a local video recording on the glasses.
- * The runtime calls these from its handleVideoRecordingStart/Stop handlers; the
- * host's PhoneVideoCoordinator implements them (drives the glasses over BLE via
- * the bluetooth-sdk startVideoRecording/stopVideoRecording). `stopRecording`
- * optionally uploads the finished clip to a developer-provided URL; no uploaded
- * URL is returned to the miniapp.
- */
-export interface VideoRecordingAdapter {
-  startRecording: (
-    packageName: string,
-    opts: {
-      width?: number
-      height?: number
-      fps?: number
-      sound?: boolean
-      save?: boolean
-    },
-  ) => Promise<{recordingId: string}>
-  stopRecording: (
-    packageName: string,
-    recordingId?: string,
-    opts?: {uploadUrl?: string; uploadAuthToken?: string},
-  ) => Promise<void>
-  /**
-   * Stop any recordings still owned by an app (e.g. on miniapp disconnect/crash)
-   * so the glasses don't keep recording until the max-recording timeout.
-   */
-  stopForApp?: (packageName: string) => Promise<void>
 }
 
 /**
