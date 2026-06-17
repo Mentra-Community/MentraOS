@@ -347,6 +347,12 @@ jest.mock("@mentra/island", () => {
           setView: jest.fn(),
         },
       },
+      permissions: {
+        check: jest.fn(() => Promise.resolve(false)),
+        request: jest.fn(() => Promise.resolve(false)),
+        openSettings: jest.fn(() => Promise.resolve()),
+        requirementsForMiniapp: jest.fn(() => Promise.resolve([])),
+      },
       phoneNotifications: {
         enabled: jest.fn(() => false),
         setEnabled: jest.fn(() => Promise.resolve({is_ok: () => true})),

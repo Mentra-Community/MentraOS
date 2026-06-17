@@ -20,6 +20,7 @@ import {incidents} from "./facades/incidents"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
+import {permissions} from "./facades/permissions"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -60,6 +61,8 @@ export const toolkit = {
   pairing,
   /** Phone→glasses notification forwarding (Android). */
   phoneNotifications,
+  /** OS permissions (check/request/openSettings + per-miniapp requirements). */
+  permissions,
   display: {
     mirror: displayMirror,
   },
