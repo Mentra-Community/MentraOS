@@ -21,6 +21,7 @@ import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
 import {permissions} from "./facades/permissions"
+import {notifications} from "./facades/notifications"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -63,6 +64,8 @@ export const toolkit = {
   phoneNotifications,
   /** OS permissions (check/request/openSettings + per-miniapp requirements). */
   permissions,
+  /** Inbound alerts island→host (crashloop, version-incompatible, connection loss). */
+  notifications,
   display: {
     mirror: displayMirror,
   },
