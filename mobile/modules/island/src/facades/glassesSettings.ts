@@ -10,9 +10,26 @@
  */
 import {useSettingsStore, SETTINGS, BLUETOOTH_SETTING_KEYS} from "../stores/settings"
 
-// Internal sync keys carried on BLUETOOTH_SETTING_KEYS for the device handshake —
-// NOT user-tunable device settings, so kept out of the OEM-facing surface.
-const INTERNAL_KEYS = new Set<string>([SETTINGS.core_token.key, SETTINGS.auth_email.key])
+// Keys carried on BLUETOOTH_SETTING_KEYS for the device handshake that are NOT
+// user-tunable settings — auth, device/controller IDENTITY (set by pairing), and
+// internal RUNTIME flags. Kept out of the OEM-facing `available()` surface.
+const INTERNAL_KEYS = new Set<string>([
+  // auth
+  SETTINGS.core_token.key,
+  SETTINGS.auth_email.key,
+  // glasses + controller identity (managed by pairing, not the user)
+  SETTINGS.pending_wearable.key,
+  SETTINGS.default_wearable.key,
+  SETTINGS.device_name.key,
+  SETTINGS.device_address.key,
+  SETTINGS.pending_controller.key,
+  SETTINGS.default_controller.key,
+  SETTINGS.controller_device_name.key,
+  SETTINGS.controller_address.key,
+  // internal runtime flags
+  SETTINGS.local_stt_fallback_active.key,
+  SETTINGS.offline_captions_running.key,
+])
 const DEVICE_KEYS = BLUETOOTH_SETTING_KEYS.filter((k) => !INTERNAL_KEYS.has(k))
 
 export const glassesSettings = {
