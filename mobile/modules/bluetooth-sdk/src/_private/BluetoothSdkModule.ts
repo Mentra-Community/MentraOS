@@ -566,10 +566,5 @@ NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
 }
 
-const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
-  return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
-}
-
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

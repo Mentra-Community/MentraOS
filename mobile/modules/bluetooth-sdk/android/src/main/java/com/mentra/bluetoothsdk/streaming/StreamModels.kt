@@ -170,20 +170,15 @@ data class StreamResolvedConfig @JvmOverloads constructor(
 data class StreamRequest @JvmOverloads constructor(
     val streamUrl: String,
     val streamId: String = "",
-    val keepAlive: Boolean = true,
-    val keepAliveIntervalSeconds: Int = 5,
     val sound: Boolean = true,
     val video: StreamVideoConfig? = null,
     val audio: StreamAudioConfig? = null,
-    val keepAliveMode: String? = null,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
             put("type", "start_stream")
             put("streamUrl", streamUrl)
             put("streamId", streamId)
-            put("keepAlive", keepAlive)
-            put("keepAliveIntervalSeconds", keepAliveIntervalSeconds)
             put("sound", sound)
             video?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("video", it) }
             audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("audio", it) }
@@ -197,18 +192,12 @@ data class StreamRequest @JvmOverloads constructor(
                     (values["streamUrl"] ?: values["rtmpUrl"] ?: values["srtUrl"] ?: values["whipUrl"]) as? String
                         ?: "",
                 streamId = values["streamId"] as? String ?: "",
-                keepAlive = values["keepAlive"] as? Boolean ?: true,
-                keepAliveIntervalSeconds = (values["keepAliveIntervalSeconds"] as? Number)?.toInt() ?: 5,
                 sound = values["sound"] as? Boolean ?: true,
                 video = StreamVideoConfig.fromMap(stringMapValue(values["video"])),
                 audio = StreamAudioConfig.fromMap(stringMapValue(values["audio"])),
-                keepAliveMode = stringValue(values, "keepAliveMode"),
             )
     }
 }
-
-internal fun StreamRequest.isExternallyManagedKeepAlive(): Boolean =
-    keepAliveMode == "external"
 
 internal data class StreamKeepAliveRequest @JvmOverloads constructor(
     val streamId: String,

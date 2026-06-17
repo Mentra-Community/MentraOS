@@ -553,6 +553,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
+        AsyncFunction("startExternallyManagedStream") { params: Map<String, Any> ->
+            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
+        }
+
         AsyncFunction("stopStream") { requireSdk().stopStream().values }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->

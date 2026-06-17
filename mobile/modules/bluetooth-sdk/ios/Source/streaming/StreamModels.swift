@@ -219,31 +219,22 @@ public struct StreamResolvedConfig: Equatable {
 public struct StreamRequest {
     public let streamUrl: String
     public let streamId: String
-    public let keepAlive: Bool
-    public let keepAliveIntervalSeconds: Int
     public let sound: Bool
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
-    public let keepAliveMode: String?
 
     public init(
         streamUrl: String,
         streamId: String = "",
-        keepAlive: Bool = true,
-        keepAliveIntervalSeconds: Int = 5,
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
-        audio: StreamAudioConfig? = nil,
-        keepAliveMode: String? = nil
+        audio: StreamAudioConfig? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
-        self.keepAlive = keepAlive
-        self.keepAliveIntervalSeconds = keepAliveIntervalSeconds
         self.sound = sound
         self.video = video
         self.audio = audio
-        self.keepAliveMode = keepAliveMode
     }
 
     init(values: [String: Any]) {
@@ -254,12 +245,9 @@ public struct StreamRequest {
                 ?? values["whipUrl"] as? String
                 ?? "",
             streamId: values["streamId"] as? String ?? "",
-            keepAlive: values["keepAlive"] as? Bool ?? true,
-            keepAliveIntervalSeconds: intValue(values["keepAliveIntervalSeconds"]) ?? 5,
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
-            audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
-            keepAliveMode: stringValue(values, "keepAliveMode")
+            audio: StreamAudioConfig(values: values["audio"] as? [String: Any])
         )
     }
 
@@ -268,8 +256,6 @@ public struct StreamRequest {
         values["type"] = "start_stream"
         values["streamUrl"] = streamUrl
         values["streamId"] = streamId
-        values["keepAlive"] = keepAlive
-        values["keepAliveIntervalSeconds"] = keepAliveIntervalSeconds
         values["sound"] = sound
         if let videoValues = video?.dictionary, !videoValues.isEmpty {
             values["video"] = videoValues
@@ -278,12 +264,6 @@ public struct StreamRequest {
             values["audio"] = audioValues
         }
         return values
-    }
-}
-
-extension StreamRequest {
-    var isExternallyManagedKeepAlive: Bool {
-        keepAliveMode == "external"
     }
 }
 
