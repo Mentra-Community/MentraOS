@@ -36,6 +36,14 @@ import com.mentra.recovery.util.RecoveryConstants;
 public class RemediationWorker extends Worker {
   private static final long WAIT_PING_INTERVAL_MS = 3000L;
 
+  /**
+   * Cross-run mutual exclusion. The boot prompt and the periodic job use different unique work
+   * names, so WorkManager may run two instances at once. They share a single download/install path
+   * and APK file, so only one may run the critical section at a time.
+   */
+  private static final java.util.concurrent.atomic.AtomicBoolean RUNNING =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
+
   public RemediationWorker(@NonNull Context context, @NonNull WorkerParameters params) {
     super(context, params);
   }
@@ -67,6 +75,20 @@ public class RemediationWorker extends Worker {
       return Result.retry();
     }
 
+    // Serialize boot and periodic runs before any fetch/download so they cannot clobber the shared
+    // remediation APK or dispatch duplicate installs.
+    if (!RUNNING.compareAndSet(false, true)) {
+      Log.i(RecoveryConstants.TAG, "Another remediation run in progress; deferring");
+      return Result.retry();
+    }
+    try {
+      return runRemediation(context, attempt);
+    } finally {
+      RUNNING.set(false);
+    }
+  }
+
+  private Result runRemediation(Context context, int attempt) {
     RemediationManifestClient client = new RemediationManifestClient();
     RemediationPolicy policy = client.fetchPolicy();
     if (policy == null) {
