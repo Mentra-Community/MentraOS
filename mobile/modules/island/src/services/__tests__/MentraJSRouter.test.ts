@@ -252,6 +252,18 @@ describe("MentraJSRouter", () => {
     expect(logger.error).toHaveBeenCalledTimes(1)
   })
 
+  test("ready_nack logs as warning instead of dev-overlay error", () => {
+    router.start()
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__error",
+      method: "ready_nack",
+      argsJson: '{"phase":"steady-state","timeoutMs":3000}',
+    })
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+    expect(logger.error).not.toHaveBeenCalled()
+  })
+
   test("unknown iface logs a debug line but does NOT crash", () => {
     router.start()
     crust.emit("mentrajs_message", {

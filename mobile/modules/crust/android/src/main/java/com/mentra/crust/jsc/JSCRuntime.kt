@@ -459,15 +459,15 @@ class JSCRuntime private constructor(private val appContext: Context) {
      */
     fun dispatchToJs(packageName: String, envelopeJson: String) {
         val record = contexts[packageName] ?: return
-        // Steady-state NACK — re-arm so a wedged QuickJS context surfaces
-        // an __error/ready_nack frame after 3s instead of silently
-        // swallowing the delivery. Skipped during cold-start (timer still
-        // ticking from spawn).
-        if (record.readyAcked) {
-            armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
-        }
         try {
             record.executor.submit {
+                // Steady-state NACK — re-arm inside the per-context executor so
+                // the timer measures the actual __deliver call, not time spent
+                // waiting behind earlier queued work. Skipped during cold-start
+                // (timer still ticking from spawn).
+                if (record.readyAcked) {
+                    armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
+                }
                 // Soft watchdog around evaluate: warn at 5s, kill at 30s.
                 val warn = timerScheduler.schedule({
                     Log.i(TAG, "watchdog: $packageName __deliver blocked >${WATCHDOG_WARN_MS}ms")
