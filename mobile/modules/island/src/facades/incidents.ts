@@ -42,9 +42,7 @@ export const incidents = {
       const r = await restComms.uploadIncidentLogs(incidentId, input.logs)
       if (r.is_error()) console.warn("incidents.file: upload logs failed:", r.error?.message)
     }
-    if (isGlassesConnected(useGlassesStore.getState().connection)) {
-      BluetoothSdk.sendIncidentId(incidentId, backendUrl)
-    }
+    this.notifyGlasses(incidentId, backendUrl)
     if (input.screenshots && input.screenshots.length > 0) {
       const r = await restComms.uploadIncidentAttachments(incidentId, input.screenshots)
       if (r.is_error()) console.warn("incidents.file: upload attachments failed:", r.error?.message)
@@ -53,6 +51,14 @@ export const incidents = {
   },
 
   // --- lower-level primitives (drive the steps yourself) ---
+  /**
+   * Notify the connected glasses of an incident id (no-op if disconnected).
+   * Defaults the API base URL to the island's current REST URL.
+   */
+  notifyGlasses(incidentId: string, apiBaseUrl?: string | null): void {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) return
+    BluetoothSdk.sendIncidentId(incidentId, apiBaseUrl ?? useSettingsStore.getState().getRestUrl())
+  },
   /** Create an incident (returns its id); pass the gathered phone-state snapshot. */
   create: (...args: Parameters<typeof restComms.createIncident>) => restComms.createIncident(...args),
   /** Upload the captured phone logs against an incident id. */

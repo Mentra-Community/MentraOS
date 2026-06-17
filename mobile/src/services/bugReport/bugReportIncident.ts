@@ -1,4 +1,3 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
@@ -6,7 +5,7 @@ import * as Location from "expo-location"
 import {Platform} from "react-native"
 
 import restComms from "@/services/RestComms"
-import {useAppStatusStore} from "@mentra/island"
+import {toolkit, useAppStatusStore} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
@@ -244,10 +243,8 @@ export async function submitBugIncident(
     }
   }
 
-  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
-  if (glassesConnected) {
-    BluetoothSdk.sendIncidentId(incidentId, phoneBackendUrl)
-  }
+  // Notify the glasses of the incident id (the facade no-ops if disconnected).
+  toolkit.incidents.notifyGlasses(incidentId, phoneBackendUrl)
 
   if (options?.screenshots && options.screenshots.length > 0) {
     const uploadRes = await restComms.uploadIncidentAttachments(incidentId, options.screenshots)

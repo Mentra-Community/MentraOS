@@ -1,5 +1,5 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
@@ -324,7 +324,7 @@ export default function NexDeveloperSettings() {
         ])
         return
       }
-      await BluetoothSdk.displayText(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
+      await toolkit.display.text(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -360,7 +360,7 @@ export default function NexDeveloperSettings() {
 
   const onClearDisplayClick = async () => {
     if (glassesConnected) {
-      await BluetoothSdk.clearDisplay()
+      await toolkit.display.clear()
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {

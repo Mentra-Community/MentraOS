@@ -315,6 +315,13 @@ jest.mock("@mentra/island", () => {
           disconnect: jest.fn(() => Promise.resolve()),
           forget: jest.fn(() => Promise.resolve()),
         },
+        // Thin passthroughs in the real facade — delegate to the shared
+        // bluetoothSdkMock so volume-return mocks + btsdk-call assertions work.
+        audio: {
+          getMediaVolume: jest.fn((...a) => bluetoothSdkMock.getGlassesMediaVolume(...a)),
+          setMediaVolume: jest.fn((...a) => bluetoothSdkMock.setGlassesMediaVolume(...a)),
+          setOwnAppPlaying: jest.fn((...a) => bluetoothSdkMock.setOwnAppAudioPlaying(...a)),
+        },
         status: jest.fn(() => ({state: "disconnected"})),
         onStatus: jest.fn(() => () => {}),
         info: jest.fn(() => ({})),
@@ -338,6 +345,7 @@ jest.mock("@mentra/island", () => {
         },
       },
       speech: {
+        restartTranscriber: jest.fn(() => Promise.resolve()),
         stt: {
           currentLanguage: jest.fn(() => "en"),
           languages: jest.fn(() => []),
@@ -366,6 +374,8 @@ jest.mock("@mentra/island", () => {
           view: jest.fn(() => "main"),
           setView: jest.fn(),
         },
+        text: jest.fn(() => Promise.resolve()),
+        clear: jest.fn(() => Promise.resolve()),
       },
       notifications: {
         onNotification: jest.fn(() => () => {}),
@@ -435,6 +445,7 @@ jest.mock("@mentra/island", () => {
       },
       incidents: {
         file: jest.fn(() => Promise.resolve({incidentId: "test"})),
+        notifyGlasses: jest.fn(),
         create: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false, value: {incidentId: "test"}})),
         uploadLogs: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
         uploadAttachments: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),

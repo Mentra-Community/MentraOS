@@ -13,7 +13,7 @@ import {cloudClientService} from "./services/CloudClientService"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
-import {displayMirror} from "./facades/displayMirror"
+import {display} from "./facades/display"
 import {speech} from "./facades/speech"
 import {session} from "./facades/session"
 import {settings} from "./facades/settings"
@@ -77,9 +77,7 @@ export const toolkit = {
   permissions,
   /** Inbound alerts island→host (crashloop, version-incompatible, connection loss). */
   notifications,
-  display: {
-    mirror: displayMirror,
-  },
+  display,
   /**
    * Escape hatches — the raw device-state zustand stores, grouped under `stores`,
    * exposed so the Mentra app keeps using them directly instead of rewriting every

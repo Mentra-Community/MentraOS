@@ -1,5 +1,4 @@
 import {useFocusEffect} from "@react-navigation/native"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-native"
 
@@ -12,6 +11,7 @@ import {translate} from "@/i18n"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
+  toolkit,
   ttsModelManager as TTSModelManager,
   useStopAll,
   type OfflineModelDownloadStatus as DownloadStatus,
@@ -242,7 +242,7 @@ export default function SpeechSettingsScreen() {
           if (target == null) return
           try {
             await STTModelManager.activateLanguage(target)
-            await BluetoothSdk.restartTranscriber()
+            await toolkit.speech.restartTranscriber()
           } catch (error: any) {
             console.error("STT activation failed:", error)
             showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
@@ -262,7 +262,7 @@ export default function SpeechSettingsScreen() {
       )
       await refreshLists()
       await STTModelManager.activateLanguage(code)
-      await BluetoothSdk.restartTranscriber()
+      await toolkit.speech.restartTranscriber()
       setSttCurrent(code)
       STTModelManager.setCurrentLanguage(code)
       sttDesiredRef.current = code

@@ -1,6 +1,6 @@
 // Imports the real glasses facade by path (not via "@mentra/island", which jest
 // mocks) so the actual projection + delegation run under the mobile jest runner.
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {glasses} from "../../modules/island/src/facades/glasses"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 
@@ -43,6 +43,15 @@ describe("glasses facade", () => {
     expect(BluetoothSdk.disconnect).toHaveBeenCalled()
     await glasses.forget()
     expect(BluetoothSdk.forget).toHaveBeenCalled()
+  })
+
+  it("connectDefault() seeds the phone's device settings to native before connecting", async () => {
+    await glasses.connectDefault()
+    // The pre-connect seed (moved out of the host Reconnect flow) must land first.
+    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalled()
+    expect((BluetoothSdk.updateBluetoothSettings as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      (BluetoothSdk.connectDefault as jest.Mock).mock.invocationCallOrder[0],
+    )
   })
 
   it("onStatus() fires on store changes and stops after unsubscribe", () => {
