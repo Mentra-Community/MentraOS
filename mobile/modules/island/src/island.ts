@@ -10,6 +10,7 @@
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
+import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
 import {speech} from "./facades/speech"
@@ -33,7 +34,8 @@ import {useSettingsStore} from "./stores/settings"
 export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
   configure,
-  /** Start the runtime: mark started + construct/connect the cloud client. */
+  /** Start the runtime: mark started + construct/connect the cloud client + begin
+   * syncing device settings to the glasses. */
   async start() {
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
@@ -41,9 +43,13 @@ export const toolkit = {
     // Mentra app has already called cloudClient.init() (synchronously, right after
     // start()), THIS call is the no-op.
     cloudClientService.init()
+    // Push device-setting changes to the glasses for ANY host, so
+    // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
+    startGlassesSettingsSync()
   },
-  /** Stop the runtime: tear down the cloud client + mark stopped. */
+  /** Stop the runtime: tear down the settings sync + cloud client + mark stopped. */
   async stop() {
+    stopGlassesSettingsSync()
     cloudClientService.stop()
     await bootstrapStop()
   },

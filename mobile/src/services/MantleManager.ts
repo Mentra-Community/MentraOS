@@ -621,23 +621,9 @@ class MantleManager {
       {equalityFn: shallow},
     )
 
-    // Subscribe to settings forwarded to the Bluetooth SDK.
-    useSettingsStore.subscribe(
-      (state) => state.getBluetoothSettings(),
-      (state: Record<string, any>, previousState: Record<string, any>) => {
-        const bluetoothSettingsObj: Record<string, any> = {}
-
-        for (const key in state) {
-          const k = key as keyof Record<string, any>
-          if (state[k] !== previousState[k]) {
-            bluetoothSettingsObj[k] = state[k] as any
-          }
-        }
-        // console.log("MANTLE: Bluetooth settings changed", bluetoothSettingsObj)
-        BluetoothSdk.updateBluetoothSettings(bluetoothSettingsObj)
-      },
-      {equalityFn: shallow},
-    )
+    // (Device-settings -> glasses BLE sync now lives in island's
+    // GlassesSettingsSync, started by toolkit.start(), so toolkit.glasses.settings.set()
+    // reaches the device for any host. Removed here to avoid a double-push.)
 
     useSettingsStore.subscribe(
       (state) => ({

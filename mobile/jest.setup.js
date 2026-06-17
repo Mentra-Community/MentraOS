@@ -246,6 +246,9 @@ jest.mock("@mentra/island", () => {
   // before the move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/island/src/stores/settings")
   const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
+  // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
+  // the real one so its behavior is exercised where it now lives (not MantleManager).
+  const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -281,8 +284,14 @@ jest.mock("@mentra/island", () => {
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
       configure: jest.fn(),
-      start: jest.fn(() => Promise.resolve()),
-      stop: jest.fn(() => Promise.resolve()),
+      start: jest.fn(() => {
+        realGlassesSettingsSync.startGlassesSettingsSync()
+        return Promise.resolve()
+      }),
+      stop: jest.fn(() => {
+        realGlassesSettingsSync.stopGlassesSettingsSync()
+        return Promise.resolve()
+      }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
         disconnect: jest.fn(() => Promise.resolve()),
