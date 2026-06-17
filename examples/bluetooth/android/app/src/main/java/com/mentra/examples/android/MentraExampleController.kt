@@ -80,6 +80,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -332,6 +334,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var autoOtaCheckedConnectionKey: String? = null
     private var autoOtaCheckInProgress = false
     private var latestOtaVersionInfoSignature: String? = null
+    private val buttonPhotoSettingsSyncMutex = Mutex()
+    private var buttonPhotoSettingsSyncGeneration = 0
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -541,22 +545,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
-        runAction(if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses") {
-            requireConnected("sync photo capture settings")
-            // Keep hardware-button captures at max detail while scan mode is enabled.
-            val settings =
-                if (enabled) {
-                    scanButtonPreset()
-                } else {
-                    ButtonPhotoSettings(
-                        size = buttonPhotoSizeToSdk(state.photoSize),
-                        mfnr = true,
-                        zsl = true,
-                        resetCaptureTuning = true,
-                    )
-                }
-            withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
-        }
+        val settings =
+            if (enabled) {
+                scanButtonPreset()
+            } else {
+                ButtonPhotoSettings(
+                    size = buttonPhotoSizeToSdk(state.photoSize),
+                    mfnr = true,
+                    zsl = true,
+                    resetCaptureTuning = true,
+                )
+            }
+        syncButtonPhotoSettings(
+            if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses",
+            settings,
+        )
     }
 
     fun setScanAeDivisor(divisor: Int) {
@@ -594,11 +597,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
-        // Re-assert the max-size scan button preset so the hardware button stays in sync.
-        runAction("Apply scan preset on glasses") {
+        syncButtonPhotoSettings("Apply scan preset on glasses", scanButtonPreset())
+    }
+
+    private fun syncButtonPhotoSettings(label: String, settings: ButtonPhotoSettings) {
+        val generation = ++buttonPhotoSettingsSyncGeneration
+        runAction(label) {
             requireConnected("sync photo capture settings")
-            withContext(Dispatchers.IO) {
-                mentraBluetoothSdk.setButtonPhotoSettings(scanButtonPreset())
+            buttonPhotoSettingsSyncMutex.withLock {
+                if (generation != buttonPhotoSettingsSyncGeneration) {
+                    return@withLock
+                }
+                withContext(Dispatchers.IO) {
+                    mentraBluetoothSdk.setButtonPhotoSettings(settings)
+                }
             }
         }
     }
@@ -656,6 +668,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun applyBarcodeScanPhotoPreset() {
+        // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
         state = state.copy(
             photoSize = "max",
             photoCompression = "none",

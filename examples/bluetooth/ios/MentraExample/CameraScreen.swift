@@ -165,7 +165,7 @@ struct CameraScreen: View {
         .background(AppColor.bg)
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: model.activeAction) { action in
-            if action == "Capture & upload" {
+            if action == "Capture & upload" || action == "Capture scan photo" {
                 captureMode = .photo
             } else if action == "Start video recording" || action == "Stop & upload video" {
                 captureMode = .video

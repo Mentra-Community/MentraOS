@@ -131,7 +131,8 @@ fun CameraScreen(controller: MentraExampleController) {
             state.videoRecording ||
                 state.activeAction == "Start video recording" ||
                 state.activeAction == "Stop & upload video" -> captureMode = CameraCaptureMode.VIDEO
-            state.activeAction == "Capture & upload" -> captureMode = CameraCaptureMode.PHOTO
+            state.activeAction == "Capture & upload" ||
+                state.activeAction == "Capture scan photo" -> captureMode = CameraCaptureMode.PHOTO
         }
     }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {

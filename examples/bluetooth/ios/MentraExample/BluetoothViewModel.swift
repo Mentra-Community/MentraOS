@@ -272,6 +272,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActions: [Int: String] = [:]
     private var activeActionOrder: [Int] = []
     private var streamConfigurationChangeInProgress = false
+    private var buttonPhotoSettingsSyncGeneration = 0
+    private var buttonPhotoSettingsSyncTask: Task<Void, Never>?
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl {
         didSet {
@@ -637,22 +639,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             applyBarcodeScanPhotoPreset()
         }
         guard glassesConnected else { return }
-        Task {
-            do {
-                if enabled {
-                    // Keep hardware-button captures at max detail while scan mode is enabled.
-                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        scanButtonPreset()
-                    )
-                } else {
-                    let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
-                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
-                    )
-                }
-            } catch {
-                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
-            }
+        if enabled {
+            syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+        } else {
+            let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
+            syncButtonPhotoSettings(
+                "Restore photo preset on glasses",
+                settings: ButtonPhotoSettings(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
+            )
         }
     }
 
@@ -676,15 +670,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pushScanButtonPreset() {
         guard glassesConnected else { return }
-        // Re-assert the max-size scan button preset so the hardware button stays in sync.
-        Task {
+        syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+    }
+
+    private func syncButtonPhotoSettings(_ label: String, settings: ButtonPhotoSettings) {
+        buttonPhotoSettingsSyncGeneration += 1
+        let generation = buttonPhotoSettingsSyncGeneration
+        let previousTask = buttonPhotoSettingsSyncTask
+        buttonPhotoSettingsSyncTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard let self, generation == self.buttonPhotoSettingsSyncGeneration, self.glassesConnected else { return }
+            let actionId = self.beginAction(label)
+            self.lastAction = "Running: \(label)"
+            self.append(tag: "TX", text: label)
             do {
-                _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                    scanButtonPreset()
-                )
+                _ = try await self.mentraBluetoothSdk.setButtonPhotoSettings(settings)
+                self.lastAction = "Requested: \(label)"
             } catch {
-                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+                self.cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+                self.lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                self.append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
             }
+            self.endAction(actionId)
         }
     }
 
@@ -757,6 +764,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func applyBarcodeScanPhotoPreset() {
+        // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
         photoSize = .max
         photoCompression = .none
         photoExposureManual = true

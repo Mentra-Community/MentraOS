@@ -609,6 +609,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const videoPollGenerationRef = useRef(0);
   const photoCloudServerEnabledRef = useRef(false);
   const scanModeRef = useRef(false);
+  const buttonPhotoSettingsSyncGenerationRef = useRef(0);
+  const buttonPhotoSettingsSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const streamCloudServerEnabledRef = useRef(false);
   const activeTabRef = useRef<ExampleTabKey>('device');
   const galleryModeEnabledRef = useRef(false);
@@ -1133,26 +1135,37 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
-  async function syncScanCapturePreset(
+  function syncScanCapturePreset(
     enabled: boolean,
     settings?: ButtonPhotoSettings,
   ) {
     if (!isGlassesConnected(bluetooth.glasses)) {
       return;
     }
-    await runAction(enabled ? 'Apply scan preset on glasses' : 'Restore photo preset on glasses', async () => {
-      requireConnected('sync photo capture settings');
-      if (enabled) {
-        await BluetoothSdk.setButtonPhotoSettings(settings ?? buildButtonPhotoSettings());
-      } else {
-        await BluetoothSdk.setButtonPhotoSettings({
+    const generation = buttonPhotoSettingsSyncGenerationRef.current + 1;
+    buttonPhotoSettingsSyncGenerationRef.current = generation;
+    const label = enabled ? 'Apply scan preset on glasses' : 'Restore photo preset on glasses';
+    const nextSettings = enabled
+      ? settings ?? buildButtonPhotoSettings()
+      : {
           size: photoSize,
           mfnr: true,
           zsl: true,
           resetCaptureTuning: true,
-        });
+        };
+    const syncTask = buttonPhotoSettingsSyncQueueRef.current.catch(() => undefined).then(async () => {
+      if (generation !== buttonPhotoSettingsSyncGenerationRef.current) {
+        return;
       }
+      await runAction(label, async () => {
+        if (generation !== buttonPhotoSettingsSyncGenerationRef.current) {
+          return;
+        }
+        requireConnected('sync photo capture settings');
+        await BluetoothSdk.setButtonPhotoSettings(nextSettings);
+      });
     });
+    buttonPhotoSettingsSyncQueueRef.current = syncTask;
   }
 
   function setScanModeAction(enabled: boolean) {
@@ -2261,6 +2274,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoCompression(BARCODE_SCAN_PHOTO_PRESET.compress);
     setScanAeDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
     setScanIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
+    // The barcode preset intentionally leaves auto exposure by setting both exposure and ISO.
     setPhotoExposureManual(true);
     setPhotoExposureTimeNsState(BARCODE_SCAN_PHOTO_PRESET.exposureTimeNs);
     setPhotoIsoState(BARCODE_SCAN_PHOTO_PRESET.iso);
