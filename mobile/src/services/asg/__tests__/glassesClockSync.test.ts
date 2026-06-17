@@ -12,7 +12,17 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => ({
   __esModule: true,
   default: {
     setSystemTime: jest.fn().mockResolvedValue(undefined),
-    retryOtaVersionCheck: jest.fn().mockResolvedValue({type: "ota_update_available", updates: []}),
+    retryOtaVersionCheck: jest.fn().mockResolvedValue({
+      type: "ota_status",
+      session_id: "",
+      total_steps: 0,
+      current_step: 0,
+      step_type: "apk",
+      phase: "download",
+      step_percent: 0,
+      overall_percent: 0,
+      status: "idle",
+    }),
   },
 }))
 

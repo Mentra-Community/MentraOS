@@ -520,8 +520,8 @@ getMemoryMB(): number
 ```
 
 The root event surface also omits raw/internal event families such as WebSocket
-trace events, OTA events (including `ota_update_available`), command-to-BLE
-traces, and MiniApp selection events.
+trace events, internal OTA progress events, command-to-BLE traces, and MiniApp
+selection events.
 
 The OTA manifest URL getter/setter (`setOtaVersionUrl` / `getOtaVersionUrl`) and
 the `startOtaUpdate(otaVersionUrl)` override are intentionally kept off the

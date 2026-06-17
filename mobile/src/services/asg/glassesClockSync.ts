@@ -43,7 +43,8 @@ export async function fixGlassesClockIfSkewed(glassesServerTime: number, lastSyn
 }
 
 /**
- * After glasses report OTA failure due to clock skew, fix time and re-run background version check.
+ * After glasses report OTA failure due to clock skew, fix time and ask glasses to retry
+ * their most recent version check.
  */
 export async function handleOtaClockSkewFromGlasses(
   errorCode: string | undefined,
@@ -96,7 +97,7 @@ export async function handleOtaClockSkewFromGlasses(
 }
 
 /**
- * Proactive fix when version_info includes glasses system_time_ms (e.g. before background OTA prefetch).
+ * Proactive fix when version_info includes glasses system_time_ms before OTA manifest checks.
  */
 export async function maybeFixGlassesClockFromVersionInfo(systemTimeMs: number | undefined): Promise<boolean> {
   if (typeof systemTimeMs !== "number" || systemTimeMs <= 0) {

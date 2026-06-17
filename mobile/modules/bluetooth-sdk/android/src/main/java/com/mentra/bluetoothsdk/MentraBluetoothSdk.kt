@@ -1328,13 +1328,6 @@ class MentraBluetoothSdk private constructor(
                     dispatchToListeners { it.onKeepAliveAck(event) }
                 }
             }
-            "ota_update_available" -> {
-                val resultValues = data + mapOf("type" to "ota_update_available")
-                synchronized(oneShotLock) {
-                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
-                }
-                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(resultValues)) }
-            }
             "ota_start_ack" -> {
                 val event = OtaStartAckEvent.fromMap(data + mapOf("type" to "ota_start_ack"))
                 synchronized(oneShotLock) {

@@ -1761,11 +1761,6 @@ public final class MentraBluetoothSDK {
             if !handleStreamKeepAliveAck(event) {
                 delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(event))
             }
-        case "ota_update_available":
-            var resultValues = data
-            resultValues["type"] = "ota_update_available"
-            pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
-            delegate?.mentraBluetoothSDK(self, didReceive: .otaUpdateAvailable(OtaUpdateAvailableEvent(values: resultValues)))
         case "ota_start_ack":
             var values = data
             values["type"] = "ota_start_ack"

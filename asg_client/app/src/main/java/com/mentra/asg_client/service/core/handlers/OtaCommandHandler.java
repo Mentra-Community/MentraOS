@@ -184,8 +184,7 @@ public class OtaCommandHandler implements ICommandHandler {
         JSONObject state = otaHelper.getOtaSessionState();
         if (state != null && communicationManager != null) {
             communicationManager.sendOtaStatus(state);
-            JSONObject data = state.optJSONObject("data");
-            String statusStr = data != null ? data.optString("status", "?") : "?";
+            String statusStr = state.optString("status", "?");
             Log.i(TAG, "📱 Sent ota_status response: " + statusStr);
         }
         return true;

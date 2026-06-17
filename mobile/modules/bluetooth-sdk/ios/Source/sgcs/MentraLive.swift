@@ -2284,32 +2284,6 @@ class MentraLive: NSObject, SGCManager {
             // Send to React Native via Bridge
             Bridge.sendMtkUpdateComplete(message: updateMessage, timestamp: timestamp)
 
-        case "ota_update_available":
-            // Process OTA update available notification from glasses (background mode)
-            Bridge.log("📱 Received ota_update_available from glasses")
-
-            let versionCode = json["version_code"] as? Int64 ?? 0
-            let versionName = json["version_name"] as? String ?? ""
-            let totalSize = json["total_size"] as? Int64 ?? 0
-
-            // Parse updates array
-            var updates: [String] = []
-            if let updatesArray = json["updates"] as? [String] {
-                updates = updatesArray
-            }
-
-            Bridge.log(
-                "📱 OTA available - version: \(versionName) (\(versionCode)), updates: \(updates), size: \(totalSize) bytes"
-            )
-
-            // Send to React Native
-            Bridge.sendOtaUpdateAvailable(
-                versionCode: versionCode,
-                versionName: versionName,
-                updates: updates,
-                totalSize: totalSize
-            )
-
         case "ota_start_ack":
             // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")

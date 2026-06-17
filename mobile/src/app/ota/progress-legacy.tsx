@@ -81,7 +81,6 @@ export default function OtaProgressScreen() {
 
   // Track the full update sequence and current position.
   // Set sequence once from otaUpdateAvailable so we show "Update X of 3" for the whole session.
-  // Do not overwrite when glasses later send ota_update_available with fewer items (e.g. [mtk, bes] after APK).
   const updateSequenceRef = useRef<string[]>([])
   if (otaUpdateAvailable?.updates?.length && updateSequenceRef.current.length === 0) {
     updateSequenceRef.current = [...otaUpdateAvailable.updates]
@@ -334,8 +333,8 @@ export default function OtaProgressScreen() {
       updateSequenceRef.current = sequence
     }
     // CRITICAL: only clear `otaProgress` on mount if there is no in-flight progress
-    // already in the store. If a background prefetch (or a re-mount during an active
-    // OTA — e.g. user navigated away and back) has already populated otaProgress,
+    // already in the store. If a re-mount during an active OTA (e.g. user navigated
+    // away and back) has already populated otaProgress,
     // wiping it here resets the visible progress bar to 0% and confuses the watchdog.
     const inFlight = otaProgress && otaProgress.status !== "FINISHED" && otaProgress.status !== "FAILED"
     console.log(

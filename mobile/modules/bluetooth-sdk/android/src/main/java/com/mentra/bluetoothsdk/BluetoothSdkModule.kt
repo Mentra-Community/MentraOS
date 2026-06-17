@@ -136,10 +136,6 @@ class BluetoothSdkModule : Module() {
                     sendEvent("keep_alive_ack", event.values)
                 }
 
-                override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
-                    sendEvent("ota_update_available", event.values)
-                }
-
                 override fun onOtaStartAck(event: OtaStartAckEvent) {
                     sendEvent("ota_start_ack", event.values)
                 }
@@ -244,7 +240,6 @@ class BluetoothSdkModule : Module() {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
-            "ota_update_available",
             "ota_progress",
             "ota_start_ack",
             "ota_status",

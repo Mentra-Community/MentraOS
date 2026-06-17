@@ -58,7 +58,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
-            "ota_update_available",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
@@ -704,8 +703,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):
             sendEvent("keep_alive_ack", ack.values)
-        case let .otaUpdateAvailable(event):
-            sendEvent("ota_update_available", event.values)
         case let .otaStartAck(event):
             sendEvent("ota_start_ack", event.values)
         case let .otaStatus(event):

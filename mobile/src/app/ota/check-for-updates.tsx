@@ -214,16 +214,12 @@ export default function OtaCheckForUpdatesScreen() {
             // If isRequired is not specified in version.json, default to true (forced update)
             setIsUpdateRequired(result.latestVersionInfo?.isRequired !== false)
             // Store the update info in global state so progress screen can access the sequence.
-            // cacheReady: false ensures the home-screen "cache-ready" popup in OtaUpdateChecker
-            // does not fire on this in-flow write — only true cache-ready signals from the glasses
-            // (see MantleManager ota_update_available listener) should trip that popup.
             useGlassesStore.getState().setOtaUpdateAvailable({
               available: true,
               versionCode: result.latestVersionInfo?.versionCode || 0,
               versionName: result.latestVersionInfo?.versionName || "",
               updates: filteredUpdates,
               totalSize: 0,
-              cacheReady: false,
             })
             setCheckState("update_available")
           } else {

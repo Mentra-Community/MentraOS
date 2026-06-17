@@ -111,8 +111,32 @@ export const bluetoothSdkMock = {
   queryGalleryStatus: jest.fn(() => Promise.resolve()),
   requestPhoto: jest.fn(() => Promise.resolve()),
   startOtaUpdate: jest.fn(() => Promise.resolve()),
-  sendOtaQueryStatus: jest.fn(() => Promise.resolve({type: "ota_update_available", updates: []})),
-  retryOtaVersionCheck: jest.fn(() => Promise.resolve({type: "ota_update_available", updates: []})),
+  sendOtaQueryStatus: jest.fn(() =>
+    Promise.resolve({
+      type: "ota_status",
+      session_id: "",
+      total_steps: 0,
+      current_step: 0,
+      step_type: "apk",
+      phase: "download",
+      step_percent: 0,
+      overall_percent: 0,
+      status: "idle",
+    }),
+  ),
+  retryOtaVersionCheck: jest.fn(() =>
+    Promise.resolve({
+      type: "ota_status",
+      session_id: "",
+      total_steps: 0,
+      current_step: 0,
+      step_type: "apk",
+      phase: "download",
+      step_percent: 0,
+      overall_percent: 0,
+      status: "idle",
+    }),
+  ),
   requestVersionInfo: jest.fn(() =>
     Promise.resolve({
       androidVersion: "",
