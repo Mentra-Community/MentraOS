@@ -1207,7 +1207,14 @@ struct ViewState {
     }
 
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
-        try liveSgc().sendButtonPhotoSettings(requestId: requestId, size: size)
+        try sendButtonPhotoSettings(
+            requestId: requestId,
+            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
+        )
+    }
+
+    func sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) throws {
+        try liveSgc().sendButtonPhotoSettings(requestId: requestId, settings: settings)
     }
 
     func sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) throws {
@@ -1333,36 +1340,40 @@ struct ViewState {
         }
     }
 
-    func requestPhoto(
-        _ requestId: String,
-        _ appId: String,
-        _ size: String,
-        _ webhookUrl: String?,
-        _ authToken: String?,
-        _ compress: String?,
-        _ flash: Bool,
-        _ save: Bool,
-        _ sound: Bool,
-        exposureTimeNs: Double? = nil,
-        iso: Int? = nil
-    ) {
-        // Only honor manual exposure when it is a usable value; manual ISO is a one-shot
-        // companion to manual exposure and must be dropped when exposure is invalid.
-        let manualExposureNs = exposureTimeNs.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        let manualIso = manualExposureNs != nil ? iso.flatMap { $0 > 0 ? $0 : nil } : nil
+    func requestPhoto(_ request: PhotoRequest) {
+        let manualExposureNs = request.exposureTimeNs.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        let manualIso = manualExposureNs != nil ? request.iso.flatMap { $0 > 0 ? $0 : nil } : nil
+        let routed = PhotoRequest(
+            requestId: request.requestId,
+            appId: request.appId,
+            size: request.size,
+            webhookUrl: request.webhookUrl,
+            authToken: request.authToken,
+            compress: request.compress,
+            flash: request.flash,
+            save: request.save,
+            sound: request.sound,
+            exposureTimeNs: manualExposureNs,
+            iso: manualIso,
+            aeExposureDivisor: request.aeExposureDivisor,
+            isoCap: request.isoCap,
+            noiseReduction: request.noiseReduction,
+            edgeEnhancement: request.edgeEnhancement,
+            mfnr: request.mfnr,
+            zsl: request.zsl,
+            ispDigitalGain: request.ispDigitalGain,
+            ispAnalogGain: request.ispAnalogGain
+        )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") flash=\(routed.flash) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
-                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(requestId)"
+                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
             )
             return
         }
-        sgc.requestPhoto(
-            requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: manualExposureNs, iso: manualIso
-        )
+        sgc.requestPhoto(routed)
     }
 
     func connectDefault() {

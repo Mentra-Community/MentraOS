@@ -921,7 +921,7 @@ struct BluetoothStatusUpdate: CustomStringConvertible {
     }
 
     var buttonPhotoSize: ButtonPhotoSize? {
-        optionalStringValue(values, "button_photo_size").flatMap(ButtonPhotoSize.init(rawValue:))
+        optionalStringValue(values, "button_photo_size").map { ButtonPhotoSize(normalizedRawValue: $0) }
     }
 
     var buttonCameraLed: Bool? {

@@ -40,6 +40,7 @@
     "expo": "*",
     "react": "*",
     "react-native": "*",
+    "react-native-udp": "*",
     "@types/react": "*",
     "react-native-mmkv": "*",
     "react-native-nitro-bg-timer": "*",

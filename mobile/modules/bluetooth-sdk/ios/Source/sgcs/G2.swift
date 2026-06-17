@@ -1463,6 +1463,11 @@ class G2: NSObject, SGCManager {
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
     private var imageSessionCounter: Int = 0
+    private var pendingImgAckSession: Int?
+    private var pendingImgAckFragment: Int32?
+    private var pendingImgAck: CheckedContinuation<Bool, Never>?
+    private let IMG_ACK_TIMEOUT_NS: UInt64 = 1_000_000_000  // 1000ms timeout (matches Dart host)
+    private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
     private var evenHubQueueTask: Task<Void, Never>?
@@ -2047,39 +2052,124 @@ class G2: NSObject, SGCManager {
         Task { await rebuildPage() }
     }
 
-    /// Send BMP data to an image container via fragmented updateImageRawData
+    /// Send a bitmap to an image container as fragmented updateImageRawData packets.
+    ///
+    /// The glasses reply ONCE per fragment with an ImgResCmd ErrorCode (4=success, 5=failed).
+    /// Each fragment is sent with its own session id, then this awaits that fragment's ACK for up
+    /// to `IMG_ACK_TIMEOUT_NS` before sending the next. A `failed` ACK OR no ACK within the window
+    /// counts as a failure and the entire image is re-sent (fresh sessions) up to
+    /// `IMG_MAX_ATTEMPTS` times. On exhausting all attempts it logs a warning and returns
+    /// (best-effort — callers are unaffected).
     private func sendImageData(containerID: Int32, containerName: String, bmpData: Data) async {
         let fragmentSize = 4096
-        imageSessionCounter += 1
-        let sessionId = imageSessionCounter
         let totalSize = Int32(bmpData.count)
-        var fragmentIndex: Int32 = 0
-        var offset = 0
+        let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if bmpData.count == 0 {
+            return
+        }
 
         Bridge.log(
-            "G2: sendImageData(\(containerName)) - \(fragmentIndex) fragments, \(bmpData.count) bytes"
+            "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
         )
 
-        while offset < bmpData.count {
-            let end = min(offset + fragmentSize, bmpData.count)
-            let fragment = bmpData[offset..<end]
+        for attempt in 1...IMG_MAX_ATTEMPTS {
+            // One session id per WHOLE image transfer (per attempt). The glasses key their
+            // reassembly buffer on MapSessionId, so every fragment of this image must reuse the
+            // same session id with an incrementing MapFragmentIndex; the per-fragment ACK is
+            // correlated by the (session, fragmentIndex) pair. A retry uses a fresh session so a
+            // stale ACK from a prior attempt can't match.
+            imageSessionCounter = (imageSessionCounter + 1) % 256
+            let sessionId = imageSessionCounter
 
-            let msg = EvenHubProto.updateImageRawDataMessage(
-                containerID: containerID,
-                containerName: containerName,
-                mapSessionId: Int32(sessionId),
-                mapTotalSize: totalSize,
-                compressMode: 0,
-                mapFragmentIndex: fragmentIndex,
-                mapFragmentPacketSize: Int32(fragment.count),
-                mapRawData: Data(fragment)
-            )
-            sendEvenHubCommand(msg)
+            var fragmentIndex: Int32 = 0
+            var offset = 0
+            var transferOk = true
+            // if attempt > 1 {
+            //     Bridge.log("G2: sendImageData(\(containerName)) - attempt \(attempt) starting")
+            // }
+            while offset < bmpData.count {
+                let end = min(offset + fragmentSize, bmpData.count)
+                let fragment = bmpData[offset..<end]
 
-            fragmentIndex += 1
-            offset = end
-            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms between fragments
+                let msg = EvenHubProto.updateImageRawDataMessage(
+                    containerID: containerID,
+                    containerName: containerName,
+                    mapSessionId: Int32(sessionId),
+                    mapTotalSize: totalSize,
+                    compressMode: 0,
+                    mapFragmentIndex: fragmentIndex,
+                    mapFragmentPacketSize: Int32(fragment.count),
+                    mapRawData: Data(fragment)
+                )
+                sendEvenHubCommand(msg)
+                // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
+
+                // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
+                // Timeout/img_failed → abandon the attempt and retry the whole image.
+                let ok = await awaitImageAck(sessionId: sessionId, fragmentIndex: fragmentIndex)
+                if !ok {
+                    Bridge.log(
+                        "G2: img_sen: container=\(containerName) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                    )
+                    transferOk = false
+                    break
+                }
+
+                fragmentIndex += 1
+                offset = end
+            }
+
+            if transferOk {
+                // Bridge.log("G2: img_sen: container=\(containerName) - success=true")
+                return
+            }
         }
+
+        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+    }
+
+    /// Suspend until handleEvenHubResponse() resumes the pending ACK for this `(sessionId,
+    /// fragmentIndex)`, or `IMG_ACK_TIMEOUT_NS` elapses (whichever comes first). Returns whether the
+    /// fragment was acked successfully; a timeout returns false. All fragments of one image share a
+    /// session id, so the fragment index distinguishes their ACKs. @MainActor isolation guarantees
+    /// the continuation, the timeout task, and the response handler never resume concurrently, so
+    /// the `pendingImgAck` slot is the single source of truth for "already resumed".
+    private func awaitImageAck(sessionId: Int, fragmentIndex: Int32) async -> Bool {
+        let timeoutNs = IMG_ACK_TIMEOUT_NS
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            pendingImgAckSession = sessionId
+            pendingImgAckFragment = fragmentIndex
+            pendingImgAck = cont
+
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                guard let self = self else { return }
+                // Fire only if this fragment's ACK hasn't already resumed the continuation.
+                if self.pendingImgAckSession == sessionId, self.pendingImgAckFragment == fragmentIndex,
+                    let pending = self.pendingImgAck
+                {
+                    self.pendingImgAck = nil
+                    self.pendingImgAckSession = nil
+                    self.pendingImgAckFragment = nil
+                    pending.resume(returning: false)
+                }
+            }
+        }
+    }
+
+    /// Resume the pending image-ACK continuation for `(session, fragmentIndex)` (if it matches the
+    /// in-flight one). Idempotent: clears the slot so neither a duplicate L/R ACK nor the timeout
+    /// task can resume the same continuation twice.
+    private func completeImageAck(session: Int, fragmentIndex: Int32, success: Bool) {
+        guard pendingImgAckSession == session, pendingImgAckFragment == fragmentIndex,
+            let cont = pendingImgAck
+        else { return }
+        pendingImgAck = nil
+        pendingImgAckSession = nil
+        pendingImgAckFragment = nil
+        cont.resume(returning: success)
     }
 
     /// Display a bitmap inside a positioned image container.
@@ -2191,7 +2281,8 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        await rebuildState()
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // await rebuildState()
     }
 
     // re-creates the containers and sends all images and text again to the glasses:
@@ -3167,11 +3258,7 @@ class G2: NSObject, SGCManager {
 
     // MARK: - SGCManager: Camera & Media (not supported on G2)
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?,
-        iso _: Int?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}
@@ -3518,6 +3605,28 @@ class G2: NSObject, SGCManager {
             }
         } else {
 
+            // Correlate the per-fragment ACK back to the in-flight sendImageData() fragment and
+            // resume its continuation. Done BEFORE the logging dedup window below so the (possibly
+            // first-arriving) ACK is never swallowed by an unrelated recent EvenHub response.
+            // Dedup of the duplicate L/R ACK is handled by the (session, fragment) match plus
+            // completeImageAck clearing the slot — no time window needed.
+            // ImgResCmd is field 6; MapSessionId = field 3, MapFragmentIndex = field 6,
+            // ErrorCode = field 8 (4=success, 5=failed).
+            if let resData = fields[6] as? Data {
+                var resReader = ProtobufReader(resData)
+                let resFields = resReader.parseFields()
+                if let errorCode = resFields[8] as? Int32, let ackSession = resFields[3] as? Int32 {
+                    let ackFragment = (resFields[6] as? Int32) ?? 0
+                    // Bridge.log(
+                    //     "G2: img_res: session=\(ackSession) fragment=\(ackFragment) errorCode=\(errorCode) success=\(errorCode == 4)"
+                    // )
+                    // Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
+                    completeImageAck(
+                        session: Int(ackSession), fragmentIndex: ackFragment, success: errorCode == 4
+                    )
+                }
+            }
+
             // response codes:
             let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
             if lastEvenHubResponseTimestamp != nil
@@ -3548,14 +3657,14 @@ class G2: NSObject, SGCManager {
                             pageCreated = false
                         }
                     }
-                    if let errorCode = resFields[8] as? Int32 {
-                        // ImgResCmd has ErrorCode in field 8
-                        if errorCode == 4 {
-                            Bridge.log("G2: img_success")
-                        } else {
-                            Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
-                        }
-                    }
+                    // if let errorCode = resFields[8] as? Int32 {
+                    //     // ImgResCmd has ErrorCode in field 8
+                    //     if errorCode == 4 {
+                    //         Bridge.log("G2: img_success")
+                    //     } else {
+                    //         Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
+                    //     }
+                    // }
                 }
             }
 

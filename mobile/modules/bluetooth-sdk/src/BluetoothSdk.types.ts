@@ -248,6 +248,13 @@ export type PhotoCaptureMetadata = {
   sensorTimestampNs?: number
   totalLightProxy?: number
   mfnrLikely?: boolean
+  mfnrApplied?: boolean
+  width?: number
+  height?: number
+  noiseReductionWarning?: "not_implemented" | string
+  ispDigitalGainWarning?: "not_implemented" | string
+  ispAnalogGainWarning?: "not_implemented" | string
+  [key: string]: unknown
 }
 
 export type PhotoStatusEvent = {
@@ -421,8 +428,24 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
-export type PhotoSize = "small" | "medium" | "large" | "full"
-export type ButtonPhotoSize = "small" | "medium" | "large" | "max"
+export type PhotoSize = "low" | "medium" | "high" | "max"
+export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
+
+export type ButtonPhotoSettings = {
+  size: ButtonPhotoSize
+  mfnr?: boolean
+  zsl?: boolean
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
+  aeExposureDivisor?: number
+  isoCap?: number
+  compress?: PhotoCompression
+  sound?: boolean
+  /** When true, clears stored NR/edge/ISP presets on the glasses before applying other fields. */
+  resetCaptureTuning?: boolean
+}
 export type PhotoCompression = "none" | "medium" | "heavy"
 
 /**
@@ -511,6 +534,17 @@ export type PhotoRequestParams = {
   exposureTimeNs?: number | null
   /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
   iso?: number | null
+  /** After AE convergence, divide metered exposure by this factor (scan mode). */
+  aeExposureDivisor?: number
+  /** Cap ISO after AE metering (scan mode). */
+  isoCap?: number
+  /** Requested on wire; glasses may log not_implemented. */
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  mfnr?: boolean
+  zsl?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
 }
 
 export type StreamVideoConfig = {
@@ -859,7 +893,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -913,7 +946,7 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
+  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
@@ -959,12 +992,10 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
-  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-  checkForOtaUpdate(): Promise<OtaQueryResult>
-  /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
-  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-  retryOtaVersionCheck(): Promise<OtaQueryResult>
+  /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
+  checkForOtaUpdate(): Promise<boolean>
+  /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
+  startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

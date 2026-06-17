@@ -51,7 +51,7 @@ export interface PhotoRequest extends BaseMessage {
   customWebhookUrl?: string; // Custom webhook URL to override TPA's default
   authToken?: string; // Auth token for custom webhook authentication
   /** Desired photo size sent by App. Defaults to 'medium' if omitted. */
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
   /** Image compression level: none, medium, or heavy. Defaults to none. */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */

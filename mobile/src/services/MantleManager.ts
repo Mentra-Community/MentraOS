@@ -1,5 +1,5 @@
 import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -18,13 +18,15 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {WebSocketStatus} from "@/services/ws-types"
+import {cloudClient} from "@/services/cloudClient"
+import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
   configureRuntime,
+  getRuntimeHooks,
   displayProcessor,
   localMiniappRuntime,
   localSttFallbackCoordinator,
@@ -33,7 +35,6 @@ import {
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
 import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -175,11 +176,16 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
+    // Construct + connect the cloud client (best-effort) and wire its runtime
+    // adapter. The island/local-miniapp path is powered by this client.
+    const cloud = cloudClient.init()
+
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
+      cloud,
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
@@ -210,21 +216,21 @@ class MantleManager {
           ),
       },
       cloudConnection: {
-        isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
-        // The connection store is plain zustand (no subscribeWithSelector
-        // middleware), so we subscribe to all state changes and dedupe to
-        // the connected boolean ourselves.
-        addListener: (l) => {
-          let lastConnected = useConnectionStore.getState().status === WebSocketStatus.CONNECTED
-          return useConnectionStore.subscribe((state) => {
-            const connected = state.status === WebSocketStatus.CONNECTED
-            if (connected !== lastConnected) {
-              lastConnected = connected
-              l(connected)
-            }
-          })
-        },
+        // Local island miniapps are powered ONLY by the cloud client, so the
+        // on-device STT fallback for miniapps must track cloud liveness, not the
+        // v1 WebSocket. When the cloud is connected and delivering transcripts
+        // the fallback stays off (the cloud powers captions); when it is down,
+        // local STT engages. This adapter is consumed exclusively by
+        // LocalSttFallbackCoordinator, whose only consumer is the local-miniapp
+        // path. The glasses offline-captions display runs off its own
+        // `offline_captions_running` setting and is unaffected.
+        isConnected: () => cloudClient.isConnected(),
+        addListener: (l) => cloudClient.onConnectionChange(l),
       },
+      // The dev laptop's live address, from Metro. The island runtime uses it
+      // to repair persisted dev-miniapp URLs that froze a previous network's
+      // IP (the bundle host is, by construction, reachable right now).
+      devServerHost: () => devServerHost(),
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
@@ -456,9 +462,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -790,12 +799,6 @@ class MantleManager {
       )
 
       this.subs.push(
-        BluetoothSdk.addListener("local_transcription", (event) => {
-          mantle.handle_local_transcription(event)
-        }),
-      )
-
-      this.subs.push(
         (CrustModule.addListener as any)("phone_notification", async (event: any) => {
           // Direct forward to local miniapps subscribed to phone_notification.
           // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
@@ -1039,6 +1042,14 @@ class MantleManager {
           } else {
             socketComms.sendBinary(event.lc3)
           }
+
+          // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
+          // we don't waste UDP bandwidth when nothing is subscribed on v2. The
+          // v1 sends above are unchanged.
+          const cloud = getRuntimeHooks().cloud
+          if (cloud?.isConnected() && cloud.hasAudioSubscriptions()) {
+            cloud.sendAudioFrame(new Uint8Array(event.lc3))
+          }
         }),
       )
 
@@ -1224,7 +1235,7 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch(error => {
+      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
       })
       restComms.sendCalendarData({events, calendars})

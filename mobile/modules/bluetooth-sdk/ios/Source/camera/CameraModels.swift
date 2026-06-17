@@ -1,17 +1,44 @@
 import Foundation
 
 public enum PhotoSize: String {
-    case small
+    case low
     case medium
-    case large
-    case full
+    case high
+    case max
+
+    public static func normalizeLegacy(_ value: String?) -> String {
+        switch value {
+        case "small":
+            return PhotoSize.low.rawValue
+        case "large":
+            return PhotoSize.high.rawValue
+        case "full":
+            return PhotoSize.max.rawValue
+        default:
+            return value ?? PhotoSize.medium.rawValue
+        }
+    }
+
+    public init(normalizedRawValue value: String?) {
+        let normalized = PhotoSize.normalizeLegacy(value)
+        self = PhotoSize(rawValue: normalized) ?? .medium
+    }
 }
 
 public enum ButtonPhotoSize: String {
-    case small
+    case low
     case medium
-    case large
+    case high
     case max
+
+    public static func normalizeLegacy(_ value: String?) -> String {
+        PhotoSize.normalizeLegacy(value)
+    }
+
+    public init(normalizedRawValue value: String?) {
+        let normalized = ButtonPhotoSize.normalizeLegacy(value)
+        self = ButtonPhotoSize(rawValue: normalized) ?? .medium
+    }
 }
 
 public enum PhotoCompression: String {
@@ -21,10 +48,66 @@ public enum PhotoCompression: String {
 }
 
 public struct ButtonPhotoSettings {
-    public let size: ButtonPhotoSize
+    public let size: ButtonPhotoSize?
+    public let mfnr: Bool?
+    public let zsl: Bool?
+    public let noiseReduction: Bool?
+    public let edgeEnhancement: Bool?
+    public let ispDigitalGain: Int?
+    public let ispAnalogGain: String?
+    public let aeExposureDivisor: Int?
+    public let isoCap: Int?
+    public let compress: String?
+    public let sound: Bool?
+    public let resetCaptureTuning: Bool?
 
-    public init(size: ButtonPhotoSize) {
+    public init(
+        size: ButtonPhotoSize?,
+        mfnr: Bool? = nil,
+        zsl: Bool? = nil,
+        noiseReduction: Bool? = nil,
+        edgeEnhancement: Bool? = nil,
+        ispDigitalGain: Int? = nil,
+        ispAnalogGain: String? = nil,
+        aeExposureDivisor: Int? = nil,
+        isoCap: Int? = nil,
+        compress: String? = nil,
+        sound: Bool? = nil,
+        resetCaptureTuning: Bool? = nil
+    ) {
         self.size = size
+        self.mfnr = mfnr
+        self.zsl = zsl
+        self.noiseReduction = noiseReduction
+        self.edgeEnhancement = edgeEnhancement
+        self.ispDigitalGain = ispDigitalGain
+        self.ispAnalogGain = ispAnalogGain
+        self.aeExposureDivisor = aeExposureDivisor
+        self.isoCap = isoCap
+        self.compress = compress
+        self.sound = sound
+        self.resetCaptureTuning = resetCaptureTuning
+    }
+
+    static func from(params: [String: Any]) -> ButtonPhotoSettings {
+        let size = (params["size"] as? String).map { ButtonPhotoSize(normalizedRawValue: $0) }
+        let aeExposureDivisor =
+            optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
+        let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
+        return ButtonPhotoSettings(
+            size: size,
+            mfnr: optionalBoolValue(params, "mfnr"),
+            zsl: optionalBoolValue(params, "zsl"),
+            noiseReduction: optionalBoolValue(params, "noiseReduction"),
+            edgeEnhancement: optionalBoolValue(params, "edgeEnhancement"),
+            ispDigitalGain: optionalIntValue(params, "ispDigitalGain"),
+            ispAnalogGain: optionalStringValue(params, "ispAnalogGain"),
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            compress: optionalStringValue(params, "compress"),
+            sound: optionalBoolValue(params, "sound"),
+            resetCaptureTuning: optionalBoolValue(params, "resetCaptureTuning")
+        )
     }
 }
 
@@ -152,6 +235,14 @@ public struct PhotoRequest {
     public let exposureTimeNs: Double?
     /// Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
     public let iso: Int?
+    public let aeExposureDivisor: Int?
+    public let isoCap: Int?
+    public let noiseReduction: Bool?
+    public let edgeEnhancement: Bool?
+    public let mfnr: Bool?
+    public let zsl: Bool?
+    public let ispDigitalGain: Int?
+    public let ispAnalogGain: String?
 
     public init(
         requestId: String,
@@ -164,7 +255,15 @@ public struct PhotoRequest {
         save: Bool = false,
         sound: Bool,
         exposureTimeNs: Double? = nil,
-        iso: Int? = nil
+        iso: Int? = nil,
+        aeExposureDivisor: Int? = nil,
+        isoCap: Int? = nil,
+        noiseReduction: Bool? = nil,
+        edgeEnhancement: Bool? = nil,
+        mfnr: Bool? = nil,
+        zsl: Bool? = nil,
+        ispDigitalGain: Int? = nil,
+        ispAnalogGain: String? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -177,6 +276,117 @@ public struct PhotoRequest {
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
         self.iso = iso
+        self.aeExposureDivisor = aeExposureDivisor
+        self.isoCap = isoCap
+        self.noiseReduction = noiseReduction
+        self.edgeEnhancement = edgeEnhancement
+        self.mfnr = mfnr
+        self.zsl = zsl
+        self.ispDigitalGain = ispDigitalGain
+        self.ispAnalogGain = ispAnalogGain
+    }
+
+    public static func from(params: [String: Any]) -> PhotoRequest {
+        let sizeRaw = params["size"] as? String ?? "medium"
+        let compressRaw = params["compress"] as? String ?? "none"
+        let exposureTimeNs: Double?
+        switch params["exposureTimeNs"] {
+        case let value as Double:
+            exposureTimeNs = value.isFinite && value > 0 ? value : nil
+        case let value as Int:
+            exposureTimeNs = value > 0 ? Double(value) : nil
+        case let value as NSNumber:
+            let d = value.doubleValue
+            exposureTimeNs = d.isFinite && d > 0 ? d : nil
+        default:
+            exposureTimeNs = nil
+        }
+        let iso: Int?
+        switch params["iso"] {
+        case let value as Int:
+            iso = value > 0 ? value : nil
+        case let value as Double:
+            iso = value.isFinite && value > 0 && value < Double(Int.max) ? Int(value) : nil
+        case let value as NSNumber:
+            let intValue = value.intValue
+            iso = intValue > 0 ? intValue : nil
+        default:
+            iso = nil
+        }
+        func optionalInt(_ key: String, min: Int = Int.min, filter: (Int) -> Bool = { _ in true }) -> Int? {
+            guard params.keys.contains(key) else { return nil }
+            switch params[key] {
+            case let value as Int:
+                return filter(value) ? value : nil
+            case let value as Double:
+                guard value.isFinite, value >= Double(min) else { return nil }
+                return filter(Int(value)) ? Int(value) : nil
+            case let value as NSNumber:
+                let intValue = value.intValue
+                return filter(intValue) ? intValue : nil
+            default:
+                return nil
+            }
+        }
+        func optionalBool(_ key: String) -> Bool? {
+            guard params.keys.contains(key) else { return nil }
+            return params[key] as? Bool
+        }
+
+        return PhotoRequest(
+            requestId: params["requestId"] as? String ?? "",
+            appId: params["appId"] as? String ?? "",
+            size: PhotoSize(normalizedRawValue: sizeRaw),
+            webhookUrl: params["webhookUrl"] as? String,
+            authToken: (params["authToken"] as? String)?.nilIfBlank,
+            compress: PhotoCompression(rawValue: compressRaw),
+            flash: params["flash"] as? Bool ?? true,
+            save: (params["save"] as? Bool) ?? (params["saveToGallery"] as? Bool) ?? false,
+            sound: params["sound"] as? Bool ?? true,
+            exposureTimeNs: exposureTimeNs,
+            iso: iso,
+            aeExposureDivisor: optionalInt("aeExposureDivisor", min: 2) { $0 > 1 },
+            isoCap: optionalInt("isoCap", min: 1) { $0 > 0 },
+            noiseReduction: optionalBool("noiseReduction"),
+            edgeEnhancement: optionalBool("edgeEnhancement"),
+            mfnr: optionalBool("mfnr"),
+            zsl: optionalBool("zsl"),
+            ispDigitalGain: optionalInt("ispDigitalGain"),
+            ispAnalogGain: params["ispAnalogGain"] as? String
+        )
+    }
+
+    func appendScanFields(to json: inout [String: Any]) {
+        if let aeExposureDivisor {
+            json["aeExposureDivisor"] = aeExposureDivisor
+        }
+        if let isoCap {
+            json["isoCap"] = isoCap
+        }
+        if let noiseReduction {
+            json["noiseReduction"] = noiseReduction
+        }
+        if let edgeEnhancement {
+            json["edgeEnhancement"] = edgeEnhancement
+        }
+        if let mfnr {
+            json["mfnr"] = mfnr
+        }
+        if let zsl {
+            json["zsl"] = zsl
+        }
+        if let ispDigitalGain {
+            json["ispDigitalGain"] = ispDigitalGain
+        }
+        if let ispAnalogGain {
+            json["ispAnalogGain"] = ispAnalogGain
+        }
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        isEmpty ? nil : self
     }
 }
 

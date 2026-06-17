@@ -20,6 +20,7 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./proto
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
+import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type UnsubscribeFn} from "./modules/events"
@@ -149,6 +150,7 @@ export class MiniappSession {
   public readonly events: EventManager
   public readonly speaker: SpeakerModule
   public readonly camera: CameraModule
+  public readonly cloud: CloudModule
   public readonly dashboard: DashboardAPI
   public readonly glasses: GlassesModule
   public readonly heading: HeadingModule
@@ -229,6 +231,7 @@ export class MiniappSession {
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
+    this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
     this.glasses = new GlassesModule(this)

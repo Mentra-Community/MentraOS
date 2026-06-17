@@ -31,6 +31,8 @@ export {getMentraOSGlobals} from "./globals"
 export type {MentraOSGlobals, MiniappCapsuleMenuRect, MiniappColorScheme, MiniappSafeAreaInsets} from "./globals"
 
 export {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
+export {CLOUD_STATUS_STREAM} from "./modules/cloud"
+export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
 // Hardware requirement types — re-exported from @mentra/types so miniapp
 // authors can type their miniapp.json manifest without pulling in the types
@@ -93,6 +95,7 @@ export type {
   VideoRecordingStarted,
 } from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
+export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {
   ManagedStreamResult,

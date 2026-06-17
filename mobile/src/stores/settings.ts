@@ -148,6 +148,26 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Cloud V2 endpoint OVERRIDES. Empty = no override; cloudClient's resolveUrl
+  // owns the full precedence (override -> env -> Metro-derived dev default).
+  // The value may be an explicit URL or the METRO_AUTO sentinel ("my dev
+  // laptop", resolved live from Metro so it survives network changes). Never
+  // bake an env var or a personal LAN IP into the default here: that makes the
+  // override branch always-truthy and strands devs on a stale address.
+  cloud_core_url: {
+    key: "cloud_core_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  cloud_runtime_url: {
+    key: "cloud_runtime_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
     defaultValue: () => [],
@@ -459,7 +479,7 @@ export const SETTINGS: Record<string, Setting> = {
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
     key: "button_photo_size",
-    defaultValue: () => "large",
+    defaultValue: () => "max",
     writable: true,
     saveOnServer: true,
     persist: true,

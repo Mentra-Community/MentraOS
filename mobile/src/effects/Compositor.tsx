@@ -41,7 +41,7 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {useNavigationStore} from "@/stores/navigation"
 import {hapticBuzz} from "@/utils/utils"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import { SETTINGS, useSetting } from "@/stores/settings"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
@@ -341,7 +341,7 @@ export default function Compositor() {
   }, [isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale])
 
   if (!renderedApp) return null
-
+    
   return (
     <Animated.View
       pointerEvents={isForeground ? "auto" : "box-none"}
@@ -368,6 +368,7 @@ export default function Compositor() {
             appName={renderedApp.name}
             version={renderedApp.version}
             devUrl={renderedApp.devUrl}
+            devPort={renderedApp.devPort != null ? String(renderedApp.devPort) : undefined}
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
             onShouldCapture={handleShouldCapture}

@@ -185,23 +185,47 @@ public class CameraSettings {
    * @param builder Capture request builder for still capture
    */
   public void configureCaptureBuilder(CaptureRequest.Builder builder) {
+    configureCaptureBuilder(builder, null, null);
+  }
+
+  /**
+   * Configure capture builder with optional per-request MFNR/ZSL overrides.
+   *
+   * @param requestMfnr {@code null} = use global settings; {@code false} = force MFNR off
+   * @param requestZsl {@code null} = use global settings; {@code false} = skip ZSL for single-frame capture
+   */
+  public void configureCaptureBuilder(
+      CaptureRequest.Builder builder, Boolean requestMfnr, Boolean requestZsl) {
     if (builder == null) {
       Log.w(TAG, "Capture builder is null, cannot configure");
       return;
     }
 
-    // Check if ZSL is enabled in settings
-    boolean zslEnabled = mAsgSettings.isZslEnabled();
-    boolean mfnrEnabled = mAsgSettings.isMfnrEnabled();
+    boolean zslEnabled = requestZsl != null ? requestZsl : mAsgSettings.isZslEnabled();
+    boolean mfnrEnabled = requestMfnr != null ? requestMfnr : mAsgSettings.isMfnrEnabled();
 
     if (!zslEnabled && !mfnrEnabled) {
-      Log.d(TAG, "ZSL and MFNR disabled by settings - skipping vendor key configuration");
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      Log.d(TAG, "Set CONTROL_ENABLE_ZSL = false in capture builder");
+
+      if (mKeyZslMode != null) {
+        byte[] zslOff = new byte[]{0};
+        builder.set(mKeyZslMode, zslOff);
+        Log.d(TAG, "Capture: ZSL_MODE vendor key set to OFF (0)");
+      }
+
+      if (mKeyAisRequestMode != null) {
+        int[] mfnrOff = new int[]{0};
+        builder.set(mKeyAisRequestMode, mfnrOff);
+        Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0)");
+      }
+
+      Log.d(TAG, "ZSL and MFNR disabled for capture");
       return;
     }
 
     Log.d(TAG, "🔍 DIAGNOSTIC: Configuring capture builder with ZSL/MFNR");
 
-    // Enable ZSL for capture
     if (zslEnabled && isZslSupported()) {
       builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
       Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in capture builder");
@@ -213,15 +237,27 @@ public class CameraSettings {
       }
     } else if (zslEnabled) {
       Log.d(TAG, "ZSL enabled in settings but vendor keys not available");
+    } else {
+      // zslEnabled=false but mfnrEnabled=true path: explicitly disable ZSL so it isn't
+      // inherited from the preview request (which always enables it for the ZSL buffer).
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      if (mKeyZslMode != null) {
+        builder.set(mKeyZslMode, new byte[]{0});
+        Log.d(TAG, "Capture: ZSL disabled (MFNR-only path), ZSL_MODE vendor key set to OFF");
+      }
+      Log.d(TAG, "Set CONTROL_ENABLE_ZSL = false in capture builder (ZSL off, MFNR on)");
     }
 
-    // Enable MFNR for capture (mode 255 = full MFNR)
     if (mfnrEnabled && isMfnrSupported()) {
       if (mKeyAisRequestMode != null) {
         int[] mfnrMode = new int[]{255};
         builder.set(mKeyAisRequestMode, mfnrMode);
         Log.d(TAG, "Capture: MFNR/AIS mode set to ON (255) - Full multi-frame noise reduction");
       }
+    } else if (!mfnrEnabled && mKeyAisRequestMode != null) {
+      int[] mfnrOff = new int[]{0};
+      builder.set(mKeyAisRequestMode, mfnrOff);
+      Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0) per request");
     } else if (mfnrEnabled) {
       Log.d(TAG, "MFNR enabled in settings but vendor keys not available");
     }

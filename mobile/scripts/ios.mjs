@@ -50,39 +50,64 @@ const deviceName = connected.deviceProperties.name
 
 console.log(`Using device: ${deviceName} (${deviceUdid})`)
 
-// NOTE: We deliberately do NOT use `expo run:ios` for the install/launch.
-// Expo's bundled LockdowndClient crashes on newer iOS (26.x) with
-// "TypeError: Cannot convert object to primitive value" during the device
-// handshake. Instead we build with xcodebuild and install/launch with Apple's
-// own `devicectl`, which works reliably. (Expo still owns prebuild above.)
-
-const SCHEME = "Mentra"
+// `bun expo run:ios` builds fine but its bundled @expo/cli uses a home-grown
+// JS lockdownd client to install on-device, which throws
+// "TypeError: Cannot convert object to primitive value" against current iOS.
+// So we drive the build with xcodebuild and install/launch with Apple's
+// `devicectl` — the same tool the device-detection above already relies on.
 const WORKSPACE = "ios/Mentra.xcworkspace"
-const CONFIG = "Debug"
+const SCHEME = "Mentra"
 const BUNDLE_ID = "com.mentra.mentra"
+const derivedData = "ios/build"
 
-// 1. Build for the connected device.
-await $({
-  stdio: "inherit",
-})`xcodebuild -workspace ${WORKSPACE} -scheme ${SCHEME} -configuration ${CONFIG} -destination ${`id=${deviceUdid}`} -allowProvisioningUpdates build`
+// Build for the connected device.
+await $({stdio: "inherit"})`xcodebuild \
+  -workspace ${WORKSPACE} \
+  -scheme ${SCHEME} \
+  -configuration Debug \
+  -destination id=${deviceUdid} \
+  -derivedDataPath ${derivedData} \
+  -allowProvisioningUpdates \
+  build`
 
-// 2. Resolve the built .app path from xcodebuild's settings (don't hardcode the
-//    DerivedData hash).
-const settingsJson = await $`xcodebuild -workspace ${WORKSPACE} -scheme ${SCHEME} -configuration ${CONFIG} -destination ${`id=${deviceUdid}`} -showBuildSettings -json`.quiet()
-const settings = JSON.parse(settingsJson.stdout)
-const build = settings.find((s) => s.buildSettings?.TARGET_BUILD_DIR && s.buildSettings?.FULL_PRODUCT_NAME)?.buildSettings
-if (!build) {
-  console.error("Could not resolve built .app path from xcodebuild settings")
-  process.exit(1)
-}
-const appPath = `${build.TARGET_BUILD_DIR}/${build.FULL_PRODUCT_NAME}`
-console.log(`Built app: ${appPath}`)
+const appPath = `${derivedData}/Build/Products/Debug-iphoneos/${SCHEME}.app`
 
-// 3. Install + launch via devicectl (bypasses Expo's broken LockdowndClient).
+// Install + launch via devicectl (works where expo's installer fails).
 await $({stdio: "inherit"})`xcrun devicectl device install app --device ${deviceUdid} ${appPath}`
-await $({
-  stdio: "inherit",
-})`xcrun devicectl device process launch --device ${deviceUdid} ${BUNDLE_ID}`
+await $({stdio: "inherit"})`xcrun devicectl device process launch --device ${deviceUdid} ${BUNDLE_ID}`
 
-console.log("\n✅ Installed and launched on device.")
-console.log("If the app shows a Metro error, start the dev server with: bun start")
+// Start Metro in its own clean process so the dev client can connect.
+await $({stdio: "inherit"})`bun expo start --dev-client`
+
+// // Build & install the app without starting the bundler. `expo run:ios` does
+// // not exit on its own after install (it stays attached to the device, showing
+// // a "Connecting to <device>" spinner that pollutes the logs), so we stream its
+// // output, kill it once the app is installed, then start Metro in a clean
+// // process of our own.
+// const runProc = $`bun expo run:ios --device ${deviceUdid} --no-bundler`
+
+// let installed = false
+// for await (const chunk of runProc.stdout) {
+//   process.stdout.write(chunk)
+//   if (/Installing .*\.app/.test(chunk.toString())) {
+//     installed = true
+//     // Give the install/launch a moment to finish, then stop the hung process.
+//     await new Promise((r) => setTimeout(r, 6000))
+//     runProc.kill("SIGINT")
+//     break
+//   }
+// }
+
+// try {
+//   await runProc
+// } catch {
+//   // We SIGINT'd it on purpose; ignore the resulting non-zero exit.
+// }
+
+// if (!installed) {
+//   console.error("Build/install did not complete; not starting Metro.")
+//   process.exit(1)
+// }
+
+// // Start Metro separately in its own clean process.
+// await $({stdio: "inherit"})`bun expo start --dev-client`

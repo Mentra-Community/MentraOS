@@ -369,7 +369,7 @@ These are the supported React Native app developer entrypoints:
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
-| LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
+| LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
 
 React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
@@ -410,7 +410,7 @@ React Native exposes the narrowest return types for clear branching after `await
 | `startStream(...)` | `StreamStatusEvent` for the requested stream once `status` is `streaming`. | `stream_status` error/reconnect failure, timeout, or send failure. |
 | `stopStream()` | `StreamStatusEvent` once `status` is `stopped`; an already-stopped / not-streaming glasses reply resolves as a normalized stopped event. | Real stop error, timeout, send failure, or another stream stop in flight. |
 | `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, or send failure. |
-| `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`: either `ota_update_available` or the current `ota_status`. | Command response timeout, send failure, or another OTA query in flight. A returned `ota_status.status === "failed"` is a glasses OTA state to show in UI, not a command transport rejection. |
+| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 | `startOtaUpdate()` | `OtaStartAckEvent` from `ota_start_ack`. | Start-ack timeout, send failure, or another OTA start in flight. |
 
 ## Gallery Mode
@@ -438,21 +438,20 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
 | Settings | Gallery mode, camera options, microphone route, Wi-Fi, hotspot, and OTA |
 | LEDs | `rgbLedControl` on supported glasses |
-| System | `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
+| System | `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
 
 Mentra Live has camera, microphone, speaker, Wi-Fi, LED, and OTA capabilities. Gate UI by connection readiness, permissions, and the latest SDK status.
 
 ## OTA Updates
 
-Mentra Live OTA is glasses-owned. The SDK exposes the same command and event semantics used by the MentraOS app:
+Mentra Live OTA installation is glasses-owned. The SDK checks the configured manifest on the phone, then sends `ota_start` with that same manifest URL when the user accepts the update:
 
-| API | Glasses command | Purpose |
-| --- | --- | --- |
-| `checkForOtaUpdate()` | `ota_query_status` | Ask the glasses to report update availability or current progress. Resolves with `OtaQueryResult` from the ASG client. |
-| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |
-| `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after a known clock-skew/TLS failure. |
+| API | Purpose |
+| --- | --- |
+| `checkForOtaUpdate()` | Fetch the configured manifest and resolve `true` when an ASG APK, MTK, or BES update is available. |
+| `startOtaUpdate()` | Send `ota_start` with the configured manifest URL after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |
 
-Use the returned query/start values for one-shot UI. Keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state. React Native still receives `ota_update_available`, `ota_start_ack`, and `ota_status` events for low-level integrations; Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`; iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.
+Use the boolean check result for update prompts and keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state. Availability is exposed through `checkForOtaUpdate()` rather than a public event; React Native receives `ota_start_ack` and `ota_status` events during the install flow. Android listeners receive `onOtaStartAck` and `onOtaStatus`; iOS delegates receive `.otaStartAck` and `.otaStatus` through `BluetoothEvent`.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
@@ -571,7 +570,6 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
 | `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings: encoded output size in `video.width` / `video.height`, native camera capture size in `video.captureWidth` / `video.captureHeight`, video bitrate and `fps`, plus audio bitrate, sample rate, echo cancellation, and noise suppression. |
-| `ota_update_available` | `OtaUpdateAvailableEvent` | Mentra Live reports an available OTA package. Also returned by `checkForOtaUpdate()` when an update is available. |
 | `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. Also returned by `startOtaUpdate()`. |
 | `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |
 
@@ -594,7 +592,7 @@ Transport statuses such as `uploading`, `compressing`, `ble_fallback_compression
 
 Local action-button photos emitted by the glasses use the same `photo_status` shape when the phone SDK is connected. Those local captures set `resolvedConfig.source` to `button` and `resolvedConfig.transferMethod` to `local`.
 
-Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onPhotoStatus`, `onMicPcm`, `onStreamStatus`, and `onOtaStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`; OTA arrives through `didReceive` as `.otaUpdateAvailable`, `.otaStartAck`, or `.otaStatus`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onPhotoStatus`, `onMicPcm`, `onStreamStatus`, and `onOtaStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`; OTA install progress arrives through `didReceive` as `.otaStartAck` or `.otaStatus`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
 | Event area | Examples |
 | --- | --- |
