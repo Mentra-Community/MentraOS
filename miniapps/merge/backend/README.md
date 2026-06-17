@@ -28,8 +28,10 @@ bun run dev
 For USB testing on Android, reverse the backend port:
 
 ```bash
-adb reverse tcp:3123 tcp:3123
+adb reverse tcp:3130 tcp:3130
 ```
+
+The miniapp dev sidecar uses `3123`, so the backend uses `3130` in dev.
 
 The `/api/insights` route requires a Mentra miniapp token. In local development
 the backend verifies that token against Cloud Core's JWKS:

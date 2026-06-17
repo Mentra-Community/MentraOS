@@ -26,7 +26,7 @@ export function App() {
   const [interimCount, setInterimCount] = useState(0)
   const [cloudStatus, setCloudStatus] = useState<CloudClientStatus>(DEFAULT_STATUS)
   const [settings, setSettings] = useState<MergeSettings>(DEFAULT_SETTINGS)
-  const [backendUrl, setBackendUrl] = useState("http://localhost:3123")
+  const [backendUrl, setBackendUrl] = useState("http://localhost:3130")
   const [backendStatus, setBackendStatus] = useState<MergeBackendStatus>("idle")
   const [processing, setProcessing] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
