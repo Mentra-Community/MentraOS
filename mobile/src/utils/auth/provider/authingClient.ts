@@ -17,6 +17,29 @@ interface Session {
 
 const SESSION_KEY = "authing_session"
 
+/**
+ * The authing-js-sdk's GraphQLClient rejects with a plain `{code, message, data}`
+ * object rather than an `Error` (see node_modules/authing-js-sdk GraphQLClient,
+ * `throw { code, message, data }`). `Res.try_async`'s default wrapping turns a
+ * non-Error into `new Error(String(value))`, which for an object collapses to
+ * the useless `"[object Object]"` — discarding the code/message that
+ * `mapAuthError` needs to show a real message.
+ *
+ * This mapper preserves the payload by serializing it into an Error whose
+ * `.message` is the JSON string `parseAuthingError` already knows how to read.
+ */
+const toAuthingError = (e: unknown): Error => {
+  if (e instanceof Error) return e
+  if (e && typeof e === "object") {
+    try {
+      return new Error(JSON.stringify(e))
+    } catch {
+      return new Error(String(e))
+    }
+  }
+  return new Error(String(e))
+}
+
 type AuthChangeEvent =
   | "SIGNED_IN"
   | "SIGNED_OUT"
@@ -133,7 +156,7 @@ export class AuthingWrapperClient extends AuthClient {
         user: mentraUser,
       }
       return mentraSigninResponse
-    })
+    }, toAuthingError)
   }
 
   public signInWithPassword(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
@@ -176,7 +199,7 @@ export class AuthingWrapperClient extends AuthClient {
       }
 
       throw new Error("Failed to sign in")
-    })
+    }, toAuthingError)
   }
 
   public signOut(): AsyncResult<void, Error> {
@@ -315,13 +338,13 @@ export class AuthingWrapperClient extends AuthClient {
   public resetPasswordForEmail(email: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       await this.authing.sendEmail(email, EmailScene.ResetPassword)
-    })
+    }, toAuthingError)
   }
 
   public resetPasswordByCode(email: string, code: string, newPassword: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       await this.authing.resetPasswordByEmailCode(email, code, newPassword)
-    })
+    }, toAuthingError)
   }
 
   public updateUserPassword(_password: string): AsyncResult<void, Error> {

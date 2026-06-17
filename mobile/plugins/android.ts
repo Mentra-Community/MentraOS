@@ -156,7 +156,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
     // 4a. Enable Core Library Desugaring (required by :crust → Google Nav SDK).
     if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
       buildGradle = buildGradle.replace(
-        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        /(namespace\s+['"]com\.mentra\.mentra[^'"]*['"])/,
         `$1
     compileOptions {
         coreLibraryDesugaringEnabled true
