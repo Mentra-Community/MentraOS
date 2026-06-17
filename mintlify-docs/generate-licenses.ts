@@ -6,11 +6,11 @@
  * third-party license file for legal compliance.
  *
  * Usage (from repo root):
- *   bun docs/generate-licenses.ts
+ *   bun mintlify-docs/generate-licenses.ts
  *
  * Output:
- *   - docs/static/third-party-licenses.json (downloadable data)
- *   - docs/third-party-licenses.mdx (Mintlify page)
+ *   - mintlify-docs/third-party-licenses.json (downloadable data)
+ *   - mintlify-docs/third-party-licenses.mdx (Mintlify page)
  */
 
 import { $ } from "bun";
@@ -272,7 +272,7 @@ ${Object.entries(summary.byLicense)
 
 ## Full Package List
 
-The complete list of all ${summary.totalPackages.toLocaleString()} packages with their licenses is available in the source repository at \`docs/third-party-licenses.json\`.
+The complete list of all ${summary.totalPackages.toLocaleString()} packages with their licenses is available in the source repository at \`mintlify-docs/third-party-licenses.json\`.
 
 ## Common License Texts
 
@@ -469,7 +469,7 @@ async function main() {
   };
 
   // Ensure output directory exists
-  const docsDir = path.join(ROOT_DIR, "docs");
+  const docsDir = path.join(ROOT_DIR, "mintlify-docs");
   if (!fs.existsSync(docsDir)) {
     fs.mkdirSync(docsDir, { recursive: true });
   }
@@ -478,7 +478,7 @@ async function main() {
   console.log("\n📝 Generating output files...");
 
   if (formats.includes("json")) {
-    // Put JSON in docs root - Mintlify serves files from root
+    // Put JSON in the Mintlify root, which serves files from the docs site root.
     const jsonPath = path.join(docsDir, "third-party-licenses.json");
     fs.writeFileSync(jsonPath, JSON.stringify(summary, null, 2));
     console.log(`  ✓ ${jsonPath}`);

@@ -28,7 +28,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the TypeScript SDK, and the store front end sit in `cloud/packages/`, with integration tests in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Notes and plans live in `agents/` and `docs/`.
+Core client app lives in `mobile/` (Expo React Native). Backend services, the TypeScript SDK, and the store front end sit in `cloud/packages/`, with integration tests in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/`.
 
 ## Build Commands
 
@@ -164,5 +164,6 @@ export MENTRA_AGENT_API_KEY=your-api-key
 
 ## Additional Documentation
 
-- Architecture specs and design docs: `/docs/`
+- Mintlify docs: `/mintlify-docs/`
+- Architecture specs, design docs, and working notes: `/notes/`
 - Module-specific implementation details: See module-specific `AGENTS.md` files
