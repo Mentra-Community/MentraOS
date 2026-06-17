@@ -1466,7 +1466,7 @@ class G2: NSObject, SGCManager {
     private var pendingImgAckSession: Int?
     private var pendingImgAckFragment: Int32?
     private var pendingImgAck: CheckedContinuation<Bool, Never>?
-    private let IMG_ACK_TIMEOUT_NS: UInt64 = 1_000_000_000  // 1000ms timeout (matches Dart host)
+    private let IMG_ACK_TIMEOUT_NS: UInt64 = 2_000_000_000  // 1000ms timeout (matches Dart host)
     private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
@@ -2034,7 +2034,11 @@ class G2: NSObject, SGCManager {
             imageContainers[i].bmpData = Data()
         }
         // shutdown the page and then recreate the containers without the content:
-        Task { await rebuildPage() }
+        Task {
+            await rebuildPage()
+            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
+            // createPageWithContainers()
+        }
     }
 
     /// Send a bitmap to an image container as fragmented updateImageRawData packets.
@@ -2055,9 +2059,9 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        Bridge.log(
-            "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
-        )
+        // Bridge.log(
+        //     "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
+        // )
 
         for attempt in 1...IMG_MAX_ATTEMPTS {
             // One session id per WHOLE image transfer (per attempt). The glasses key their
@@ -2089,14 +2093,14 @@ class G2: NSObject, SGCManager {
                     mapRawData: Data(fragment)
                 )
                 sendEvenHubCommand(msg)
-                // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
+                Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
                 // Timeout/img_failed → abandon the attempt and retry the whole image.
                 let ok = await awaitImageAck(sessionId: sessionId, fragmentIndex: fragmentIndex)
                 if !ok {
                     Bridge.log(
-                        "G2: img_sen: container=\(containerName) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                        "G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex) failed"
                     )
                     transferOk = false
                     break
@@ -2112,7 +2116,7 @@ class G2: NSObject, SGCManager {
             }
         }
 
-        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+        // Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
 
     /// Suspend until handleEvenHubResponse() resumes the pending ACK for this `(sessionId,
@@ -3533,7 +3537,16 @@ class G2: NSObject, SGCManager {
         // Parse evenhub_main_msg_ctx: field 1 = Cmd (varint), field 13 = DevEvent (submessage)
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
+        
 
+        let payloadStr = "\(payload.map { String(format: "%02X", $0) }.joined())"
+        if payloadStr.contains("080C7A02100C") {
+            // heartbeat response
+            return
+        }
+
+        Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
+        
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
                 "G2: EvenHub response - no cmd field, \(payload.count) bytes: \(payload.map { String(format: "%02X", $0) }.joined())"
@@ -3541,7 +3554,6 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        // Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
 
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
             // Touch/gesture event from glasses
@@ -3599,7 +3611,7 @@ class G2: NSObject, SGCManager {
                     // Bridge.log(
                     //     "G2: img_res: session=\(ackSession) fragment=\(ackFragment) errorCode=\(errorCode) success=\(errorCode == 4)"
                     // )
-                    // Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
+                    Bridge.log("G2: img_res: session=\(ackSession) fragment=\(ackFragment) success=\(errorCode == 4)")
                     completeImageAck(
                         session: Int(ackSession), fragmentIndex: ackFragment, success: errorCode == 4
                     )
