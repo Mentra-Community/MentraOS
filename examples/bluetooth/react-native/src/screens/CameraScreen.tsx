@@ -13,6 +13,7 @@ import {
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
   CAMERA_ROI_POSITIONS,
+  PHOTO_BLE_FALLBACK_QUALITY_WARNING,
   PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS,
   PHOTO_COMPRESSIONS,
   PHOTO_EXPOSURE_DEFAULT_NS,
@@ -147,7 +148,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   );
   const bleFallbackWarning = sdk.photoPreviewDetails?.bleFallbackUsed
     ? sdk.photoPreviewDetails.bleFallbackMessage ??
-      'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+      PHOTO_BLE_FALLBACK_QUALITY_WARNING
     : null;
   const cloudSetupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const photoStateText = sdk.photoPreviewUrl

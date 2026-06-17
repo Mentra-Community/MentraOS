@@ -474,6 +474,8 @@ const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
 const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
+export const PHOTO_BLE_FALLBACK_QUALITY_WARNING =
+  'Wi-Fi upload failed; photo was compressed for Bluetooth fallback, so image quality is lower.';
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
 const ANDROID_12_API_LEVEL = 31;
@@ -1589,6 +1591,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         });
         handlePhotoResponse(response);
       } catch (error) {
+        if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+          markPhotoRequestStillWaiting(requestId, 'Cloud server', error);
+          void pollPhotoPreview(requestId, statusUrl, pollGeneration);
+          return;
+        }
         if (activePhotoRequestIdRef.current === requestId) {
           activePhotoRequestIdRef.current = null;
         }
@@ -1630,6 +1637,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       });
       handlePhotoResponse(response);
     } catch (error) {
+      if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+        markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
+        return;
+      }
       clearPhotoUploadTimeout();
       if (activePhotoRequestIdRef.current === requestId) {
         activePhotoRequestIdRef.current = null;
@@ -1708,7 +1719,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoPreviewDetails((current) => ({
       ...current,
       bleFallbackMessage: current?.bleFallbackUsed
-        ? 'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+        ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
         : current?.bleFallbackMessage,
       byteCount: payload.byteCount,
       previewUrl: payload.fileUri,
@@ -1798,6 +1809,32 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       errorCode,
       errorMessage,
     });
+  }
+
+  function markPhotoRequestStillWaiting(
+    requestId: string,
+    source: PhotoPreviewDetails['source'],
+    error: unknown,
+  ) {
+    setPhotoStatus({
+      type: 'photo_status',
+      requestId,
+      status: 'uploading',
+      timestamp: Date.now(),
+    });
+    setPhotoPreviewDetails((current) => ({
+      ...current,
+      error: undefined,
+      requestId,
+      source,
+      state: current?.state === 'preview' ? 'preview' : 'acknowledged',
+      timestamp: Date.now(),
+    }));
+    setCameraStatus('Camera: still waiting for photo delivery');
+    addEvent(
+      'LIVE',
+      `photo request still waiting after SDK timeout ${requestId}: ${formatError(error)}`,
+    );
   }
 
   function handlePhotoStatus(payload: PhotoStatusEvent) {
@@ -2105,7 +2142,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             setPhotoPreviewDetails((current) => ({
               ...current,
               bleFallbackMessage: current?.bleFallbackUsed
-                ? 'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+                ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
                 : current?.bleFallbackMessage,
               byteCount: typeof json.fileSizeBytes === 'number' ? json.fileSizeBytes : current?.byteCount,
               contentType: json.contentType ?? current?.contentType,
@@ -4074,16 +4111,16 @@ function photoStatusLabel(event: PhotoStatusEvent, galleryModeButtonPhoto = fals
 
 function photoBleFallbackMessage(status: string) {
   return status === 'ble_fallback_compression'
-    ? 'Wi-Fi upload failed; compressing photo for Bluetooth fallback.'
+    ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
     : null;
 }
 
 function photoBleFallbackProgressMessage(status: string, currentMessage?: string) {
   switch (status) {
     case 'ready_for_transfer':
-      return 'Wi-Fi upload failed; compressed photo is ready for Bluetooth fallback.';
+      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
     case 'transferring':
-      return 'Wi-Fi upload failed; sending compressed photo over Bluetooth.';
+      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
     default:
       return currentMessage;
   }
@@ -4257,6 +4294,14 @@ function otaStatusSessionKey(status: OtaStatusEvent) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPhotoRequestTimeoutError(error: unknown) {
+  const message = formatError(error).toLowerCase();
+  return (
+    message.includes('request_timeout') ||
+    message.includes('timed out waiting for glasses response')
+  );
 }
 
 function webhookReachabilityErrorMessage(error: unknown, healthUrl: string) {
