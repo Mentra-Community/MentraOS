@@ -42,6 +42,19 @@ Core client app lives in `mobile/` (Expo React Native). Backend services and the
 - iOS setup: `cd ios && pod install && cd ..`
 - Prebuild: `bun expo prebuild` (syncs native projects - NEVER use --clean or --clear flags!)
 
+### Local Android compile checks
+
+- ASG client compile check: `./scripts/check-android-compile.sh asg`
+- Bluetooth SDK Android compile check: `./scripts/check-android-compile.sh bluetooth-sdk`
+- Both checks: `./scripts/check-android-compile.sh`
+
+The Bluetooth SDK Android sources under `mobile/modules/bluetooth-sdk/android`
+are compiled through the generated Expo Android project at `mobile/android`,
+matching CI. Do not rely on a system `gradle` install from the SDK source
+directory; use the repo script so the Gradle wrapper and prebuild setup are
+consistent. The Bluetooth SDK check runs with `-PmentraPublicSdk=true` so it
+validates the public Maven artifact dependency shape.
+
 ### Cloud Backend (cloud)
 
 - Install deps: `bun install`
