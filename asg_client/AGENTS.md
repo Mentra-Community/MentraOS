@@ -17,6 +17,7 @@ Android application that runs on Android-based smart glasses like Mentra Live. P
 - **Install on Device**: `./gradlew installDebug`
 - **Clean Build**: `./gradlew clean`
 - **Run Tests**: `./gradlew test`
+- **Local Compile Check**: from the repo root, `./scripts/check-android-compile.sh asg`
 
 ### Camera module tests
 
