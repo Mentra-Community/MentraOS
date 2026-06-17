@@ -160,9 +160,10 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
       },
       handleRightPress: () => {
         onExitRef.current()
+        // wait until after the animation is complete to stop the miniapp:
         BgTimer.setTimeout(() => {
           useAppStatusStore.getState().stop(packageName)
-        }, 100)
+        }, 800)
       },
     }
     useCapsuleStore.getState().setActive(registration)

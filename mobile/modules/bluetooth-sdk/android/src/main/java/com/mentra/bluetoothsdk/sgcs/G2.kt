@@ -1323,10 +1323,13 @@ class G2 : SGCManager() {
     // fragmentIndex) pair; sendImageData() awaits it before sending the next fragment. Only one
     // transfer is ever outstanding (sendImageData runs under displayMutex), so a single slot
     // suffices.
-    private var pendingImgAckSession: Int? = null
-    private var pendingImgAckFragment: Int? = null
-    private var pendingImgAck: CompletableDeferred<Boolean>? = null
-    private val IMG_ACK_TIMEOUT_MS = 1000L // matches Dart host
+    // @Volatile: written on the main thread (in sendImageData) but read/completed on the BLE
+    // callback thread (in correlateImageAck) so the ACK is never delayed behind a backed-up main
+    // queue. CompletableDeferred.complete() is itself thread-safe.
+    @Volatile private var pendingImgAckSession: Int? = null
+    @Volatile private var pendingImgAckFragment: Int? = null
+    @Volatile private var pendingImgAck: CompletableDeferred<Boolean>? = null
+    private val IMG_ACK_TIMEOUT_MS = 2000L // matches Dart host
     private val IMG_MAX_ATTEMPTS = 3
     private var authStarted: Boolean = false
     private var leftAuthenticated: Boolean = false
@@ -1459,6 +1462,16 @@ class G2 : SGCManager() {
     // Matches the 8 ms G1.java uses for its bitmap chunk loop (ANDROID_CHUNK_DELAY_MS).
     private val BLE_PACKET_GAP_MS = 8L
 
+    // Dedicated single-thread executor for pacing BLE packet bursts. We must NOT spread the burst
+    // across [mainHandler]: the incoming image ACK is also delivered on the main thread, and a long
+    // run of postDelayed writes (plus heartbeats and the text-queue tick) can push ACK processing
+    // past IMG_ACK_TIMEOUT_MS — the glasses appear to "stop responding" even though the ACK arrived.
+    // Pacing here keeps the main looper free so ACKs are processed promptly.
+    private val bleWriteExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "G2-ble-write").apply { isDaemon = true }
+            }
+
     @Suppress("deprecation")
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
         if (right) {
@@ -1493,13 +1506,22 @@ class G2 : SGCManager() {
             writeOnePacket(packets[0], left, right)
             return
         }
-        // Multi-packet bursts (bitmaps, large protobufs): write the first packet immediately,
-        // then schedule the rest with BLE_PACKET_GAP_MS spacing so the Android BLE stack can
-        // actually drain each write before the next one is queued.
-        writeOnePacket(packets[0], left, right)
-        for (i in 1 until packets.size) {
-            val packet = packets[i]
-            mainHandler.postDelayed({ writeOnePacket(packet, left, right) }, BLE_PACKET_GAP_MS * i)
+        // Multi-packet bursts (bitmaps, large protobufs): pace the whole burst on a dedicated
+        // write thread with a blocking gap between packets, so the Android BLE stack can drain each
+        // write before the next is queued WITHOUT occupying the main looper (which also carries the
+        // image ACK and would otherwise starve it under load — see [bleWriteExecutor]).
+        bleWriteExecutor.execute {
+            for (i in packets.indices) {
+                writeOnePacket(packets[i], left, right)
+                if (i < packets.size - 1) {
+                    try {
+                        Thread.sleep(BLE_PACKET_GAP_MS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return@execute
+                    }
+                }
+            }
         }
     }
 
@@ -2570,9 +2592,9 @@ class G2 : SGCManager() {
         val offsetX = (containerWidth - scaledW) / 2
         val offsetY = (containerHeight - scaledH) / 2
 
-        Bridge.log(
-                "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
-        )
+        // Bridge.log(
+        //         "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
+        // )
 
         // Render to container-sized bitmap with black background
         val destBitmap =
@@ -3492,7 +3514,15 @@ class G2 : SGCManager() {
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
                     G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
-                    G2BLE.CHAR_NOTIFY -> mainHandler.post { handleNotifyData(data, sourceKey) }
+                    G2BLE.CHAR_NOTIFY -> {
+                        // Correlate an in-flight image ACK INLINE on the BLE callback thread, before
+                        // posting the rest of the handling to the (potentially backed-up) main
+                        // queue. This guarantees the ACK that sendImageData() is awaiting resolves
+                        // promptly even while the main looper is busy draining a packet burst /
+                        // heartbeats — the cause of the intermittent "glasses stopped responding".
+                        correlateImageAck(data, sourceKey)
+                        mainHandler.post { handleNotifyData(data, sourceKey) }
+                    }
                 }
             }
 
@@ -3543,6 +3573,56 @@ class G2 : SGCManager() {
     }
 
     // ---------- Incoming Data Handling ----------
+
+    /**
+     * Resolve an in-flight image-fragment ACK directly from a raw notify packet, on the BLE
+     * callback thread. This runs BEFORE [handleNotifyData] is posted to [mainHandler] so the ACK
+     * that [sendImageData] is awaiting completes promptly even when the main looper is saturated by
+     * a packet burst, heartbeats, or the text-queue tick — the root cause of the intermittent
+     * "glasses stop responding to image sends".
+     *
+     * Deliberately a read-only, SINGLE-PACKET parse: it does NOT touch the stateful [receiveManager]
+     * (that stays exclusively on the main thread). An ImgResCmd always fits in one BLE packet, so a
+     * multi-packet frame (totalPackets > 1) is not an image ACK and is left entirely to the
+     * main-thread path. Completing an already-completed CompletableDeferred is a no-op, so the
+     * duplicate L/R ACK and the residual main-thread correlation are both harmless.
+     */
+    private fun correlateImageAck(rawData: ByteArray, @Suppress("UNUSED_PARAMETER") sourceKey: String) {
+        // Fast path: only proceed if a transfer is actually outstanding.
+        val ack = pendingImgAck ?: return
+        if (rawData.size < 8) return
+        if (rawData[0] != G2BLE.HEADER_BYTE) return
+
+        val payloadLen = rawData[3].toInt() and 0xFF
+        val expectedLen = payloadLen + 8
+        if (rawData.size < expectedLen) return
+
+        val totalPackets = rawData[4].toInt() and 0xFF
+        val serialNum = rawData[5].toInt() and 0xFF
+        val serviceId = rawData[6]
+        val status = rawData[7].toInt() and 0xFF
+        val resultCode = (status shr 1) and 0x0F
+        if (resultCode != 0) return
+        if (serviceId != ServiceID.EVEN_HUB.value) return
+        // Single complete packet only (ImgResCmd never spans packets); else defer to main thread.
+        if (totalPackets != 1 || serialNum != 1) return
+
+        // Last packet carries a 2-byte CRC trailer; strip it from the payload.
+        val payloadEnd = 8 + payloadLen - 2
+        if (payloadEnd < 8 || payloadEnd > rawData.size) return
+        val payload = rawData.copyOfRange(8, payloadEnd)
+
+        val fields = ProtobufReader(payload).parseFields()
+        val resData = fields[6] as? ByteArray ?: return // field 6 = ImgResCmd
+        val resFields = ProtobufReader(resData).parseFields()
+        val errorCode = resFields[8] as? Int ?: return
+        val ackSession = resFields[3] as? Int ?: return
+        val ackFragment = (resFields[6] as? Int) ?: 0
+        Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
+        if (ackSession == pendingImgAckSession && ackFragment == pendingImgAckFragment) {
+            ack.complete(errorCode == 4)
+        }
+    }
 
     private fun handleNotifyData(data: ByteArray, sourceKey: String) {
         val result = receiveManager.handlePacket(data, sourceKey) ?: return
@@ -3642,7 +3722,12 @@ class G2 : SGCManager() {
         val fields = reader.parseFields()
 
         // print raw payload:
-        // Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
+        val payloadStr = payload.joinToString("") { String.format("%02X", it) }
+        if (payloadStr.contains("080C7A02100C")) {
+            // heartbeat response
+            return
+        }
+        Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
@@ -3690,27 +3775,10 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
-            // Correlate the per-fragment ACK back to the in-flight sendImageData() fragment and
-            // complete its deferred. Done BEFORE the logging dedup window below so the (possibly
-            // first-arriving) ACK is never swallowed by an unrelated recent EvenHub response.
-            // Dedup of the duplicate L/R ACK is handled by the (session, fragment) match plus the
-            // fact that completing an already-completed deferred is a no-op — no time window needed.
-            // ImgResCmd is field 6; MapSessionId = field 3, MapFragmentIndex = field 6,
-            // ErrorCode = field 8 (4=success, 5=failed).
-            (fields[6] as? ByteArray)?.let { resData ->
-                val resFields = ProtobufReader(resData).parseFields()
-                val errorCode = resFields[8] as? Int ?: 0
-                val ackSession = resFields[3] as? Int ?: 0
-                val ackFragment = (resFields[6] as? Int) ?: 0
-                Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
-                if (errorCode != null && ackSession != null &&
-                                ackSession == pendingImgAckSession &&
-                                ackFragment == pendingImgAckFragment
-                ) {
-                    pendingImgAck?.complete(errorCode == 4)
-                }
-            }
-            
+            // NOTE: the per-fragment image ACK is correlated inline on the BLE callback thread in
+            // correlateImageAck() (called before this runs is posted to the main looper) so it is
+            // never delayed behind a saturated main queue. Nothing to do here for ImgResCmd.
+
             val timestamp = System.currentTimeMillis()
             val lastResponse = lastEvenHubResponseTimestamp
             if (lastResponse != null && timestamp - lastResponse < 100) {
