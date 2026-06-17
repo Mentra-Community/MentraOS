@@ -26,8 +26,6 @@ import {
   PHOTO_ISP_DIGITAL_GAIN_OPTIONS,
   PHOTO_SIZES,
   PHOTO_TUNING_FLAG_OPTIONS,
-  SCAN_AE_DIVISOR_OPTIONS,
-  SCAN_ISO_CAP_OPTIONS,
   type BluetoothSdkExampleModel,
   type PhotoAeExposureDivisor,
   type PhotoCompression,
@@ -37,7 +35,6 @@ import {
   type PhotoPreviewDetails,
   type PhotoSize,
   type PhotoTuningFlag,
-  type ScanAeDivisor,
   type VideoPreviewDetails,
 } from '../useBluetoothSdkExample';
 
@@ -71,28 +68,14 @@ function photoSdkCall(
   cameraFov: number,
   cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
   scanMode: boolean,
-  scanAeDivisor: ScanAeDivisor,
-  scanIsoCap: number,
 ) {
   const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
 console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
-  const requestFields = scanMode
-    ? `  size: "max",
-  compress: "none",
-  sound: false,
-  aeExposureDivisor: ${scanAeDivisor},
-  isoCap: ${scanIsoCap},
-  noiseReduction: false,
-  edgeEnhancement: false,
-  mfnr: false,
-  zsl: false,
-  ispDigitalGain: 0,
-  ispAnalogGain: "low",`
-    : [
+  const requestFields = [
         `  size: "${size}",`,
         `  compress: "${compression}",`,
-        '  sound: true,',
+        `  sound: ${scanMode ? 'false' : 'true'},`,
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
         exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO',
         aeExposureDivisor !== null ? `  aeExposureDivisor: ${aeExposureDivisor},` : null,
@@ -197,8 +180,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         sdk.cameraFov,
         sdk.cameraRoiPosition,
         sdk.scanMode,
-        sdk.scanAeDivisor,
-        sdk.scanIsoCap,
       );
 
   React.useEffect(() => {
@@ -338,12 +319,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </Pressable>
         <View style={styles.scanModeBelowCapture}>
           <ScanModeSettingsCard
-            aeDivisor={sdk.scanAeDivisor}
             enabled={sdk.scanMode}
-            isoCap={sdk.scanIsoCap}
-            onAeDivisorChange={sdk.setScanAeDivisor}
             onEnabledChange={sdk.setScanMode}
-            onIsoCapChange={sdk.setScanIsoCap}
           />
         </View>
         <PhotoDetailsCard
@@ -537,8 +514,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           {PHOTO_SIZES.map((size) => (
             <Chip
               key={size}
-              active={!sdk.scanMode && sdk.photoSize === size}
-              disabled={sdk.scanMode}
+              active={sdk.photoSize === size}
               value={size}
               onPress={() => sdk.setPhotoSize(size)}
             />
@@ -549,14 +525,12 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Chip
               key={compression}
               active={sdk.photoCompression === compression}
-              disabled={sdk.scanMode}
               value={compression}
               onPress={() => sdk.setPhotoCompression(compression)}
             />
           ))}
         </OptionGroup>
         <ExposureControl
-          disabled={sdk.scanMode}
           enabled={sdk.photoExposureManual}
           onEnabledChange={sdk.setPhotoExposureManual}
           onIsoChange={sdk.setPhotoIso}
@@ -566,7 +540,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         />
         <PhotoRequestTuningControl
           aeExposureDivisor={sdk.photoAeExposureDivisor}
-          disabled={sdk.scanMode}
           edgeEnhancement={sdk.photoEdgeEnhancement}
           ispAnalogGain={sdk.photoIspAnalogGain}
           ispDigitalGain={sdk.photoIspDigitalGain}
@@ -578,7 +551,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           onIspAnalogGainChange={sdk.setPhotoIspAnalogGain}
           onIspDigitalGainChange={sdk.setPhotoIspDigitalGain}
           onIsoCapChange={sdk.setPhotoIsoCap}
-          onApplyBarcodePreset={sdk.applyBarcodeScanPhotoPreset}
           onMfnrChange={sdk.setPhotoMfnr}
           onNoiseReductionChange={sdk.setPhotoNoiseReduction}
           onZslChange={sdk.setPhotoZsl}
@@ -1051,27 +1023,19 @@ function photoCaptureMetadataDetail(config: PhotoStatusExtras['captureMetadata']
 }
 
 function ScanModeSettingsCard({
-  aeDivisor,
   enabled,
-  isoCap,
-  onAeDivisorChange,
   onEnabledChange,
-  onIsoCapChange,
 }: {
-  aeDivisor: ScanAeDivisor;
   enabled: boolean;
-  isoCap: number;
-  onAeDivisorChange: (divisor: ScanAeDivisor) => void;
   onEnabledChange: (enabled: boolean) => void;
-  onIsoCapChange: (isoCap: number) => void;
 }) {
   return (
     <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.settingLabel}>SCAN MODE</Text>
+          <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
           <Text style={styles.settingHint}>
-            {enabled ? `Max res · AE÷${aeDivisor} · ISO cap ${isoCap}` : 'Document / barcode capture preset'}
+            {enabled ? 'Barcode scanning on' : 'Standard photo capture'}
           </Text>
         </View>
         <Switch
@@ -1083,34 +1047,12 @@ function ScanModeSettingsCard({
         />
       </View>
       {enabled ? (
-        <>
-          <Text style={styles.settingDescription}>
-            Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn on NR/ISP). Capture still sends AE÷ and ISO cap in take_photo.
-          </Text>
-          <OptionGroup label="ae divisor">
-            {SCAN_AE_DIVISOR_OPTIONS.map((option) => (
-              <Chip
-                key={option}
-                active={aeDivisor === option}
-                value={`÷${option}`}
-                onPress={() => onAeDivisorChange(option)}
-              />
-            ))}
-          </OptionGroup>
-          <OptionGroup label="iso cap">
-            {SCAN_ISO_CAP_OPTIONS.map((option) => (
-              <Chip
-                key={option}
-                active={isoCap === option}
-                value={String(option)}
-                onPress={() => onIsoCapChange(option)}
-              />
-            ))}
-          </OptionGroup>
-        </>
+        <Text style={styles.settingDescription}>
+          Applies the barcode capture preset and scans captured photo previews for barcodes. Tune the live request fields below.
+        </Text>
       ) : (
         <Text style={styles.settingDescription}>
-          Off — capture uses the size, compress, and exposure options below.
+          Off - capture uses the current fields below without barcode recognition.
         </Text>
       )}
     </View>
@@ -1208,7 +1150,6 @@ function PhotoRequestTuningControl({
   mfnr,
   noiseReduction,
   onAeExposureDivisorChange,
-  onApplyBarcodePreset,
   onEdgeEnhancementChange,
   onIspAnalogGainChange,
   onIspDigitalGainChange,
@@ -1227,7 +1168,6 @@ function PhotoRequestTuningControl({
   mfnr: PhotoTuningFlag;
   noiseReduction: PhotoTuningFlag;
   onAeExposureDivisorChange: (divisor: PhotoAeExposureDivisor | null) => void;
-  onApplyBarcodePreset: () => void;
   onEdgeEnhancementChange: (value: PhotoTuningFlag) => void;
   onIspAnalogGainChange: (gain: PhotoIspAnalogGain | null) => void;
   onIspDigitalGainChange: (gain: PhotoIspDigitalGain | null) => void;
@@ -1244,9 +1184,6 @@ function PhotoRequestTuningControl({
           <Text style={styles.settingLabel}>PHOTO REQUEST TUNING</Text>
           <Text style={styles.settingHint}>Optional request parameters</Text>
         </View>
-        <Pressable disabled={disabled} onPress={onApplyBarcodePreset} style={styles.applyChip}>
-          <Text style={styles.applyChipText}>Barcode preset</Text>
-        </Pressable>
       </View>
       <OptionGroup label="ae divisor">
         <Chip

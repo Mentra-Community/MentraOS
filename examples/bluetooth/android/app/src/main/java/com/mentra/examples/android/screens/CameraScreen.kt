@@ -122,8 +122,6 @@ fun CameraScreen(controller: MentraExampleController) {
         state.cameraFov,
         state.cameraRoiPosition,
         state.scanMode,
-        state.scanAeDivisor,
-        state.scanIsoCap,
     )
     val clipboardManager = LocalClipboardManager.current
     var photoDetailsExpanded by remember { mutableStateOf(false) }
@@ -557,8 +555,7 @@ fun CameraScreen(controller: MentraExampleController) {
                         photoSizeOptions.forEach { size ->
                             OptionChip(
                                 size,
-                                !state.scanMode && state.photoSize == size,
-                                enabled = !state.scanMode,
+                                state.photoSize == size,
                             ) { controller.setPhotoSize(size) }
                         }
                     }
@@ -569,10 +566,8 @@ fun CameraScreen(controller: MentraExampleController) {
                             }
                         }
                     }
-                    if (!state.scanMode) {
-                        ExposureSettingsCard(controller)
-                        PhotoRequestTuningSettingsCard(controller)
-                    }
+                    ExposureSettingsCard(controller)
+                    PhotoRequestTuningSettingsCard(controller)
                 }
                 CameraFovSettingsCard(controller)
             }
@@ -597,7 +592,7 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("SCAN MODE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                 Text(
-                    if (state.scanMode) "Document / barcode capture preset" else "Standard photo capture",
+                    if (state.scanMode) "Barcode capture preset" else "Standard photo capture",
                     color = AppColor.greenAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -607,19 +602,11 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
         }
         if (state.scanMode) {
             Text(
-                "Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.",
+                "Applies the barcode capture preset and keeps the glasses button preset in sync. Tune the live request fields below.",
                 color = AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("AE ÷3", state.scanAeDivisor == 3) { controller.setScanAeDivisor(3) }
-                OptionChip("AE ÷5", state.scanAeDivisor == 5) { controller.setScanAeDivisor(5) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("ISO 800", state.scanIsoCap == 800) { controller.setScanIsoCap(800) }
-                OptionChip("ISO 400", state.scanIsoCap == 400) { controller.setScanIsoCap(400) }
-            }
         }
     }
 }
@@ -725,23 +712,9 @@ private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) 
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-                Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(
-                "Barcode preset",
-                color = AppColor.greenAccent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(AppColor.greenAccent.copy(alpha = 0.16f))
-                    .border(1.dp, AppColor.greenAccent.copy(alpha = 0.28f), RoundedCornerShape(999.dp))
-                    .clickable { controller.applyBarcodeScanPhotoPreset() }
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+            Text("Optional request parameters", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
         CameraOptionGroup("ae divisor") {
             OptionChip("Unset", state.photoAeExposureDivisor == null) { controller.setPhotoAeExposureDivisor(null) }

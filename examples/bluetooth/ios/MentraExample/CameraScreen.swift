@@ -36,35 +36,8 @@ private func cameraSdkCall(
     iso: Int,
     cameraFov: Int,
     cameraRoiPosition: Int,
-    scanMode: Bool,
-    scanAeDivisor: Int,
-    scanIsoCap: Int
+    scanMode: Bool
 ) -> String {
-    if scanMode {
-        return """
-    // Scan tuning is synced through button photo settings.
-    // App-triggered captures use max detail:
-    let photo = try await mentraBluetoothSdk.requestPhoto(
-        PhotoRequest(
-          requestId: requestId,
-          appId: "com.mentra.bluetoothsdk.example.ios",
-          size: .max,
-          webhookUrl: uploadUrl,
-          compress: PhotoCompression.none,
-          sound: false,
-          aeExposureDivisor: \(scanAeDivisor),
-          isoCap: \(scanIsoCap),
-          noiseReduction: false,
-          edgeEnhancement: false,
-          mfnr: false,
-          zsl: false,
-          ispDigitalGain: 0,
-          ispAnalogGain: "low"
-        )
-    )
-    print("Scan photo delivered: \\(photo.requestId)")
-    """
-    }
     let exposureLine = exposureManual
         ? "      exposureTimeNs: \(exposureTimeNs),"
         : "      exposureTimeNs: nil, // auto exposure"
@@ -115,7 +88,7 @@ private func cameraSdkCall(
           size: .\(size),
           webhookUrl: uploadUrl,
           compress: .\(compression),
-          sound: true,
+          sound: \(scanMode ? "false" : "true"),
     \(exposureLine)
     \(isoLine)\(optionalTuningLines)
         )
@@ -266,7 +239,7 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : model.scanMode ? "Capture scan photo" : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : (model.activeAction == "Capture & upload" || model.activeAction == "Capture scan photo") ? "Capturing..." : model.scanMode ? "Capture scan photo" : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
@@ -433,9 +406,7 @@ struct CameraScreen: View {
             iso: model.photoIso,
             cameraFov: model.cameraFov,
             cameraRoiPosition: model.cameraRoiPosition,
-            scanMode: model.scanMode,
-            scanAeDivisor: model.scanAeDivisor,
-            scanIsoCap: model.scanIsoCap
+            scanMode: model.scanMode
         )
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
@@ -596,11 +567,9 @@ struct CameraScreen: View {
                         ForEach(photoSizeOptions, id: \.display) { option in
                             CameraOptionChip(
                                 value: option.display,
-                                highlight: !model.scanMode && model.photoSize == option.size
+                                highlight: model.photoSize == option.size
                             )
-                            .opacity(model.scanMode ? 0.45 : 1)
                             .onTapGesture {
-                                guard !model.scanMode else { return }
                                 model.setPhotoSize(option.size)
                             }
                         }
@@ -613,10 +582,8 @@ struct CameraScreen: View {
                         }
                     }
 
-                    if !model.scanMode {
-                        ExposureSettingsCard(model: model)
-                        PhotoRequestTuningSettingsCard(model: model)
-                    }
+                    ExposureSettingsCard(model: model)
+                    PhotoRequestTuningSettingsCard(model: model)
                 }
                 CameraFovSettingsCard(model: model)
             }
@@ -727,7 +694,7 @@ private struct ScanModeSettingsCard: View {
                         .font(.system(size: 10, weight: .bold))
                         .tracking(1.1)
                         .foregroundColor(AppColor.muted)
-                    Text(model.scanMode ? "Document / barcode capture preset" : "Standard photo capture")
+                    Text(model.scanMode ? "Barcode capture preset" : "Standard photo capture")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(AppColor.greenAccent)
                 }
@@ -737,21 +704,9 @@ private struct ScanModeSettingsCard: View {
                     .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
             if model.scanMode {
-                Text("Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.")
+                Text("Applies the barcode capture preset and keeps the glasses button preset in sync. Tune the live request fields below.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
-                HStack(spacing: 8) {
-                    CameraOptionChip(value: "AE ÷3", highlight: model.scanAeDivisor == 3)
-                        .onTapGesture { model.setScanAeDivisor(3) }
-                    CameraOptionChip(value: "AE ÷5", highlight: model.scanAeDivisor == 5)
-                        .onTapGesture { model.setScanAeDivisor(5) }
-                }
-                HStack(spacing: 8) {
-                    CameraOptionChip(value: "ISO 800", highlight: model.scanIsoCap == 800)
-                        .onTapGesture { model.setScanIsoCap(800) }
-                    CameraOptionChip(value: "ISO 400", highlight: model.scanIsoCap == 400)
-                        .onTapGesture { model.setScanIsoCap(400) }
-                }
             }
         }
         .padding(14)
@@ -866,28 +821,14 @@ private struct PhotoRequestTuningSettingsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("PHOTO REQUEST TUNING")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(1.1)
-                        .foregroundColor(AppColor.muted)
-                    Text("Optional request parameters")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(AppColor.greenAccent)
-                }
-                Spacer()
-                Button("Barcode preset") {
-                    model.applyBarcodeScanPhotoPreset()
-                }
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(AppColor.greenAccent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(AppColor.greenAccent.opacity(0.16))
-                .overlay(Capsule().stroke(AppColor.greenAccent.opacity(0.28), lineWidth: 1))
-                .clipShape(Capsule())
-                .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PHOTO REQUEST TUNING")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundColor(AppColor.muted)
+                Text("Optional request parameters")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(AppColor.greenAccent)
             }
 
             CameraOptionGroup(label: "ae divisor") {
