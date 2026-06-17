@@ -7,7 +7,6 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@mentra/island"
@@ -277,9 +276,8 @@ class MantleManager {
         computeRoute: (payload) => navigationService.computeRoute(payload),
         reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
       },
-      heading: {
-        addListener: (l) => headingService.addListener(l),
-      },
+      // heading / compass moved into island (HeadingService, subscribed directly by
+      // the runtime) — no longer a host hook.
       locationTier: {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },

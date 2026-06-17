@@ -34,6 +34,7 @@ import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
+import headingService from "./HeadingService"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
@@ -1531,14 +1532,10 @@ class LocalMiniappRuntime {
   private recomputeHeadingSubscription(): void {
     const wantsHeading = this.streamSubscribers.has(MiniappStreamType.HEADING_UPDATE)
     if (wantsHeading && !this.headingUnsub) {
-      // Heading is host-supplied via runtime hooks; if the host hasn't wired
-      // it the subscription is a no-op and no events fire.
-      const heading = getRuntimeHooks().heading
-      if (heading) {
-        this.headingUnsub = heading.addListener((degrees: number) => {
-          this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
-        })
-      }
+      // Heading sensor lives in island (HeadingService) — subscribe directly.
+      this.headingUnsub = headingService.addListener((degrees: number) => {
+        this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
+      })
     } else if (!wantsHeading && this.headingUnsub) {
       this.headingUnsub()
       this.headingUnsub = null

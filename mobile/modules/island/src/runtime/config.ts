@@ -292,10 +292,6 @@ export interface NavigationAdapter {
  * HeadingService wraps native sensor output; the runtime only needs the
  * subscribe-and-unsubscribe surface.
  */
-export interface HeadingAdapter {
-  addListener: (l: (degrees: number) => void) => () => void
-}
-
 /**
  * Location-tier control. Used by the runtime to request a higher GPS
  * sample rate while a miniapp is subscribed to `location_update`.
@@ -393,8 +389,8 @@ export interface RuntimeHooks {
   settings?: SettingsAccessor
   /** Google Navigation SDK adapter (turn-by-turn + computeRoute). */
   navigation?: NavigationAdapter
-  /** Device heading / compass adapter. */
-  heading?: HeadingAdapter
+  // Device heading / compass moved into island (HeadingService, subscribed
+  // directly by the runtime) — no longer a host-provided hook.
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
   locationTier?: LocationTierAdapter
   /** Cloud WebSocket connection state surface. */
