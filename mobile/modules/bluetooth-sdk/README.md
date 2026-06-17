@@ -459,6 +459,18 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
 
+For local Android source compile checks inside this monorepo, run from the
+MentraOS repo root:
+
+```sh
+./scripts/check-android-compile.sh bluetooth-sdk
+```
+
+The `android/` folder in this package is source for the generated Expo Android
+project, not the local Gradle entrypoint. The check script prepares
+`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
+matching the CI release workflow's public SDK dependency mode.
+
 For bare native iOS apps, use the public SwiftPM repository:
 
 ```text
