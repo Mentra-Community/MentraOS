@@ -45,6 +45,7 @@ import {
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
   type InteropAuditEvent,
+  type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
 import type {
@@ -101,6 +102,23 @@ function locationRateRank(rate: string | null | undefined): number {
   if (!rate) return -1
   const i = LOCATION_RATE_PRIORITY.indexOf(rate as LocationRate)
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (value: T | null) => {
+      if (settled) return
+      settled = true
+      BgTimer.clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = BgTimer.setTimeout(() => done(null), timeoutMs)
+    promise.then(
+      (value) => done(value),
+      () => done(null),
+    )
+  })
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
@@ -785,7 +803,7 @@ class LocalMiniappRuntime {
     // Dispatch
     switch (requestType) {
       case MiniappRequestType.CONNECT:
-        this.handleConnect(packageName, payload, requestId)
+        void this.handleConnect(packageName, payload, requestId)
         break
       case MiniappRequestType.SUBSCRIBE:
         this.handleSubscribe(packageName, payload, requestId)
@@ -951,10 +969,8 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handleConnect(packageName: string, _payload: Record<string, unknown>, requestId?: string): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
-
-    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -976,6 +992,9 @@ class LocalMiniappRuntime {
     // to false; this is manifest-declaration tracking only — OS-grant state
     // is intentionally not modeled here.
     const declaredPermissions = computeDeclaredPermissionRecord(existing.installedManifest)
+    const authPromise = this.requestMiniappAuth(packageName)
+    const initialAuth = await withTimeout(authPromise, 1_500)
+    const userId = initialAuth?.mentraUserId ?? ""
 
     this.sendToMiniapp(
       packageName,
@@ -985,14 +1004,34 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
     )
+    if (!initialAuth) {
+      authPromise
+        .then((auth) => {
+          if (!auth) return
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.AUTH_UPDATE,
+            auth,
+          })
+        })
+        .catch((err) => {
+          console.warn(`${LOG_TAG}: miniapp auth unavailable for ${packageName}: ${(err as Error)?.message ?? err}`)
+        })
+    }
     this.sendCloudStatusToMiniapp(packageName)
 
     // Handshake complete — unblock any launcher.waitForConnect() callers.
     this.handshookApps.add(packageName)
     this.flushConnectWaiters(packageName)
+  }
+
+  private async requestMiniappAuth(packageName: string): Promise<MiniappAuthToken | null> {
+    const auth = getRuntimeHooks().miniappAuth
+    if (!auth) return null
+    return auth.getToken(packageName)
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {

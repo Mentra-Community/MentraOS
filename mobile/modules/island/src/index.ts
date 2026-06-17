@@ -101,6 +101,8 @@ export {
   type SocketCommsAdapter,
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
+  type MiniappAuthAdapter,
+  type MiniappAuthToken,
   type AudioPlaybackAdapter,
   type AudioPlayRequest,
   type SettingsAccessor,

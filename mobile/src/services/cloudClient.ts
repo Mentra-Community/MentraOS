@@ -12,7 +12,12 @@
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
-import {createCloudUdpSocket, type CloudClientStatusSnapshot, type CloudRuntimeAdapter} from "@mentra/island"
+import {
+  createCloudUdpSocket,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
+  type MiniappAuthToken,
+} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
 import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
@@ -184,6 +189,12 @@ function resetRuntimeStatus(): void {
   emitStatus(currentRuntimeStatus())
 }
 
+function normalizeExpiresAt(expiresAt: number): number {
+  // Core/cloud-client may speak Unix seconds while the miniapp SDK uses
+  // JavaScript milliseconds for easy TTL checks.
+  return expiresAt < 10_000_000_000 ? expiresAt * 1000 : expiresAt
+}
+
 function stringifyMeta(meta: unknown): string {
   if (!meta || typeof meta !== "object") return ""
   try {
@@ -323,6 +334,23 @@ function buildAdapter(): CloudRuntimeAdapter {
  * in.
  */
 export const cloudClient = {
+  async getMiniappAuthToken(packageName: string): Promise<MiniappAuthToken> {
+    if (!client) {
+      this.init()
+    }
+    const c = client
+    if (!c) throw new Error("cloud client not initialized")
+
+    const {token, expiresAt} = await c.auth.getMiniappToken(packageName)
+    const identity = c.auth.identity
+    return {
+      mentraUserId: identity.mentraUserId,
+      oemId: identity.oemId,
+      token,
+      expiresAt: normalizeExpiresAt(expiresAt),
+    }
+  },
+
   /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
   startManagedPhoto(opts: Record<string, unknown> = {}) {
     if (!client) throw new Error("cloud client not connected")

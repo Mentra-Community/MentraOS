@@ -122,13 +122,16 @@ export type {
 export type {TranscriptionConfig} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
+  AuthUpdatePayload,
   MiniappVisibility,
   PermissionType,
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  MiniappAuthState,
   MiniappRequestError,
 } from "../session"
+export type {AuthFetchOptions, AuthModule} from "../modules/auth"
 export type {MiniappColorScheme} from "../globals"
 // Navigation — exported as a single block since the types reference each other.
 export type {

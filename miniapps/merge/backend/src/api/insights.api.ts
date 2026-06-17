@@ -5,13 +5,15 @@ import {
   insightsService,
   type InsightRequest,
 } from "../services/insights/insights.service"
+import {MiniappAuthError, verifyMiniappAuthHeader} from "../services/auth/miniapp-auth.service"
 
 export const insightsApi = new Hono()
 
 insightsApi.post("/", async (c) => {
   try {
+    const auth = await verifyMiniappAuthHeader(c.req.header("Authorization"))
     const body = (await c.req.json()) as InsightRequest
-    return c.json(await insightsService.createInsight(body))
+    return c.json(await insightsService.createInsight({...body, userId: auth.mentraUserId}))
   } catch (error) {
     return insightErrorResponse(c, error)
   }
@@ -20,6 +22,9 @@ insightsApi.post("/", async (c) => {
 function insightErrorResponse(c: Context, error: unknown): Response {
   if (error instanceof InsightServiceError) {
     return c.json({type: "silent", reasoning: error.message}, error.status)
+  }
+  if (error instanceof MiniappAuthError) {
+    return c.json({type: "silent", reasoning: error.message}, 401)
   }
 
   const message = error instanceof Error ? error.message : "Unknown error"

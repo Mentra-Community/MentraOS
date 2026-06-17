@@ -138,6 +138,93 @@ describe("MiniappSession auto-PONG", () => {
   })
 })
 
+describe("MiniappSession auth", () => {
+  test("session.auth reads miniapp token from CONNECT_ACK", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_123",
+      packageName: "com.test.auth",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_123",
+        oemId: "test-oem",
+        token: "miniapp-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    expect(await session.auth.getToken()).toBe("miniapp-token")
+    expect(await session.auth.getAuthHeader()).toBe("Bearer miniapp-token")
+    expect(session.auth.current?.mentraUserId).toBe("user_123")
+  })
+
+  test("session.auth waits for AUTH_UPDATE when token misses CONNECT_ACK", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "",
+      packageName: "com.test.auth.update",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth: {
+        mentraUserId: "user_later",
+        token: "later-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+
+    expect(await tokenPromise).toBe("later-token")
+    expect(session.userId).toBe("user_later")
+  })
+
+  test("session.auth.fetch attaches bearer token", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch",
+      packageName: "com.test.auth.fetch",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch",
+        token: "fetch-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    let observedAuth = ""
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      observedAuth = new Headers(init?.headers).get("Authorization") ?? ""
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedAuth).toBe("Bearer fetch-token")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
 describe("MiniappSession request correlation", () => {
   test("REQUEST_RESULT with matching requestId resolves the promise", async () => {
     const transport = new FakeTransport()

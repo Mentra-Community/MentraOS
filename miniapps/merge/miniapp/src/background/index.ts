@@ -323,7 +323,7 @@ class MergeController {
     this.setBackendStatus("processing", null)
 
     try {
-      const res = await fetch(`${this.backendUrl}/api/insights`, {
+      const res = await this.session.auth.fetch(`${this.backendUrl}/api/insights`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({

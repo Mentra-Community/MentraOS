@@ -164,6 +164,12 @@ export enum MiniappResponseType {
    */
   PERMISSIONS_UPDATE = "miniapp_permissions_update",
 
+  /**
+   * Push: miniapp-scoped backend auth token changed. Carries a token minted for
+   * this packageName only; it is never a Core or runtime access token.
+   */
+  AUTH_UPDATE = "miniapp_auth_update",
+
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
 

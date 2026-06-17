@@ -186,6 +186,9 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
+      miniappAuth: {
+        getToken: (packageName) => cloudClient.getMiniappAuthToken(packageName),
+      },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
