@@ -19,6 +19,7 @@ import {dev} from "./facades/dev"
 import {incidents} from "./facades/incidents"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
+import {phoneNotifications} from "./facades/phoneNotifications"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -57,6 +58,8 @@ export const toolkit = {
   miniapps,
   /** First-time glasses discovery + pairing. */
   pairing,
+  /** Phone→glasses notification forwarding (Android). */
+  phoneNotifications,
   display: {
     mirror: displayMirror,
   },
