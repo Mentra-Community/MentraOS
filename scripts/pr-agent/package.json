@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@connectrpc/connect-node": "^1.6.1",
     "@cursor/sdk": "^1.0.0",
     "@octokit/rest": "^21.1.1",
     "minimatch": "^10.0.1",

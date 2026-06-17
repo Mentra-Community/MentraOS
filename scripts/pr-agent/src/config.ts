@@ -5,8 +5,8 @@ import { z } from 'zod';
 
 const ConfigSchema = z.object({
   dryRun: z.boolean().default(true),
-  reviewModel: z.string().default('claude-4.6-sonnet-medium-thinking'),
-  fixModel: z.string().default('claude-opus-4-8-thinking-xhigh'),
+  reviewModel: z.string().default('claude-sonnet-4-6'),
+  fixModel: z.string().default('claude-opus-4-8'),
   authors: z
     .object({
       mode: z.enum(['allowlist', 'all', 'label_only']).default('label_only'),
