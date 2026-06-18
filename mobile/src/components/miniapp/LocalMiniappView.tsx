@@ -81,7 +81,7 @@ function LocalMiniappView({
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [loadGatePassed, setLoadGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // ----- Load-state tracking -------------------------------------------------
@@ -166,11 +166,10 @@ function LocalMiniappView({
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (Platform.OS !== "android") return
-    // android is slow to start (and doesn't handle opacity properly) so we need to wait for the animation to complete
-    // before attempting to load the webview or we'll get visual jank
+    // if (Platform.OS !== "android") return
+    // delay loading the webview until the animation is complete
     BgTimer.setTimeout(() => {
-      setAndroidGatePassed(true)
+      setLoadGatePassed(true)
     }, 1000)
   }, [])
 
@@ -440,13 +439,13 @@ function LocalMiniappView({
     return <Text text="Missing required parameters" />
   }
 
-  // if (Platform.OS === "android" && !androidGatePassed) {
-  //   return (
-  //     <View className="flex-1">
-  //       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-  //     </View>
-  //   )
-  // }
+  if (!loadGatePassed) {
+    return (
+      <View className="flex-1">
+        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
+      </View>
+    )
+  }
 
   let isDevApp = packageName == DEV_APP_PACKAGE_NAME
   if (isDevApp) {
