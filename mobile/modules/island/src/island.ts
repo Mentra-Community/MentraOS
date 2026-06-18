@@ -13,6 +13,7 @@ import {cloudClientService} from "./services/CloudClientService"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
+import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
 import {display} from "./facades/display"
@@ -54,6 +55,9 @@ export const toolkit = {
     startGlassesStatusProjection()
     // Project the glasses' OTA events into the store for the toolkit.ota read surface.
     startOtaService()
+    // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
+    // works for any host (not just the Mentra app's host-side MantleManager fork).
+    startAudioCloudUplink()
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -65,6 +69,7 @@ export const toolkit = {
     stopGlassesSettingsSync()
     stopGlassesStatusProjection()
     stopOtaService()
+    stopAudioCloudUplink()
     stopPhoneNotificationsSync()
     cloudClientService.stop()
     await bootstrapStop()

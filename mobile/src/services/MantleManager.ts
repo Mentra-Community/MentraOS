@@ -25,7 +25,6 @@ import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugRepor
 import {
   appRegistry,
   configureRuntime,
-  getRuntimeHooks,
   displayProcessor,
   toolkit,
   localMiniappRuntime,
@@ -1076,7 +1075,10 @@ class MantleManager {
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
 
-          // Route audio to: UDP (if enabled) -> WebSocket (fallback)
+          // Route audio to: UDP (if enabled) -> WebSocket (fallback). This is the
+          // v1 plane (Mentra-app only), deleted at v1 retirement. The v2 cloud fork
+          // moved into island (AudioCloudUplink, started by toolkit.start()) so a
+          // bare OEM gets cloud audio without this host handler.
           if (udp.enabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
             udp.sendAudio(event.lc3)
@@ -1084,14 +1086,6 @@ class MantleManager {
           } else {
             socketComms.sendBinary(event.lc3)
             bgcapNoteMicFrame("ws") // BGCAP diagnostic
-          }
-
-          // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
-          // we don't waste UDP bandwidth when nothing is subscribed on v2. The
-          // v1 sends above are unchanged.
-          const cloud = getRuntimeHooks().cloud
-          if (cloud?.isConnected() && cloud.hasAudioSubscriptions()) {
-            cloud.sendAudioFrame(new Uint8Array(event.lc3))
           }
         }),
       )
