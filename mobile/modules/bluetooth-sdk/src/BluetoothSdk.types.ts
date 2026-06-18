@@ -570,8 +570,6 @@ export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
   streamId?: string
-  keepAlive?: boolean
-  keepAliveIntervalSeconds?: number
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig

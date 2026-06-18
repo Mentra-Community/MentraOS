@@ -70,7 +70,7 @@ export interface StreamOptions {
   /** Enable WebRTC playback URL. Only applies to managed streaming. Default: true. */
   enableWebRTC?: boolean;
 
-  /** Video configuration (resolution, bitrate, fps) */
+  /** Video configuration (resolution, bitrate, frameRate) */
   video?: VideoConfig;
 
   /** Audio configuration (bitrate, sample rate) */

@@ -90,10 +90,16 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.status).toBe("streaming")
       expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {sound: boolean; streamUrl: string; streamId: string}
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+        sound: boolean
+        streamUrl: string
+        streamId: string
+      }
       expect(arg.streamUrl).toBe("rtmp://my.server/key")
       expect(arg.streamId).toBe(streamId)
       expect(arg.sound).toBe(false)
+      expect("keepAlive" in arg).toBe(false)
+      expect("keepAliveIntervalSeconds" in arg).toBe(false)
       expect(coord.owns(streamId)).toBe(true)
     })
 
@@ -173,7 +179,6 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.hlsUrl).toBe("https://playback.test/abc/manifest/video.m3u8")
       expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      // Glasses should be told to publish to the WHIP endpoint (preferred).
       const arg = startExternallyManagedStream.mock.calls[0]![0] as {
         audio: unknown
         sound: boolean
@@ -186,6 +191,8 @@ describe("PhoneStreamCoordinator", () => {
       expect(arg.sound).toBe(false)
       expect(arg.video).toEqual({fps: 30})
       expect(arg.audio).toEqual({bitrate: 64_000})
+      expect("keepAlive" in arg).toBe(false)
+      expect("keepAliveIntervalSeconds" in arg).toBe(false)
     })
 
     test("second miniapp joins existing managed stream and gets same URLs", async () => {

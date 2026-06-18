@@ -150,6 +150,7 @@ public final class MentraBluetoothSDK {
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
+    private static let defaultStreamKeepAliveIntervalSeconds = 5
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
@@ -790,6 +791,14 @@ public final class MentraBluetoothSDK {
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
+        try await startStream(request, startSdkKeepAlive: true)
+    }
+
+    func startExternallyManagedStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
+        try await startStream(request, startSdkKeepAlive: false)
+    }
+
+    private func startStream(_ request: StreamRequest, startSdkKeepAlive: Bool) async throws -> StreamStatusEvent {
         var values = request.values
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
@@ -800,8 +809,11 @@ public final class MentraBluetoothSDK {
         do {
             let event = try await pending.wait(timeoutMs: 30_000)
             pendingStreamStarts.removeValue(forKey: streamId)
-            if request.keepAlive, !request.isExternallyManagedKeepAlive {
-                startStreamKeepAliveMonitor(streamId: streamId, intervalSeconds: request.keepAliveIntervalSeconds)
+            if startSdkKeepAlive {
+                startStreamKeepAliveMonitor(
+                    streamId: streamId,
+                    intervalSeconds: Self.defaultStreamKeepAliveIntervalSeconds
+                )
             }
             return event
         } catch {
@@ -1258,7 +1270,7 @@ public final class MentraBluetoothSDK {
     }
 
     private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
-        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : 5
+        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : Self.defaultStreamKeepAliveIntervalSeconds
         let tracker = ActiveStreamKeepAlive(streamId: streamId, intervalSeconds: intervalSeconds)
         activeStreamKeepAlive = tracker
         sendNextStreamKeepAlive(for: tracker)
