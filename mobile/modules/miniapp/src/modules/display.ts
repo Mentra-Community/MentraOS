@@ -134,7 +134,7 @@ export class DisplayManager {
     this.session.sendOneShot({
       type: MiniappRequestType.DISPLAY,
       view: options.view ?? "main",
-      layout,
+      layout: layout,
       durationMs: options.durationMs,
     })
   }

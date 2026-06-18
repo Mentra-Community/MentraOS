@@ -1963,7 +1963,7 @@ class G2: NSObject, SGCManager {
         self.sendMenuApps()
 
         // order the calendar (Schedule) widget first on the dashboard
-        // self.setCalendarWidgetFirst()
+        self.setCalendarWidgetFirst()
 
         // send calendar events
         let calendarEvents =
@@ -2228,7 +2228,7 @@ class G2: NSObject, SGCManager {
                     mapRawData: Data(fragment)
                 )
                 // sendEvenHubCommand(msg)
-                queueEvenHubCommand(msg)// if the queue is backed up, the message will fail the ack check but that's fine
+                queueEvenHubCommand(msg)
                 // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
@@ -3381,7 +3381,7 @@ class G2: NSObject, SGCManager {
     // MARK: - SGCManager: Camera & Media (not supported on G2)
 
     func requestPhoto(_: PhotoRequest) {}
-    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}
     func sendStreamKeepAlive(_: [String: Any]) {}
@@ -3389,6 +3389,7 @@ class G2: NSObject, SGCManager {
     func sendButtonPhotoSettings() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
+    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 

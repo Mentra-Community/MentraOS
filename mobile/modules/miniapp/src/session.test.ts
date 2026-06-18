@@ -138,6 +138,64 @@ describe("MiniappSession auto-PONG", () => {
   })
 })
 
+describe("MiniappSession canvas", () => {
+  test("session.canvas is constructed", () => {
+    const session = new MiniappSession({transport: new FakeTransport()})
+    expect(session.canvas).toBeDefined()
+  })
+
+  test("showBitmap produces a CANVAS envelope with operation + options", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.canvas",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const before = transport.sent.length
+    session.canvas.showBitmap("BMP_DATA", {x: 10, y: 20, width: 100, height: 100})
+    expect(transport.sent.length).toBe(before + 1)
+
+    const env = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    const payload = env!.payload as {type: string; operation: string; options: Record<string, unknown>}
+    expect(payload.type).toBe(MiniappRequestType.CANVAS)
+    expect(payload.operation).toBe("show_bitmap")
+    expect(payload.options).toMatchObject({data: "BMP_DATA", x: 10, y: 20, width: 100, height: 100})
+  })
+
+  test("showText / clear emit their canvas operations", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.canvas2",
+      capabilities: null,
+    })
+    await connectPromise
+
+    session.canvas.showText("hi", {x: 0, y: 0})
+    let payload = parseEnvelope(transport.sent[transport.sent.length - 1]!)!.payload as {
+      operation: string
+      options: {text: string}
+    }
+    expect(payload.operation).toBe("show_text")
+    expect(payload.options.text).toBe("hi")
+
+    session.canvas.clear()
+    payload = parseEnvelope(transport.sent[transport.sent.length - 1]!)!.payload as {
+      operation: string
+      options: {text: string}
+    }
+    expect(payload.operation).toBe("clear")
+  })
+})
+
 describe("MiniappSession request correlation", () => {
   test("REQUEST_RESULT with matching requestId resolves the promise", async () => {
     const transport = new FakeTransport()

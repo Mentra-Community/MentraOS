@@ -51,6 +51,7 @@ export {
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
+export type {CanvasManager} from "../modules/canvas"
 export type {
   CameraFovPreset,
   CameraFovRequest,

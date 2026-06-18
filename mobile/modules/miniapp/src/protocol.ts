@@ -24,6 +24,9 @@ export enum MiniappRequestType {
   /** Push a layout to the glasses display. */
   DISPLAY = "miniapp_display",
 
+  /** Push a canvas command to the glasses canvas. */
+  CANVAS = "miniapp_canvas",
+
   /** Play an arbitrary audio URL through the phone's audio playback service. */
   PLAY_AUDIO = "miniapp_play_audio",
 
