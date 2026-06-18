@@ -237,17 +237,10 @@ class MantleManager {
       // (AudioPlaybackService — pure expo-audio + btsdk volume control) — no longer a hook.
       // glassesStatus read/subscribe moved into island (DisplayProcessor /
       // LocalMiniappRuntime read the island glasses store directly) — no longer hooks.
-      settings: {
-        getSetting: <T = unknown>(key: string): T | undefined =>
-          useSettingsStore.getState().getSetting(key) as T | undefined,
-        setSetting: (key, value, persistImmediately) =>
-          useSettingsStore.getState().setSetting(key, value, persistImmediately),
-        subscribeKey: (key, onChange) =>
-          useSettingsStore.subscribe(
-            (state) => state.getSetting(key),
-            (value) => onChange(value as never),
-          ),
-      },
+      // cloud + miniappAuth are self-wired by island's cloudClientService (not injected here).
+      // settings read/subscribe moved into island — the runtime reads the island
+      // useSettingsStore directly (LocalMiniappRuntime / LocalSttFallbackCoordinator /
+      // DisplayProcessor) — no longer a host hook (it just re-wrapped the island store).
       // cloudConnection is self-wired by island's cloudClientService now (it
       // powers the local-miniapp on-device-STT fallback off cloud liveness), so
       // the host no longer injects it.

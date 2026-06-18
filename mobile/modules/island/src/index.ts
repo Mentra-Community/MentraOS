@@ -181,7 +181,6 @@ export {
   type CloudRuntimeAdapter,
   type MiniappAuthAdapter,
   type MiniappAuthToken,
-  type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
   type InteropAdapter,

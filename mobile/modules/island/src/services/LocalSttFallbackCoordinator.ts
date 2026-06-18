@@ -1,5 +1,6 @@
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {useSettingsStore} from "../stores/settings"
 import sttModelManager from "./STTModelManager"
 
 /**
@@ -33,12 +34,11 @@ class LocalSttFallbackCoordinator {
   private cloudAdapterAttached = false
 
   private constructor() {
-    const settings = getRuntimeHooks().settings
     // Reset the persisted mirror flag on boot — the in-memory state in this
     // coordinator is the source of truth, and a stale "true" left from the
     // previous session would cause native to feed Sherpa before any miniapp
     // registered a subscription.
-    settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
   }
 
   /**
@@ -124,13 +124,13 @@ class LocalSttFallbackCoordinator {
       this.log("local stt activation skipped: cloud recovered during transcriber restart")
       return
     }
-    getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
   }
 
   private stopLocalStt(reason: string): void {
     this.log(`stopping local stt: ${reason}`)
-    getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
     this.localActive = false
   }
 
