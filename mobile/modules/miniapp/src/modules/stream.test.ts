@@ -38,14 +38,14 @@ describe("StreamModule", () => {
       stream.startUnmanaged({
         streamUrl: "rtmp://example.test/live/key",
         sound: false,
-        video: {fps: 30},
+        video: {frameRate: 30},
       }),
     ).resolves.toEqual(result)
     expect(requestCalls).toEqual([
       {
         type: MiniappRequestType.STREAM_START,
         streamUrl: "rtmp://example.test/live/key",
-        video: {fps: 30},
+        video: {frameRate: 30},
         audio: undefined,
         sound: false,
       },
@@ -71,6 +71,7 @@ describe("StreamModule", () => {
     await expect(
       stream.startManaged({
         restreamDestinations: [{url: "rtmp://dest.example/live/key", name: "demo"}],
+        video: {frameRate: 24},
         audio: {sampleRate: 48_000},
       }),
     ).resolves.toEqual(result)
@@ -78,7 +79,7 @@ describe("StreamModule", () => {
       {
         type: MiniappRequestType.MANAGED_STREAM_START,
         restreamDestinations: [{url: "rtmp://dest.example/live/key", name: "demo"}],
-        video: undefined,
+        video: {frameRate: 24},
         audio: {sampleRate: 48_000},
         sound: true,
       },
