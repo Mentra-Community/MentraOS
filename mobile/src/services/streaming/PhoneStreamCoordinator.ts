@@ -29,7 +29,12 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import type {KeepAliveAckEvent, StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
+import type {
+  KeepAliveAckEvent,
+  StreamResolvedConfig,
+  StreamStartRequest,
+  StreamStatusEvent,
+} from "@mentra/bluetooth-sdk-internal"
 import {getRuntimeHooks} from "@mentra/island"
 
 import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
@@ -75,15 +80,15 @@ const consoleLogger: LifecycleLogger = {
 
 export interface StartUnmanagedOptions {
   streamUrl: string
-  video?: unknown
-  audio?: unknown
+  video?: StreamStartRequest["video"]
+  audio?: StreamStartRequest["audio"]
   sound?: boolean
 }
 
 export interface StartManagedOptions {
   restreamDestinations?: RestreamDestinationInput[]
-  video?: unknown
-  audio?: unknown
+  video?: StreamStartRequest["video"]
+  audio?: StreamStartRequest["audio"]
   sound?: boolean
   /**
    * Ingest protocol preference — a real latency/durability trade on Cloudflare:
@@ -277,8 +282,8 @@ export class PhoneStreamCoordinator {
           sound: opts.sound ?? true,
           // The native bridge rejects explicit `undefined` values ("Value is
           // undefined, expected an Object") — only include what was provided.
-          ...(opts.video !== undefined ? {video: opts.video as never} : {}),
-          ...(opts.audio !== undefined ? {audio: opts.audio as never} : {}),
+          ...(opts.video !== undefined ? {video: opts.video} : {}),
+          ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)
@@ -363,8 +368,8 @@ export class PhoneStreamCoordinator {
           streamId,
           sound: opts.sound ?? true,
           // See startUnmanaged: the native bridge rejects explicit `undefined`.
-          ...(opts.video !== undefined ? {video: opts.video as never} : {}),
-          ...(opts.audio !== undefined ? {audio: opts.audio as never} : {}),
+          ...(opts.video !== undefined ? {video: opts.video} : {}),
+          ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
         })
         entry.publisherStart = publisherStartResult(streamId, event)
       } catch (err) {

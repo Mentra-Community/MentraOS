@@ -179,7 +179,6 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.hlsUrl).toBe("https://playback.test/abc/manifest/video.m3u8")
       expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      // Glasses should be told to publish to the WHIP endpoint (preferred).
       const arg = startExternallyManagedStream.mock.calls[0]![0] as {
         audio: unknown
         sound: boolean
