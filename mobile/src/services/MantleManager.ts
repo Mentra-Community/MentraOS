@@ -566,96 +566,14 @@ class MantleManager {
         }),
       )
 
-      // Keep the store in sync for standalone WiFi status events.
-      this.subs.push(
-        BluetoothSdk.addListener("wifi_status_change", (event) => {
-          const {type: _type, ...wifi} = event
-          useGlassesStore.getState().setGlassesInfo({wifi})
-        }),
-      )
+      // wifi_status_change / glasses_wifi / hotspot_status_change:
+      // moved to island DeviceEventRouter (started by toolkit.start())
 
-      // Forward glasses Wi-Fi to miniapps (session.glasses.onWifi) from the
-      // STORE — the single source of truth — so every path converges here:
-      // wifi_status_change, onGlassesStatus, and BLE disconnect. Effective
-      // connectivity requires the glasses to be connected AND on Wi-Fi, so a
-      // disconnect correctly flips `connected` to false (no stale "connected").
-      this.subs.push(
-        useGlassesStore.subscribe(
-          (s) => {
-            const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
-            return {
-              connected,
-              ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
-              localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
-            }
-          },
-          (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
-          {equalityFn: shallow},
-        ),
-      )
+      // hotspot_error: moved to island DeviceEventRouter (started by toolkit.start())
 
-      // TODO: remove since we can sub to the zustand store for hotspot info:
-      this.subs.push(
-        BluetoothSdk.addListener("hotspot_status_change", (event) => {
-          const enabled = event.state === "enabled"
-          const ssid = enabled ? event.ssid : ""
-          const password = enabled ? event.password : ""
-          const localIp = enabled ? event.localIp : ""
-          useGlassesStore.getState().setHotspotInfo(enabled, ssid, password, localIp)
-          GlobalEventEmitter.emit("hotspot_status_change", {
-            enabled,
-            ssid,
-            password,
-            local_ip: localIp,
-          })
-        }),
-      )
+      // gallery_status: moved to island DeviceEventRouter (started by toolkit.start())
 
-      this.subs.push(
-        BluetoothSdk.addListener("hotspot_error", (event) => {
-          GlobalEventEmitter.emit("hotspot_error", {
-            error_message: event.errorMessage,
-            timestamp: event.timestamp,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("gallery_status", (event) => {
-          GlobalEventEmitter.emit("gallery_status", {
-            photos: event.photos,
-            videos: event.videos,
-            total: event.total,
-            has_content: event.hasContent,
-            camera_busy: event.cameraBusy,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("photo_response", (event) => {
-          // Local miniapps' photos are tracked by phonePhotoCoordinator. If
-          // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
-          // phone-owned requestId, short-circuit the in-flight long-poll with
-          // the typed error. Terminal success is ignored here because the
-          // coordinator resolves from the phone/cloud upload result. Cloud-app
-          // photos (third-party SDK) still forward to cloud's PhotoManager.
-          //
-          // Error responses are the only photo_response events that settle
-          // the coordinator directly.
-          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
-            if (event.state === "error") {
-              phonePhotoCoordinator.handlePhotoError(
-                event.requestId,
-                event.errorCode ?? "GLASSES_ERROR",
-                event.errorMessage ?? "Glasses reported an error",
-              )
-            }
-            return
-          }
-          restComms.sendPhotoResponse(event)
-        }),
-      )
+      // photo_response: moved to island DeviceEventRouter (started by toolkit.start())
 
       this.subs.push(
         BluetoothSdk.addListener("heartbeat_sent", (event) => {
@@ -701,30 +619,18 @@ class MantleManager {
         BluetoothSdk.addListener("button_press", (event) => {
           console.log("MANTLE: BUTTON_PRESS event received:", event)
           this.handle_button_press(event)
-          localMiniappRuntime.forwardEvent("button_press", event)
+          // forwardEvent("button_press") -> local miniapps moved to island DeviceEventRouter
         }),
       )
 
       this.subs.push(
         BluetoothSdk.addListener("touch_event", (event) => {
           socketComms.sendTouchEvent(event)
-          localMiniappRuntime.forwardEvent("touch_event", event)
+          // forwardEvent("touch_event") -> local miniapps moved to island DeviceEventRouter
         }),
       )
 
-      // Raw accelerometer readings from the glasses IMU (G2). The native
-      // payload {x, y, z, timestamp} already matches the miniapp AccelData
-      // shape, so forward it as-is (runtime maps accel_event → accel_data).
-      this.subs.push(
-        BluetoothSdk.addListener("accel_event", (event) => {
-          localMiniappRuntime.forwardEvent("accel_event", {
-            x: event.x,
-            y: event.y,
-            z: event.z,
-            timestamp: typeof event.timestamp === "number" ? event.timestamp : Date.now(),
-          })
-        }),
-      )
+      // accel_event: moved to island DeviceEventRouter (started by toolkit.start())
 
       this.subs.push(
         BluetoothSdk.addListener("swipe_volume_status", (event) => {
@@ -905,22 +811,12 @@ class MantleManager {
         }),
       )
 
-      // Allow native hardware-originated setting changes to persist.
-      this.subs.push(
-        BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
-          await useSettingsStore.getState().setSetting(event.key, event.value)
-        }),
-      )
+      // save_setting: moved to island DeviceEventRouter (started by toolkit.start())
 
       this.subs.push(
         BluetoothSdk.addListener("head_up", (event) => {
           mantle.handle_head_up(event.up)
-          // Translate native {up: boolean} → cloud-SDK shape {position: "up" | "down"}
-          localMiniappRuntime.forwardEvent("head_up", {
-            position: event.up ? "up" : "down",
-            timestamp: Date.now(),
-          })
+          // forwardEvent("head_up") -> local miniapps moved to island DeviceEventRouter
         }),
       )
 
@@ -961,24 +857,7 @@ class MantleManager {
       //   }),
       // )
 
-      // G2 dashboard menu: user selected a miniapp from the glasses swipe menu
-      // G2.swift resolves the numeric appId → packageName before sending this event
-      this.subs.push(
-        BluetoothSdk.addListener("miniapp_selected", (event) => {
-          const packageName = event.packageName as string
-          if (!packageName) return
-          const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
-          if (!app) return
-          // Toggle: if already running, stop it; otherwise start it
-          if (app.running) {
-            console.log(`MANTLE: stopping ${packageName}`)
-            useAppStatusStore.getState().stop(packageName)
-          } else {
-            console.log(`MANTLE: starting ${packageName}`)
-            useAppStatusStore.getState().start(app, {skipNavigation: true})
-          }
-        }),
-      )
+      // miniapp_selected: moved to island DeviceEventRouter (started by toolkit.start())
 
       this.subs.push(
         BluetoothSdk.addListener("local_transcription", (event) => {
@@ -1050,12 +929,9 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("stream_status", (event) => {
-          // Phone-owned streams stay on-device; cloud-SDK app streams
-          // forward so cloud's lifecycle state machine sees them.
-          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
-            phoneStreamCoordinator.handleGlassesStatus(event)
-            return
-          }
+          // Phone-owned streams are handled by the island stream coordinator (DeviceEventRouter);
+          // cloud-SDK app streams forward to cloud (v1) so its lifecycle state machine sees them.
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) return
           console.log("MANTLE: Forwarding stream status to server:", event)
           socketComms.sendStreamStatus(event)
         }),
@@ -1063,10 +939,8 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("keep_alive_ack", (event) => {
-          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
-            phoneStreamCoordinator.handleKeepAliveAck(event)
-            return
-          }
+          // Phone-owned keep-alives handled by the island stream coordinator (DeviceEventRouter).
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) return
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
         }),

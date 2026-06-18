@@ -247,19 +247,8 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().deviceModel).toBe("Mentra Live")
     expect(useGlassesStore.getState().batteryLevel).toBe(77)
 
-    emitBluetoothSdkEvent("photo_response", {
-      type: "photo_response",
-      state: "success",
-      requestId: "req-1",
-      uploadUrl: "https://example.com/photo.jpg",
-      timestamp: 123,
-    })
-    expect(restComms.sendPhotoResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId: "req-1",
-        uploadUrl: "https://example.com/photo.jpg",
-      }),
-    )
+    // photo_response routing moved into island's DeviceEventRouter (covered by
+    // deviceEventRouter.test.ts); MantleManager no longer handles it.
 
     emitBluetoothSdkEvent("touch_event", {
       type: "touch_event",
