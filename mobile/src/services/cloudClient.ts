@@ -343,14 +343,14 @@ export const cloudClient = {
     return c.core.miniapps.getRegistry()
   },
 
-  async getMiniappAuthToken(packageName: string): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
     if (!client) {
       this.init()
     }
     const c = client
     if (!c) throw new Error("cloud client not initialized")
 
-    const {token, expiresAt} = await c.auth.getMiniappToken(packageName)
+    const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
     const identity = c.auth.identity
     return {
       mentraUserId: identity.mentraUserId,

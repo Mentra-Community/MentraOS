@@ -18,6 +18,9 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /** Request a fresh miniapp-scoped backend auth token. */
+  AUTH_REFRESH = "miniapp_auth_refresh",
+
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 

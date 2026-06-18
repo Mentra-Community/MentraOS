@@ -1,6 +1,7 @@
 import type {NavManeuver} from "@mentra/miniapp"
 
 import {ManeuverFormatter} from "@/background/managers/ManeuverFormatter"
+import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import type {LogEntry, NavStatus} from "@/shared/types"
 
@@ -17,6 +18,7 @@ export function LiveLog({
   status: NavStatus
   maneuver: NavManeuver | null
 }) {
+  const unitSystem = useNavStore((s) => s.unitSystem)
   const showStatusBlock = running || maneuver || status !== "idle"
   return (
     <>
@@ -29,7 +31,7 @@ export function LiveLog({
             </div>
             {maneuver && maneuver.distanceMeters >= 0 ? (
               <div className="text-[12px] font-mono text-neutral-700 bg-neutral-100 px-2 py-1 rounded ml-auto">
-                {formatDistance(maneuver.distanceMeters)}
+                {formatDistance(maneuver.distanceMeters, unitSystem)}
               </div>
             ) : null}
           </div>

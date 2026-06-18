@@ -133,6 +133,16 @@ export class CloudClient {
       throw new CloudClientError("auth.core requires endpoints.core");
     }
 
+    // Runtime auth is the mandatory half (Core is optional). Guard it before the
+    // `in` check below so a caller passing the pre-split flat `auth` shape
+    // (`{ subjectToken, subjectTokenType }`, no `runtime`) gets a clear
+    // configuration error instead of an opaque `TypeError` from `"source" in undefined`.
+    if (!config.auth.runtime) {
+      throw new CloudClientError(
+        "auth.runtime is required (got a pre-split/flat auth config?)",
+      );
+    }
+
     const runtimeUsesCore =
       "source" in config.auth.runtime && config.auth.runtime.source === "core";
     if (runtimeUsesCore && (!coreUrl || !config.auth.core)) {

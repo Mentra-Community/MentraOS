@@ -62,6 +62,50 @@ describe("@mentra/auth miniapp auth", () => {
     await expect(auth.verifyToken(token)).rejects.toBeInstanceOf(MentraAuthError);
   });
 
+  test("rejects expired miniapp tokens", async () => {
+    const token = await mintMiniappToken(TEST_PACKAGE, {
+      expirationTime: Math.floor(Date.now() / 1000) - 60,
+    });
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrl: `${server.url.origin}/.well-known/jwks.json`,
+      clockTolerance: 0,
+    });
+
+    await expect(auth.verifyToken(token)).rejects.toThrow(MentraAuthError);
+    await expect(auth.verifyToken(token)).rejects.toThrow("miniapp token rejected");
+  });
+
+  test("rejects tokens signed with an unexpected algorithm", async () => {
+    const token = await new jose.SignJWT({ oemId: "test-oem" })
+      .setProtectedHeader({ alg: "HS256", kid: "mentra-miniapp-1" })
+      .setIssuer(TEST_ISSUER)
+      .setAudience(TEST_PACKAGE)
+      .setSubject("user_123")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(new TextEncoder().encode("not-the-eddsa-key"));
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrl: `${server.url.origin}/.well-known/jwks.json`,
+    });
+
+    await expect(auth.verifyToken(token)).rejects.toBeInstanceOf(MentraAuthError);
+  });
+
+  test("rejects tampered tokens", async () => {
+    const token = await mintMiniappToken(TEST_PACKAGE);
+    const parts = token.split(".");
+    parts[1] = parts[1]!.replace(/.$/, parts[1]!.endsWith("A") ? "B" : "A");
+    const tampered = parts.join(".");
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrl: `${server.url.origin}/.well-known/jwks.json`,
+    });
+
+    await expect(auth.verifyToken(tampered)).rejects.toBeInstanceOf(MentraAuthError);
+  });
+
   test("accepts one of several configured issuers", async () => {
     const token = await mintMiniappToken(TEST_PACKAGE, { issuer: "mentra" });
     const auth = createMentraAuth({
@@ -107,7 +151,7 @@ describe("@mentra/auth miniapp auth", () => {
 
 async function mintMiniappToken(
   audience: string,
-  opts: { issuer?: string } = {},
+  opts: { expirationTime?: string | number; issuer?: string } = {},
 ): Promise<string> {
   const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
   return new jose.SignJWT({ oemId: "test-oem" })
@@ -117,6 +161,6 @@ async function mintMiniappToken(
     .setSubject("user_123")
     .setJti("token_123")
     .setIssuedAt()
-    .setExpirationTime("1h")
+    .setExpirationTime(opts.expirationTime ?? "1h")
     .sign(privateKey);
 }

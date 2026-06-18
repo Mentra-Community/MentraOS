@@ -188,6 +188,47 @@ describe("MiniappSession auth", () => {
     expect(session.userId).toBe("user_later")
   })
 
+  test("session.auth requests a fresh token when the cached token expires", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_expired",
+      packageName: "com.test.auth.expired",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_expired",
+        token: "expired-token",
+        expiresAt: Date.now() - 1_000,
+      },
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    const outbound = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    expect((outbound!.payload as {type?: string}).type).toBe(MiniappRequestType.AUTH_REFRESH)
+    expect(outbound!.requestId).toBeDefined()
+
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {
+          auth: {
+            mentraUserId: "user_expired",
+            token: "fresh-token",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      },
+      outbound!.requestId!,
+    )
+
+    expect(await tokenPromise).toBe("fresh-token")
+    expect(session.auth.current?.token).toBe("fresh-token")
+  })
+
   test("session.auth.fetch attaches bearer token", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport})
@@ -454,5 +495,33 @@ describe("MiniappSession transport disconnect", () => {
     expect(caught).toBeDefined()
     expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
     expect(session.ready).toBe(false)
+  })
+
+  test("disconnect rejects pending auth waiters instead of leaving them to time out", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    // CONNECT_ACK without an auth block, so getToken() must register a waiter
+    // and wait for an AUTH_UPDATE that will never arrive once the transport drops.
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "",
+      packageName: "com.test.auth.disc",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    transport.fireDisconnect("test disconnect")
+
+    let caught: unknown
+    try {
+      await tokenPromise
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeDefined()
+    expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
+    expect((caught as Error).message).toContain("test disconnect")
   })
 })

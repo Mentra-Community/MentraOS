@@ -74,6 +74,7 @@ interface ConnectedMiniapp {
   sendMessage: (raw: string) => void
   lastPongAt: number
   installedManifest?: InstalledMiniappManifest
+  authRefreshTimerId: number | null
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /**
@@ -123,6 +124,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | nul
 
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
+const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
+const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -535,6 +538,10 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      if (existing.authRefreshTimerId !== null) {
+        BgTimer.clearTimeout(existing.authRefreshTimerId)
+        existing.authRefreshTimerId = null
+      }
       for (const stream of existing.subscriptions) {
         const subs = this.streamSubscribers.get(stream)
         if (subs) {
@@ -550,6 +557,7 @@ class LocalMiniappRuntime {
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       installedManifest,
+      authRefreshTimerId: null,
       speakerState: "idle",
       requestedLocationRate: null,
     })
@@ -660,6 +668,7 @@ class LocalMiniappRuntime {
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     this.clearForegroundProbe(packageName)
+    this.clearMiniappAuthRefresh(packageName)
     // Drop the handshake flag and fail any in-flight waitForConnect() callers
     // (e.g. a wake that's mid-handshake when the app is torn down). Done before
     // the early-return so it runs even if the connectedApps entry is already gone.
@@ -804,6 +813,9 @@ class LocalMiniappRuntime {
     switch (requestType) {
       case MiniappRequestType.CONNECT:
         void this.handleConnect(packageName, payload, requestId)
+        break
+      case MiniappRequestType.AUTH_REFRESH:
+        void this.handleAuthRefresh(packageName, payload, requestId)
         break
       case MiniappRequestType.SUBSCRIBE:
         this.handleSubscribe(packageName, payload, requestId)
@@ -995,6 +1007,7 @@ class LocalMiniappRuntime {
     const authPromise = this.requestMiniappAuth(packageName)
     const initialAuth = await withTimeout(authPromise, 1_500)
     const userId = initialAuth?.mentraUserId ?? ""
+    if (initialAuth) this.scheduleMiniappAuthRefresh(packageName, initialAuth)
 
     this.sendToMiniapp(
       packageName,
@@ -1012,6 +1025,7 @@ class LocalMiniappRuntime {
       authPromise
         .then((auth) => {
           if (!auth) return
+          this.scheduleMiniappAuthRefresh(packageName, auth)
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.AUTH_UPDATE,
             auth,
@@ -1028,10 +1042,71 @@ class LocalMiniappRuntime {
     this.flushConnectWaiters(packageName)
   }
 
-  private async requestMiniappAuth(packageName: string): Promise<MiniappAuthToken | null> {
+  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
     const auth = getRuntimeHooks().miniappAuth
     if (!auth) return null
-    return auth.getToken(packageName)
+    return auth.getToken(packageName, opts)
+  }
+
+  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
+      if (!auth) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_CONNECTED,
+          message: "Miniapp auth is not configured",
+        })
+        return
+      }
+      this.sendResult(packageName, requestId, true, {auth})
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (err as Error)?.message ?? "Miniapp auth refresh failed",
+      })
+    }
+  }
+
+  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = await this.requestMiniappAuth(packageName, opts)
+    if (!auth) return null
+    this.scheduleMiniappAuthRefresh(packageName, auth)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth,
+    })
+    return auth
+  }
+
+  private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
+    const minTtlMs = Number(payload.minTtlMs)
+    if (!Number.isFinite(minTtlMs) || minTtlMs <= 0) return undefined
+    return {minTtlMs}
+  }
+
+  private scheduleMiniappAuthRefresh(packageName: string, auth: MiniappAuthToken): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    this.clearMiniappAuthRefresh(packageName)
+
+    const refreshAt = auth.expiresAt - MINIAPP_AUTH_REFRESH_HEADROOM_MS
+    const delay = Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now())
+    app.authRefreshTimerId = BgTimer.setTimeout(() => {
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      current.authRefreshTimerId = null
+      void this.refreshMiniappAuth(packageName).catch((err) => {
+        console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
+      })
+    }, delay)
+  }
+
+  private clearMiniappAuthRefresh(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authRefreshTimerId === null) return
+    const timerId = app.authRefreshTimerId
+    BgTimer.clearTimeout(timerId)
+    app.authRefreshTimerId = null
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {

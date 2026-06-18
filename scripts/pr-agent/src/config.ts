@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 const ConfigSchema = z.object({
   dryRun: z.boolean().default(true),
-  reviewModel: z.string().default('claude-sonnet-4-6'),
+  reviewModel: z.string().default('claude-opus-4-8'),
   fixModel: z.string().default('claude-opus-4-8'),
   authors: z
     .object({
@@ -20,7 +20,7 @@ const ConfigSchema = z.object({
       maxBugbotWaitMin: z.number().default(12),
       maxCiWaitMin: z.number().default(45),
       maxNewBlockingPerCycle: z.number().default(5),
-      maxFixAgentTurns: z.number().default(20),
+      maxFixAgentTurns: z.number().default(80),
       consecutiveNoNewReviewsForHandoff: z.number().default(2),
       discoveryCycles: z.number().default(1),
     })

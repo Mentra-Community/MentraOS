@@ -22,11 +22,14 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
-    // Optional bitmap_view container position/size (used by G2; ignored by others)
-    var bmpX: Int32?
-    var bmpY: Int32?
-    var bmpWidth: Int32?
-    var bmpHeight: Int32?
+    // Optional container position/size — used by bitmap_view and positioned_text (G2; ignored by others)
+    var bmpX: Int32? = nil
+    var bmpY: Int32? = nil
+    var bmpWidth: Int32? = nil
+    var bmpHeight: Int32? = nil
+    // Optional positioned_text border (used by G2; ignored by others)
+    var borderWidth: Int32? = nil
+    var borderRadius: Int32? = nil
 }
 
 @MainActor
@@ -714,6 +717,19 @@ struct ViewState {
                     width: currentViewState.bmpWidth,
                     height: currentViewState.bmpHeight
                 )
+            case "positioned_text":
+                Bridge.log(
+                    "MAN: positioned_text → text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                )
+                await sgc?.sendPositionedText(
+                    currentViewState.text,
+                    x: currentViewState.bmpX ?? 0,
+                    y: currentViewState.bmpY ?? 0,
+                    width: currentViewState.bmpWidth ?? 576,
+                    height: currentViewState.bmpHeight ?? 288,
+                    borderWidth: currentViewState.borderWidth ?? 0,
+                    borderRadius: currentViewState.borderRadius ?? 0
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -1039,6 +1055,8 @@ struct ViewState {
         let bmpY = (layout["y"] as? NSNumber).map { $0.int32Value }
         let bmpWidth = (layout["width"] as? NSNumber).map { $0.int32Value }
         let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
+        let borderWidth = (layout["borderWidth"] as? NSNumber).map { $0.int32Value }
+        let borderRadius = (layout["borderRadius"] as? NSNumber).map { $0.int32Value }
 
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
@@ -1048,7 +1066,8 @@ struct ViewState {
         var newViewState = ViewState(
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
             text: text, data: data, animationData: nil,
-            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight
+            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight,
+            borderWidth: borderWidth, borderRadius: borderRadius
         )
 
         if layoutType == "bitmap_animation" {
@@ -1067,6 +1086,27 @@ struct ViewState {
             } else {
                 Bridge.log("MAN: ERROR: bitmap_animation missing frames or interval")
             }
+        }
+
+        // positioned_text is a sticky overlay container (e.g. the nav trip-stats
+        // label) that lives ALONGSIDE the main view. It must NOT flow through the
+        // single replaceable viewState[stateIndex] — otherwise the constantly-
+        // refreshing main text_wall (maneuver text) and the minimap bitmap_view
+        // overwrite it every frame and it never renders. Route it straight to the
+        // SGC, which keeps its own persistent text container for that rect.
+        if layoutType == "positioned_text" {
+            Bridge.log(
+                "MAN: positioned_text (sticky) → text='\(text)' rect=\(bmpX ?? 0),\(bmpY ?? 0) \(bmpWidth ?? 576)x\(bmpHeight ?? 288)"
+            )
+            Task { [weak self] in
+                await self?.sgc?.sendPositionedText(
+                    text,
+                    x: bmpX ?? 0, y: bmpY ?? 0,
+                    width: bmpWidth ?? 576, height: bmpHeight ?? 288,
+                    borderWidth: borderWidth ?? 0, borderRadius: borderRadius ?? 0
+                )
+            }
+            return
         }
 
         let cS = viewStates[stateIndex]
@@ -1193,11 +1233,11 @@ struct ViewState {
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
         try sendButtonPhotoSettings(
             requestId: requestId,
-            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
+            settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size))
         )
     }
 
-    func sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) throws {
+    func sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) throws {
         try liveSgc().sendButtonPhotoSettings(requestId: requestId, settings: settings)
     }
 

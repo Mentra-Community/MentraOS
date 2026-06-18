@@ -93,6 +93,10 @@ export interface AuthUpdatePayload {
   auth?: MiniappAuthState
 }
 
+interface AuthRefreshResult {
+  auth?: MiniappAuthState
+}
+
 /**
  * Manifest-declared permission record. v3-aligned: lowercase canonical keys.
  * Booleans indicate whether the miniapp declared each in its manifest.json.
@@ -223,6 +227,7 @@ export class MiniappSession {
     reject: (error: Error) => void
     timer: ReturnType<typeof setTimeout>
   }>()
+  private authRefreshPromise: Promise<MiniappAuthState | null> | null = null
 
   /**
    * Outbound queue for anything sent before CONNECT_ACK. Flushed in FIFO order
@@ -318,6 +323,8 @@ export class MiniappSession {
     if (current && this.authHasTtl(current, minTtlMs)) {
       return Promise.resolve({...current})
     }
+
+    void this.requestAuthRefresh(minTtlMs)
 
     return new Promise((resolve, reject) => {
       const waiter = {
@@ -694,10 +701,44 @@ export class MiniappSession {
       pending.reject(error)
     }
     this.pendingRequests.clear()
+    // Auth waiters live outside pendingRequests — they're resolved by an
+    // AUTH_UPDATE push, not a correlated REQUEST_RESULT — so a transport drop,
+    // dispose, or CONNECT_ACK timeout must reject them here too. Otherwise an
+    // in-flight session.auth.getToken()/fetch() hangs until its 10s waiter
+    // timeout instead of failing fast with the disconnect error.
+    for (const waiter of Array.from(this.authWaiters)) {
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.reject(new NotConnectedError(error.message))
+    }
   }
 
   private authHasTtl(auth: MiniappAuthState, minTtlMs: number): boolean {
     return auth.expiresAt - Date.now() > minTtlMs
+  }
+
+  private requestAuthRefresh(minTtlMs: number): Promise<MiniappAuthState | null> {
+    if (this.authRefreshPromise) return this.authRefreshPromise
+    if (!this.ready || !this.transport.isOpen()) return Promise.resolve(null)
+
+    this.authRefreshPromise = this.sendRequest<AuthRefreshResult>({
+      type: MiniappRequestType.AUTH_REFRESH,
+      minTtlMs,
+    })
+      .then((result) => {
+        const auth = result?.auth
+        if (auth) this.applyAuth(auth)
+        return auth ?? null
+      })
+      .catch((err) => {
+        console.warn("[MiniappSession] auth refresh failed:", err)
+        return null
+      })
+      .finally(() => {
+        this.authRefreshPromise = null
+      })
+
+    return this.authRefreshPromise
   }
 
   private applyAuth(next: MiniappAuthState): void {

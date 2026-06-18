@@ -482,11 +482,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
-    public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent {
-        try await setButtonPhotoSettings(ButtonPhotoSettings(size: size))
-    }
-
-    public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent {
+    public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
             updateStore: { _ in
@@ -545,30 +541,26 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent {
+    public func setVideoRecordingDefaults(_ defaults: VideoRecordingDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_video_recording",
             updateStore: { _ in
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", width)
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", height)
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", fps)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", defaults.width)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", defaults.height)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", defaults.fps)
             },
             send: { requestId in
                 try DeviceManager.shared.sendButtonVideoRecordingSettings(
                     requestId: requestId,
-                    width: width,
-                    height: height,
-                    fps: fps
+                    width: defaults.width,
+                    height: defaults.height,
+                    fps: defaults.fps
                 )
             }
         )
     }
 
-    public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent {
-        try await setButtonVideoRecordingSettings(width: settings.width, height: settings.height, fps: settings.fps)
-    }
-
-    public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent {
+    public func setCaptureLedEnabled(_ enabled: Bool) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_camera_led",
             updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_camera_led", enabled) },
@@ -576,7 +568,7 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent {
+    public func setMaxVideoRecordingDuration(minutes: Int) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_max_recording_time",
             updateStore: { _ in

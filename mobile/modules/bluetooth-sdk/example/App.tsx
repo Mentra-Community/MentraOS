@@ -1,8 +1,8 @@
 import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
 import type {
-  ButtonPhotoSize,
   PhotoCaptureMetadata,
   PhotoRequestParams,
+  PhotoSize,
   PhotoStatusEvent,
 } from "@mentra/bluetooth-sdk"
 import PhotoReceiver from "@mentra/bluetooth-sdk/photo-receiver"
@@ -25,7 +25,7 @@ import {
 
 type TabId = "connection" | "camera"
 
-const PHOTO_SIZE_OPTIONS: {key: ButtonPhotoSize; label: string}[] = [
+const PHOTO_SIZE_OPTIONS: {key: PhotoSize; label: string}[] = [
   {key: "low", label: "Low (960×720)"},
   {key: "medium", label: "Medium (1440×1088)"},
   {key: "high", label: "High (3264×2448)"},
@@ -56,7 +56,7 @@ type CaptureResult = {
 
 export default function App() {
   const [tab, setTab] = useState<TabId>("camera")
-  const [photoSize, setPhotoSize] = useState<ButtonPhotoSize>("max")
+  const [photoSize, setPhotoSize] = useState<PhotoSize>("max")
   const [scanMode, setScanMode] = useState(false)
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
@@ -116,13 +116,13 @@ export default function App() {
     return result.uploadUrl
   }
 
-  const handlePhotoSizeChange = async (size: ButtonPhotoSize) => {
-    await BluetoothSdk.setButtonPhotoSettings({size})
+  const handlePhotoSizeChange = async (size: PhotoSize) => {
+    await BluetoothSdk.setPhotoCaptureDefaults({size})
     setPhotoSize(size)
   }
 
   const pushScanButtonPreset = useCallback(async () => {
-    await BluetoothSdk.setButtonPhotoSettings({
+    await BluetoothSdk.setPhotoCaptureDefaults({
       size: "max",
       mfnr: false,
       zsl: false,
@@ -143,7 +143,7 @@ export default function App() {
       return
     }
     try {
-      await BluetoothSdk.setButtonPhotoSettings({
+      await BluetoothSdk.setPhotoCaptureDefaults({
         size: photoSize,
         mfnr: true,
         zsl: true,
