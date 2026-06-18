@@ -11,8 +11,7 @@ export interface StreamVideoConfig {
   width?: number
   height?: number
   bitrate?: number
-  /** Request input uses frameRate; resolved stream status reports video.fps. */
-  frameRate?: number
+  fps?: number
 }
 
 export interface StreamAudioConfig {

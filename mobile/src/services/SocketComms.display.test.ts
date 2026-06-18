@@ -162,7 +162,7 @@ describe("SocketComms stream messages", () => {
         width: 1280,
         height: 720,
         bitrate: 1_000_000,
-        frameRate: 30,
+        fps: 30,
       },
       audio: {
         bitrate: 64_000,

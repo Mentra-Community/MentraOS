@@ -4,14 +4,15 @@ data class StreamVideoConfig @JvmOverloads constructor(
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Int? = null,
-    val frameRate: Int? = null,
+    val fps: Int? = null,
 ) {
     fun toMap(): Map<String, Any> =
         listOfNotNull(
             width?.let { "width" to it },
             height?.let { "height" to it },
             bitrate?.let { "bitrate" to it },
-            frameRate?.let { "frameRate" to it },
+            // ASG stream parsers shipped with the BLE key named "frameRate".
+            fps?.let { "frameRate" to it },
         ).toMap()
 
     companion object {
@@ -22,7 +23,7 @@ data class StreamVideoConfig @JvmOverloads constructor(
                 width = numberValue(values, "width"),
                 height = numberValue(values, "height"),
                 bitrate = numberValue(values, "bitrate"),
-                frameRate = numberValue(values, "frameRate"),
+                fps = numberValue(values, "fps"),
             )
         }
     }

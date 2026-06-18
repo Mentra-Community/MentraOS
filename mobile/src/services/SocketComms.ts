@@ -40,10 +40,13 @@ const normalizeStreamVideoConfig = (value: unknown): StreamStartRequest["video"]
   const height = finiteNumber(value.height)
   const bitrate = finiteNumber(value.bitrate)
   const frameRate = finiteNumber(value.frameRate)
+  // Cloud SDK apps historically send frameRate; the local Bluetooth/miniapp SDKs
+  // expose fps. Keep the compatibility translation at this cloud boundary.
+  const fps = frameRate ?? finiteNumber(value.fps)
   if (width !== undefined) config.width = width
   if (height !== undefined) config.height = height
   if (bitrate !== undefined) config.bitrate = bitrate
-  if (frameRate !== undefined) config.frameRate = frameRate
+  if (fps !== undefined) config.fps = fps
   return Object.keys(config).length > 0 ? config : undefined
 }
 

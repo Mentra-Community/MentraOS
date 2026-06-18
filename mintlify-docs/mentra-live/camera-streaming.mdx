@@ -296,7 +296,7 @@ await BluetoothSdk.startStream({
   type: 'start_stream',
   streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
   streamId,
-  video: {frameRate: 15},
+  video: {fps: 15},
 });
 
 await BluetoothSdk.stopStream();
@@ -312,7 +312,7 @@ sdk.startStream(
     StreamRequest(
         streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
         streamId = streamId,
-        video = StreamVideoConfig(frameRate = 15),
+        video = StreamVideoConfig(fps = 15),
     )
 )
 
@@ -329,7 +329,7 @@ try await sdk.startStream(
     StreamRequest(
         streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
         streamId: streamId,
-        video: StreamVideoConfig(frameRate: 15)
+        video: StreamVideoConfig(fps: 15)
     )
 )
 

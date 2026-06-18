@@ -399,13 +399,13 @@ await BluetoothSdk.startStream({
   type: 'start_stream',
   streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
   streamId,
-  video: {frameRate: 15},
+  video: {fps: 15},
 })
 
 await BluetoothSdk.stopStream()
 ```
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. Stream video input fields are `width`, `height`, `bitrate`, and `frameRate`. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. Stream video input fields are `width`, `height`, `bitrate`, and `fps`. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
 `stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight. The resolved effective frame rate is reported as `resolvedConfig.video.fps`.
 
 ## Events
