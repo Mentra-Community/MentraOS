@@ -7,7 +7,7 @@
  * listener); the installed-apps list + the listener permission are CrustModule.
  */
 import {Platform} from "react-native"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
 export const phoneNotifications = {

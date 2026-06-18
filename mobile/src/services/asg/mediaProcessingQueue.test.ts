@@ -11,7 +11,7 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
   unlink: jest.fn(() => Promise.resolve()),
 }))
 
-jest.mock("crust", () => ({
+jest.mock("@mentra/crust", () => ({
   __esModule: true,
   default: {},
 }))

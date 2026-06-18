@@ -1322,6 +1322,95 @@ private class G2ReceiveManager {
     }
 }
 
+// MARK: - Image ACK box
+
+/// Thread-safe holder for the single in-flight image-fragment ACK continuation.
+///
+/// Lives OUTSIDE `@MainActor` isolation so the CoreBluetooth notify callback (which runs on the BLE
+/// dispatch queue) can correlate and resume the awaiting continuation directly, without hopping to
+/// the main actor. That hop is exactly what caused intermittent "glasses stopped responding": the
+/// ACK would queue behind a packet burst / heartbeats / the text-queue tick on the main actor and
+/// miss the timeout window even though it had physically arrived.
+///
+/// All access is guarded by `lock`. Resuming a `CheckedContinuation` from any thread is safe, and
+/// `arm`/`resolve` clear the slot atomically so neither the duplicate L/R ACK nor the timeout can
+/// resume the same continuation twice.
+private final class ImgAckBox {
+    private let lock = NSLock()
+    private var session: Int?
+    private var fragment: Int32?
+    private var cont: CheckedContinuation<Bool, Never>?
+
+    /// Install the awaiting continuation for `(session, fragment)`.
+    func arm(session: Int, fragment: Int32, cont: CheckedContinuation<Bool, Never>) {
+        lock.lock()
+        self.session = session
+        self.fragment = fragment
+        self.cont = cont
+        lock.unlock()
+    }
+
+    /// Resume the continuation if it matches `(session, fragment)`. Returns true if it fired.
+    @discardableResult
+    func resolve(session: Int, fragment: Int32, success: Bool) -> Bool {
+        lock.lock()
+        guard self.session == session, self.fragment == fragment, let c = cont else {
+            lock.unlock()
+            return false
+        }
+        self.session = nil
+        self.fragment = nil
+        self.cont = nil
+        lock.unlock()
+        c.resume(returning: success)
+        return true
+    }
+
+    /// Time out the continuation for `(session, fragment)` (resumes false if still armed).
+    func timeout(session: Int, fragment: Int32) {
+        _ = resolve(session: session, fragment: fragment, success: false)
+    }
+}
+
+/// A minimal FIFO async lock that serializes display mutations.
+///
+/// `G2` is `@MainActor`, which only guarantees mutual exclusion *between*
+/// suspension points — not across an `await`. Two display operations can
+/// therefore interleave while one is suspended in `awaitImageAck`, and the
+/// second would overwrite the single-slot [ImgAckBox], stranding the first
+/// continuation (its image-send `Task` then hangs forever). Serializing every
+/// display mutation through this lock keeps exactly one image transfer in
+/// flight at a time, matching the Android client's `displayMutex` invariant.
+///
+/// State is only touched inside `acquire`/`release`, which run synchronously on
+/// the main actor (no `await` between the read and the write), so the state
+/// itself needs no extra locking.
+@MainActor
+private final class DisplayMutex {
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Suspend until the lock is free, then take it.
+    func acquire() async {
+        if !locked {
+            locked = true
+            return
+        }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            waiters.append(cont)
+        }
+    }
+
+    /// Hand the lock to the next waiter (preserving ownership), or free it.
+    func release() {
+        if waiters.isEmpty {
+            locked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 // MARK: - G2 Class (SGCManager implementation)
 
 /// Actor for reconnection logic (matches G1 pattern)
@@ -1463,10 +1552,23 @@ class G2: NSObject, SGCManager {
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
     private var imageSessionCounter: Int = 0
+    /// Lock-protected, non-isolated holder for the in-flight image ACK so the BLE-queue notify
+    /// callback can resolve it without bouncing through the main actor (see [ImgAckBox]).
+    private let imgAckBox = ImgAckBox()
+    /// Serializes display mutations so only one image transfer is ever in flight; without it a
+    /// second display op can clobber `imgAckBox` while the first is suspended (see [DisplayMutex]).
+    private let displayMutex = DisplayMutex()
+    private let IMG_ACK_TIMEOUT_NS: UInt64 = 2_000_000_000  // 1000ms timeout (matches Dart host)
+    private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
     private var evenHubQueueTask: Task<Void, Never>?
-    private var pendingTextMsg: Data?
+    // FIFO of pending text-container updates. A single-slot var here used to let
+    // a later update (e.g. the constantly-refreshing maneuver text) overwrite an
+    // earlier one for a DIFFERENT container (e.g. the bottom-left trip stats),
+    // so the second container's content never reached the glasses. A queue lets
+    // updates to distinct containers each get drained.
+    private var pendingTextMsgs: [Data] = []
     private var lastEvenHubMsg: Data?
     private var lastEvenHubResendsRemaining: Int = 0
     private let EVEN_HUB_RESEND_COUNT: Int = 1
@@ -1563,15 +1665,40 @@ class G2: NSObject, SGCManager {
 
     // MARK: - BLE Sending
 
+    // Per-side FIFO write queues. We DON'T dump a multi-packet burst into CoreBluetooth in a tight
+    // loop: when its internal buffer is full, `.withoutResponse` writes are silently DROPPED, so the
+    // glasses receive an incomplete fragment, never ACK it, and the send appears to hang. Instead we
+    // enqueue and drain only while `canSendWriteWithoutResponse` is true, resuming from
+    // `peripheralIsReady(toSendWriteWithoutResponse:)`. This also keeps pacing off any timer/looper.
+    private var leftWriteQueue: [Data] = []
+    private var rightWriteQueue: [Data] = []
+
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
         // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
-        for packet in packets {
-            if right, let char = rightWriteChar, let peripheral = rightPeripheral {
-                peripheral.writeValue(packet, for: char, type: .withoutResponse)
-            }
-            if left, let char = leftWriteChar, let peripheral = leftPeripheral {
-                peripheral.writeValue(packet, for: char, type: .withoutResponse)
-            }
+        if right {
+            rightWriteQueue.append(contentsOf: packets)
+            drainWriteQueue(right: true)
+        }
+        if left {
+            leftWriteQueue.append(contentsOf: packets)
+            drainWriteQueue(right: false)
+        }
+    }
+
+    /// Drain one side's queue while the peripheral can accept write-without-response. Stops as soon
+    /// as the buffer is full; `peripheralIsReady(toSendWriteWithoutResponse:)` resumes the drain.
+    private func drainWriteQueue(right: Bool) {
+        let peripheral = right ? rightPeripheral : leftPeripheral
+        let char = right ? rightWriteChar : leftWriteChar
+        guard let peripheral = peripheral, let char = char else {
+            // No connection for this side; drop its pending packets so they can't replay later.
+            if right { rightWriteQueue.removeAll() } else { leftWriteQueue.removeAll() }
+            return
+        }
+        while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
+            guard peripheral.canSendWriteWithoutResponse else { return }
+            let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
+            peripheral.writeValue(packet, for: char, type: .withoutResponse)
         }
     }
 
@@ -1878,7 +2005,7 @@ class G2: NSObject, SGCManager {
         evenHubQueueTask?.cancel()
         evenHubQueueTask = nil
         evenHubQueueLock.lock()
-        pendingTextMsg = nil
+        pendingTextMsgs.removeAll()
         lastEvenHubMsg = nil
         lastEvenHubResendsRemaining = 0
         evenHubQueueLock.unlock()
@@ -1945,6 +2072,16 @@ class G2: NSObject, SGCManager {
         await sendTextWall(text)
     }
 
+    func sendPositionedText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32
+    ) async {
+        await sendTextAt(
+            text, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius
+        )
+    }
+
     func sendTextAt(
         _ text: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil, height: Int32? = nil,
         borderWidth: Int32? = nil, borderColor: Int32? = nil, borderRadius: Int32? = nil,
@@ -1963,10 +2100,10 @@ class G2: NSObject, SGCManager {
         let ry = y ?? G2.defaultTextContainer.y
         let rw = width ?? G2.defaultTextContainer.width
         let rh = height ?? G2.defaultTextContainer.height
-        let borderWidth = G2.defaultTextContainer.borderWidth
-        let borderColor = G2.defaultTextContainer.borderColor
-        let borderRadius = G2.defaultTextContainer.borderRadius
-        let paddingLength = G2.defaultTextContainer.paddingLength
+        let borderWidth = borderWidth ?? G2.defaultTextContainer.borderWidth
+        let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
+        let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
+        let paddingLength = paddingLength ?? G2.defaultTextContainer.paddingLength
         let content = text.isEmpty ? " " : text
 
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
@@ -2029,42 +2166,119 @@ class G2: NSObject, SGCManager {
             imageContainers[i].bmpData = Data()
         }
         // shutdown the page and then recreate the containers without the content:
-        Task { await rebuildPage() }
+        // Serialize the teardown so it can't tear the page down mid image-send (see DisplayMutex).
+        Task {
+            await displayMutex.acquire()
+            defer { displayMutex.release() }
+            await rebuildPage()
+            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
+            // createPageWithContainers()
+        }
     }
 
-    /// Send BMP data to an image container via fragmented updateImageRawData
+    /// Send a bitmap to an image container as fragmented updateImageRawData packets.
+    ///
+    /// The glasses reply ONCE per fragment with an ImgResCmd ErrorCode (4=success, 5=failed).
+    /// Each fragment is sent with its own session id, then this awaits that fragment's ACK for up
+    /// to `IMG_ACK_TIMEOUT_NS` before sending the next. A `failed` ACK OR no ACK within the window
+    /// counts as a failure and the entire image is re-sent (fresh sessions) up to
+    /// `IMG_MAX_ATTEMPTS` times. On exhausting all attempts it logs a warning and returns
+    /// (best-effort — callers are unaffected).
     private func sendImageData(containerID: Int32, containerName: String, bmpData: Data) async {
         let fragmentSize = 4096
-        imageSessionCounter += 1
-        let sessionId = imageSessionCounter
         let totalSize = Int32(bmpData.count)
-        var fragmentIndex: Int32 = 0
-        var offset = 0
-
-        Bridge.log(
-            "G2: sendImageData(\(containerName)) - \(fragmentIndex) fragments, \(bmpData.count) bytes"
-        )
-
-        while offset < bmpData.count {
-            let end = min(offset + fragmentSize, bmpData.count)
-            let fragment = bmpData[offset..<end]
-
-            let msg = EvenHubProto.updateImageRawDataMessage(
-                containerID: containerID,
-                containerName: containerName,
-                mapSessionId: Int32(sessionId),
-                mapTotalSize: totalSize,
-                compressMode: 0,
-                mapFragmentIndex: fragmentIndex,
-                mapFragmentPacketSize: Int32(fragment.count),
-                mapRawData: Data(fragment)
-            )
-            sendEvenHubCommand(msg)
-
-            fragmentIndex += 1
-            offset = end
-            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms between fragments
+        let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if bmpData.count == 0 {
+            return
         }
+
+        // Bridge.log(
+        //     "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
+        // )
+
+        for attempt in 1...IMG_MAX_ATTEMPTS {
+            // One session id per WHOLE image transfer (per attempt). The glasses key their
+            // reassembly buffer on MapSessionId, so every fragment of this image must reuse the
+            // same session id with an incrementing MapFragmentIndex; the per-fragment ACK is
+            // correlated by the (session, fragmentIndex) pair. A retry uses a fresh session so a
+            // stale ACK from a prior attempt can't match.
+            imageSessionCounter = (imageSessionCounter + 1) % 256
+            let sessionId = imageSessionCounter
+
+            var fragmentIndex: Int32 = 0
+            var offset = 0
+            var transferOk = true
+            // if attempt > 1 {
+            //     Bridge.log("G2: sendImageData(\(containerName)) - attempt \(attempt) starting")
+            // }
+            while offset < bmpData.count {
+                let end = min(offset + fragmentSize, bmpData.count)
+                let fragment = bmpData[offset..<end]
+
+                let msg = EvenHubProto.updateImageRawDataMessage(
+                    containerID: containerID,
+                    containerName: containerName,
+                    mapSessionId: Int32(sessionId),
+                    mapTotalSize: totalSize,
+                    compressMode: 0,
+                    mapFragmentIndex: fragmentIndex,
+                    mapFragmentPacketSize: Int32(fragment.count),
+                    mapRawData: Data(fragment)
+                )
+                sendEvenHubCommand(msg)
+                // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
+
+                // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
+                // Timeout/img_failed → abandon the attempt and retry the whole image.
+                let ok = await awaitImageAck(sessionId: sessionId, fragmentIndex: fragmentIndex)
+                if !ok {
+                    Bridge.log(
+                        "G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex) failed"
+                    )
+                    transferOk = false
+                    break
+                }
+
+                fragmentIndex += 1
+                offset = end
+            }
+
+            if transferOk {
+                // Bridge.log("G2: img_sen: container=\(containerName) - success=true")
+                return
+            }
+        }
+
+        Bridge.log("G2: img_sen: container=\(containerName) - failed after \(IMG_MAX_ATTEMPTS) attempts")
+    }
+
+    /// Suspend until correlateImageAck() resolves the ACK for this `(sessionId, fragmentIndex)`, or
+    /// `IMG_ACK_TIMEOUT_NS` elapses (whichever comes first). Returns whether the fragment was acked
+    /// successfully; a timeout returns false. All fragments of one image share a session id, so the
+    /// fragment index distinguishes their ACKs. The continuation lives in [ImgAckBox], whose lock
+    /// makes the ACK-resolve and the timeout mutually exclusive — exactly one resumes it.
+    private func awaitImageAck(sessionId: Int, fragmentIndex: Int32) async -> Bool {
+        let timeoutNs = IMG_ACK_TIMEOUT_NS
+        let box = imgAckBox
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            box.arm(session: sessionId, fragment: fragmentIndex, cont: cont)
+
+            // Detached (not @MainActor): the timeout must fire on its own schedule regardless of how
+            // busy the main actor is. The box's lock makes racing with resolve() safe.
+            Task.detached {
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                box.timeout(session: sessionId, fragment: fragmentIndex)
+            }
+        }
+    }
+
+    /// Resume the pending image-ACK continuation for `(session, fragmentIndex)` (if it matches the
+    /// in-flight one). Idempotent via [ImgAckBox]: a duplicate L/R ACK or the timeout can't resume
+    /// the same continuation twice. Safe to call from any thread (the BLE callback queue).
+    private nonisolated func completeImageAck(session: Int, fragmentIndex: Int32, success: Bool) {
+        imgAckBox.resolve(session: session, fragment: fragmentIndex, success: success)
     }
 
     /// Display a bitmap inside a positioned image container.
@@ -2080,6 +2294,11 @@ class G2: NSObject, SGCManager {
         base64ImageData: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil,
         height: Int32? = nil
     ) async -> Bool {
+        // Serialize against other display mutations so two image sends can't overlap and
+        // clobber the single-slot imgAckBox (see DisplayMutex).
+        await displayMutex.acquire()
+        defer { displayMutex.release() }
+
         let rx = x ?? G2.defaultImgContainer.x
         let ry = y ?? G2.defaultImgContainer.y
         let rw = width ?? G2.defaultImgContainer.width
@@ -2176,11 +2395,17 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        await rebuildState()
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // await rebuildState()
     }
 
     // re-creates the containers and sends all images and text again to the glasses:
     private func rebuildState() async {
+        // Hold the display lock for the whole rebuild so its per-container sendImageData calls
+        // can't interleave with a concurrent displayBitmap (see DisplayMutex).
+        await displayMutex.acquire()
+        defer { displayMutex.release() }
+
         Bridge.log("G2: rebuildState()")
         // recreate the containers:
         createPageWithContainers()
@@ -2664,16 +2889,22 @@ class G2: NSObject, SGCManager {
 
     private func queueEvenHubCommand(_ payload: Data) {
         evenHubQueueLock.lock()
-        pendingTextMsg = payload
+        // Append rather than overwrite so updates to different text containers
+        // (maneuver text + bottom-left trip stats) all survive. Cap the backlog
+        // so a stall can't grow it unbounded; dropping the oldest is fine since
+        // text updates are idempotent (the next frame re-pushes current content).
+        pendingTextMsgs.append(payload)
+        if pendingTextMsgs.count > 8 {
+            pendingTextMsgs.removeFirst(pendingTextMsgs.count - 8)
+        }
         evenHubQueueLock.unlock()
     }
 
     private func drainEvenHubQueue() {
         evenHubQueueLock.lock()
-        let msg = pendingTextMsg
-        pendingTextMsg = nil
         let toSend: Data?
-        if let msg = msg {
+        if !pendingTextMsgs.isEmpty {
+            let msg = pendingTextMsgs.removeFirst()
             lastEvenHubMsg = msg
             lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
             toSend = msg
@@ -2790,6 +3021,8 @@ class G2: NSObject, SGCManager {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
 
+        leftWriteQueue.removeAll()
+        rightWriteQueue.removeAll()
         leftInitialized = false
         rightInitialized = false
         authStarted = false
@@ -3441,7 +3674,16 @@ class G2: NSObject, SGCManager {
         // Parse evenhub_main_msg_ctx: field 1 = Cmd (varint), field 13 = DevEvent (submessage)
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
+        
 
+        let payloadStr = "\(payload.map { String(format: "%02X", $0) }.joined())"
+        if payloadStr.contains("080C7A02100C") {
+            // heartbeat response
+            return
+        }
+
+        // Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
+        
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
                 "G2: EvenHub response - no cmd field, \(payload.count) bytes: \(payload.map { String(format: "%02X", $0) }.joined())"
@@ -3449,7 +3691,6 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        // Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
 
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
             // Touch/gesture event from glasses
@@ -3492,6 +3733,10 @@ class G2: NSObject, SGCManager {
             }
         } else {
 
+            // NOTE: the per-fragment image ACK is correlated inline on the BLE callback queue in
+            // correlateImageAck() (called from didUpdateValueFor before this is dispatched to the
+            // main actor) so it is never delayed behind a saturated main actor. Nothing to do here.
+
             // response codes:
             let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
             if lastEvenHubResponseTimestamp != nil
@@ -3522,14 +3767,14 @@ class G2: NSObject, SGCManager {
                             pageCreated = false
                         }
                     }
-                    if let errorCode = resFields[8] as? Int32 {
-                        // ImgResCmd has ErrorCode in field 8
-                        if errorCode == 4 {
-                            Bridge.log("G2: img_success")
-                        } else {
-                            Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
-                        }
-                    }
+                    // if let errorCode = resFields[8] as? Int32 {
+                    //     // ImgResCmd has ErrorCode in field 8
+                    //     if errorCode == 4 {
+                    //         Bridge.log("G2: img_success")
+                    //     } else {
+                    //         Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
+                    //     }
+                    // }
                 }
             }
 
@@ -4258,6 +4503,8 @@ extension G2: CBCentralManagerDelegate {
             // Clear both sides to force re-discovery (like G1)
             self.leftPeripheral = nil
             self.rightPeripheral = nil
+            self.leftWriteQueue.removeAll()
+            self.rightWriteQueue.removeAll()
             self.leftInitialized = false
             self.rightInitialized = false
             self.leftWriteChar = nil
@@ -4390,6 +4637,14 @@ extension G2: CBPeripheralDelegate {
     ) {
         guard let data = characteristic.value, error == nil else { return }
 
+        // Correlate an in-flight image-fragment ACK INLINE on the BLE callback queue, before hopping
+        // to the main actor. This keeps the ACK that sendImageData() awaits from being starved by a
+        // saturated main actor (packet burst / heartbeats / text-queue tick) — the cause of the
+        // intermittent "glasses stopped responding to image sends". See [ImgAckBox].
+        if characteristic.uuid == G2BLE.CHAR_NOTIFY {
+            correlateImageAck(data)
+        }
+
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
@@ -4403,12 +4658,69 @@ extension G2: CBPeripheralDelegate {
         }
     }
 
+    /// Read-only, SINGLE-PACKET parse of a raw notify frame that resolves an in-flight image ACK
+    /// directly (off the main actor). Does NOT touch the stateful `receiveManager` (main-actor only):
+    /// an ImgResCmd always fits in one BLE packet, so any multi-packet frame is left to the
+    /// main-thread path. Idempotent via [ImgAckBox], so the residual main-thread correlation and the
+    /// duplicate L/R ACK are both harmless.
+    nonisolated func correlateImageAck(_ rawData: Data) {
+        guard rawData.count >= 8 else { return }
+        let b = { (i: Int) -> UInt8 in rawData[rawData.startIndex + i] }
+        guard b(0) == G2BLE.HEADER_BYTE else { return }
+
+        let payloadLen = Int(b(3))
+        let expectedLen = payloadLen + 8
+        guard rawData.count >= expectedLen else { return }
+
+        let totalPackets = Int(b(4))
+        let serialNum = Int(b(5))
+        let serviceId = b(6)
+        let resultCode = (Int(b(7)) >> 1) & 0x0F
+        guard resultCode == 0 else { return }
+        guard serviceId == ServiceID.evenHub.rawValue else { return }
+        // Single complete packet only (ImgResCmd never spans packets).
+        guard totalPackets == 1, serialNum == 1 else { return }
+
+        // Strip the 2-byte CRC trailer on the (last == only) packet.
+        let payloadEnd = 8 + payloadLen - 2
+        guard payloadEnd >= 8, payloadEnd <= rawData.count else { return }
+        let payload = rawData.subdata(in: (rawData.startIndex + 8)..<(rawData.startIndex + payloadEnd))
+
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        guard let resData = fields[6] as? Data else { return }  // field 6 = ImgResCmd
+        var resReader = ProtobufReader(resData)
+        let resFields = resReader.parseFields()
+        guard let errorCode = resFields[8] as? Int32,
+            let ackSession = resFields[3] as? Int32
+        else { return }
+        let ackFragment = (resFields[6] as? Int32) ?? 0
+        Bridge.log(
+            "G2: img_res: session=\(ackSession) fragment=\(ackFragment) errorCode=\(errorCode) success=\(errorCode == 4)"
+        )
+        completeImageAck(
+            session: Int(ackSession), fragmentIndex: ackFragment, success: errorCode == 4)
+    }
+
     nonisolated func peripheral(
         _: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?
     ) {
         if let error = error {
             DispatchQueue.main.async {
                 Bridge.log("G2: Write error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// CoreBluetooth's write-without-response buffer freed up — resume draining that side's queue.
+    /// Called on the BLE queue; hop to the main actor to touch the queue state.
+    nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            if peripheral === self.rightPeripheral {
+                self.drainWriteQueue(right: true)
+            } else if peripheral === self.leftPeripheral {
+                self.drainWriteQueue(right: false)
             }
         }
     }

@@ -24,7 +24,7 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
   }
 })
 
-jest.mock("crust", () => {
+jest.mock("@mentra/crust", () => {
   const {crustModuleMock} = require("@/test-utils/mockCrustModule")
   return {
     __esModule: true,

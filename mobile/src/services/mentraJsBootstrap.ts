@@ -8,7 +8,7 @@
 
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {
   MentraJSCrashController,

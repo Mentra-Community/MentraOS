@@ -104,6 +104,45 @@ async function getSubjectToken(): Promise<{token: string; type: SubjectTokenType
   return {token: r.token, type: r.type as SubjectTokenType}
 }
 
+// Local-dev runtime token: when the runtime endpoint is a local cloud (localhost /
+// emulator loopback) in a __DEV__ build, the runtime can't verify a real Supabase
+// subject token, so fetch a dev runtime token from the local auth server instead of
+// exchanging the core token. Ported from the host cloudClient when the client moved
+// into island; a no-op for any real (non-local) cloud or release build.
+const LOCAL_AUTH_PORT = 3002
+let localDevRuntimeToken: {token: string; expiresAtMs: number} | null = null
+
+function shouldUseLocalDevRuntimeToken(endpoints: {runtime: string}): boolean {
+  if (!__DEV__) return false
+  try {
+    const host = new URL(endpoints.runtime).hostname
+    return host === "localhost" || host === "127.0.0.1" || host === "10.0.2.2"
+  } catch {
+    return false
+  }
+}
+
+async function getLocalDevRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string> {
+  const now = Date.now()
+  if (!opts?.forceRefresh && localDevRuntimeToken && localDevRuntimeToken.expiresAtMs - now > 60_000) {
+    return localDevRuntimeToken.token
+  }
+  const base = new URL(resolveEndpoints().runtime)
+  base.port = String(LOCAL_AUTH_PORT)
+  base.pathname = "/api/dev/runtime-token"
+  base.search = new URLSearchParams({userId: "local-phone-user", oemId: "mentra"}).toString()
+  const res = await fetch(base.toString())
+  if (!res.ok) {
+    throw new Error(`cloudClient: local dev runtime token failed (${res.status})`)
+  }
+  const body = (await res.json()) as {access_token?: string; expires_in?: number}
+  if (!body.access_token) {
+    throw new Error("cloudClient: local dev runtime token response missing access_token")
+  }
+  localDevRuntimeToken = {token: body.access_token, expiresAtMs: now + (body.expires_in ?? 300) * 1000}
+  return body.access_token
+}
+
 function toCloudClientStatusSnapshot(snapshot: RuntimeSnapshot): CloudClientStatusSnapshot {
   return {status: snapshot.status, audioTransport: snapshot.audioTransport}
 }
@@ -262,12 +301,17 @@ function construct(): void {
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
+  const coreAuth = {getSubjectToken}
+  const auth = shouldUseLocalDevRuntimeToken(endpoints)
+    ? {core: coreAuth, runtime: {getToken: getLocalDevRuntimeToken}}
+    : {core: coreAuth, runtime: {source: "core" as const}}
+
   client = new CloudClient({
     endpoints,
     // The phone LC3-encodes mic audio (even in phone/simulated mode); announce
     // LC3 at 16 kHz with the frame size the encoder emits.
     audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
-    auth: {getSubjectToken},
+    auth,
     logger: cloudLogger,
   })
 
@@ -373,6 +417,7 @@ export const cloudClientService = {
 
     const wasConnected = connected
     client = null
+    localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     if (wasConnected) notifyConnectionListeners(false)
@@ -392,6 +437,7 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     if (wasConnected) notifyConnectionListeners(false)

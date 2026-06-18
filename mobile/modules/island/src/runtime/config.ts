@@ -102,9 +102,9 @@ export interface CloudRuntimeAdapter {
 }
 
 /**
- * Cloud connection state surface used by LocalSttFallbackCoordinator to
- * decide when on-device STT should take over from cloud transcription.
- * Hosts wrap their own WebSocket-status store.
+ * Cloud connection state surface used by LocalSttFallbackCoordinator to decide when
+ * on-device STT should take over from cloud transcription. island's cloudClientService
+ * self-wires this from its own cloud-v2 liveness (no host injection).
  */
 export interface CloudConnectionAdapter {
   isConnected: () => boolean

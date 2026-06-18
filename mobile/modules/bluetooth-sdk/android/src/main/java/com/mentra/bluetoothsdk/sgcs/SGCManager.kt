@@ -77,6 +77,20 @@ abstract class SGCManager {
             width: Int? = null,
             height: Int? = null
     ): Boolean
+
+    /**
+     * Show text in a positioned container with an optional rounded border.
+     * G2-only capability; default no-op so other glasses ignore it.
+     */
+    open fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int = 0,
+            borderRadius: Int = 0
+    ) {}
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

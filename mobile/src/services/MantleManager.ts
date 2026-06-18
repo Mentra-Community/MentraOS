@@ -1,5 +1,5 @@
-import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk-internal"
-import CrustModule from "crust"
+import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"

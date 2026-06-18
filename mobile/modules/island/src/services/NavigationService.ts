@@ -11,7 +11,7 @@
  * Works on both Android and iOS via the native GoogleNavigation SDK.
  */
 
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"

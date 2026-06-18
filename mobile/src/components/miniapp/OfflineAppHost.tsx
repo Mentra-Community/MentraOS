@@ -46,6 +46,7 @@ interface OfflineAppHostProps {
   onExit: () => void
   /** Capture an app-switcher screenshot without exiting. */
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
 interface StackEntry {
@@ -53,7 +54,7 @@ interface StackEntry {
   params?: any
 }
 
-export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture}: OfflineAppHostProps) {
+export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture, showCapsule = false}: OfflineAppHostProps) {
   const def = offlineAppRegistry[packageName]
 
   const [stack, setStack] = useState<StackEntry[]>(() => (def ? [{path: def.initialRoute}] : []))
@@ -160,9 +161,10 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
       },
       handleRightPress: () => {
         onExitRef.current()
+        // wait until after the animation is complete to stop the miniapp:
         BgTimer.setTimeout(() => {
           useAppStatusStore.getState().stop(packageName)
-        }, 100)
+        }, 1000)
       },
     }
     useCapsuleStore.getState().setActive(registration)
@@ -229,7 +231,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
           )
         })}
       </ScreenStack>
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }

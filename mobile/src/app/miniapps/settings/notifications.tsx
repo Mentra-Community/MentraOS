@@ -1,4 +1,4 @@
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
 import Toast from "react-native-toast-message"

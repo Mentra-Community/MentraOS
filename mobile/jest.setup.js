@@ -750,7 +750,7 @@ jest.mock("@/services/WebSocketManager", () => {
 })
 
 // Mock crust native module to avoid native bridge errors
-jest.mock("crust", () => ({
+jest.mock("@mentra/crust", () => ({
   default: {
     addListener: jest.fn(() => ({remove: jest.fn()})),
     showAVRoutePicker: jest.fn(),

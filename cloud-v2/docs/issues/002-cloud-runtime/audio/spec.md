@@ -399,11 +399,11 @@ Things we looked at and chose not to build, so the reasoning isn't lost:
 
 ## What this assumes from other docs
 
-- **OEM auth (001).** A connecting phone has already obtained a
-  Mentra access token via the OEM auth flow. The audio path verifies
-  this token and uses `MentraUserId` from its claims. See
-  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) for the
-  token format and verification logic.
+- **Runtime auth (007).** A connecting phone presents a `cloud-runtime` token. The
+  audio path verifies this token against Runtime's configured issuer/JWKS list and
+  uses the normalized user id plus `oemId` from its claims. Hosted deployments may
+  obtain that runtime token through the Core/Auth OEM exchange; self-hosted
+  runtimes can trust the OEM's issuer directly.
 - **OEM portal (002).** Not directly assumed by the audio path. OEM
   registration happens through the portal; the audio path just sees
   the resulting issued tokens.
@@ -445,8 +445,10 @@ Things we looked at and chose not to build, so the reasoning isn't lost:
 
 ## Related work
 
-- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md), runtime OEM auth (issued
-  tokens; this spec consumes them)
+- [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md),
+  Runtime token issuer/JWKS verification model
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md),
+  OEM subject-token exchange Core/Auth can use to broker hosted Runtime tokens
 - [`../../005-websites/oem-portal/`](../../005-websites/oem-portal/), OEM admin portal
   (independent of audio path)
 - Future: e2e test infrastructure spec

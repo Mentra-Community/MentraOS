@@ -45,13 +45,14 @@ export interface HttpClient {
 /**
  * Dependencies for the helper.
  *
- * `getToken` is the default Bearer source (normally `cloud.auth.getAccessToken`).
+ * `getToken` is the default Bearer source (for example
+ * `cloud.auth.getRuntimeToken` or `cloud.auth.getCoreToken`).
  * It is optional because the auth module's own `/exchange` and `/refresh` calls
  * run before any access token exists; those calls pass `opts.bearer` directly.
  */
 export interface CreateHttpClientDeps {
   baseUrl: string;
-  // default Bearer source, usually cloud.auth.getAccessToken
+  // default Bearer source, usually cloud.auth.getRuntimeToken/getCoreToken
   getToken?: () => Promise<string>;
   logger: Logger;
 }

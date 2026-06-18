@@ -45,7 +45,7 @@ jest.mock("react-native-wifi-reborn", () => ({
 
 // Location-services check moved off @/utils/PermissionsUtils onto the crust native
 // module (CrustModule.isLocationServicesEnabled) when gallery sync moved into island.
-jest.mock("crust", () => ({
+jest.mock("@mentra/crust", () => ({
   __esModule: true,
   default: {
     isLocationServicesEnabled: jest.fn(() => Promise.resolve(true)),

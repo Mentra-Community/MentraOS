@@ -21,15 +21,15 @@ import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Neutral last-ditch fallbacks (reachable under `adb reverse`). Deliberately
-// NOT a personal LAN IP: those go stale the moment the laptop changes networks
-// and must never live in code or .env. The dev-laptop case is covered by the
-// METRO_AUTO sentinel / Metro-derived default below.
-const FALLBACK_CORE_URL = "http://localhost:3000"
-const FALLBACK_RUNTIME_URL = "http://localhost:3001"
+// Team-friendly defaults for dev builds. Local Cloud V2 is still one tap away
+// via the METRO_AUTO dev-settings preset; it should not be the invisible
+// default because it depends on a local stack plus adb reverse/LAN reachability.
+const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
+const LOCAL_AUTH_PORT = 3002
 
 function metroUrl(port: number): string | undefined {
   const host = devServerHost()
@@ -43,12 +43,11 @@ function metroUrl(port: number): string | undefined {
  *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
  *      changing networks;
  *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
- *   3. in dev, the Metro host (the machine serving this bundle);
- *   4. a neutral localhost fallback.
+ *   3. Cloud Dev — the default shared backend for team testing.
  * Read via the settings store's `getState()` accessor (not a hook) so this
  * service stays React-free.
  */
-function resolveUrl(settingKey: string, envValue: string | undefined, port: number, fallback: string): string {
+function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
   const override = useSettingsStore.getState().getSetting(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
     const trimmed = override.trim()
@@ -62,7 +61,7 @@ function resolveUrl(settingKey: string, envValue: string | undefined, port: numb
   const envUrl = envValue?.trim()
   if (envUrl) return envUrl
 
-  return (__DEV__ ? metroUrl(port) : undefined) ?? fallback
+  return defaultUrl
 }
 
 function coreUrl(): string {
@@ -70,7 +69,7 @@ function coreUrl(): string {
     SETTINGS.cloud_core_url.key,
     process.env.EXPO_PUBLIC_CLOUD_CORE_URL as string | undefined,
     CORE_PORT,
-    FALLBACK_CORE_URL,
+    DEFAULT_CORE_URL,
   )
 }
 
@@ -79,7 +78,7 @@ function runtimeUrl(): string {
     SETTINGS.cloud_runtime_url.key,
     process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL as string | undefined,
     RUNTIME_PORT,
-    FALLBACK_RUNTIME_URL,
+    DEFAULT_RUNTIME_URL,
   )
 }
 

@@ -7,7 +7,7 @@
  * MantleManager. Android-only; a no-op elsewhere. Started by `toolkit.start()`.
  */
 import {shallow} from "zustand/shallow"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
