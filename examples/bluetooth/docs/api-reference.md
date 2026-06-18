@@ -619,7 +619,7 @@ val started = sdk.startStream(
     StreamRequest(
         streamUrl = streamUrl,
         streamId = streamId,
-        video = StreamVideoConfig(frameRate = 15),
+        video = StreamVideoConfig(fps = 15),
     )
 )
 println("Stream started: ${started.status}")
@@ -636,7 +636,7 @@ let started = try await sdk.startStream(
     StreamRequest(
         streamUrl: streamUrl,
         streamId: streamId,
-        video: StreamVideoConfig(frameRate: 15)
+        video: StreamVideoConfig(fps: 15)
     )
 )
 print("Stream started: \(started.status)")
@@ -653,7 +653,7 @@ const started = await BluetoothSdk.startStream({
   type: 'start_stream',
   streamUrl,
   streamId,
-  video: {frameRate: 15},
+  video: {fps: 15},
 });
 console.log('Stream started', started.status);
 const stopped = await BluetoothSdk.stopStream();
