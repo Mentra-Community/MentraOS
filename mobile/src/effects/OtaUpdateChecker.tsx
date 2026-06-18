@@ -4,7 +4,6 @@ import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk-internal"
 import {useEffect, useRef} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {maybeFixGlassesClockFromVersionInfo} from "@/services/asg/glassesClockSync"
 import {
   getGlassesSystemTimeMs,
   isGlassesConnected,
@@ -17,7 +16,7 @@ import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import {BgTimer} from "@mentra/island"
+import {BgTimer, maybeFixGlassesClockFromVersionInfo} from "@mentra/island"
 
 export interface VersionInfo {
   versionCode: number

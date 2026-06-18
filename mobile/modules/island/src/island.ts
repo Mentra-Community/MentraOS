@@ -12,6 +12,7 @@ import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runti
 import {cloudClientService} from "./services/CloudClientService"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
+import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
 import {display} from "./facades/display"
@@ -20,6 +21,7 @@ import {session} from "./facades/session"
 import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
 import {incidents} from "./facades/incidents"
+import {ota} from "./facades/ota"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
@@ -49,6 +51,8 @@ export const toolkit = {
     // of the runtime reads). Established first so the stores are live before the
     // syncs below react to them.
     startGlassesStatusProjection()
+    // Project the glasses' OTA events into the store for the toolkit.ota read surface.
+    startOtaService()
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -59,6 +63,7 @@ export const toolkit = {
   async stop() {
     stopGlassesSettingsSync()
     stopGlassesStatusProjection()
+    stopOtaService()
     stopPhoneNotificationsSync()
     cloudClientService.stop()
     await bootstrapStop()
@@ -73,6 +78,8 @@ export const toolkit = {
   dev,
   /** Bug-report / feedback submission (island-owned RestComms). */
   incidents,
+  /** Firmware OTA read/observe surface (updateAvailable/status + on* subscriptions). */
+  ota,
   /** Miniapp lifecycle (the WebView bridge primitives are exported separately). */
   miniapps,
   /** First-time glasses discovery + pairing. */

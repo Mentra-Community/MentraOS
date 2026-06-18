@@ -1,9 +1,10 @@
 import {useGlassesStore} from "@/stores/glasses"
+// otaLegacyMapping moved into island; this jest mapping test imports it by path.
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
   otaStatusFromNormalized,
-} from "@/utils/otaLegacyMapping"
+} from "../../../modules/island/src/services/otaLegacyMapping"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 /**

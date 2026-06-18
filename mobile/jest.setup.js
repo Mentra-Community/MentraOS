@@ -258,6 +258,11 @@ jest.mock("@mentra/island", () => {
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
   const realGlassesStatusProjection = jest.requireActual("./modules/island/src/services/GlassesStatusProjection")
+  const realOtaService = jest.requireActual("./modules/island/src/services/OtaService")
+  // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
+  // from @mentra/island, so expose the real (pure) implementations through the mock.
+  const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
+  const realGallerySyncClock = jest.requireActual("./modules/island/src/services/gallerySyncClock")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
@@ -298,18 +303,26 @@ jest.mock("@mentra/island", () => {
     // + RestComms singleton — both moved into island.
     ...realSettings,
     restComms: realRestComms.default,
+    // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
+    fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
+    maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
+    detectClockSkew: realGallerySyncClock.detectClockSkew,
+    isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
+    CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
       configure: jest.fn(),
       start: jest.fn(() => {
         realGlassesStatusProjection.startGlassesStatusProjection()
+        realOtaService.startOtaService()
         realGlassesSettingsSync.startGlassesSettingsSync()
         realPhoneNotificationsSync.startPhoneNotificationsSync()
         return Promise.resolve()
       }),
       stop: jest.fn(() => {
         realGlassesStatusProjection.stopGlassesStatusProjection()
+        realOtaService.stopOtaService()
         realGlassesSettingsSync.stopGlassesSettingsSync()
         realPhoneNotificationsSync.stopPhoneNotificationsSync()
         return Promise.resolve()
@@ -461,6 +474,12 @@ jest.mock("@mentra/island", () => {
         uploadLogs: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
         uploadAttachments: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
         sendFeedback: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+      },
+      ota: {
+        updateAvailable: jest.fn(() => null),
+        status: jest.fn(() => null),
+        onUpdateAvailable: jest.fn(() => () => {}),
+        onStatus: jest.fn(() => () => {}),
       },
       stores: {
         glasses: realGlasses.useGlassesStore,

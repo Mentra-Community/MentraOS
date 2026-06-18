@@ -1,4 +1,4 @@
-import BluetoothSdk, {ButtonPressEvent, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
@@ -18,7 +18,6 @@ import socketComms from "@/services/SocketComms"
 import {cloudClient, cloudConfigValues} from "@/services/cloudClient"
 import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
-import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
@@ -40,11 +39,6 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
 import {useCoreStore} from "@/stores/core"
 import udp from "@/services/UdpManager"
-import {
-  legacyOtaProgressFromOtaStatusEvent,
-  normalizeOtaStatusEvent,
-  otaStatusFromNormalized,
-} from "@/utils/otaLegacyMapping"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
@@ -1046,80 +1040,10 @@ class MantleManager {
         }),
       )
 
-      this.subs.push(
-        BluetoothSdk.addListener("ota_update_available", (event) => {
-          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-            console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
-            return
-          }
-          console.log("📱 MANTLE: OTA update available from glasses:", event)
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            available: true,
-            versionCode: event.version_code ?? 0,
-            versionName: event.version_name ?? "",
-            updates: event.updates ?? [],
-            totalSize: event.total_size ?? 0,
-            cacheReady: event.cache_ready === true,
-          })
-          GlobalEventEmitter.emit("ota_update_available", {
-            versionCode: event.version_code,
-            versionName: event.version_name,
-            updates: event.updates,
-            totalSize: event.total_size,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("mtk_update_complete", (event) => {
-          console.log("MANTLE: MTK firmware update complete:", event.message)
-          GlobalEventEmitter.emit("mtk_update_complete", {
-            message: event.message,
-            timestamp: event.timestamp,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("ota_start_ack", (event) => {
-          console.log("MANTLE: ota_start_ack received from glasses")
-          GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("ota_status", (event) => {
-          const normalized = normalizeOtaStatusEvent(event as Record<string, unknown>)
-          const status: OtaStatus = otaStatusFromNormalized(normalized)
-          useGlassesStore.getState().setOtaStatus(status)
-          // Emit before legacy progress: setOtaProgress can throw (e.g. JSON.stringify in store);
-          // native logs would still show while RN UI would stay on "Starting update…".
-          GlobalEventEmitter.emit("ota_status", status)
-          try {
-            useGlassesStore.getState().setOtaProgress(legacyOtaProgressFromOtaStatusEvent(normalized))
-          } catch (err) {
-            console.warn("MANTLE: ota_status legacy otaProgress mapping failed", err)
-          }
-
-          if (status.status === "failed") {
-            const raw = event as Record<string, unknown>
-            const glassesTimeMs = Number(raw.glasses_time_ms ?? raw.glassesTimeMs ?? 0) || undefined
-            const errorCode = normalized.error_message
-            if (
-              errorCode === "clock_skew" ||
-              (errorCode === "ssl_error" && typeof glassesTimeMs === "number" && Number.isFinite(glassesTimeMs))
-            ) {
-              handleOtaClockSkewFromGlasses(errorCode, glassesTimeMs).catch((err) => {
-                console.warn("MANTLE: OTA clock skew auto-fix failed", err)
-              })
-            }
-          }
-
-          if (status.status === "complete" || status.status === "failed") {
-            useGlassesStore.getState().setOtaUpdateAvailable(null)
-          }
-        }),
-      )
+      // (The OTA BLE event handlers — ota_update_available / mtk_update_complete /
+      // ota_start_ack / ota_status → island stores + clock-skew auto-fix — moved into
+      // island's OtaService, started by toolkit.start(), behind the toolkit.ota read
+      // surface. Removed here to avoid double-handling.)
     }
 
     // one time get all:
