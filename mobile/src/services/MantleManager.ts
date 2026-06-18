@@ -209,15 +209,10 @@ class MantleManager {
       // IP (the bundle host is, by construction, reachable right now).
       devServerHost: () => devServerHost(),
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
-      sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
+      // sendDisplayEvent / restartTranscriber / setMicRequirements moved into island
+      // (LocalDisplayManager / LocalSttFallbackCoordinator / MicStateCoordinator call
+      // BluetoothSdk directly) — no longer host hooks.
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
-      restartTranscriber: () => BluetoothSdk.restartTranscriber(),
-      setMicRequirements: (requirements) =>
-        BluetoothSdk.updateBluetoothSettings({
-          should_send_pcm: requirements.shouldSendPcm,
-          should_send_lc3: requirements.shouldSendLc3,
-          should_send_transcript: requirements.shouldSendTranscript,
-        }),
       // photo capture + video recording moved into island (PhonePhotoCoordinator /
       // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
       // (The photo_response error-routing listener below still drives the coordinator.)

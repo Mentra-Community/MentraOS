@@ -364,26 +364,15 @@ export interface RuntimeHooks {
    * can leave this unset.
    */
   setDisplayEvent?: (event: string) => void
-  /**
-   * Send a processed display event to the connected glasses through the host's
-   * native Bluetooth bridge.
-   */
-  sendDisplayEvent?: (event: Record<string, unknown>) => Promise<void> | void
+  // Display output (sendDisplayEvent), the local-transcriber restart (restartTranscriber),
+  // and the mic control plane (setMicRequirements) moved into island — the runtime calls
+  // BluetoothSdk directly (LocalDisplayManager / LocalSttFallbackCoordinator /
+  // MicStateCoordinator) — no longer host hooks.
   /**
    * Subscribe to host glasses-status changes when the runtime needs live
    * device-model updates. Returns an unsubscribe function.
    */
   subscribeGlassesStatus?: (onChange: (changed: Partial<GlassesSnapshot>) => void) => () => void
-  /**
-   * Restart the host-managed local transcriber. The runtime only decides when
-   * local STT is needed; the host owns the native STT implementation.
-   */
-  restartTranscriber?: () => Promise<void> | void
-  /**
-   * Apply the union of cloud and local microphone requirements through the
-   * host's native Bluetooth bridge.
-   */
-  setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
   // Photo capture + video recording + camera FOV moved into island (PhonePhotoCoordinator
   // / PhoneVideoCoordinator + a direct BluetoothSdk.setCameraFov call) — no longer host hooks.
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */

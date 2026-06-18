@@ -19,6 +19,7 @@
  * is off.
  */
 
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import displayProcessor from "./DisplayProcessor"
 import {getRuntimeHooks} from "../runtime/config"
 import {BgTimer} from "../utils/timers"
@@ -381,12 +382,13 @@ class LocalDisplayManager {
     }
 
     try {
-      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
-      if (sendDisplayEvent) {
-        void Promise.resolve(sendDisplayEvent(processedEvent)).catch((err) => {
-          console.error(`${LOG_TAG}: native display failed:`, err)
-        })
-      }
+      // The display output path is a direct btsdk call now (was a host sendDisplayEvent
+      // hook) so a bare OEM renders to the glasses without wiring it.
+      void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+        console.error(`${LOG_TAG}: native display failed:`, err)
+      })
+      // setDisplayEvent stays a host hook — it feeds the host's on-screen glasses-mirror
+      // UI (a host concern; unset on installed-only / OEM hosts).
       getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)
