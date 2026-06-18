@@ -92,7 +92,7 @@ export class MentraAuth {
   private readonly algorithms: string[];
   private readonly clockTolerance: string | number;
   private readonly jwksUrl: string;
-  private jwks: ReturnType<typeof jose.createRemoteJWKSet> | null = null;
+  private readonly jwks: ReturnType<typeof jose.createRemoteJWKSet>;
 
   constructor(options: MentraAuthOptions = {}) {
     this.packageName = resolvePackageName(options.packageName);
@@ -161,9 +161,6 @@ export class MentraAuth {
   }
 
   private getJwks(): ReturnType<typeof jose.createRemoteJWKSet> {
-    if (!this.jwks) {
-      this.jwks = jose.createRemoteJWKSet(new URL(this.jwksUrl));
-    }
     return this.jwks;
   }
 }
