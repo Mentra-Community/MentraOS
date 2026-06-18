@@ -63,13 +63,13 @@ export function TranslationItem({translation, isFirst, isLast, showOriginalText 
       </div>
 
       {showOriginalText && translation.originalText && (
-        <p className="self-stretch text-gray-500 text-sm font-normal font-['Red_Hat_Display'] leading-5">
+        <p className="selectable-text self-stretch text-gray-500 text-sm font-normal font-['Red_Hat_Display'] leading-5">
           {translation.originalText}
         </p>
       )}
 
       <p
-        className={`self-stretch text-gray-900 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
+        className={`selectable-text self-stretch text-gray-900 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
           translation.isFinal ? "" : "italic"
         }`}>
         {translation.text}

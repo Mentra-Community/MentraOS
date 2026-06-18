@@ -108,17 +108,17 @@ export function TargetLanguageSelector({
       <div className="p-6 bg-zinc-100 shrink-0">
         <div className="flex gap-4">
           <button
+            onClick={onCancel}
+            disabled={saving}
+            className="flex-1 py-3.5 bg-white text-gray-900 border border-gray-200 rounded-full font-bold text-lg font-['Red_Hat_Display'] shadow-sm hover:bg-gray-50 transition-colors">
+            Cancel
+          </button>
+          <button
             onClick={handleSave}
             disabled={saving}
             className="flex-1 py-3.5 rounded-full font-bold text-lg font-['Red_Hat_Display'] shadow-sm transition-colors disabled:opacity-50"
             style={{backgroundColor: accentColor, color: accentForeground}}>
             {saving ? "Saving..." : "Save"}
-          </button>
-          <button
-            onClick={onCancel}
-            disabled={saving}
-            className="flex-1 py-3.5 bg-white text-gray-900 border border-gray-200 rounded-full font-bold text-lg font-['Red_Hat_Display'] shadow-sm hover:bg-gray-50 transition-colors">
-            Cancel
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@ import {useEffect, useMemo, useState, type CSSProperties, type ReactNode} from "
 import {useSafeArea} from "@mentra/miniapp/ui"
 
 import MergeLogo from "./assets/merge_logo.png"
+import {useDeveloperMode, type HoldHandlers} from "./useDeveloperMode"
 
 import type {
   AnswerLanguage,
@@ -50,8 +51,10 @@ const MERGE_ACTIVE_STYLE: CSSProperties = {
   boxShadow: "0 8px 20px rgba(244, 93, 139, 0.24)",
 }
 
+// Flat white so the safe-area insets match the white app bar below them
+// instead of showing a blue→violet→pink gradient behind the status bar.
 const MERGE_SHELL_STYLE: CSSProperties = {
-  background: `linear-gradient(135deg, ${MERGE_COLORS.sky} 0%, ${MERGE_COLORS.violet} 48%, ${MERGE_COLORS.pink} 100%)`,
+  background: MERGE_COLORS.surface,
 }
 
 type MergeTab = "insights" | "settings"
@@ -62,6 +65,7 @@ export function App() {
   const {insets, capsuleMenu} = useSafeArea()
   const [activeTab, setActiveTab] = useState<MergeTab>("insights")
   const [showDeveloperInfo, setShowDeveloperInfo] = useState(false)
+  const {developerMode, holdHandlers} = useDeveloperMode()
   const [transcripts, setTranscripts] = useState<MergeTranscript[]>([])
   const [insights, setInsights] = useState<MergeInsight[]>([])
   const [decisions, setDecisions] = useState<MergeDecision[]>([])
@@ -153,12 +157,9 @@ export function App() {
           <div className="flex items-center gap-3 min-w-0">
             <img src={MergeLogo} alt="" className="h-10 w-10 flex-shrink-0" />
             <div className="min-w-0">
-              <h1 className="m-0 text-xl font-bold truncate">Local Merge</h1>
+              <h1 className="m-0 text-xl font-bold truncate">Merge</h1>
               <p className="m-0 mt-0.5 text-sm text-[#6b7280] truncate">
-                <span>{processing ? "Thinking..." : insights.length > 0 ? "Listening for useful context" : "Listening"}</span>
-                <span className="ml-2 text-[11px] font-semibold uppercase tracking-normal text-zinc-300">
-                  F {finalCount} · I {interimCount}
-                </span>
+                {processing ? "Thinking..." : insights.length > 0 ? "Listening for useful context" : "Listening"}
               </p>
             </div>
           </div>
@@ -177,6 +178,7 @@ export function App() {
             {activeTab === "settings" ? (
               <SettingsView
                 settings={settings}
+                developerMode={developerMode}
                 onFrequencyChange={(frequency) => {
                   setSettings((current) => ({...current, frequency}))
                   mentra.send("merge:set-frequency", {frequency})
@@ -196,6 +198,7 @@ export function App() {
                 cloudPresentation={cloudPresentation}
                 backendPresentation={backendPresentation}
                 lastError={lastError}
+                developerMode={developerMode}
               />
             )}
           </div>
@@ -205,6 +208,7 @@ export function App() {
           <BottomNav
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            settingsHoldHandlers={holdHandlers}
           />
         )}
       </div>
@@ -220,6 +224,7 @@ function InsightsView({
   cloudPresentation,
   backendPresentation,
   lastError,
+  developerMode,
 }: {
   insights: MergeInsight[]
   decisions: MergeDecision[]
@@ -228,6 +233,7 @@ function InsightsView({
   cloudPresentation: Presentation
   backendPresentation: BackendPresentation
   lastError: string | null
+  developerMode: boolean
 }) {
   const [mode, setMode] = useState<InsightsMode>("insights")
   const [expandedInsightId, setExpandedInsightId] = useState<string | null>(null)
@@ -235,15 +241,17 @@ function InsightsView({
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <section className="px-4 py-2 bg-white border-b border-[#e3e7e6]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
-            <StatusPill label={cloudPresentation.label} detail={cloudPresentation.detail} color={cloudPresentation.accentColor} />
-            <StatusPill label={backendPresentation.label} detail={backendPresentation.detail} color={backendPresentation.dotColor} />
+      {developerMode && (
+        <section className="px-4 py-2 bg-white border-b border-[#e3e7e6]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+              <StatusPill label={cloudPresentation.label} detail={cloudPresentation.detail} color={cloudPresentation.accentColor} />
+              <StatusPill label={backendPresentation.label} detail={backendPresentation.detail} color={backendPresentation.dotColor} />
+            </div>
+            <ModeSwitch mode={mode} onModeChange={setMode} />
           </div>
-          <ModeSwitch mode={mode} onModeChange={setMode} />
-        </div>
-      </section>
+        </section>
+      )}
 
       <main className="flex-1 min-h-0 overflow-y-auto px-5 pb-4">
         {mode === "activity" ? (
@@ -281,28 +289,32 @@ function InsightsView({
         )}
       </main>
 
-      <LiveDebugTray
-        latestTranscript={latestTranscript}
-        latestDecision={latestDecision}
-        cloudPresentation={cloudPresentation}
-        backendPresentation={backendPresentation}
-        lastError={lastError}
-        onOpenActivity={() => {
-          setMode("activity")
-          setExpandedDecisionId(latestDecision?.id ?? null)
-        }}
-      />
+      {developerMode && (
+        <LiveDebugTray
+          latestTranscript={latestTranscript}
+          latestDecision={latestDecision}
+          cloudPresentation={cloudPresentation}
+          backendPresentation={backendPresentation}
+          lastError={lastError}
+          onOpenActivity={() => {
+            setMode("activity")
+            setExpandedDecisionId(latestDecision?.id ?? null)
+          }}
+        />
+      )}
     </div>
   )
 }
 
 function SettingsView({
   settings,
+  developerMode,
   onFrequencyChange,
   onAnswerLanguageChange,
   onOpenDeveloperInfo,
 }: {
   settings: MergeSettings
+  developerMode: boolean
   onFrequencyChange: (frequency: FrequencyMode) => void
   onAnswerLanguageChange: (answerLanguage: AnswerLanguage) => void
   onOpenDeveloperInfo: () => void
@@ -367,11 +379,13 @@ function SettingsView({
         </div>
       </section>
 
-      <button
-        className="w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors"
-        onClick={onOpenDeveloperInfo}>
-        Developer info
-      </button>
+      {developerMode && (
+        <button
+          className="w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors"
+          onClick={onOpenDeveloperInfo}>
+          Developer info
+        </button>
+      )}
     </div>
   )
 }
@@ -424,16 +438,22 @@ function DeveloperInfo({
 function BottomNav({
   activeTab,
   onTabChange,
+  settingsHoldHandlers,
 }: {
   activeTab: MergeTab
   onTabChange: (tab: MergeTab) => void
+  settingsHoldHandlers?: HoldHandlers
 }) {
   return (
-    <div className="w-full h-14 py-3 bg-white/80 rounded-tl-2xl rounded-tr-2xl backdrop-blur-lg flex justify-center items-end">
+    <div className="w-full h-14 bg-white/80 rounded-tl-2xl rounded-tr-2xl backdrop-blur-lg flex justify-center items-stretch">
       <NavButton active={activeTab === "insights"} label="Insights" onClick={() => onTabChange("insights")}>
         <InsightsIcon active={activeTab === "insights"} />
       </NavButton>
-      <NavButton active={activeTab === "settings"} label="Settings" onClick={() => onTabChange("settings")}>
+      <NavButton
+        active={activeTab === "settings"}
+        label="Settings"
+        onClick={() => onTabChange("settings")}
+        holdHandlers={settingsHoldHandlers}>
         <SettingsIcon active={activeTab === "settings"} />
       </NavButton>
     </div>
@@ -444,23 +464,32 @@ function NavButton({
   active,
   label,
   onClick,
+  holdHandlers,
   children,
 }: {
   active: boolean
   label: string
   onClick: () => void
+  holdHandlers?: HoldHandlers
   children: ReactNode
 }) {
+  // The button fills its flex cell so the touch target spans the full nav-bar
+  // height and half its width; the active pill stays icon-sized inside it.
   return (
-    <div className="flex-1 inline-flex flex-col justify-start items-center gap-1">
-      <button
-        aria-label={label}
-        onClick={onClick}
+    <button
+      aria-label={label}
+      onClick={onClick}
+      onPointerDown={holdHandlers?.onPointerDown}
+      onPointerUp={holdHandlers?.onPointerUp}
+      onPointerLeave={holdHandlers?.onPointerLeave}
+      onPointerCancel={holdHandlers?.onPointerCancel}
+      className="flex-1 inline-flex justify-center items-center">
+      <span
         className="w-12 h-7 p-2 rounded-3xl inline-flex justify-center items-center transition-colors"
         style={active ? MERGE_ACTIVE_STYLE : {backgroundColor: "transparent"}}>
         {children}
-      </button>
-    </div>
+      </span>
+    </button>
   )
 }
 
@@ -521,7 +550,9 @@ function InsightCard({
             </div>
           </div>
         </div>
-        <p className="m-0 text-base leading-6 text-[#202928] whitespace-pre-wrap break-words">{insight.text}</p>
+        <p className="selectable-text m-0 text-base leading-6 text-[#202928] whitespace-pre-wrap break-words">
+          {insight.text}
+        </p>
       </button>
 
       {expanded ? (
