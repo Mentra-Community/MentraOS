@@ -135,6 +135,15 @@ export type OsmLineMapOptions = {
   marker?: {at: LatLng; headingDeg: number} | null
   /** Arrow size in target pixels (tip-to-base length). Default 9. */
   markerSizePx?: number
+  /**
+   * Heading-up rotation. When set, the whole map is rotated so this compass
+   * bearing (0 = north, 90 = east) points UP on the display — i.e. the map
+   * faces the user's direction of travel. Pass the route's forward bearing to
+   * keep "the way you're going" always at the top. When omitted/null the map
+   * is drawn north-up (legacy behaviour). The heading marker is drawn pointing
+   * straight up in this mode, since the rotation already aligns it with travel.
+   */
+  rotationDeg?: number | null
 }
 
 /**
@@ -207,11 +216,24 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
   const cx = hiW / 2
   const cy = hiH / 2
 
+  // Heading-up rotation. Rotate the local-meter frame so the given compass
+  // bearing points up. A bearing θ has world vector (sinθ, cosθ) in (east,
+  // north); to bring it onto +north we rotate every point by −θ. cos/sin are
+  // hoisted out of the per-point hot path. rot==null → identity (north-up).
+  const rotDeg = opts.rotationDeg ?? null
+  const rotRad = rotDeg != null ? (-rotDeg * Math.PI) / 180 : 0
+  const rCos = Math.cos(rotRad)
+  const rSin = Math.sin(rotRad)
+
   const project = (p: LatLng): {x: number; y: number} => {
     const m = toLocalMeters(p, center)
+    // Rotate the (east, north) meter vector before projecting to pixels so the
+    // chosen bearing ends up pointing up.
+    const ex = m.x * rCos - m.y * rSin
+    const ny = m.x * rSin + m.y * rCos
     return {
-      x: cx + m.x * pxPerMeter,
-      y: cy - m.y * pxPerMeter, // Y flipped: north is up
+      x: cx + ex * pxPerMeter,
+      y: cy - ny * pxPerMeter, // Y flipped: north(-of-rotated-frame) is up
     }
   }
 
@@ -241,7 +263,11 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
     const c = project(marker.at)
     const size = (opts.markerSizePx ?? 14) * ss
     // Bearing 0 = north = up (−y). Rotate the arrow's local geometry by it.
-    const rad = (marker.headingDeg * Math.PI) / 180
+    // In heading-up mode the map is already rotated to travel direction, so the
+    // arrow points straight up (effective bearing = headingDeg − rotationDeg,
+    // which is ~0 when the marker uses the same bearing the map is rotated to).
+    const effHeading = rotDeg != null ? marker.headingDeg - rotDeg : marker.headingDeg
+    const rad = (effHeading * Math.PI) / 180
     const sin = Math.sin(rad)
     const cos = Math.cos(rad)
     // Local arrow (pointing up): tip ahead, two base corners behind.

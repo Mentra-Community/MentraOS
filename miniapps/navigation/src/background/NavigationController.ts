@@ -746,6 +746,28 @@ export class NavigationController {
       }
     }, 250)
     this.unsubs.push(() => clearTimeout(handle))
+
+    // Steady HUD tick while navigating. The distance-to-next-turn and
+    // total-distance-remaining are recomputed inside refreshHUD() from
+    // `this.coords`, but refreshHUD() is otherwise only called when a
+    // GPS fix arrives. On Android the location stream batches/stutters
+    // (power-save, urban canyon, indoor), so fixes can lag several
+    // seconds — and the displayed meters freeze in the gap, going stale
+    // while the user is clearly still moving. Recompute on a fixed ~1s
+    // cadence so the numbers decrement smoothly regardless of GPS
+    // jitter. Gated on `trip.running` so we don't repaint when idle, and
+    // refreshHUD()'s own coalescing (identical-frame + 3s window)
+    // prevents redundant pushes when nothing actually changed.
+    const HUD_TICK_MS = 1000
+    const tick = setInterval(() => {
+      if (!this.trip.running) return
+      try {
+        this.refreshHUD()
+      } catch {
+        /* ignore */
+      }
+    }, HUD_TICK_MS)
+    this.unsubs.push(() => clearInterval(tick))
   }
 
   // ── G2 touch gestures ────────────────────────────────────────────────
@@ -1111,6 +1133,11 @@ export class NavigationController {
     // heading when there's no route to follow.
     const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
     const markerHeading = routeBearing ?? this.heading
+    // Heading-up: rotate the whole minimap so the direction of travel (route
+    // forward, or live compass heading as fallback) points UP. From the moment
+    // the route starts the road ahead is at the top of the HUD, instead of the
+    // map sitting north-up until the user turns. Null when we have no bearing
+    // yet (renderer falls back to north-up for that frame).
     const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
       center: me,
       width: this.OSM_MINIMAP_SIZE,
@@ -1118,6 +1145,7 @@ export class NavigationController {
       viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
       lineWidthPx: 2,
       route: this.trip.routePoints,
+      rotationDeg: markerHeading,
       marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
     })
     // Live trip stats in the bottom-left: distance remaining + ETA, both of which
@@ -1488,7 +1516,10 @@ export class NavigationController {
       })
       const steps = res.routes?.[0]?.steps
       if (!steps || steps.length === 0) return
-      this.cachedInstructions = steps.map((s) => s.instruction ?? "")
+      // Strip the trailing "Destination will be on the left/right" hint,
+      // same as the onRoute cache path — this refetch path was leaking
+      // it straight into the HUD instructions.
+      this.cachedInstructions = steps.map((s) => cleanInstruction(s.instruction))
       // Re-zip into the current live routeSteps so the UI updates.
       const live = this.trip.routeSteps
       if (live && live.length > 0) {
@@ -1680,7 +1711,7 @@ function cleanInstruction(raw: string | null | undefined): string {
   // a preceding " | " or ". " delimiter). Trim trailing whitespace
   // and stray punctuation left behind by the removal.
   return raw
-    .replace(/\s*[|.]?\s*destination will be on the (left|right)\s*\.?\s*$/i, "")
+    .replace(/\s*[|.]?\s*(?:your\s+)?destination will be on the (left|right)\s*\.?\s*$/i, "")
     .trim()
 }
 
