@@ -37,6 +37,7 @@ import {isGlassesConnected} from "./GlassesReadiness"
 import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
 import {useGlassesStore} from "../stores/glasses"
+import {useSettingsStore} from "../stores/settings"
 import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
@@ -1001,7 +1002,7 @@ class LocalMiniappRuntime {
     existing.lastPongAt = Date.now()
 
     // Read current glasses capabilities from the settings store
-    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(ISLAND_SETTINGS_KEYS.defaultWearable)
+    const defaultWearable = (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as DeviceTypes | undefined)
     const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
 
     // Build the declared-permission record for the SDK's session.permissions
@@ -1716,7 +1717,7 @@ class LocalMiniappRuntime {
   // ---------------------------------------------------------------------------
 
   private getStorageKeyPrefix(packageName: string): string {
-    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
+    const userId = (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) as string | undefined) || "anonymous"
     return `mentraos_localstorage_${userId}_${packageName}_`
   }
 
@@ -1943,7 +1944,7 @@ class LocalMiniappRuntime {
       // runtime hook — a pure BluetoothSdk.setCameraFov passthrough with no host coupling).
       const result = await BluetoothSdk.setCameraFov(request)
 
-      getRuntimeHooks().settings?.setSetting(
+      useSettingsStore.getState().setSetting(
         ISLAND_SETTINGS_KEYS.cameraFov,
         {fov: result.fov, roi_position: CAMERA_ROI_POSITION_VALUES[result.roiPosition]},
         false,
@@ -2535,7 +2536,7 @@ class LocalMiniappRuntime {
       this.broadcastCloudStatus()
     })
 
-    getRuntimeHooks().settings?.subscribeKey?.<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive, () => {
+    useSettingsStore.subscribe((s) => s.getSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive), () => {
       this.broadcastCloudStatus()
     })
   }
@@ -2546,7 +2547,7 @@ class LocalMiniappRuntime {
       audioTransport: "none",
     }
     const fallbackActive =
-      getRuntimeHooks().settings?.getSetting<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive) === true
+      (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive) as boolean | undefined) === true
     return {
       status: base.status,
       audioTransport: fallbackActive ? "offline" : base.audioTransport,

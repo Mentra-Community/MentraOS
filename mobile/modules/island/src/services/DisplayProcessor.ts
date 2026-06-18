@@ -27,8 +27,9 @@ import {
   type BreakMode,
 } from "../utils/display"
 
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {ISLAND_SETTINGS_KEYS} from "../runtime/config"
 import {useGlassesStore} from "../stores/glasses"
+import {useSettingsStore} from "../stores/settings"
 import {isGlassesConnected} from "./GlassesReadiness"
 
 // =============================================================================
@@ -309,13 +310,11 @@ export class DisplayProcessor {
       return
     }
 
-    const hooks = getRuntimeHooks()
-    if (!hooks.settings) {
-      // Settings hook not configured yet; bail and let the host call us back after configureRuntime().
-      return
-    }
-
-    const defaultWearable = hooks.settings?.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as string | undefined
+    // Seed the device profile from the saved default wearable, read off the island
+    // settings store directly (was a host settings hook).
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | string
+      | undefined
     if (defaultWearable) {
       this.setDeviceModel(defaultWearable)
       console.log(`DISPLAY_PROCESSOR: Initialized DisplayProcessor with default wearable: ${defaultWearable}`)

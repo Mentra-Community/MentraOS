@@ -149,15 +149,8 @@ export interface StoreAccessor<T> {
   get: () => T
 }
 
-export interface SettingsAccessor {
-  getSetting: <T = unknown>(key: string) => T | undefined
-  setSetting: <T = unknown>(key: string, value: T, persistImmediately?: boolean) => void
-  /**
-   * Subscribe to changes for one setting key. Returns an unsubscribe fn.
-   * Optional — coordinators that only read settings on demand can skip it.
-   */
-  subscribeKey?: <T = unknown>(key: string, onChange: (value: T | undefined) => void) => () => void
-}
+// Settings read/subscribe moved into island — the runtime reads useSettingsStore
+// directly (the host hook just re-wrapped that same store) — no longer a hook.
 
 /**
  * Stable settings keys read by island services. Hosts must wire their own
@@ -341,7 +334,6 @@ export interface RuntimeHooks {
    * Core/runtime credentials; this adapter returns only miniapp tokens.
    */
   miniappAuth?: MiniappAuthAdapter
-  settings?: SettingsAccessor
   // Device heading / compass moved into island (HeadingService, subscribed
   // directly by the runtime) — no longer a host-provided hook.
   // Location-tier + GPS task moved into island (PhoneLocationService) — no longer a hook.
