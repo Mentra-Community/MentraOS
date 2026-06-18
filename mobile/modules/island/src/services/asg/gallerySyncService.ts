@@ -5,34 +5,30 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import NetInfo from "@react-native-community/netinfo"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "../../../../bluetooth-sdk/build/_internal"
+import CrustModule from "crust"
 import {AppState, AppStateStatus, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
-import {useGallerySyncStore, HotspotInfo} from "@/stores/gallerySync"
-import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
-import {PhotoInfo, CaptureGroup} from "@/types/asg"
-import {showAlert} from "@/utils/AlertUtils"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {BgTimer, fixGlassesClockIfSkewed, detectClockSkew, isSyncManifestEmpty} from "@mentra/island"
-import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import {useGallerySyncStore, HotspotInfo} from "../../stores/gallerySync"
+import {selectGlassesConnected, useGlassesStore} from "../../stores/glasses"
+import {isGlassesConnected} from "../GlassesReadiness"
+import {SETTINGS, useSettingsStore} from "../../stores/settings"
+import {PhotoInfo, CaptureGroup} from "../../types/asg"
+import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
+import {BgTimer} from "../../utils/timers"
+import {fixGlassesClockIfSkewed} from "../glassesClockSync"
+import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
+import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
+import {permissions, PermissionFeatures} from "../../facades/permissions"
 
-import {translate} from "@/i18n"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
-import {
-  checkConnectivityRequirementsUI,
-  checkFeaturePermissions,
-  requestFeaturePermissions,
-  PermissionFeatures,
-  isLocationServicesEnabled,
-} from "@/utils/PermissionsUtils"
+import {emitGalleryNotice} from "./galleryNotices"
 
 // Timing constants
 const TIMING = {
@@ -416,23 +412,12 @@ class GallerySyncService {
       return
     }
 
-    // Reuse shared connectivity gate (BT + Android location); shows the right alert if not ready
-    const connectivityOk = await checkConnectivityRequirementsUI()
-    if (this.shouldAbortPreFlight()) {
-      console.log("[GallerySyncService] Pre-flight aborted after connectivity check")
-      return
-    }
-    if (!connectivityOk) {
-      console.warn("[GallerySyncService] Sync aborted - connectivity requirements not met")
-      store.setSyncError("Connectivity requirements not met")
-      return
-    }
-
-    // Check if glasses are connected (store-based, secondary check)
+    // The BT + Android-location connectivity gate now runs host-side before sync() is
+    // triggered (it shows host UI); island only does the store-based glasses check.
     if (!glassesConnected) {
       console.warn("[GallerySyncService] Sync aborted - Glasses not connected")
       store.setSyncError("Glasses not connected")
-      showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+      emitGalleryNotice({code: "glasses_disconnected"})
       return
     }
 
@@ -459,10 +444,10 @@ class GallerySyncService {
 
     // 2. Location permission (required to read WiFi SSID for hotspot verification)
     console.log("[GallerySyncService]   📍 Checking location permission...")
-    const hasLocationPermission = await checkFeaturePermissions(PermissionFeatures.LOCATION)
+    const hasLocationPermission = await permissions.check(PermissionFeatures.LOCATION)
     if (!hasLocationPermission) {
       console.log("[GallerySyncService]   ⚠️ Location permission not granted - requesting...")
-      const granted = await requestFeaturePermissions(PermissionFeatures.LOCATION)
+      const granted = await permissions.request(PermissionFeatures.LOCATION)
       if (!granted) {
         console.warn("[GallerySyncService]   ❌ Location permission denied - WiFi SSID verification may fail")
         // Don't block sync - we'll try anyway and fall back to IP-based verification if needed
@@ -509,11 +494,7 @@ class GallerySyncService {
       console.log(`[GallerySyncService]   💾 Free disk space: ${freeSpaceMB.toFixed(0)} MB`)
       if (fsInfo.freeSpace < 500 * 1024 * 1024) {
         console.error("[GallerySyncService]   ❌ Insufficient disk space (<500MB)")
-        showAlert(
-          "Insufficient Storage",
-          `Only ${freeSpaceMB.toFixed(0)} MB free. Please free up at least 500 MB before syncing.`,
-          [{text: "OK"}],
-        )
+        emitGalleryNotice({code: "insufficient_storage", data: {freeSpaceMB: Math.round(freeSpaceMB)}})
         store.setSyncError("Insufficient storage space")
         return
       }
@@ -542,10 +523,7 @@ class GallerySyncService {
           )}s remaining) - showing wait message`,
         )
 
-        showAlert("Please Wait", "WiFi is initializing. Please wait a moment before trying to sync again.", [
-          {text: "OK"},
-        ])
-
+        emitGalleryNotice({code: "wifi_initializing"})
         return
       } else {
         // Cooldown expired, clear the timestamp
@@ -577,32 +555,12 @@ class GallerySyncService {
           // Mark that we're waiting for WiFi so we can auto-retry when user returns
           this.waitingForWifiRetry = true
 
-          // Show styled alert with option to open settings
-          showAlert(
-            "WiFi is Disabled",
-            "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => {
-                  this.waitingForWifiRetry = false
-                  this.wifiSettingsOpenedAt = null
-                  store.setSyncError("WiFi disabled - enable WiFi and try again")
-                },
-              },
-              {
-                text: "Open Settings",
-                onPress: async () => {
-                  // Set timestamp so we can enforce cooldown on next sync attempt
-                  this.wifiSettingsOpenedAt = Date.now()
-                  await SettingsNavigationUtils.openWifiSettings()
-                  store.setSyncError("Enable WiFi and try sync again")
-                },
-              },
-            ],
-            {cancelable: false},
-          )
+          // Emit a notice; the host shows the "enable WiFi → open settings" alert. Set the
+          // cooldown timestamp optimistically so the next sync shows "WiFi initializing"
+          // (the host opens settings in response to this notice).
+          this.wifiSettingsOpenedAt = Date.now()
+          emitGalleryNotice({code: "wifi_off"})
+          store.setSyncError("WiFi disabled - enable WiFi and try again")
 
           // Return early - do NOT proceed with sync
           return
@@ -628,36 +586,16 @@ class GallerySyncService {
     if (Platform.OS === "android") {
       console.log("[GallerySyncService]   📍 Checking Location Services status...")
       try {
-        const locationServicesEnabled = await isLocationServicesEnabled()
+        const locationServicesEnabled = await CrustModule.isLocationServicesEnabled()
         console.log("[GallerySyncService]   📍 Location Services enabled:", locationServicesEnabled)
 
         if (!locationServicesEnabled) {
           console.error("[GallerySyncService]   ❌ Location Services is OFF - cannot sync")
           console.error("[GallerySyncService]   ❌ Android requires Location Services for WiFi operations")
 
-          // Show styled alert with option to enable location services
-          showAlert(
-            "Location Services Required",
-            "Android requires Location Services to be enabled to connect to your glasses WiFi hotspot. Would you like to enable it?",
-            [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => {
-                  store.setSyncError("Location Services disabled - enable in Settings and try again")
-                },
-              },
-              {
-                text: "Enable",
-                onPress: async () => {
-                  // Use the native dialog for better UX (shows in-app prompt on supported devices)
-                  await SettingsNavigationUtils.showLocationServicesDialog()
-                  store.setSyncError("Enable Location Services and try sync again")
-                },
-              },
-            ],
-            {cancelable: false},
-          )
+          // Emit a notice; the host shows the "enable Location Services" alert + dialog.
+          emitGalleryNotice({code: "location_services_off"})
+          store.setSyncError("Location Services disabled - enable in Settings and try again")
 
           // Return early - do NOT proceed with sync
           return
@@ -788,29 +726,22 @@ class GallerySyncService {
 
     console.log("[GallerySyncService] First sync - showing WiFi join explanation")
 
-    return new Promise((resolve) => {
-      const message =
-        Platform.OS === "ios"
-          ? translate("glasses:wifiJoinExplanationIos", {ssid})
-          : translate("glasses:wifiJoinExplanationAndroid", {ssid})
-
-      showAlert(translate("glasses:connectToGlassesTitle"), message, [
-        {
-          text: translate("common:ok"),
-          onPress: async () => {
-            console.log("[GallerySyncService] User acknowledged WiFi explanation")
-            // Mark as explained so we don't show again
-            settingsStore.setSetting(SETTINGS.gallery_sync_explained.key, true, false)
-            // Android: the native WiFi connect call freezes the UI thread (screen dims
-            // instantly on Samsung), leaving the dialog mid-fade. Wait for the fade to
-            // complete before resolving so the dialog fully dismisses first.
-            if (Platform.OS === "android") {
-              await new Promise((r) => setTimeout(r, 150))
-            }
-            resolve(true)
-          },
-        },
-      ])
+    return new Promise<boolean>((resolve) => {
+      const proceed = () => {
+        // Mark as explained so we don't show again.
+        settingsStore.setSetting(SETTINGS.gallery_sync_explained.key, true, false)
+        resolve(true)
+      }
+      // Emit the one-time wifi-join explanation as a notice the host renders + acknowledges.
+      // The host owns the alert + its dismiss timing (Android's native WiFi connect freezes
+      // the UI thread, so it should let the dialog fully dismiss before calling ack).
+      const delivered = emitGalleryNotice({
+        code: "connect_to_glasses",
+        data: {ssid, platform: Platform.OS},
+        ack: proceed,
+      })
+      // No host listening (e.g. an OEM that hasn't wired onNotice) — don't hang the sync.
+      if (delivered === 0) proceed()
     })
   }
 
@@ -1574,7 +1505,6 @@ class GallerySyncService {
               }
 
               // Enqueue for background processing (non-blocking)
-              const _isPhoto = downloadedFile.name?.match(/\.(jpg|jpeg|png)$/i)
               const isVideo = downloadedFile.name?.match(/\.(mp4|mov)$/i)
               const leaf = downloadedFile.name?.includes("/")
                 ? downloadedFile.name.substring(downloadedFile.name.lastIndexOf("/") + 1)
@@ -1946,98 +1876,6 @@ class GallerySyncService {
       if (store.syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
-    }
-  }
-
-  /**
-   * Auto-save downloaded files to camera roll
-   *
-   * ⚠️ DEPRECATED: This method is no longer used. Photos are now saved to camera roll
-   * immediately after each download completes (see executeDownload method).
-   *
-   * NOTE: Files now download in chronological order (oldest first), so the immediate-save
-   * approach will also save them in chronological order to the system gallery.
-   */
-  private async autoSaveToCameraRoll(downloadedFiles: PhotoInfo[]): Promise<void> {
-    const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
-    if (!shouldAutoSave || downloadedFiles.length === 0) return
-
-    console.log(
-      `[GallerySyncService] Auto-saving ${downloadedFiles.length} files to camera roll in chronological order...`,
-    )
-
-    const hasPermission = await MediaLibraryPermissions.checkPermission()
-    if (!hasPermission) {
-      const granted = await MediaLibraryPermissions.requestPermission()
-      if (!granted) {
-        console.warn("[GallerySyncService] Camera roll permission denied")
-        return
-      }
-    }
-
-    // CRITICAL: Sort all downloaded files by capture time BEFORE saving to gallery
-    // This ensures gallery displays them in chronological order, not download order
-    // (photos download first by size, videos second, but we want chronological capture order)
-    const sortedFiles = [...downloadedFiles].sort((a, b) => {
-      // Parse capture timestamps - handle both string and number formats
-      // Use Number.MAX_SAFE_INTEGER for invalid/missing timestamps to push them to the end
-      const parseTime = (modified: string | number | undefined): number => {
-        if (modified === undefined || modified === null) return Number.MAX_SAFE_INTEGER
-        if (typeof modified === "number") return isNaN(modified) ? Number.MAX_SAFE_INTEGER : modified
-        const parsed = parseInt(modified, 10)
-        return isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed
-      }
-
-      const timeA = parseTime(a.modified)
-      const timeB = parseTime(b.modified)
-
-      // Sort oldest first (ascending) so they're added to gallery in chronological order
-      return timeA - timeB
-    })
-
-    console.log(`[GallerySyncService] Sorted ${sortedFiles.length} files by capture time:`)
-    sortedFiles.slice(0, 5).forEach((file, idx) => {
-      const captureTime = typeof file.modified === "string" ? parseInt(file.modified, 10) : file.modified || 0
-      const captureDate = new Date(captureTime)
-      const fileType = file.is_video ? "video" : "photo"
-      console.log(`  ${idx + 1}. ${file.name} - ${captureDate.toISOString()} (${fileType})`)
-    })
-    if (sortedFiles.length > 5) {
-      console.log(`  ... and ${sortedFiles.length - 5} more files`)
-    }
-
-    let savedCount = 0
-    let failedCount = 0
-
-    // Save files in chronological order (oldest first)
-    for (const photoInfo of sortedFiles) {
-      const filePath = photoInfo.filePath || localStorageService.getPhotoFilePath(photoInfo.name)
-
-      // Parse the capture timestamp from the photo metadata
-      // The 'modified' field contains the original capture time from the glasses
-      let captureTime: number | undefined
-      if (photoInfo.modified) {
-        captureTime = typeof photoInfo.modified === "string" ? parseInt(photoInfo.modified, 10) : photoInfo.modified
-        if (isNaN(captureTime)) {
-          console.warn(`[GallerySyncService] Invalid modified timestamp for ${photoInfo.name}:`, photoInfo.modified)
-          captureTime = undefined
-        }
-      }
-
-      // Save to camera roll with capture time for logging
-      const success = await MediaLibraryPermissions.saveToLibrary(filePath, captureTime)
-      if (success) {
-        savedCount++
-      } else {
-        failedCount++
-      }
-    }
-
-    console.log(
-      `[GallerySyncService] Saved ${savedCount}/${sortedFiles.length} files to camera roll in chronological order`,
-    )
-    if (failedCount > 0) {
-      console.warn(`[GallerySyncService] Failed to save ${failedCount} files to camera roll`)
     }
   }
 

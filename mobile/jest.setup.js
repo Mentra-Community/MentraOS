@@ -485,6 +485,13 @@ jest.mock("@mentra/island", () => {
         install: jest.fn((...a) => bluetoothSdkMock.startOtaUpdate(...a)),
         retry: jest.fn((...a) => bluetoothSdkMock.retryOtaVersionCheck(...a)),
       },
+      gallery: {
+        status: jest.fn(() => ({})),
+        onStatus: jest.fn(() => () => {}),
+        onNotice: jest.fn(() => () => {}),
+        sync: jest.fn(() => Promise.resolve()),
+        cancel: jest.fn(() => Promise.resolve()),
+      },
       stores: {
         glasses: realGlasses.useGlassesStore,
         display: realDisplay.useDisplayStore,
@@ -499,6 +506,46 @@ jest.mock("@mentra/island", () => {
     // instance (not a fresh one) so the instance RestComms emits on is the same
     // one tests listen on across the boundary.
     GlobalEventEmitter: jest.requireActual("./modules/island/src/utils/GlobalEventEmitter").default,
+    // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
+    // NetworkMonitoring, MantleManager) import these from @mentra/island. Stub them here
+    // so those screens/services load under the mock without native deps. The gallery
+    // service's own jest test imports the REAL implementations by relative path instead.
+    gallerySyncService: {
+      initialize: jest.fn(),
+      startSync: jest.fn(() => Promise.resolve()),
+      cancelSync: jest.fn(() => Promise.resolve()),
+      isSyncing: jest.fn(() => false),
+      isSyncStarting: jest.fn(() => false),
+      queryGlassesGalleryStatus: jest.fn(() => Promise.resolve()),
+    },
+    localStorageService: {
+      getDownloadedFiles: jest.fn(() => Promise.resolve([])),
+      convertToPhotoInfo: jest.fn((file) => file),
+      convertToDownloadedFile: jest.fn((file) => file),
+      saveDownloadedFile: jest.fn(() => Promise.resolve()),
+      deleteDownloadedFile: jest.fn(() => Promise.resolve()),
+      clearAllFiles: jest.fn(() => Promise.resolve()),
+      getSyncState: jest.fn(() => Promise.resolve({total_downloaded: 0, total_size: 0})),
+      updateSyncState: jest.fn(() => Promise.resolve()),
+    },
+    asgCameraApi: {
+      setServer: jest.fn(),
+      syncWithServer: jest.fn(() => Promise.resolve()),
+      downloadCapture: jest.fn(() => Promise.resolve()),
+      deleteFilesFromServer: jest.fn(() => Promise.resolve()),
+    },
+    gallerySettingsService: {
+      getSettings: jest.fn(() => Promise.resolve({})),
+      getAutoSaveToCameraRoll: jest.fn(() => Promise.resolve(false)),
+      setAutoSaveToCameraRoll: jest.fn(() => Promise.resolve()),
+    },
+    MediaLibraryPermissions: {
+      checkPermission: jest.fn(() => Promise.resolve(true)),
+      requestPermission: jest.fn(() => Promise.resolve(true)),
+      saveToLibrary: jest.fn(() => Promise.resolve()),
+    },
+    emitGalleryNotice: jest.fn(),
+    onGalleryNotice: jest.fn(() => () => {}),
     // island now owns the cloud client (keystone #5); the host wrapper delegates
     // to this. Mocked so host/service tests don't construct a real CloudClient.
     cloudClientService: {

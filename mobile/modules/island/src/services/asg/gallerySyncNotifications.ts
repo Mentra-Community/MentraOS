@@ -11,10 +11,6 @@
 // import * as Notifications from "expo-notifications"
 import {Platform} from "react-native"
 
-// Notification IDs
-const _SYNC_NOTIFICATION_ID = "gallery-sync-progress"
-const _CHANNEL_ID = "gallery-sync"
-
 // iOS throttling - only update every N seconds to avoid banner spam
 const IOS_UPDATE_THROTTLE_MS = 10000 // 10 seconds between updates on iOS
 
@@ -32,7 +28,6 @@ const IOS_UPDATE_THROTTLE_MS = 10000 // 10 seconds between updates on iOS
 
 class GallerySyncNotifications {
   private static instance: GallerySyncNotifications
-  private channelCreated = false
   private notificationActive = false
   private lastUpdateTime = 0 // For iOS throttling
 
@@ -65,8 +60,6 @@ class GallerySyncNotifications {
     //     showBadge: false,
     //   })
     // }
-
-    this.channelCreated = true
   }
 
   /**
@@ -113,17 +106,6 @@ class GallerySyncNotifications {
   }
 
   /**
-   * Create a visual progress bar (Android only)
-   */
-  private createProgressBar(progress: number, width: number = 15): string {
-    const filled = Math.round((progress / 100) * width)
-    const empty = width - filled
-    const filledBar = "●".repeat(filled)
-    const emptyBar = "○".repeat(empty)
-    return `${filledBar}${emptyBar}`
-  }
-
-  /**
    * Update sync progress notification
    * On iOS, updates are throttled to avoid spamming the user with banner notifications
    */
@@ -151,18 +133,8 @@ class GallerySyncNotifications {
 
     await this.ensureChannel()
 
-    // Calculate overall progress (completed files + current file progress)
-    const overallProgress = Math.round(((currentFile - 1 + fileProgress / 100) / totalFiles) * 100)
-
-    // Build notification body - progress bar only on Android
-    let _body: string
-    if (Platform.OS === "android") {
-      const progressBar = this.createProgressBar(overallProgress)
-      _body = `${progressBar} ${overallProgress}%\nDownloading ${currentFile} of ${totalFiles}`
-    } else {
-      // iOS: simple text only, no progress bar
-      _body = `Downloading ${currentFile} of ${totalFiles} (${overallProgress}%)`
-    }
+    // Notifications are disabled; the overall-progress + body computation that fed
+    // scheduleNotificationAsync (below, commented) is omitted to keep this a no-op.
 
     // await Notifications.scheduleNotificationAsync({
     //   identifier: SYNC_NOTIFICATION_ID,
@@ -182,19 +154,8 @@ class GallerySyncNotifications {
   async showSyncComplete(downloadedCount: number, failedCount: number = 0): Promise<void> {
     await this.ensureChannel()
 
-    let _title: string
-    let _body: string
-
-    if (failedCount === 0) {
-      _title = "Sync complete"
-      _body = `Downloaded ${downloadedCount} ${downloadedCount === 1 ? "file" : "files"} from your glasses`
-    } else if (downloadedCount === 0) {
-      _title = "Sync failed"
-      _body = `Failed to download ${failedCount} ${failedCount === 1 ? "file" : "files"}`
-    } else {
-      _title = "Sync complete with errors"
-      _body = `Downloaded ${downloadedCount}, failed ${failedCount}`
-    }
+    // Notifications are disabled; the title/body computation that fed
+    // scheduleNotificationAsync (below, commented) is omitted to keep this a no-op.
 
     // await Notifications.scheduleNotificationAsync({
     //   identifier: SYNC_NOTIFICATION_ID,

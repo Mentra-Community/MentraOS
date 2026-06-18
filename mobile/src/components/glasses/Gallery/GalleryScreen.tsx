@@ -32,8 +32,7 @@ import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySyncService} from "@/services/asg/gallerySyncService"
-import {localStorageService} from "@/services/asg/localStorageService"
+import {gallerySyncService, localStorageService, MediaLibraryPermissions, toolkit} from "@mentra/island"
 import {useGallerySyncStore} from "@/stores/gallerySync"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -41,7 +40,8 @@ import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
 import showAlert from "@/utils/AlertUtils"
-import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
+import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
@@ -137,6 +137,63 @@ export function GalleryScreen() {
 
   // Animation for smooth transition from placeholders to photos
   const fadeAnim = useRef(new Animated.Value(1)).current
+
+  // Render the island gallery sync's structured notices (it no longer shows its own
+  // alerts). The host owns the alert text/buttons/i18n + the OS-settings deep-links.
+  useEffect(() => {
+    return toolkit.gallery.onNotice((notice) => {
+      switch (notice.code) {
+        case "glasses_disconnected":
+          showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+          break
+        case "insufficient_storage":
+          showAlert(
+            "Insufficient Storage",
+            `Only ${notice.data?.freeSpaceMB ?? 0} MB free. Please free up at least 500 MB before syncing.`,
+            [{text: "OK"}],
+          )
+          break
+        case "wifi_initializing":
+          showAlert("Please Wait", "WiFi is initializing. Please wait a moment before trying to sync again.", [
+            {text: "OK"},
+          ])
+          break
+        case "wifi_off":
+          showAlert(
+            "WiFi is Disabled",
+            "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openWifiSettings()},
+            ],
+            {cancelable: false},
+          )
+          break
+        case "location_services_off":
+          showAlert(
+            "Location Services Required",
+            "Android requires Location Services to be enabled to connect to your glasses WiFi hotspot. Would you like to enable it?",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
+            ],
+            {cancelable: false},
+          )
+          break
+        case "connect_to_glasses": {
+          const ssid = (notice.data?.ssid as string) ?? ""
+          const message =
+            notice.data?.platform === "ios"
+              ? translate("glasses:wifiJoinExplanationIos", {ssid})
+              : translate("glasses:wifiJoinExplanationAndroid", {ssid})
+          showAlert(translate("glasses:connectToGlassesTitle"), message, [
+            {text: translate("common:ok"), onPress: () => notice.ack?.()},
+          ])
+          break
+        }
+      }
+    })
+  }, [])
 
   // DEBUG: Log state changes
   useEffect(() => {
@@ -516,8 +573,8 @@ export function GalleryScreen() {
     }
   }
 
-  // Handle sync button press - delegate to service
-  const handleSyncPress = () => {
+  // Handle sync button press - delegate to the island gallery service.
+  const handleSyncPress = async () => {
     if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
@@ -529,7 +586,12 @@ export function GalleryScreen() {
       return
     }
 
-    gallerySyncService.startSync()
+    // Connectivity gate (BT + Android location) — host-side UI; the island sync no
+    // longer runs it. Shows the right alert + aborts if requirements aren't met.
+    const connectivityOk = await checkConnectivityRequirementsUI()
+    if (!connectivityOk) return
+
+    void toolkit.gallery.sync()
   }
 
   // Handle deletion of selected photos

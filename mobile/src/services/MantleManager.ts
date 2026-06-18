@@ -17,7 +17,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudClient, cloudConfigValues} from "@/services/cloudClient"
 import {devServerHost} from "@/utils/cloudClient/devHost"
-import {gallerySyncService} from "@/services/asg/gallerySyncService"
+import {gallerySyncService} from "@mentra/island"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,

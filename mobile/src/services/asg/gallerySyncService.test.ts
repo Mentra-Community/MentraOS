@@ -1,10 +1,15 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
-import {asgCameraApi} from "@/services/asg/asgCameraApi"
-import {gallerySyncNotifications} from "@/services/asg/gallerySyncNotifications"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {mediaProcessingQueue} from "@/services/asg/mediaProcessingQueue"
-import {gallerySyncService} from "./gallerySyncService"
+// gallerySyncService + its asg cluster moved into @mentra/island; this CI-gated jest
+// test stays in the host tree and imports them by relative path so it keeps running
+// (island's own test runner is bit-rotted). The stores + GlobalEventEmitter come
+// through the host shims, which the @mentra/island jest mock resolves to the SAME
+// real island instances the service uses — so store writes here are visible to it.
+import {asgCameraApi} from "../../../modules/island/src/services/asg/asgCameraApi"
+import {gallerySyncNotifications} from "../../../modules/island/src/services/asg/gallerySyncNotifications"
+import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
+import {mediaProcessingQueue} from "../../../modules/island/src/services/asg/mediaProcessingQueue"
+import {gallerySyncService} from "../../../modules/island/src/services/asg/gallerySyncService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
 import {useGlassesStore} from "@/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -38,40 +43,43 @@ jest.mock("react-native-wifi-reborn", () => ({
   isEnabled: jest.fn(() => Promise.resolve(true)),
 }))
 
-jest.mock("@/utils/PermissionsUtils", () => ({
-  PermissionFeatures: {LOCATION: "location"},
-  checkConnectivityRequirementsUI: jest.fn(() => Promise.resolve(true)),
-  checkFeaturePermissions: jest.fn(() => Promise.resolve(true)),
-  requestFeaturePermissions: jest.fn(() => Promise.resolve(true)),
-  isLocationServicesEnabled: jest.fn(() => Promise.resolve(true)),
-}))
-
-jest.mock("@/utils/AlertUtils", () => ({
-  showAlert: jest.fn(),
+// Location-services check moved off @/utils/PermissionsUtils onto the crust native
+// module (CrustModule.isLocationServicesEnabled) when gallery sync moved into island.
+jest.mock("crust", () => ({
   __esModule: true,
-  default: jest.fn(),
-}))
-
-jest.mock("@/utils/SettingsNavigationUtils", () => ({
-  SettingsNavigationUtils: {
-    openWifiSettings: jest.fn(),
+  default: {
+    isLocationServicesEnabled: jest.fn(() => Promise.resolve(true)),
   },
 }))
 
-jest.mock("@/utils/permissions/MediaLibraryPermissions", () => ({
+// Feature permissions now flow through the island permissions facade (was
+// @/utils/PermissionsUtils.checkFeaturePermissions/requestFeaturePermissions). The
+// connectivity gate (checkConnectivityRequirementsUI) + alert/navigation seams moved
+// host-side (GalleryScreen renders them off toolkit.gallery.onNotice), so they're no
+// longer mocked here.
+jest.mock("../../../modules/island/src/facades/permissions", () => ({
+  permissions: {
+    check: jest.fn(() => Promise.resolve(true)),
+    request: jest.fn(() => Promise.resolve(true)),
+    openSettings: jest.fn(() => Promise.resolve()),
+  },
+  PermissionFeatures: {LOCATION: "location"},
+}))
+
+jest.mock("../../../modules/island/src/utils/permissions/MediaLibraryPermissions", () => ({
   MediaLibraryPermissions: {
     checkPermission: jest.fn(() => Promise.resolve(true)),
     requestPermission: jest.fn(() => Promise.resolve(true)),
   },
 }))
 
-jest.mock("@/services/asg/gallerySettingsService", () => ({
+jest.mock("../../../modules/island/src/services/asg/gallerySettingsService", () => ({
   gallerySettingsService: {
     getAutoSaveToCameraRoll: jest.fn(() => Promise.resolve(false)),
   },
 }))
 
-jest.mock("@/services/asg/gallerySyncNotifications", () => ({
+jest.mock("../../../modules/island/src/services/asg/gallerySyncNotifications", () => ({
   gallerySyncNotifications: {
     requestPermissions: jest.fn(() => Promise.resolve()),
     showSyncError: jest.fn(),
@@ -80,7 +88,7 @@ jest.mock("@/services/asg/gallerySyncNotifications", () => ({
   },
 }))
 
-jest.mock("@/services/asg/localStorageService", () => ({
+jest.mock("../../../modules/island/src/services/asg/localStorageService", () => ({
   localStorageService: {
     getSyncQueue: jest.fn(() => Promise.resolve(null)),
     hasResumableSyncQueue: jest.fn(() => Promise.resolve(false)),
@@ -92,7 +100,7 @@ jest.mock("@/services/asg/localStorageService", () => ({
   },
 }))
 
-jest.mock("@/services/asg/mediaProcessingQueue", () => ({
+jest.mock("../../../modules/island/src/services/asg/mediaProcessingQueue", () => ({
   mediaProcessingQueue: {
     reset: jest.fn(),
     enqueue: jest.fn(),
@@ -101,16 +109,12 @@ jest.mock("@/services/asg/mediaProcessingQueue", () => ({
   },
 }))
 
-jest.mock("@/services/asg/asgCameraApi", () => ({
+jest.mock("../../../modules/island/src/services/asg/asgCameraApi", () => ({
   asgCameraApi: {
     setServer: jest.fn(),
     syncWithServer: jest.fn(),
     downloadCapture: jest.fn(),
   },
-}))
-
-jest.mock("@/i18n", () => ({
-  translate: jest.fn((key: string) => key),
 }))
 
 const mockGetSyncState = localStorageService.getSyncState as jest.Mock
@@ -212,14 +216,16 @@ describe("GallerySyncService", () => {
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
-    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: () => void = () => {
-      throw new Error("Connectivity promise resolver was not initialized")
+    // The first suspendable pre-flight await is the notification-permission request;
+    // suspend it, disconnect mid-flight, then resolve — shouldAbortPreFlight() (which
+    // re-checks glasses connection after the await) must abort quietly.
+    let resolvePreflightGate: () => void = () => {
+      throw new Error("Pre-flight gate resolver was not initialized")
     }
-    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
       () =>
-        new Promise<boolean>((resolve) => {
-          resolveConnectivity = () => resolve(true)
+        new Promise<void>((resolve) => {
+          resolvePreflightGate = () => resolve()
         }),
     )
 
@@ -229,27 +235,29 @@ describe("GallerySyncService", () => {
     expect(gallerySyncService.isSyncStarting()).toBe(true)
     expect(gallerySyncService.isSyncing()).toBe(false)
 
-    // Disconnect while connectivity check is in flight — shouldAbortPreFlight catches it after the await
+    // Disconnect while the permission request is in flight — shouldAbortPreFlight catches it after the await
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 
-    resolveConnectivity()
+    resolvePreflightGate()
     await startPromise
 
     expect(useGallerySyncStore.getState().syncState).toBe("idle")
     expect(useGallerySyncStore.getState().lastError).toBeNull()
     expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
-    expect(gallerySyncNotifications.requestPermissions).not.toHaveBeenCalled()
+    // The gate ran once, then pre-flight aborted before requesting the hotspot.
+    expect(gallerySyncNotifications.requestPermissions).toHaveBeenCalledTimes(1)
   })
 
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
-    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: () => void = () => {
-      throw new Error("Connectivity promise resolver was not initialized")
+    // Suspend the first pre-flight await (notification permission). Two concurrent
+    // startSync() calls must coalesce into a single pre-flight attempt.
+    let resolvePreflightGate: () => void = () => {
+      throw new Error("Pre-flight gate resolver was not initialized")
     }
-    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementation(
       () =>
-        new Promise<boolean>((resolve) => {
-          resolveConnectivity = () => resolve(true)
+        new Promise<void>((resolve) => {
+          resolvePreflightGate = () => resolve()
         }),
     )
 
@@ -259,9 +267,9 @@ describe("GallerySyncService", () => {
     const second = gallerySyncService.startSync()
 
     expect(gallerySyncService.isSyncStarting()).toBe(true)
-    expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
+    expect(gallerySyncNotifications.requestPermissions).toHaveBeenCalledTimes(1)
 
-    resolveConnectivity()
+    resolvePreflightGate()
     await Promise.all([first, second])
 
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")

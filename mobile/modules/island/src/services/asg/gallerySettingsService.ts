@@ -1,4 +1,4 @@
-import {storage} from "@/utils/storage/storage"
+import {storage} from "../../utils/storage/storage"
 
 export interface GallerySettings {
   autoSaveToCameraRoll: boolean

@@ -5,8 +5,8 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
-import {BgTimer} from "@mentra/island"
+import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "../../types/asg"
+import {BgTimer} from "../../utils/timers"
 
 import {localStorageService} from "./localStorageService"
 import {validateDownloadedMediaFile} from "./galleryMediaValidation"
@@ -15,8 +15,6 @@ export class AsgCameraApiClient {
   private baseUrl: string
   private port: number
   private lastRequestTime: number = 0
-  private requestQueue: Array<() => Promise<any>> = []
-  private isProcessingQueue: boolean = false
 
   constructor(serverUrl?: string, port: number = 8089) {
     this.port = port
