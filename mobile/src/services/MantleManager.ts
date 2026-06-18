@@ -647,41 +647,10 @@ class MantleManager {
         }),
       )
 
-      this.subs.push(
-        BluetoothSdk.addListener("audio_pairing_needed", (event) => {
-          GlobalEventEmitter.emit("audio_pairing_needed", {
-            deviceName: event.deviceName,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("audio_connected", (event) => {
-          GlobalEventEmitter.emit("audio_connected", {
-            deviceName: event.deviceName,
-          })
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("audio_disconnected", () => {
-          GlobalEventEmitter.emit("audio_disconnected", {})
-        }),
-      )
-
-      // Allow native hardware-originated setting changes to persist.
-      this.subs.push(
-        BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
-          await useSettingsStore.getState().setSetting(event.key, event.value)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("head_up", (event) => {
-          mantle.handle_head_up(event.up)
-        }),
-      )
+      // NOTE: audio_pairing_needed / audio_connected / audio_disconnected / save_setting /
+      // head_up were registered a SECOND time below (the duplicate block), so each handler
+      // fired twice per event. The duplicates are removed here; the single registrations
+      // live further down (head_up there is the superset — it also forwards to miniapps).
 
       this.subs.push(
         BluetoothSdk.addListener("speaking_status", (event) => {
