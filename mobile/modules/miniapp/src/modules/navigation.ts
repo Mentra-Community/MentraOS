@@ -127,6 +127,15 @@ export type NavManeuver = {
   speedLimitMps?: number | null
   /** Bearing along the route at the user's current position, 0–360. Null if unknown. */
   routeHeadingDeg?: number | null
+  /**
+   * The host engine's verbatim turn-by-turn instruction for the step the
+   * user is approaching (e.g. "Keep right at the fork.", "Turn left onto
+   * Waller Street.", "Your destination is on the right."). Surfaced so a
+   * maneuver card can render the engine's own wording as-is instead of
+   * reconstructing it from `maneuverType` + `nextStepRoad`. Null when the
+   * host doesn't supply one (older hosts, pre-first-update).
+   */
+  instruction?: string | null
 }
 
 /**
@@ -598,7 +607,10 @@ export class NavigationModule {
       mode,
       avoid: opts.avoid,
       simulate: opts.simulate ?? false,
-      speedMultiplier: opts.speedMultiplier ?? 5,
+      // Real-time by default (1×). The host's Mapbox replayer already moves
+      // at realistic per-segment speeds; the old 5× ran walking sims at a
+      // sprint. Callers can still pass a higher multiplier to fast-forward.
+      speedMultiplier: opts.speedMultiplier ?? 1,
       missedTurnRerouteMeters: opts.missedTurnRerouteMeters,
     })
     if (!nativeResult.ok) {
@@ -960,22 +972,21 @@ export class NavigationModule {
     // Subscribe to NavUpdate:
     //   - `arrived` resets the engine so the pivot list doesn't linger
     //     after a trip ends.
-    //   - `rerouting` is the trip's only chance to refresh the route
-    //     once the user goes off course. Native route emits are
-    //     suppressed for the whole trip (REST owns the polyline), so a
-    //     reroute never arrives via `onRoute`. Re-run the Routes REST
-    //     call from the user's current position and dispatch a fresh
-    //     synthetic `onRoute` — the same path `start()` uses — so the
-    //     map polyline, steps, and pivots all rebuild. Without this the
-    //     UI sits on the stale pre-reroute route until arrival.
+    //   - `rerouting` no longer triggers a client-side REST re-route. The
+    //     host engine (Mapbox Navigation SDK) owns off-route detection AND
+    //     rerouting natively: when the user diverges it fetches a new route
+    //     and pushes it through the normal `onRoute` channel (the native
+    //     RoutesObserver fires on the REROUTE-reason update). So the map
+    //     polyline, steps, and pivots rebuild via the same `onRoute` path
+    //     as the initial route — no separate `_reissueRouteForReroute`
+    //     needed. Issuing our own REST route here would race the host's and
+    //     double the Directions calls. `rerouting` is now purely a UI
+    //     status signal.
     this._tripUnsubs.push(
       this.onUpdate((update) => {
         if (update.kind === "arrived") {
           this._pivots.reset()
           return
-        }
-        if (update.kind === "rerouting") {
-          this._reissueRouteForReroute()
         }
       }),
     )
@@ -1014,30 +1025,14 @@ export class NavigationModule {
     })
   }
 
-  /**
-   * Refresh the route after a native reroute. Bumps the compute-route
-   * sequence (so a reply from a reroute that was already superseded by a
-   * newer one is dropped), re-runs the Routes REST call from the user's
-   * current position, and dispatches the result as a synthetic
-   * `onRoute`. The existing onRoute path rebuilds the polyline, steps,
-   * and pivots; the next maneuver event flips the trip status back out
-   * of "rerouting". No-op when the trip context is gone (post-stop).
-   */
-  private _reissueRouteForReroute(): void {
-    if (!this._tripStops || this._tripStops.length === 0) return
-    const seq = ++this._computeRouteSeq
-    this._issueComputeRouteForTrip()
-      .then((result) => {
-        if (seq !== this._computeRouteSeq) return // a newer reroute superseded us
-        const computed = result?.routes?.[0]
-        if (!computed) return
-        const syntheticRoute = buildNavRouteFromComputed(computed)
-        this.session.events._forwardEvent(MiniappStreamType.NAVIGATION_ROUTE, syntheticRoute)
-      })
-      .catch((err) => {
-        console.warn("[NavigationModule] reroute computeRoute failed:", err)
-      })
-  }
+  // NOTE: the former `_reissueRouteForReroute()` (client-side REST re-route
+  // on the `rerouting` update) was removed in the Mapbox migration. The host
+  // Navigation SDK now owns off-route detection + rerouting natively and
+  // pushes the new route through `onRoute` directly, so a client REST
+  // re-route would race it and double the Directions requests. If a future
+  // host does NOT auto-reroute, re-add a reroute refresh in
+  // `_attachPivotTrackingForTrip`'s `onUpdate("rerouting")` handler using
+  // `_issueComputeRouteForTrip()` + `buildNavRouteFromComputed()`.
 
   private _detachPivotTracking(): void {
     for (const unsub of this._tripUnsubs) {

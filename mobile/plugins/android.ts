@@ -153,7 +153,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 4a. Enable Core Library Desugaring (required by :crust → Google Nav SDK).
+    // 4a. Enable Core Library Desugaring (required by :crust → Mapbox Nav SDK).
     if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
       buildGradle = buildGradle.replace(
         /(namespace\s+['"]com\.mentra\.mentra['"])/,
@@ -172,7 +172,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
         /(implementation\("com\.facebook\.react:react-android"\))/,
         `$1
 
-    // Required by :crust (Google Navigation SDK uses Java 8+ APIs).
+    // Required by :crust (Mapbox Navigation SDK uses Java 8+ APIs).
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`,
       )
     }
@@ -376,39 +376,47 @@ function withAndroidManifestModifications(config: any) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
 
-      // Inject Google Navigation SDK API key from env. Read at build time.
-      // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
-      //
-      // If the key is missing, navigation is broken at runtime with a
-      // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
-      // build never ships; warn (don't fail) in local-dev so new
-      // contributors who aren't touching nav can still build.
-      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID ?? ""
-      if (!navApiKey) {
+      // Android navigation runs on the Mapbox Navigation SDK (migrated off
+      // the Google Navigation SDK), so the Google geo API_KEY meta-data is
+      // no longer injected here. iOS still uses the Google Nav SDK
+      // (GoogleNavigation pod + GOOGLE_NAV_API_KEY in Info.plist) until the
+      // iOS migration lands — that path is untouched. See
+      // issues/mapbox-navigation-migration.md.
+      if (!app["meta-data"]) {
+        app["meta-data"] = []
+      }
+
+      // Inject the Mapbox runtime token (pk.…) as manifest meta-data
+      // `com.mapbox.token`. NavigationManager.kt reads this tag from the
+      // merged manifest at boot and passes it to MapboxOptions.accessToken —
+      // the same provisioning shape the Google geo key above uses. Public
+      // token, safe to ship. The secret Downloads:Read token (sk.…) is
+      // build-time-only (~/.gradle/gradle.properties) and never reaches the
+      // manifest. Fail loudly in CI/EAS; warn in local dev.
+      // See issues/mapbox-navigation-migration.md.
+      const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+      if (!mapboxToken) {
         const isCiOrEas =
           process.env.CI === "true" ||
           process.env.CI === "1" ||
           process.env.EAS_BUILD === "true" ||
           process.env.NODE_ENV === "production"
         const msg =
-          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID is not set. Navigation will fail at runtime — " +
+          "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime — " +
           "set it in mobile/.env (see mobile/.env.example) before building."
         if (isCiOrEas) {
           throw new Error(msg)
         }
         console.warn(`[mobile/plugins/android] ${msg}`)
       }
-      if (!app["meta-data"]) {
-        app["meta-data"] = []
-      }
-      const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
-      if (existing) {
-        existing.$["android:value"] = navApiKey
+      const existingMapbox = app["meta-data"].find((m: any) => m.$["android:name"] === "com.mapbox.token")
+      if (existingMapbox) {
+        existingMapbox.$["android:value"] = mapboxToken
       } else {
         app["meta-data"].push({
           $: {
-            "android:name": "com.google.android.geo.API_KEY",
-            "android:value": navApiKey,
+            "android:name": "com.mapbox.token",
+            "android:value": mapboxToken,
           },
         })
       }

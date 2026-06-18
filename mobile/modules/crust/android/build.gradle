@@ -82,11 +82,24 @@ android {
 }
 
 dependencies {
-  // Google Navigation SDK for Android.
-  // Used by NavigationManager.kt to drive headless turn-by-turn nav.
-  implementation 'com.google.android.libraries.navigation:navigation:6.0.0'
+  // Mapbox Navigation SDK v3 (replaces Google Navigation SDK).
+  // Drives headless turn-by-turn nav in NavigationManager.kt: route
+  // progress, off-route + automatic rerouting, enhanced (map-matched)
+  // location, and the MapboxReplayer simulation harness for dev trips.
+  // Resolved from the Mapbox SDK registry (see mobile/android/build.gradle
+  // repositories) using the Downloads:Read token.
+  //
+  // We depend on the headless modules directly, NOT the umbrella
+  // `navigationcore:android` artifact — that one also drags in `ui-maps`,
+  // `voice`, and `copilot`, which a custom glasses HUD doesn't use (dead
+  // APK weight). `:navigation` is the core engine; `:tripdata` carries the
+  // banner/maneuver formatting used to label turns.
+  // Version pinned to 3.25.0 — re-check https://docs.mapbox.com/android/navigation/releases/
+  implementation 'com.mapbox.navigationcore:navigation:3.25.0'
+  implementation 'com.mapbox.navigationcore:tripdata:3.25.0'
 
-  // Required by Google Nav SDK (Java 8+ APIs on minSdk < 26).
+  // Required for Java 8+ APIs on minSdk < 26 (was needed by Google Nav SDK;
+  // Mapbox Nav SDK likewise targets desugared core libs).
   coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
 

@@ -80,6 +80,29 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     console.warn(`[mobile/app.config] ${msg}`)
   }
 
+  // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on
+  // Android. Injected as AndroidManifest meta-data (com.mapbox.token), which
+  // NavigationManager.kt reads and feeds to MapboxOptions.accessToken — the
+  // same provisioning shape the Google geo API_KEY used. Public token, safe
+  // to ship; the secret Downloads:Read token (sk.…) is build-time-only and
+  // lives in ~/.gradle/gradle.properties, never here. Fail loudly in CI/EAS,
+  // warn in local dev. See issues/mapbox-navigation-migration.md.
+  const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+  if (!mapboxAccessToken) {
+    const isCiOrEas =
+      process.env.CI === "true" ||
+      process.env.CI === "1" ||
+      process.env.EAS_BUILD === "true" ||
+      process.env.NODE_ENV === "production"
+    const msg =
+      "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime — " +
+      "set it in mobile/.env (see mobile/.env.example) before building."
+    if (isCiOrEas) {
+      throw new Error(msg)
+    }
+    console.warn(`[mobile/app.config] ${msg}`)
+  }
+
   const buildNumber = getBuildNumber()
 
   return {
