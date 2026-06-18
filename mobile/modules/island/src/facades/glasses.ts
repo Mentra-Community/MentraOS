@@ -13,7 +13,8 @@
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {ButtonPressEvent, TouchEvent} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
-import {isGlassesReady} from "../services/GlassesReadiness"
+import {useSettingsStore, SETTINGS} from "../stores/settings"
+import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
@@ -71,6 +72,22 @@ export const glasses = {
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
   /** Set a device as the `connectDefault()` target. */
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
+  /**
+   * Reconnect to the saved default glasses. Resolves `false` when there's nothing to
+   * reconnect to (no default paired), `true` when already connected or after kicking
+   * off the connect. The host gates connectivity/permissions (its UI) before calling.
+   */
+  reconnect: async (): Promise<boolean> => {
+    const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+    if (!defaultWearable) return false
+    if (isGlassesConnected(useGlassesStore.getState().connection)) return true
+    pushAllBluetoothSettings()
+    await BluetoothSdk.connectDefault()
+    return true
+  },
+  /** True when no glasses has ever been paired (no saved default wearable) — e.g. to
+   * route a first-run host into the pairing/onboarding flow. */
+  isFirstPairing: (): boolean => !useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key),
 
   // --- read-model (projected from the island-owned glasses store) ---
   status: (): GlassesStatusSnapshot => projectStatus(),

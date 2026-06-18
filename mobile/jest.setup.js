@@ -337,6 +337,8 @@ jest.mock("@mentra/island", () => {
         connect: jest.fn(() => Promise.resolve()),
         connectSimulated: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
+        reconnect: jest.fn(() => Promise.resolve(true)),
+        isFirstPairing: jest.fn(() => false),
         controller: {
           connectDefault: jest.fn(() => Promise.resolve()),
           disconnect: jest.fn(() => Promise.resolve()),
