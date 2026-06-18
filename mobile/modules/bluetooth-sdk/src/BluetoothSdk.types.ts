@@ -556,7 +556,7 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
-  fps?: number
+  frameRate?: number
 }
 
 export type StreamAudioConfig = {

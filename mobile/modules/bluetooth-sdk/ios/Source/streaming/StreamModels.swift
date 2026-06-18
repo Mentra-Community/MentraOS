@@ -4,18 +4,18 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
-    public let fps: Int?
+    public let frameRate: Int?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        fps: Int? = nil
+        frameRate: Int? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
-        self.fps = fps
+        self.frameRate = frameRate
     }
 
     var dictionary: [String: Any] {
@@ -23,7 +23,7 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
-        if let fps { values["frameRate"] = fps }
+        if let frameRate { values["frameRate"] = frameRate }
         return values
     }
 
@@ -33,7 +33,7 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            fps: intValue(values["fps"])
+            frameRate: intValue(values["frameRate"])
         )
     }
 }
