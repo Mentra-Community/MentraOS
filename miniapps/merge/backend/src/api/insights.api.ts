@@ -1,4 +1,5 @@
 import {Hono, type Context} from "hono"
+import {createMentraAuth, type MentraAuthVariables} from "@mentra/auth"
 
 import {
   InsightServiceError,
@@ -6,12 +7,19 @@ import {
   type InsightRequest,
 } from "../services/insights/insights.service"
 
-export const insightsApi = new Hono()
+export const insightsApi = new Hono<{Variables: MentraAuthVariables}>()
+
+const mentraAuth = createMentraAuth({
+  packageName: process.env.MERGE_PACKAGE_NAME ?? "com.mentra.local-merge",
+})
+
+insightsApi.use("*", mentraAuth.hono())
 
 insightsApi.post("/", async (c) => {
   try {
+    const auth = c.get("mentraAuth")
     const body = (await c.req.json()) as InsightRequest
-    return c.json(await insightsService.createInsight(body))
+    return c.json(await insightsService.createInsight({...body, userId: auth.mentraUserId}))
   } catch (error) {
     return insightErrorResponse(c, error)
   }

@@ -91,8 +91,8 @@ Here is our real **access token**, decoded (this is the device's main credential
 Standard claim names are three letters by convention: `sub` (subject = the user),
 `aud` (audience), `iss` (issuer), `exp` (expiry), `iat` (issued-at), `jti`
 (JWT id). The rest (`oem_id`, `session_id`) are ours. (The miniapp token in
-section 7 uses a camelCase `oemId` and `iss: "mentra"` instead — that is a
-separate token, verified by developer backends, not the device access token.)
+section 7 uses a camelCase `oemId` and `aud = <packageName>` instead -- that is
+a separate token, verified by developer backends, not the device access token.)
 
 ## 5. Signing: how a note cannot be forged
 
@@ -175,7 +175,7 @@ pinned to exactly one miniapp:
 ```json
 { "sub": "663b1f...", "oemId": "mentra",
   "aud": "com.dev.weather",   // valid ONLY for this miniapp's backend
-  "iss": "mentra", "exp": ... }
+  "iss": "cloud-core", "exp": ... }
 ```
 
 The weather miniapp's backend, when it verifies a token, checks **both** "is the

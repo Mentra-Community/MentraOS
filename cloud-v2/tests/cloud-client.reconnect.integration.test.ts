@@ -41,6 +41,14 @@ const RELAY_PORT = 13042;
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPemWrap(
     access.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   const miniapp = crypto.generateKeyPairSync("ed25519");
   process.env.MENTRA_MINIAPP_JWT_PRIVATE_KEY = stripPemWrap(
     miniapp.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
@@ -64,6 +72,7 @@ const RELAY_PORT = 13042;
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/6";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
+  process.env.AUDIO_PROVIDER = "mock";
   process.env.LOG_LEVEL ??= "warn";
 }
 
@@ -157,7 +166,7 @@ describe("cloud.runtime reconnect (real core + audio, relayed socket)", () => {
     });
 
     await cloud.runtime.connect();
-    await cloud.auth.getAccessToken();
+    await cloud.auth.getCoreToken();
     const { mentraUserId } = cloud.auth.identity;
 
     await cloud.runtime.setSubscriptions([

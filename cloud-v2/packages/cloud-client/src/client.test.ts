@@ -57,6 +57,62 @@ describe("CloudClient construction", () => {
       "runtime-only mode",
     );
   });
+
+  test("remints miniapp tokens when requested TTL exceeds cached lifetime", async () => {
+    const originalFetch = globalThis.fetch;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    let miniappMints = 0;
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/client/auth/refresh")) {
+        return jsonResponse({
+          access_token: testJwt({ sub: "user-1", oem_id: "oem-1", exp: nowSeconds + 3600 }),
+          refresh_token: "refresh-2",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+      if (url.endsWith("/api/client/auth/miniapp-token")) {
+        miniappMints += 1;
+        return jsonResponse({
+          token: `miniapp-${miniappMints}`,
+          expiresAt: miniappMints === 1 ? nowSeconds + 180 : nowSeconds + 3600,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const cloud = new CloudClient(
+        config({
+          endpoints: { core: "https://core.example.test", runtime: "https://runtime.example.test" },
+          auth: {
+            core: {
+              accessToken: testJwt({ sub: "user-1", oem_id: "oem-1", exp: nowSeconds + 3600 }),
+              refreshToken: "refresh-1",
+            },
+            runtime: { getToken: async () => "runtime-token" },
+          },
+        }),
+      );
+
+      await expect(cloud.auth.getMiniappToken("com.example.app")).resolves.toMatchObject({
+        token: "miniapp-1",
+      });
+      await expect(cloud.auth.getMiniappToken("com.example.app")).resolves.toMatchObject({
+        token: "miniapp-1",
+      });
+      await expect(
+        cloud.auth.getMiniappToken("com.example.app", { minTtlMs: 5 * 60 * 1000 }),
+      ).resolves.toMatchObject({
+        token: "miniapp-2",
+      });
+      expect(miniappMints).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 function config(
@@ -94,4 +150,26 @@ function dummyWs(): WebSocketLike {
     onClose: () => undefined,
     onError: () => undefined,
   };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function testJwt(claims: Record<string, unknown>): string {
+  return [
+    base64UrlJson({ alg: "none", typ: "JWT" }),
+    base64UrlJson(claims),
+    "signature",
+  ].join(".");
+}
+
+function base64UrlJson(value: unknown): string {
+  return btoa(JSON.stringify(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }

@@ -27,6 +27,13 @@
         "typescript-eslint": "^8.44.1",
       },
     },
+    "cloud-v2/packages/auth": {
+      "name": "@mentra/auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "jose": "^5.9.6",
+      },
+    },
     "cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
       "version": "0.0.0",
@@ -160,6 +167,7 @@
     "miniapps/merge": {
       "name": "local-merge",
       "dependencies": {
+        "@mentra/auth": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "hono": "^4.11.1",
         "react": "^19.0.0",
@@ -310,6 +318,8 @@
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, ""],
 
     "@ioredis/commands": ["@ioredis/commands@1.10.0", "", {}, "sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q=="],
+
+    "@mentra/auth": ["@mentra/auth@workspace:cloud-v2/packages/auth"],
 
     "@mentra/cloud-client": ["@mentra/cloud-client@workspace:cloud-v2/packages/cloud-client"],
 

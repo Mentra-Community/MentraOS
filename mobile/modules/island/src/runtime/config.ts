@@ -40,6 +40,18 @@ export interface CloudRuntimeTtsAdapter {
   speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
 }
 
+export interface MiniappAuthToken {
+  mentraUserId: string
+  oemId?: string
+  token: string
+  expiresAt: number
+}
+
+export interface MiniappAuthAdapter {
+  /** Mint or return a cached token scoped to one miniapp packageName. */
+  getToken: (packageName: string, opts?: {minTtlMs?: number}) => Promise<MiniappAuthToken>
+}
+
 import type {ClientApp} from "../types/applet"
 
 /**
@@ -444,6 +456,11 @@ export interface RuntimeHooks {
    * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
    */
   cloud?: CloudRuntimeAdapter
+  /**
+   * Package-scoped backend auth for local miniapps. The host owns the real
+   * Core/runtime credentials; this adapter returns only miniapp tokens.
+   */
+  miniappAuth?: MiniappAuthAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
