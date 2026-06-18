@@ -701,6 +701,16 @@ export class MiniappSession {
       pending.reject(error)
     }
     this.pendingRequests.clear()
+    // Auth waiters live outside pendingRequests — they're resolved by an
+    // AUTH_UPDATE push, not a correlated REQUEST_RESULT — so a transport drop,
+    // dispose, or CONNECT_ACK timeout must reject them here too. Otherwise an
+    // in-flight session.auth.getToken()/fetch() hangs until its 10s waiter
+    // timeout instead of failing fast with the disconnect error.
+    for (const waiter of Array.from(this.authWaiters)) {
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.reject(new NotConnectedError(error.message))
+    }
   }
 
   private authHasTtl(auth: MiniappAuthState, minTtlMs: number): boolean {
