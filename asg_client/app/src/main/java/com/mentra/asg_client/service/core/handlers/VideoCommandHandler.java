@@ -191,7 +191,8 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
             // Start recording with settings
             boolean save = data.optBoolean("save", false);
-            boolean flash = data.optBoolean("flash", true);
+            // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
+            boolean flash = true;
             boolean sound = data.optBoolean("sound", true);
             // Optional auto-stop after N minutes; 0 (the default) means record until
             // stopped or interrupted (battery/storage/thermal/error). Validate like the

@@ -228,7 +228,6 @@ public struct PhotoRequest {
     public let webhookUrl: String?
     public let authToken: String?
     public let compress: PhotoCompression?
-    public let flash: Bool
     public let save: Bool
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
@@ -251,7 +250,6 @@ public struct PhotoRequest {
         webhookUrl: String? = nil,
         authToken: String? = nil,
         compress: PhotoCompression? = nil,
-        flash: Bool = true,
         save: Bool = false,
         sound: Bool,
         exposureTimeNs: Double? = nil,
@@ -271,7 +269,6 @@ public struct PhotoRequest {
         self.webhookUrl = webhookUrl
         self.authToken = authToken
         self.compress = compress
-        self.flash = flash
         self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
@@ -340,7 +337,6 @@ public struct PhotoRequest {
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
             compress: PhotoCompression(rawValue: compressRaw),
-            flash: params["flash"] as? Bool ?? true,
             save: (params["save"] as? Bool) ?? (params["saveToGallery"] as? Bool) ?? false,
             sound: params["sound"] as? Bool ?? true,
             exposureTimeNs: exposureTimeNs,
