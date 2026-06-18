@@ -102,7 +102,7 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
 
     // The access token must exist first so identity is readable. getMiniappToken
     // exchanges on demand, but we read identity to compare against the claims.
-    await cloud.auth.getAccessToken();
+    await cloud.auth.getCoreToken();
     const { mentraUserId } = cloud.auth.identity;
 
     const { token, expiresAt } = await cloud.auth.getMiniappToken(TEST_PACKAGE);
@@ -141,7 +141,10 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
 
   return new CloudClient({
     endpoints: { core: coreHandle.url, runtime: `http://localhost:${CORE_PORT}` },
-    auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    auth: {
+      core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+      runtime: { source: "core" },
+    },
   });
 }
 
