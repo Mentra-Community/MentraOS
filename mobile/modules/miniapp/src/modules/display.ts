@@ -26,6 +26,7 @@ export type LayoutType =
   | "reference_card"
   | "dashboard_card"
   | "bitmap_view"
+  | "positioned_text"
   | "clear_view"
 
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
@@ -70,6 +71,23 @@ export interface BitmapView {
   height?: number
 }
 
+export interface PositionedText {
+  layoutType: "positioned_text"
+  text: string
+  /** Top-left x of the text container on the 576×288 canvas. Omit for default placement. */
+  x?: number
+  /** Top-left y of the text container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
+}
+
 export interface ClearView {
   layoutType: "clear_view"
 }
@@ -80,6 +98,7 @@ export type Layout =
   | ReferenceCard
   | DashboardCard
   | BitmapView
+  | PositionedText
   | ClearView
 
 export interface DisplayOptions {
@@ -97,6 +116,21 @@ export interface BitmapOptions extends DisplayOptions {
   width?: number
   /** Target container height. */
   height?: number
+}
+
+export interface TextAtOptions extends DisplayOptions {
+  /** Top-left x of the text container on the 576×288 canvas. */
+  x?: number
+  /** Top-left y of the text container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
 }
 
 export class DisplayManager {
@@ -146,6 +180,23 @@ export class DisplayManager {
   showBitmapView(data: string, options: BitmapOptions = {}): void {
     const {x, y, width, height, ...display} = options
     this.send({layoutType: "bitmap_view", data, x, y, width, height}, display)
+  }
+
+  /**
+   * Show text inside a positioned container (G2 only). Unlike `showTextWall`,
+   * which fills the whole view, this places the text at an arbitrary x/y with an
+   * optional rounded border — e.g. a label next to a bitmap.
+   *
+   * @example
+   * // Label pinned to the bottom-left of the 576×288 canvas, with a rounded border
+   * display.showTextAt("TEST", {x: 0, y: 201, width: 120, height: 87, borderWidth: 2, borderRadius: 6})
+   */
+  showTextAt(text: string, options: TextAtOptions = {}): void {
+    const {x, y, width, height, borderWidth, borderRadius, ...display} = options
+    this.send(
+      {layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius},
+      display,
+    )
   }
 
   /** Clear the specified view. */

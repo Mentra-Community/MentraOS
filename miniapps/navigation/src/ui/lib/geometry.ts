@@ -2,6 +2,7 @@ export {
   bearingDeg,
   detectCrossings,
   haversineMeters,
+  remainingRouteMeters,
   signedAngleDiff,
   type Crossing,
   type LatLng,

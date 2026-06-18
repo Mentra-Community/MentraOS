@@ -12,11 +12,15 @@
  */
 
 import {rm} from "fs/promises"
-import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
-
 const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
+
+// App version, read from miniapp.json so there's a single source of truth.
+// Inlined into the UI bundle (and harmless in the background bundle) so the
+// dev panel can show which build is running.
+const miniapp = (await import("./miniapp.json")) as {version?: string}
+const appVersion = miniapp.version ?? "0.0.0"
 
 // The GCP key now feeds ONLY the Maps JavaScript API (ui/lib/googleMaps.ts),
 // which loads Google's script directly in the WebView and therefore can't be
@@ -44,6 +48,7 @@ if (nodeEnv === "production") console.log("Building with NODE_ENV=production")
 const backgroundDefine: Record<string, string> = {
   "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
 // UI: needs the Maps JS key (can't be proxied). PROXY_BASE_URL is harmless here
@@ -52,6 +57,7 @@ const uiDefine: Record<string, string> = {
   "process.env.PUBLIC_MAP_NAV_VIEWER": JSON.stringify(navKey),
   "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
 // Background: IIFE, no DOM. The JSContext loads this once.
@@ -71,11 +77,33 @@ if (!backgroundResult.success) {
 
 const tailwind = (await import("bun-plugin-tailwind")).default
 
+// Force a SINGLE React copy in the UI bundle. The @mentra/miniapp SDK is
+// symlinked and can resolve its own (different-version) React from a separate
+// node_modules, which produces two React instances → "Invalid hook call /
+// more than one copy of React". This plugin rewrites every react / react-dom
+// (and their sub-paths) import to THIS app's copy, so app components and SDK
+// hooks share one React.
+const reactDedupePlugin: import("bun").BunPlugin = {
+  name: "react-dedupe",
+  setup(build) {
+    const appDir = import.meta.dir
+    const pin = (spec: string) => Bun.resolveSync(spec, appDir)
+    // Match `react`, `react-dom`, and their sub-paths (e.g. react/jsx-runtime).
+    build.onResolve({filter: /^react(-dom)?(\/.*)?$/}, (args) => {
+      try {
+        return {path: pin(args.path)}
+      } catch {
+        return undefined // fall back to default resolution
+      }
+    })
+  },
+}
+
 const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [tailwind, reactSingletonPlugin(import.meta.url)],
+  plugins: [reactDedupePlugin, tailwind],
   minify: true,
   define: uiDefine,
 })

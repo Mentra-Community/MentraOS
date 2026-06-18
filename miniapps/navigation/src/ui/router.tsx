@@ -22,6 +22,7 @@ import {type ReactNode, createContext, useCallback, useContext, useEffect, useSt
 export type Route =
   | {name: "navigation"}
   | {name: "add-place"; presetType?: "home" | "work"}
+  | {name: "settings"}
 
 // Lets feature-level popstate handlers (e.g. LocationSearch's
 // back-to-close-drawer) tell the router "I just consumed this back

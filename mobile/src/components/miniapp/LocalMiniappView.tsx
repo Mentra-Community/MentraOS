@@ -54,6 +54,7 @@ interface LocalMiniappViewProps {
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
 function LocalMiniappView({
@@ -65,6 +66,7 @@ function LocalMiniappView({
   devPort,
   onExit,
   onShouldCapture = () => undefined,
+  showCapsule = false,
 }: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
@@ -463,7 +465,7 @@ function LocalMiniappView({
           label={label}
           devApp={isDevApp}
         />
-        <CapsuleMenu forceShow={true} />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -538,7 +540,7 @@ function LocalMiniappView({
           devApp={isDevApp}
           disableFadeIn={true}
         />
-        <CapsuleMenu forceShow={true} />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -602,7 +604,7 @@ function LocalMiniappView({
         disableFadeIn={true}
       />
       {/* <View className="flex-1 bg-red-500"/> */}
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }
