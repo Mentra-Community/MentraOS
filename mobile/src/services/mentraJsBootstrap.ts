@@ -1,69 +1,48 @@
 /**
- * MentraJS bootstrap — constructs the host-side router singletons and
- * wires native crash detection into the controller. Called once from
- * MantleManager.initServices alongside the LocalMiniappRuntime init.
+ * MentraJS host bootstrap — the island owns the MentraJS engine itself
+ * (`ensureMiniappEngine()` constructs the crash controller, UI router, JS router,
+ * binds them to the native Crust module + the launcher, and starts the pump).
  *
- * Idempotent — multiple calls return the same singletons.
+ * This host shim attaches the concerns that are genuinely host-owned:
+ *  - the inter-miniapp interop policy (which packages count as system apps, the
+ *    app-store start/stop, the audit trail) via `configureRuntime`, and
+ *  - crashloop telemetry — Sentry events, automatic incident filing, the
+ *    user-facing alert — via `router.onCrashloop` / `router.onRestartToast`.
+ *
+ * Called once from MantleManager.initServices. Idempotent — the island engine is
+ * a singleton and the host attach runs once.
  */
 
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
-import CrustModule from "@mentra/crust"
 
 import {
-  MentraJSCrashController,
-  MentraJSRouter,
-  MentraUIRouter,
-  configureLauncher,
   configureRuntime,
-  devServerBridge,
-  localMiniappRuntime,
+  ensureMiniappEngine,
+  getMiniappEngine,
   miniappLauncher,
   useAppStatusStore,
 } from "@mentra/island"
 
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {SYSTEM_APPS} from "@/constants/miniapps"
-import {useNavigationStore} from "@/stores/navigation"
 import {logEvent} from "@/utils/analytics"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
 const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
 
-let bootstrapped: {
-  router: MentraJSRouter
-  uiRouter: MentraUIRouter
-  crashController: MentraJSCrashController
-} | null = null
+let hostAttached = false
 
 export function bootstrapMentraJS() {
-  if (bootstrapped) return bootstrapped
-  // The Crust native module type doesn't include the new mentraJs*
-  // functions in the codebase's published TS typing until expo prebuild
-  // runs; cast to a loose shape so the bootstrap compiles cleanly.
-  const crust = CrustModule as unknown as ConstructorParameters<typeof MentraJSRouter>[1]
+  // Construct (or reuse) the island-owned engine, then attach the host concerns
+  // once. ensureMiniappEngine() is idempotent; the hostAttached guard keeps the
+  // interop hook + telemetry from re-binding on repeat calls.
+  const engine = ensureMiniappEngine()
+  if (hostAttached) return engine
+  hostAttached = true
 
-  const crashController = new MentraJSCrashController({
-    maxRetries: 3,
-  })
-  const uiRouter = new MentraUIRouter({
-    mentraJsDispatchToJs: (packageName: string, envelope: Record<string, unknown>) =>
-      (
-        CrustModule as unknown as {
-          mentraJsDispatchToJs: (p: string, e: Record<string, unknown>) => Promise<void>
-        }
-      ).mentraJsDispatchToJs(packageName, envelope),
-  })
-  const router = new MentraJSRouter(localMiniappRuntime, crust)
-  router.crashController = crashController
-  router.uiRouter = uiRouter
-
-  // Hand the router to the island MiniappLauncher so headless launch/teardown
-  // (apps.ts start/stop, the action broker, the WebView mount path) all spawn
-  // through one place. The router is host-constructed (needs the native Crust
-  // binding) and injected here — same DI seam as configureRuntime.
-  configureLauncher({router})
+  const {router} = engine
 
   // Wire the inter-miniapp interop adapter (session.miniapps + session.actions
   // .invoke). The host owns the system-app policy (SYSTEM_APPS + dev sideloads)
@@ -192,56 +171,12 @@ export function bootstrapMentraJS() {
 
   // The /applet/local route binds the UI router to its WebView directly
   // via `getMentraJS().uiRouter.bindWebView(...)` — no global attach
-  // step needed. The router is reachable on the bootstrapped singleton.
+  // step needed. The router is reachable on the island engine singleton.
 
-  // Wire up the dev server's "respawn-bg" signal so a touch under
-  // src/background/ kills + re-spawns the JSContext with the latest
-  // bundle. The WebView reload path stays separate (devServerBridge.onReload).
-  //
-  // Dev miniapps fetch the fresh background JS straight off the dev server
-  // over HTTP (mirrors LocalMiniappView's HTTP-direct launch). Released
-  // miniapps fall back to reading the installed file:// snapshot.
-  devServerBridge.onRespawnBackground(async (packageName) => {
-    try {
-      // Re-resolve the freshly built bundle (dev: HTTP off the dev server;
-      // released: file:// snapshot) via the launcher's shared recipe. Carries
-      // the declared permissions + manifest across the respawn — omitting them
-      // would respawn the JSContext with no permissions, so SUBSCRIBE gates and
-      // per-call dispatch checks would start rejecting after a background
-      // hot-reload.
-      const resolved = await miniappLauncher.resolveBundle(packageName)
-      if (!resolved) {
-        console.warn(`MentraJS: respawn-bg could not resolve bundle for ${packageName}`)
-        return
-      }
-      // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
-      // which is idempotent and would no-op an already-registered context.
-      await router.unregister(packageName)
-      const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
-        permissions: resolved.declaredPermissions,
-        installedManifest: resolved.installedManifest,
-      })
-      if (!ok) {
-        console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
-        return
-      }
-      // The respawned JSContext is a fresh MiniappSession with ui.bound
-      // false. The mounted WebView won't re-fire mentra.ready() (it's
-      // latched), so re-announce it so RPC replies (mentra.request) reach
-      // the UI again instead of being dropped while unbound.
-      uiRouter.notifyReopen(packageName)
-    } catch (e) {
-      console.warn(`MentraJS: respawn-bg threw for ${packageName}:`, e)
-    }
-  })
-
-  router.start()
-
-  bootstrapped = {router, uiRouter, crashController}
-  return bootstrapped
+  return engine
 }
 
-/** Returns the singletons if already bootstrapped, else null. */
+/** Returns the island MentraJS engine singletons if constructed, else null. */
 export function getMentraJS() {
-  return bootstrapped
+  return getMiniappEngine()
 }

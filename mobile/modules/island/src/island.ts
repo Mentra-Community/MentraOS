@@ -16,6 +16,10 @@ import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
+import {ensureMiniappEngine} from "./services/MiniappEngine"
+import localMiniappRuntime from "./services/LocalMiniappRuntime"
+import displayProcessor from "./services/DisplayProcessor"
+import {gallerySyncService} from "./services/asg/gallerySyncService"
 import {glasses} from "./facades/glasses"
 import {display} from "./facades/display"
 import {speech} from "./facades/speech"
@@ -69,6 +73,17 @@ export const toolkit = {
     startGlassesSettingsSync()
     // Same for phone-notification config -> the native listener (Android).
     startPhoneNotificationsSync()
+    // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
+    // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
+    // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor
+    // (layout arbitration over the island stores), and the gallery-sync service.
+    // All idempotent — when the Mentra app's host bootstrap also calls these, the
+    // second call is a no-op. Host-only concerns (crashloop telemetry, the
+    // inter-miniapp interop policy) are attached separately by the host.
+    localMiniappRuntime.initialize()
+    ensureMiniappEngine()
+    displayProcessor.attachToRuntime()
+    gallerySyncService.initialize()
   },
   /** Stop the runtime: tear down the settings sync + cloud client + mark stopped. */
   async stop() {

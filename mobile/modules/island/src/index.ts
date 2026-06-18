@@ -40,6 +40,7 @@ export {
   type CrashOutcome,
   type CrashControllerOptions,
 } from "./services/MentraJSCrashController"
+export {ensureMiniappEngine, getMiniappEngine, type MiniappEngine} from "./services/MiniappEngine"
 export {
   redactSecrets,
   MentraJSLogThrottle,
