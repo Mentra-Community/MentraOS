@@ -1619,15 +1619,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     markPhotoRequestStarted(requestId);
     resetBarcodeScan();
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
-    clearPhotoUploadTimeout();
-    photoUploadTimeoutRef.current = setTimeout(() => {
-      if (activePhotoRequestIdRef.current === requestId) {
-        activePhotoRequestIdRef.current = null;
-        setCameraStatus('Camera: timed out waiting for phone upload');
-        markPhotoRequestFailed(requestId, 'UPLOAD_TIMEOUT', 'Timed out waiting for phone upload');
-        addEvent('TX', `phone photo upload timed out ${requestId}`);
-      }
-    }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
+    startPhonePhotoUploadTimeout(requestId);
 
     try {
       const response = await BluetoothSdk.requestPhoto({
@@ -1640,8 +1632,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       handlePhotoResponse(response);
     } catch (error) {
       if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
-        clearPhotoUploadTimeout();
         markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
+        startPhonePhotoUploadTimeout(requestId);
         return;
       }
       clearPhotoUploadTimeout();
@@ -1838,6 +1830,18 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       'LIVE',
       `photo request still waiting after SDK timeout ${requestId}: ${formatError(error)}`,
     );
+  }
+
+  function startPhonePhotoUploadTimeout(requestId: string) {
+    clearPhotoUploadTimeout();
+    photoUploadTimeoutRef.current = setTimeout(() => {
+      if (activePhotoRequestIdRef.current === requestId) {
+        activePhotoRequestIdRef.current = null;
+        setCameraStatus('Camera: timed out waiting for phone upload');
+        markPhotoRequestFailed(requestId, 'UPLOAD_TIMEOUT', 'Timed out waiting for phone upload');
+        addEvent('TX', `phone photo upload timed out ${requestId}`);
+      }
+    }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
   }
 
   function handlePhotoStatus(payload: PhotoStatusEvent) {
