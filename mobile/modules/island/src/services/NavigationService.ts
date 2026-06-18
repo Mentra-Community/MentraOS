@@ -15,6 +15,8 @@ import CrustModule from "@mentra/crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"
+import restComms from "./RestComms"
+import {useSettingsStore} from "../stores/settings"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -734,4 +736,3 @@ async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: numbe
     return {ok: false, error: err instanceof Error ? err.message : "reverseGeocode failed"}
   }
 }
-

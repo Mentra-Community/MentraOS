@@ -9,7 +9,6 @@ import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@mentra/island"
 import {phoneStreamCoordinator} from "@mentra/island"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
@@ -320,24 +319,8 @@ class MantleManager {
       cameraSettings: {
         setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
       },
-      // Google Nav SDK adapter — the island runtime fan-outs nav events to
-      // miniapps subscribed to navigation_*. Delegates straight to the host's
-      // singleton NavigationService.
-      navigation: {
-        getState: () => navigationService.getState(),
-        getSnapshot: () => navigationService.getSnapshot(),
-        addListener: (l) => navigationService.addListener(l),
-        addLocationListener: (l) => navigationService.addLocationListener(l),
-        addRouteListener: (l) => navigationService.addRouteListener(l),
-        start: (coords, options) => navigationService.start(coords, options),
-        stop: () => navigationService.stop(),
-        simulateDeviation: (offsetMeters) => navigationService.simulateDeviation(offsetMeters),
-        setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
-        setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
-        requestPermission: () => navigationService.requestPermission(),
-        // Route compute + reverse geocoding now run in the v2 cloud maps service
-        // (cloud.runtime.maps); the device no longer calls Mapbox REST directly.
-      },
+      // Navigation (Google Nav SDK) moved into island (NavigationService, called
+      // directly by the runtime's NavigationHandlers) — no longer a host hook.
       // heading / compass moved into island (HeadingService, subscribed directly by
       // the runtime) — no longer a host hook.
       locationTier: {
