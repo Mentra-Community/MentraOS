@@ -3,7 +3,7 @@
 The normal release path is the GitHub Actions workflow documented in
 `RELEASING_CI.md`. It exports and tags the public SwiftPM mirror at
 `Mentra-Community/mentra-bluetooth-sdk-ios` when
-`mobile/modules/bluetooth-sdk/package.json` changes on `dev`.
+`mobile/modules/bluetooth-sdk/package.json` changes on `staging`.
 
 This manual process remains useful for local verification, emergency recovery,
 or inspecting the generated mirror before CI is enabled.
@@ -76,7 +76,7 @@ already contains the version being tagged before exporting.
 
 ## Commit and Tag
 
-Use the same version format as existing SwiftPM tags, for example `0.1.12`
+Use the same version format as existing SwiftPM tags, for example `0.1.14`
 without a leading `v`.
 
 ```bash

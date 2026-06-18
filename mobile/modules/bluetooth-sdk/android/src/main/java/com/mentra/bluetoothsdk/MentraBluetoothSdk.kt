@@ -45,7 +45,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
-    @Volatile private var configuredOtaVersionUrl = OtaManifestDefaults.DEFAULT_OTA_VERSION_URL
+    @Volatile private var configuredOtaVersionUrl: String? = null
 
     init {
         listeners.add(listener)
@@ -474,7 +474,7 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
-    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
+    fun setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",
             updateStore = { _ ->
@@ -527,30 +527,20 @@ class MentraBluetoothSdk private constructor(
             send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, settings) },
         )
 
-    fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
+    fun setVideoRecordingDefaults(defaults: VideoRecordingDefaults): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_video_recording",
             updateStore = { _ ->
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
-                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", defaults.width)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", defaults.height)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", defaults.fps)
             },
             send = { requestId ->
-                deviceManager.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+                deviceManager.sendButtonVideoRecordingSettings(requestId, defaults.width, defaults.height, defaults.fps)
             },
         )
 
-    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings): SettingsAckEvent =
-        setButtonVideoRecordingSettings(width = settings.width, height = settings.height, fps = settings.fps)
-
-    fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent =
-        performSettingsCommand(
-            setting = "button_camera_led",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
-            send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
-        )
-
-    fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent =
+    fun setMaxVideoRecordingDuration(minutes: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_max_recording_time",
             updateStore = { _ ->
@@ -754,7 +744,16 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun startStream(request: StreamRequest): StreamStatusEvent {
+    fun startStream(request: StreamRequest): StreamStatusEvent =
+        startStream(request, startSdkKeepAlive = true)
+
+    internal fun startExternallyManagedStream(request: StreamRequest): StreamStatusEvent =
+        startStream(request, startSdkKeepAlive = false)
+
+    private fun startStream(
+        request: StreamRequest,
+        startSdkKeepAlive: Boolean,
+    ): StreamStatusEvent {
         val message = request.toMap().toMutableMap()
         val streamId = (message["streamId"] as? String)?.takeIf { it.isNotBlank() }
                 ?: "sdk-${UUID.randomUUID()}"
@@ -765,8 +764,8 @@ class MentraBluetoothSdk private constructor(
         try {
             deviceManager.startStream(message)
             val event = pending.await(STREAM_START_TIMEOUT_MS)
-            if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
-                startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+            if (startSdkKeepAlive) {
+                startStreamKeepAliveMonitor(streamId, DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS)
             }
             return event
         } finally {
@@ -910,7 +909,7 @@ class MentraBluetoothSdk private constructor(
         configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl
+    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
 
     /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
     fun checkForOtaUpdate(): Boolean {
@@ -1083,7 +1082,9 @@ class MentraBluetoothSdk private constructor(
         if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
             return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
         }
-        return configuredOtaVersionUrl.ifBlank { deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL } }
+        // SDK consumers are pinned to the manifest built for their SDK version.
+        // A future glasses-advertised URL should not silently change that pairing.
+        return configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
     }
 
     private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {

@@ -53,6 +53,7 @@ import {
   type InteropAuditEvent,
   type TtsSynthesisResult,
 } from "../runtime/config"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import type {
   AudioSubscription,
   LanguageSource,
@@ -2111,8 +2112,8 @@ class LocalMiniappRuntime {
     try {
       const result = await streaming.startUnmanaged(packageName, {
         streamUrl: payload.streamUrl as string,
-        video: payload.video,
-        audio: payload.audio,
+        video: normalizeStreamVideoConfig(payload.video),
+        audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
@@ -2166,8 +2167,8 @@ class LocalMiniappRuntime {
     try {
       const result = await streaming.startManaged(packageName, {
         restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
-        video: payload.video,
-        audio: payload.audio,
+        video: normalizeStreamVideoConfig(payload.video),
+        audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         ingest: payload.ingest as "srt" | "whip" | undefined,
       })

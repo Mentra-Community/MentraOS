@@ -89,7 +89,6 @@ Each command responds with `<command>_response` on success or `rgb_led_control_e
 | Event                     | Local MTK LED               | RGB ring                              |
 | ------------------------- | --------------------------- | ------------------------------------- |
 | Photo capture (flash on)  | brief flash                 | white flash via `rgb_led_photo_flash` |
-| Photo capture (flash off) | nothing                     | nothing                               |
 | Video recording start     | solid on                    | white solid via `rgb_led_video_solid` |
 | Video recording stop      | off                         | off via `rgb_led_control_off`         |
 | Stream start              | solid on                    | (handled by stream service)           |
@@ -98,7 +97,7 @@ Each command responds with `<command>_response` on success or `rgb_led_control_e
 | Buffer recording stopped  | off                         | (BES default)                         |
 | Recording error           | off                         | off                                   |
 
-Whether the local MTK LED actually fires for a given button-triggered capture is gated by the [`button_camera_led` setting](../ASG_CLIENT_API.md#button_camera_led).
+The local MTK capture LED is always enabled for photo, video, and stream capture.
 
 ## Direct manipulation (Java only — not generally needed)
 

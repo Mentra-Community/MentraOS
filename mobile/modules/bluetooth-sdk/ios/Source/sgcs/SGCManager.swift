@@ -22,13 +22,13 @@ protocol SGCManager {
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     /// Start video recording with optional per-recording resolution/fps. A width,
     /// height, or fps of 0 means "use the device's saved button-video default".
     /// Defaulted in an extension to delegate to the basic recording path; devices
     /// that support custom settings (e.g. Mentra Live) override this.
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        requestId: String, save: Bool, sound: Bool, width: Int, height: Int, fps: Int,
         maxRecordingTimeMinutes: Int
     )
     func stopVideoRecording(requestId: String)
@@ -44,7 +44,6 @@ protocol SGCManager {
     func sendButtonPhotoSettings()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
-    func sendButtonCameraLedSetting()
     func sendCameraFovSetting()
 
     // MARK: - Display Control
@@ -149,10 +148,10 @@ extension SGCManager {
     // MARK: - Video recording (default: ignore custom settings, use saved defaults)
 
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width _: Int, height _: Int,
+        requestId: String, save: Bool, sound: Bool, width _: Int, height _: Int,
         fps _: Int, maxRecordingTimeMinutes _: Int
     ) {
-        startVideoRecording(requestId: requestId, save: save, flash: flash, sound: sound)
+        startVideoRecording(requestId: requestId, save: save, sound: sound)
     }
 
     func stopVideoRecording(requestId: String, webhookUrl _: String?, authToken _: String?) {

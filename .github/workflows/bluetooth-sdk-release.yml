@@ -5,6 +5,7 @@ on:
     branches:
       - dev
     paths:
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
       - ".github/scripts/bluetooth-sdk-release-info.mjs"
       - ".github/workflows/bluetooth-sdk-release.yml"
       - "mobile/modules/bluetooth-sdk/**"
@@ -27,10 +28,11 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
+  SDK_OTA_RELEASE_TAG: bluetooth-sdk-ota
   SDK_PACKAGE_DIR: mobile/modules/bluetooth-sdk
   SDK_PACKAGE_JSON: mobile/modules/bluetooth-sdk/package.json
 
@@ -60,6 +62,18 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
 
+      - name: Verify iOS SDK version is metadata-derived
+        run: |
+          set -euo pipefail
+          if grep -Fq "compiledSdkVersion" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
+            echo "BluetoothSdkDefaults.swift must not hardcode the SDK version; iOS OTA defaults must use package metadata." >&2
+            exit 1
+          fi
+          if ! grep -Fq "packageVersion(from: sdkBundle)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
+            echo "BluetoothSdkDefaults.swift must derive the SDK version from iOS package metadata." >&2
+            exit 1
+          fi
+
       - name: Summarize release decision
         run: |
           {
@@ -73,9 +87,292 @@ jobs:
             echo "- Run release jobs: \`${{ steps.release-info.outputs.run_release }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  sdk-ota:
+    name: Publish SDK-pinned ASG OTA manifest
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    # Pinned to the mac runners: they have the ASG signing keystore provisioned
+    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
+    runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      manifest_url: ${{ steps.sdk-ota-info.outputs.manifest_url }}
+      version_code: ${{ steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.asg-build-info.outputs.version_name }}
+    steps:
+      - name: Refuse non-dev publish
+        if: needs.detect.outputs.dry_run != 'true' && github.ref_name != 'dev'
+        run: |
+          echo "Bluetooth SDK releases must publish from the dev branch while this workflow is being validated." >&2
+          exit 1
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Compute ASG build info
+        id: asg-build-info
+        env:
+          SDK_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          EPOCH_OFFSET_SECONDS=1735689600
+          BASELINE=100000
+          NOW_SECONDS=$(git show -s --format=%ct HEAD)
+          VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BUILD_TIMESTAMP=$(date -u -r "$NOW_SECONDS" +%Y%m%d.%H%M%S)
+          VERSION_NAME="sdk.${SDK_VERSION}.${BUILD_TIMESTAMP}.${SHORT_SHA}"
+
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SDK OTA release names
+        id: sdk-ota-info
+        env:
+          SDK_VERSION: ${{ needs.detect.outputs.version }}
+          SHORT_SHA: ${{ steps.asg-build-info.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$SDK_VERSION" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$'; then
+            echo "Unsafe SDK version for OTA path: $SDK_VERSION" >&2
+            exit 1
+          fi
+          APK_ASSET="asg-client-sdk-${SDK_VERSION}-vc${VERSION_CODE}-${SHORT_SHA}.apk"
+          MANIFEST_ASSET="bluetooth-sdk-${SDK_VERSION}-version.json"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${APK_ASSET}"
+          MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${MANIFEST_ASSET}"
+
+          echo "apk_asset=${APK_ASSET}" >> "$GITHUB_OUTPUT"
+          echo "apk_url=${APK_URL}" >> "$GITHUB_OUTPUT"
+          echo "manifest_asset=${MANIFEST_ASSET}" >> "$GITHUB_OUTPUT"
+          echo "manifest_url=${MANIFEST_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup ASG environment
+        working-directory: ./asg_client
+        run: cp .env.example .env
+
+      - name: Clone StreamPackLite dependency
+        working-directory: ./asg_client
+        run: |
+          git clone https://github.com/Mentra-Community/StreamPackLite.git
+          cd StreamPackLite
+          git checkout working
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.os }}-
+
+      - name: Build recovery worker asset
+        working-directory: ./asg_client/recovery_worker
+        run: |
+          chmod +x ./build_and_deploy.sh
+          ./build_and_deploy.sh
+          test -f ../app/src/main/assets/recovery_worker.apk
+
+      - name: Build ASG release APK
+        id: gradle-build
+        working-directory: ./asg_client
+        run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+        continue-on-error: true
+
+      - name: Retry ASG build with clean cache
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./asg_client
+        run: |
+          echo "First ASG build failed, cleaning Gradle cache and retrying..."
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+
+      - name: Collect ASG APK info
+        id: asg-apk-info
+        run: |
+          set -euo pipefail
+          APK="asg_client/app/build/outputs/apk/release/app-release.apk"
+          if command -v shasum >/dev/null 2>&1; then
+            SHA256=$(shasum -a 256 "$APK" | awk '{print $1}')
+          else
+            SHA256=$(sha256sum "$APK" | awk '{print $1}')
+          fi
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+          echo "size=$(wc -c < "$APK" | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SDK OTA manifest
+        env:
+          ASG_APK_SHA256: ${{ steps.asg-apk-info.outputs.sha256 }}
+          ASG_APK_SIZE: ${{ steps.asg-apk-info.outputs.size }}
+          ASG_APK_URL: ${{ steps.sdk-ota-info.outputs.apk_url }}
+          ASG_VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
+          ASG_VERSION_NAME: ${{ steps.asg-build-info.outputs.version_name }}
+          FIRMWARE_MANIFEST: asg_client/ota_manifests/firmware_live.json
+          OUTPUT_PATH: sdk-ota-manifest/version.json
+          SDK_VERSION: ${{ needs.detect.outputs.version }}
+        run: node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
+
+      - name: Upload ASG APK and manifest to SDK OTA release
+        if: needs.detect.outputs.dry_run != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const crypto = require('crypto');
+
+            function sha256(data) {
+              return crypto.createHash('sha256').update(data).digest('hex');
+            }
+
+            const releaseBody = [
+              'Persistent ASG OTA artifacts for Bluetooth SDK releases.',
+              '',
+              'Each SDK version owns an immutable manifest at:',
+              '`https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`',
+              '',
+              'Do not delete assets from this release unless the matching SDK version is intentionally retired.',
+            ].join('\n');
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: process.env.SDK_OTA_RELEASE_TAG,
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: process.env.SDK_OTA_RELEASE_TAG,
+                  name: 'Bluetooth SDK OTA Artifacts',
+                  body: releaseBody,
+                  prerelease: true,
+                  draft: false,
+                });
+              } else {
+                throw error;
+              }
+            }
+
+            const releaseId = release.data.id;
+            const existingAssets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              per_page: 100,
+            });
+            const uploads = [
+              {
+                path: 'asg_client/app/build/outputs/apk/release/app-release.apk',
+                name: '${{ steps.sdk-ota-info.outputs.apk_asset }}',
+              },
+              {
+                path: 'sdk-ota-manifest/version.json',
+                name: '${{ steps.sdk-ota-info.outputs.manifest_asset }}',
+              },
+            ];
+
+            for (const upload of uploads) {
+              const data = fs.readFileSync(upload.path);
+              const existingAsset = existingAssets.find((asset) => asset.name === upload.name);
+              if (existingAsset) {
+                const existingResponse = await fetch(existingAsset.browser_download_url);
+                if (!existingResponse.ok) {
+                  throw new Error(`Failed to download existing SDK OTA release asset ${upload.name}: HTTP ${existingResponse.status}`);
+                }
+                const existingData = Buffer.from(await existingResponse.arrayBuffer());
+                if (sha256(existingData) !== sha256(data)) {
+                  throw new Error(`Refusing to overwrite immutable SDK OTA release asset ${upload.name}; existing content differs.`);
+                }
+                core.info(`Reusing existing SDK OTA release asset ${upload.name}.`);
+                continue;
+              }
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.name,
+                data,
+              });
+            }
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: releaseBody,
+            });
+
+      - name: Verify SDK OTA manifest release asset
+        if: needs.detect.outputs.dry_run != 'true'
+        env:
+          VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
+        run: |
+          set -euo pipefail
+
+          echo "Verifying ${{ steps.sdk-ota-info.outputs.manifest_url }}"
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --location "${{ steps.sdk-ota-info.outputs.manifest_url }}" -o /tmp/sdk_ota_version.json \
+              && jq -e --argjson versionCode "$VERSION_CODE" \
+                '.apps["com.mentra.asg_client"].versionCode == $versionCode
+                  and (.mtk_patches | type == "array" and length > 0)
+                  and (.bes_firmware | type == "object")' \
+                /tmp/sdk_ota_version.json >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "SDK OTA manifest was not reachable at ${{ steps.sdk-ota-info.outputs.manifest_url }} after deploy." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Summarize SDK OTA artifact
+        run: |
+          {
+            echo "## Bluetooth SDK OTA artifact"
+            echo ""
+            echo "- SDK version: \`${{ needs.detect.outputs.version }}\`"
+            echo "- ASG versionCode: \`${{ steps.asg-build-info.outputs.version_code }}\`"
+            echo "- ASG versionName: \`${{ steps.asg-build-info.outputs.version_name }}\`"
+            echo "- APK asset: \`${{ steps.sdk-ota-info.outputs.apk_asset }}\`"
+            echo "- Manifest URL: \`${{ steps.sdk-ota-info.outputs.manifest_url }}\`"
+            echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   npm:
     name: Stage npm package
-    needs: detect
+    needs: [detect, sdk-ota]
     if: needs.detect.outputs.run_release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -138,7 +435,7 @@ jobs:
 
   maven:
     name: Publish Maven Central artifacts
-    needs: detect
+    needs: [detect, sdk-ota]
     if: needs.detect.outputs.run_release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -282,7 +579,7 @@ jobs:
 
   ios-swiftpm:
     name: Release iOS SwiftPM mirror
-    needs: detect
+    needs: [detect, sdk-ota]
     if: needs.detect.outputs.run_release == 'true'
     runs-on: macos-15
     steps:

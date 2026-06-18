@@ -249,7 +249,22 @@ export type NavTripSnapshot = {
 // longer a host-provided hook.
 
 // Streaming (RTMP/SRT/WHIP publishing) moved into island (PhoneStreamCoordinator,
-// called directly by the runtime) — no longer a host-provided hook.
+// called directly by the runtime) — no longer a host-provided hook. The stream config
+// data types stay here (shared by runtime/streamConfig.ts + the island coordinator).
+
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraFovPreset = "narrow" | "standard" | "wide"

@@ -489,13 +489,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  button_camera_led: {
-    key: "button_camera_led",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   button_max_recording_time: {
     key: "button_max_recording_time",
     defaultValue: () => 10,
@@ -681,7 +674,6 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.
   SETTINGS.button_video_settings.key,
-  SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
   SETTINGS.camera_fov.key,
   // device / pairing:
