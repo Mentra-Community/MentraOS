@@ -505,7 +505,6 @@ setOtaVersionUrl(otaVersionUrl: string): void
 getOtaVersionUrl(): string
 startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
 sendOtaQueryStatus(): Promise<void>
-retryOtaVersionCheck(): Promise<void>
 restartTranscriber(): Promise<void>
 
 setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -543,7 +542,6 @@ internal fun setOtaVersionUrl(otaVersionUrl: String)
 internal fun getOtaVersionUrl(): String
 internal fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent
 internal fun sendOtaQueryStatus()
-internal fun retryOtaVersionCheck()
 internal fun sendShutdown()
 internal fun sendReboot()
 internal fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
@@ -568,7 +566,6 @@ func setOtaVersionUrl(_ otaVersionUrl: String) throws
 func getOtaVersionUrl() -> String
 func startOtaUpdate(otaVersionUrl: String) async throws -> OtaStartAckEvent
 func sendOtaQueryStatus()
-func retryOtaVersionCheck()
 func sendShutdown()
 func sendReboot()
 func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil)

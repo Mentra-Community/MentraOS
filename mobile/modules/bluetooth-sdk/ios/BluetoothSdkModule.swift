@@ -398,11 +398,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.sendOtaQueryStatus().values
         }
 
-        AsyncFunction("retryOtaVersionCheck") {
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.retryOtaVersionCheck().values
-        }
-
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {

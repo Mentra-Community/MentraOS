@@ -7,6 +7,7 @@ import {BgTimer} from "@mentra/island"
 
 import {useGlassesStore} from "@/stores/glasses"
 
+import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"
 import {detectClockSkew} from "./gallerySyncClock"
 
 export const CLOCK_SETTLE_MS = 500
@@ -43,8 +44,8 @@ export async function fixGlassesClockIfSkewed(glassesServerTime: number, lastSyn
 }
 
 /**
- * After glasses report OTA failure due to clock skew, fix time and ask glasses to retry
- * their most recent version check.
+ * After glasses report OTA failure due to clock skew, fix time and restart
+ * through the normal phone-driven ota_start path.
  */
 export async function handleOtaClockSkewFromGlasses(
   errorCode: string | undefined,
@@ -85,8 +86,10 @@ export async function handleOtaClockSkewFromGlasses(
       }
 
       lastOtaClockFixAt = Date.now()
-      console.log("[GlassesClockSync] ⏰ Retrying glasses OTA version check after clock fix")
-      await BluetoothSdk.retryOtaVersionCheck()
+      const {buildNumber, otaVersionUrl} = useGlassesStore.getState()
+      const manifestUrl = getAsgOtaVersionUrl(otaVersionUrl, buildNumber)
+      console.log("[GlassesClockSync] ⏰ Restarting OTA with ota_start after clock fix")
+      await BluetoothSdk.startOtaUpdate(manifestUrl)
       return true
     } finally {
       inflightOtaClockFix = null
@@ -107,11 +110,6 @@ export async function maybeFixGlassesClockFromVersionInfo(systemTimeMs: number |
   const fixed = await fixGlassesClockIfSkewed(systemTimeMs, 0)
   if (!fixed) {
     return false
-  }
-
-  if (useGlassesStore.getState().wifi.state === "connected") {
-    console.log("[GlassesClockSync] ⏰ Glasses on WiFi — retrying OTA version check after clock fix")
-    await BluetoothSdk.retryOtaVersionCheck()
   }
 
   return true

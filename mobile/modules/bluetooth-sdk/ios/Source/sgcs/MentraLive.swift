@@ -2878,17 +2878,6 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendOtaRetryVersionCheck() {
-        Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-
-        let json: [String: Any] = [
-            "type": "ota_retry_version_check",
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-        ]
-
-        sendJson(json, wakeUp: true)
-    }
-
     func keepAwake() {
         Bridge.log("LIVE: 📱 Sending keep_awake command to glasses")
 

@@ -4647,18 +4647,6 @@ class MentraLive : SGCManager() {
         }
     }
 
-    fun sendOtaRetryVersionCheck() {
-        try {
-            val json = JSONObject()
-            json.put("type", "ota_retry_version_check")
-            json.put("timestamp", System.currentTimeMillis())
-            sendJson(json, true)
-            Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-        } catch (e: JSONException) {
-            Log.e(TAG, "⏰ Error creating ota_retry_version_check command", e)
-        }
-    }
-
     /**
      * Request version info from glasses. Glasses will respond with version_info message containing
      * build number, firmware version, etc.

@@ -497,8 +497,6 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
 
-        AsyncFunction("retryOtaVersionCheck") { requireSdk().retryOtaVersionCheck().values }
-
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") { requireSdk().requestVersionInfo().toMap() }

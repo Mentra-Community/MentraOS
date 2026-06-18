@@ -263,8 +263,6 @@ public enum BluetoothEvent: CustomStringConvertible {
             event.description
         case let .keepAliveAck(event):
             event.description
-        case let .otaUpdateAvailable(event):
-            event.description
         case let .otaStartAck(event):
             event.description
         case let .otaStatus(event):

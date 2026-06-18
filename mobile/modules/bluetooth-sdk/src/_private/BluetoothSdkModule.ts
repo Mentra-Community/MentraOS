@@ -134,8 +134,6 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkForOtaUpdate(): Promise<boolean>
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
-  /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
-  retryOtaVersionCheck(): Promise<OtaQueryResult>
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>

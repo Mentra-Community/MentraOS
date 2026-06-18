@@ -114,7 +114,6 @@ public class OtaHelper {
 
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
-    private static volatile boolean phoneInitiatedRetryPending = false;
 
     // The version JSON URL used for the current/last phone-started OTA check.
     private volatile String lastVersionJsonUrl = OtaConstants.VERSION_JSON_URL;
@@ -409,13 +408,6 @@ public class OtaHelper {
         }
     }
 
-    private void updatePhoneInitiatedRetryPending(String errorCode) {
-        if (!isPhoneInitiatedOta) {
-            return;
-        }
-        phoneInitiatedRetryPending = "clock_skew".equals(errorCode) || "ssl_error".equals(errorCode);
-    }
-
     /**
      * Start OTA update from phone command (onboarding or background approval).
      * Called by OtaCommandHandler when phone sends ota_start command.
@@ -447,7 +439,6 @@ public class OtaHelper {
         Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
 
         isPhoneInitiatedOta = true;
-        phoneInitiatedRetryPending = false;
 
         // Reset progress tracking
         lastProgressSentTime = 0;
@@ -463,31 +454,6 @@ public class OtaHelper {
             return OtaConstants.VERSION_JSON_URL;
         }
         return versionJsonUrl.trim();
-    }
-
-    /**
-     * Retry the last OTA manifest URL after phone-side recovery work, such as clock sync.
-     */
-    public void retryBackgroundVersionCheck() {
-        if (context == null) {
-            Log.w(TAG, "⏰ Cannot retry OTA version check — no context");
-            return;
-        }
-        if (versionCheckLock.isLocked()) {
-            Log.i(TAG, "⏰ OTA already in progress - retry will report current status");
-            sendOtaStatus();
-            return;
-        }
-        if (!phoneInitiatedRetryPending) {
-            Log.i(TAG, "⏰ Ignoring OTA retry request - no failed phone-started OTA is waiting for retry");
-            sendOtaStatus();
-            return;
-        }
-        Log.i(TAG, "⏰ Retrying OTA version check after phone recovery");
-        WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
-        phoneInitiatedRetryPending = false;
-        isPhoneInitiatedOta = true;
-        startVersionCheckWithUrl(context, lastVersionJsonUrl);
     }
 
     public void startVersionCheck(Context context) {
@@ -589,7 +555,6 @@ public class OtaHelper {
                 // Send failure to phone with semantic error classification
                 String errorCode = classifyDownloadError(e);
                 if (isPhoneInitiatedOta) {
-                    updatePhoneInitiatedRetryPending(errorCode);
                     sendProgressToPhone(currentUpdateStage, 0, 0, 0, "FAILED", errorCode);
                 }
             } finally {
@@ -1225,7 +1190,6 @@ public class OtaHelper {
             }
             Log.e(TAG, "Download succeeded but verification failed");
             lastApkFailureErrorCode = FirmwareDownloadException.CODE_APK_VERIFY_FAILED;
-            updatePhoneInitiatedRetryPending(lastApkFailureErrorCode);
             EventBus.getDefault().post(new DownloadProgressEvent(
                 DownloadProgressEvent.DownloadStatus.FAILED, lastApkFailureErrorCode));
             return false;
@@ -1238,7 +1202,6 @@ public class OtaHelper {
             }
             String errorCode = classifyDownloadError(e);
             lastApkFailureErrorCode = errorCode;
-            updatePhoneInitiatedRetryPending(errorCode);
             EventBus.getDefault().post(new DownloadProgressEvent(
                 DownloadProgressEvent.DownloadStatus.FAILED, errorCode));
             sendProgressToPhone("download", 0, 0, 0, "FAILED", errorCode);
@@ -1921,7 +1884,6 @@ public class OtaHelper {
             if (partialFile.exists()) {
                 partialFile.delete();
             }
-            updatePhoneInitiatedRetryPending(nonRetryable.getErrorCode());
             sendProgressToPhone("download", 0, 0, 0, "FAILED", nonRetryable.getErrorCode());
             return false;
         } catch (Exception e) {
@@ -1932,7 +1894,6 @@ public class OtaHelper {
                 Log.d(TAG, "Cleaned up partial BES firmware file");
             }
             String errorCode = classifyDownloadError(e);
-            updatePhoneInitiatedRetryPending(errorCode);
             sendProgressToPhone("download", 0, 0, 0, "FAILED", errorCode);
             return false;
         }
@@ -2224,7 +2185,6 @@ public class OtaHelper {
             if (partialFile.exists()) {
                 partialFile.delete();
             }
-            updatePhoneInitiatedRetryPending(nonRetryable.getErrorCode());
             sendProgressToPhone("download", 0, 0, 0, "FAILED", nonRetryable.getErrorCode());
             return false;
         } catch (Exception e) {
@@ -2235,7 +2195,6 @@ public class OtaHelper {
                 Log.d(TAG, "Cleaned up partial MTK firmware file");
             }
             String errorCode = classifyDownloadError(e);
-            updatePhoneInitiatedRetryPending(errorCode);
             sendProgressToPhone("download", 0, 0, 0, "FAILED", errorCode);
             return false;
         }
