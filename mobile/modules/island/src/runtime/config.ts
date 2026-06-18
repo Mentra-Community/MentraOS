@@ -235,57 +235,9 @@ export type NavTripSnapshot = {
   speedLimitMps?: number | null
 }
 
-/**
- * Navigation adapter — surface of the host's NavigationService that the
- * runtime needs to wire `navigation_*` streams + request handlers for
- * miniapps.
- */
-export interface NavigationAdapter {
-  getState: () => "idle" | "navigating" | "rerouting" | "arrived"
-  getSnapshot: () => NavTripSnapshot | null
-  addListener: (l: (u: NavUpdate) => void) => () => void
-  addLocationListener: (l: (loc: NavLocation) => void) => () => void
-  addRouteListener: (l: (route: NavRoute) => void) => () => void
-  start: (
-    coords: {lat: number; lng: number},
-    options?: {
-      simulate?: boolean
-      speedMultiplier?: number
-      stops?: Array<{lat: number; lng: number}>
-      mode?: string
-      avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
-      missedTurnRerouteMeters?: number
-    },
-  ) => Promise<{ok: boolean; error?: string}>
-  stop: () => Promise<{ok: boolean; error?: string}>
-  simulateDeviation: (offsetMeters?: number) => Promise<{ok: boolean; error?: string}>
-  setWrongSidewalkOffset: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
-  setSkipCrossings: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
-  requestPermission: () => Promise<{ok: boolean; accepted: boolean; error?: string}>
-  computeRoute: (payload: Record<string, unknown>) => Promise<{
-    ok: boolean
-    error?: string
-    routes?: Array<{
-      points: Array<{lat: number; lng: number}>
-      totalDistanceMeters: number
-      totalDurationSeconds: number
-      summary?: string
-      steps?: NavRouteStep[]
-    }>
-  }>
-  /**
-   * Reverse-geocode a coordinate into a short road/route name. Used by
-   * the SDK pivot engine as a last-resort fallback when the Routes-API
-   * step's instruction text didn't yield a clean road name. Optional —
-   * hosts that don't implement it leave the SDK without a fallback,
-   * and pivots with no parseable instruction stay unlabeled.
-   */
-  reverseGeocodeRoad?: (coord: {lat: number; lng: number}) => Promise<{
-    ok: boolean
-    road?: string | null
-    error?: string
-  }>
-}
+// Navigation moved into island (NavigationService, called directly by the runtime's
+// NavigationHandlers) — no longer a host-provided hook. The Nav* data types below stay
+// (the runtime handlers use them).
 
 /**
  * Heading adapter — compass / device heading subscription. The host's
@@ -387,8 +339,6 @@ export interface RuntimeHooks {
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
   settings?: SettingsAccessor
-  /** Google Navigation SDK adapter (turn-by-turn + computeRoute). */
-  navigation?: NavigationAdapter
   // Device heading / compass moved into island (HeadingService, subscribed
   // directly by the runtime) — no longer a host-provided hook.
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */

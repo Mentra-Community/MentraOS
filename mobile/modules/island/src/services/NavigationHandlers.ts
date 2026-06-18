@@ -23,7 +23,7 @@
  */
 
 import type {NavLocation, NavRoute, NavUpdate} from "../runtime/config"
-import {getRuntimeHooks} from "../runtime/config"
+import navigationService from "./NavigationService"
 import {MiniappErrorCode, MiniappResponseType, MiniappStreamType} from "@mentra/miniapp"
 
 const LOG_TAG = "LocalMiniappRuntime"
@@ -121,7 +121,7 @@ export class NavigationHandlers {
     const missedRaw = Number(payload.missedTurnRerouteMeters)
     const missedTurnRerouteMeters = Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
 
-    const navigation = getRuntimeHooks().navigation
+    const navigation = navigationService
     if (!navigation) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
@@ -213,7 +213,7 @@ export class NavigationHandlers {
       this.activeNavApps.delete(packageName)
       // Only stop the native trip when no other miniapp is still navigating.
       if (this.activeNavApps.size === 0) {
-        const navigation = getRuntimeHooks().navigation
+        const navigation = navigationService
         const result = navigation ? await navigation.stop() : {ok: true}
         this.sendResult(packageName, requestId, result.ok, result, undefined)
       } else {
@@ -232,7 +232,7 @@ export class NavigationHandlers {
     try {
       const offsetNum = Number(payload.offsetMeters)
       const offsetMeters = Number.isFinite(offsetNum) && offsetNum > 0 ? offsetNum : 20
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation
         ? await navigation.simulateDeviation(offsetMeters)
         : {ok: false, error: "navigation adapter not configured"}
@@ -253,7 +253,7 @@ export class NavigationHandlers {
   ): Promise<void> {
     try {
       const enabled = payload.enabled === true
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation
         ? await navigation.setWrongSidewalkOffset(enabled)
         : {ok: false, error: "navigation adapter not configured"}
@@ -274,7 +274,7 @@ export class NavigationHandlers {
   ): Promise<void> {
     try {
       const enabled = payload.enabled === true
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation
         ? await navigation.setSkipCrossings(enabled)
         : {ok: false, error: "navigation adapter not configured"}
@@ -289,13 +289,13 @@ export class NavigationHandlers {
   }
 
   handleGetState(packageName: string, requestId?: string): void {
-    const snapshot = getRuntimeHooks().navigation?.getSnapshot() ?? null
+    const snapshot = navigationService.getSnapshot() ?? null
     this.sendResult(packageName, requestId, true, {state: snapshot})
   }
 
   async handleRequestPermission(packageName: string, requestId?: string): Promise<void> {
     try {
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation
         ? await navigation.requestPermission()
         : {ok: false, accepted: false, error: "navigation adapter not configured"}
@@ -315,7 +315,7 @@ export class NavigationHandlers {
     requestId?: string,
   ): Promise<void> {
     try {
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation
         ? await navigation.computeRoute(payload)
         : {ok: false as const, error: "navigation adapter not configured"}
@@ -358,7 +358,7 @@ export class NavigationHandlers {
         })
         return
       }
-      const navigation = getRuntimeHooks().navigation
+      const navigation = navigationService
       const result = navigation?.reverseGeocodeRoad
         ? await navigation.reverseGeocodeRoad({lat, lng})
         : {ok: false as const, error: "navigation adapter not configured"}

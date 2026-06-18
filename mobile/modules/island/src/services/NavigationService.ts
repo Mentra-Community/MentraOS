@@ -16,7 +16,7 @@ import CrustModule from "crust"
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"
 import restComms from "./RestComms"
-import {useSettingsStore} from "@/stores/settings"
+import {useSettingsStore} from "../stores/settings"
 
 const LOG_TAG = "NAV_SERVICE"
 

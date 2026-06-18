@@ -47,6 +47,7 @@ export {
 } from "./services/MentraJSLogPipeline"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
+export {default as navigationService} from "./services/NavigationService"
 export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 export {
