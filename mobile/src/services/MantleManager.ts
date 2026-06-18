@@ -189,10 +189,10 @@ class MantleManager {
       },
       cloud,
       miniappAuth: {
-        getToken: (packageName) => {
+        getToken: (packageName, opts) => {
           const authPackageName =
             packageName === DEV_APP_PACKAGE_NAME ? (getDevAppSourcePackage() ?? packageName) : packageName
-          return cloudClient.getMiniappAuthToken(authPackageName)
+          return cloudClient.getMiniappAuthToken(authPackageName, opts)
         },
       },
       audioPlayback: {

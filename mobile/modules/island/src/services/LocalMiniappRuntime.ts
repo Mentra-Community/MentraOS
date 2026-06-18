@@ -815,7 +815,7 @@ class LocalMiniappRuntime {
         void this.handleConnect(packageName, payload, requestId)
         break
       case MiniappRequestType.AUTH_REFRESH:
-        void this.handleAuthRefresh(packageName, requestId)
+        void this.handleAuthRefresh(packageName, payload, requestId)
         break
       case MiniappRequestType.SUBSCRIBE:
         this.handleSubscribe(packageName, payload, requestId)
@@ -1042,15 +1042,15 @@ class LocalMiniappRuntime {
     this.flushConnectWaiters(packageName)
   }
 
-  private async requestMiniappAuth(packageName: string): Promise<MiniappAuthToken | null> {
+  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
     const auth = getRuntimeHooks().miniappAuth
     if (!auth) return null
-    return auth.getToken(packageName)
+    return auth.getToken(packageName, opts)
   }
 
-  private async handleAuthRefresh(packageName: string, requestId?: string): Promise<void> {
+  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
-      const auth = await this.refreshMiniappAuth(packageName)
+      const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
       if (!auth) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.NOT_CONNECTED,
@@ -1067,8 +1067,8 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async refreshMiniappAuth(packageName: string): Promise<MiniappAuthToken | null> {
-    const auth = await this.requestMiniappAuth(packageName)
+  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = await this.requestMiniappAuth(packageName, opts)
     if (!auth) return null
     this.scheduleMiniappAuthRefresh(packageName, auth)
     this.sendToMiniapp(packageName, {
@@ -1076,6 +1076,12 @@ class LocalMiniappRuntime {
       auth,
     })
     return auth
+  }
+
+  private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
+    const minTtlMs = Number(payload.minTtlMs)
+    if (!Number.isFinite(minTtlMs) || minTtlMs <= 0) return undefined
+    return {minTtlMs}
   }
 
   private scheduleMiniappAuthRefresh(packageName: string, auth: MiniappAuthToken): void {

@@ -532,7 +532,7 @@ class MergeController {
   private showInsight(insight: MergeInsight): void {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
-    this.session.display.showTextWall(`.\\\\ Merge\n${insight.text}`, {
+    this.session.display.showTextWall(`// Merge\n${insight.text}`, {
       durationMs: DISPLAY_DURATION_MS,
       breakMode: "word",
     })

@@ -49,7 +49,7 @@ export interface MiniappAuthToken {
 
 export interface MiniappAuthAdapter {
   /** Mint or return a cached token scoped to one miniapp packageName. */
-  getToken: (packageName: string) => Promise<MiniappAuthToken>
+  getToken: (packageName: string, opts?: {minTtlMs?: number}) => Promise<MiniappAuthToken>
 }
 
 import type {ClientApp} from "../types/applet"
