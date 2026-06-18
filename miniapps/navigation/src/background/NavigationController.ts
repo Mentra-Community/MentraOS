@@ -19,6 +19,7 @@ import type {
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../shared/types"
+import {deriveManeuverDisplay} from "../shared/maneuverDisplay"
 
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -29,6 +30,7 @@ import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
 import {distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
+import {borderTestImageBase64} from "./lib/bmp"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 
 export class NavigationController {
@@ -65,6 +67,22 @@ export class NavigationController {
   // True while the swipe-up large-map view is showing. Suppresses the normal HUD
   // pump so it doesn't repaint the minimap/text over the large map.
   private largeMapShown = false
+  // Lock held while a large-map transition (show or dismiss) is mid-flight —
+  // i.e. between the clear() and the deferred render that follows the settle
+  // delay. Swipes that arrive during this window are IGNORED. Without it,
+  // rapid/accidental repeat swipes start overlapping show↔dismiss cycles whose
+  // clears, deferred renders, and largeMapShown toggles interleave and corrupt
+  // the display ("swiped a couple times and everything broke").
+  private largeMapTransitioning = false
+  // Handle for the in-flight transition's settle timer, so a teardown can
+  // cancel a pending render.
+  private largeMapTransitionTimer: ReturnType<typeof setTimeout> | null = null
+  // Re-entrancy guard for nav:start. The Start button (and some upstream
+  // flows) can dispatch nav:start twice in quick succession; the second
+  // start()'s internal stop() tears down the sim/trip session the first one
+  // just spun up, freezing the puck (maneuver + trip distance stuck at one
+  // value). Held across the async start() so a duplicate start is ignored.
+  private starting = false
   // OSM-roads minimap cache: roads fetched around a center, reused while the
   // user stays near it (re-fetch only when they move past a threshold).
   private osmRoadsCache: LatLng[][] | null = null
@@ -309,6 +327,10 @@ export class NavigationController {
             this.offRouteAdvisory = false
             this.offRouteAdvisoryDistanceM = null
             this.cachedInstructions = null
+            // If the large map is up at arrival, drop out of it so the
+            // "You have arrived" HUD can actually paint (refreshHUD early-
+            // returns while largeMapShown).
+            this.exitLargeMap()
             break
           }
           case "error":
@@ -321,6 +343,7 @@ export class NavigationController {
             this.offRouteAdvisory = false
             this.offRouteAdvisoryDistanceM = null
             this.cachedInstructions = null
+            this.exitLargeMap()
             break
         }
         this.ui.send("nav:trip-state", this.trip)
@@ -450,6 +473,14 @@ export class NavigationController {
   private wireUIBroadcasts(): void {
     this.unsubs.push(
       this.ui.on("nav:start", async (opts) => {
+        // Re-entrancy guard: ignore a second nav:start while one is already
+        // in flight (the duplicate's start() would stop() the session the
+        // first just created and freeze the puck).
+        if (this.starting) {
+          this.appendLog("START ignored — already starting")
+          return
+        }
+        this.starting = true
         const {destinationName, ...startOpts} = opts
         // Clear the previous trip's route polyline immediately so the
         // off-route threshold check doesn't run against a stale route
@@ -502,6 +533,8 @@ export class NavigationController {
           this.trip = {...this.trip, status: "idle", running: false}
           this.ui.send("nav:trip-state", this.trip)
           this.refreshHUD()
+        } finally {
+          this.starting = false
         }
       }),
     )
@@ -535,6 +568,11 @@ export class NavigationController {
           arrivalSide: null,
         }
         this.hasCompletedTrip = true
+        // If the swipe-up large map is showing, drop out of it so the trip's
+        // end actually clears the glasses — otherwise refreshHUD() early-
+        // returns (it won't paint over the large map) and the big map lingers
+        // on screen after the trip is over.
+        this.exitLargeMap()
         this.ui.send("nav:trip-state", this.trip)
         this.refreshHUD()
       }),
@@ -546,6 +584,55 @@ export class NavigationController {
         } catch (err) {
           this.appendLog(`deviate failed: ${err instanceof Error ? err.message : String(err)}`)
         }
+      }),
+    )
+    this.unsubs.push(
+      this.ui.on("nav:reset-location", () => {
+        // Dev: snap the map back to the device's REAL current location.
+        // After a simulated trip the puck is parked at the sim destination
+        // (the native sim drove it there); this stops any active trip and
+        // forces a fresh one-shot fix, then broadcasts it as nav:coords so
+        // the map re-centers on where the device actually is.
+        this.appendLog("RESET LOCATION → real fix")
+        try {
+          this.navigation.stop()
+        } catch {
+          /* ignore */
+        }
+        // Return the page to idle so the map isn't holding a stale trip.
+        this.cancelPendingRebuild()
+        this.tripStartCoords = null
+        this.lastStartOpts = null
+        this.activePivot = null
+        this.upcomingPivot = null
+        this.cachedInstructions = null
+        this.trip = {
+          ...this.trip,
+          status: "idle",
+          running: false,
+          maneuver: null,
+          activeDestination: null,
+          routePoints: null,
+          routeSteps: null,
+          offRouteAt: null,
+          arrivalSide: null,
+        }
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+        // Force-fetch a fresh fix and broadcast it. Unlike seedInitialFix,
+        // this overwrites existing coords on purpose — the whole point is to
+        // discard the sim-endpoint position and jump to reality.
+        this.location
+          .getOnce()
+          .then((d) => {
+            this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+            this.lastCoordsAt = Date.now()
+            this.ui.send("nav:coords", this.coords)
+            this.appendLog(`reset → ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}`)
+          })
+          .catch((err) => {
+            this.appendLog(`reset-location fix failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
       }),
     )
     this.unsubs.push(
@@ -694,8 +781,46 @@ export class NavigationController {
       }),
     )
 
+    this.unsubs.push(
+      this.ui.handle("test:count-both-boxes", () => {
+        this.runCountBothBoxesTest()
+      }),
+    )
+
     // Mid-trip hydration: every fresh WebView open gets a snapshot.
     this.unsubs.push(this.ui.onOpen(() => this.ui.send("nav:snapshot", this.buildSnapshot())))
+  }
+
+  /**
+   * Delay probe (dev panel). Shows the minimap bitmap top-right, then counts
+   * BOTH text containers — top-left maneuver + bottom-left stats — down from
+   * 100 to 0 on the SAME tick, once per second, through the real
+   * showManeuver/showTripStats path (so it exercises the production 200ms
+   * text queue). If the two boxes stay locked together the queue is fine; if
+   * one trails the other, that's the delay you're seeing. Auto-stops at 0.
+   * Tapping again while running is ignored (guard) so timers don't stack.
+   */
+  private countBothBoxesTimer: ReturnType<typeof setInterval> | null = null
+  private runCountBothBoxesTest(): void {
+    if (this.countBothBoxesTimer != null) return // already running — ignore re-tap
+    // Top-right minimap bitmap stays up for the whole count.
+    this.display.showBitmap(borderTestImageBase64(100, 100))
+    let n = 100
+    const tick = () => {
+      // Same value, same tick, into both containers via the real queue.
+      this.display.showManeuver(`Top\n${n}`)
+      this.display.showTripStats(`Bottom\n${n}`)
+      if (n <= 0) {
+        if (this.countBothBoxesTimer != null) {
+          clearInterval(this.countBothBoxesTimer)
+          this.countBothBoxesTimer = null
+        }
+        return
+      }
+      n--
+    }
+    tick() // show 100 immediately
+    this.countBothBoxesTimer = setInterval(tick, 1000)
   }
 
   // ── OSM line-map PoC ─────────────────────────────────────────────────
@@ -804,27 +929,68 @@ export class NavigationController {
           gesture === "swipe_down"
         if (!isSwipe) return
 
+        // LOCK: ignore swipes while a show/dismiss transition is mid-flight
+        // (clear() → settle delay → render). Rapid/accidental repeat swipes
+        // would otherwise overlap and corrupt the display.
+        if (this.largeMapTransitioning) {
+          console.log(`[TOUCH] swipe ignored — large-map transition in flight`)
+          return
+        }
+
         // Toggle: any swipe shows the box; any swipe while it's showing dismisses
         // it and brings back the original HUD.
         if (!this.largeMapShown) {
           console.log(`[TOUCH] swipe → showing large route map`)
-          this.showLargeMap() // sets largeMapShown, clears, fetches + draws the route map
+          this.showLargeMap() // sets largeMapShown + transition lock, clears, draws
         } else {
-          console.log(`[TOUCH] swipe → dismissing box, clear → wait 1s → HUD`)
+          console.log(`[TOUCH] swipe → dismissing large map → HUD`)
+          this.largeMapTransitioning = true
           this.largeMapShown = false
-          // Clear the big bitmap, wait 1s so its container fully tears down, THEN
-          // repaint the main screen — else it lingers under/over the HUD text.
+          // Clear the big bitmap (this also purges any queued HUD text so it
+          // can't flash back), wait a short beat for the G2 container teardown,
+          // THEN repaint the main screen.
           this.display.clear()
+          // Immediate top-left feedback while the HUD comes back.
+          this.display.showLoadingMessage("Loading main menu")
           this.lastHudKey = "" // force a fresh HUD repaint (directions text box)
           this.lastMinimapPng = null
-          setTimeout(() => {
+          this.largeMapTransitionTimer = setTimeout(() => {
+            this.largeMapTransitionTimer = null
             this.lastHudKey = "" // re-force in case state changed during the wait
             this.lastMinimapPng = null
+            // Blank the loading text, then let the HUD repaint write real
+            // maneuver text into the same top-left region.
+            this.display.clearLoadingMessage()
             this.refreshHUD()
-          }, 1000)
+            this.largeMapTransitioning = false // release the lock
+          }, this.LARGE_MAP_CLEAR_SETTLE_MS)
         }
       }),
     )
+  }
+
+  /**
+   * Drop out of the swipe-up large-map view: clear the big map off the
+   * glasses and reset large-map state so the normal HUD pump resumes. Safe to
+   * call when the large map isn't showing (no-op). Used when a trip ends while
+   * the large map is up — without this, refreshHUD() early-returns on
+   * `largeMapShown` and the big map lingers after the trip is over.
+   */
+  private exitLargeMap(): void {
+    // Cancel any in-flight transition (deferred render) and release the lock,
+    // so a trip ending mid-swipe doesn't leave a dangling render or a stuck
+    // lock that blocks future swipes.
+    if (this.largeMapTransitionTimer != null) {
+      clearTimeout(this.largeMapTransitionTimer)
+      this.largeMapTransitionTimer = null
+    }
+    this.largeMapTransitioning = false
+    if (!this.largeMapShown) return
+    this.largeMapShown = false
+    // Force fresh repaints when the HUD resumes.
+    this.lastHudKey = ""
+    this.lastMinimapPng = null
+    this.display.clear()
   }
 
   /**
@@ -834,14 +1000,41 @@ export class NavigationController {
    */
   private showLargeMap(): void {
     this.largeMapShown = true
-    // 1. Clear whatever's on the glasses (bitmaps + text containers).
+    this.largeMapTransitioning = true // lock out swipes until the render lands
+    // 1. Clear whatever's on the glasses (bitmaps + text containers). The HUD
+    //    pump is already gated off by `largeMapShown`, so nothing repaints
+    //    over us. Also drop the minimap/HUD dedup so swiping back down forces
+    //    a fresh repaint.
+    this.lastHudKey = ""
+    this.lastMinimapPng = null
     this.display.clear()
-    if (!this.coords) return
+    // Immediate top-left feedback while the map loads (cleared once it draws).
+    this.display.showLoadingMessage("Loading large map")
+    if (!this.coords) {
+      // No fix to render — release the lock so the view isn't stuck locked.
+      this.largeMapTransitioning = false
+      return
+    }
     const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
 
-    // 2. Render immediately with whatever roads we already have (zoomed to fit
-    //    the whole route — see renderLargeMap).
-    this.renderLargeMap(me)
+    // 2. Render the large map AFTER a short beat so the G2 finishes tearing
+    //    down the old text + minimap containers first. clear() is async on the
+    //    glasses — drawing the big bitmap on the same tick races the teardown,
+    //    so the old HUD sometimes lingers UNDER/OVER the map (the "doesn't
+    //    clear / overlays everything" glitch). Waiting lets the clear land,
+    //    then the map draws onto an empty canvas. Guarded by `largeMapShown`
+    //    in case the user swiped back down during the wait. Releases the
+    //    transition lock when done.
+    this.largeMapTransitionTimer = setTimeout(() => {
+      this.largeMapTransitionTimer = null
+      if (this.largeMapShown && this.coords) {
+        // Map drew — clear the "Loading large map" text (top-left) so it
+        // doesn't linger over the rendered map.
+        this.display.clearLoadingMessage()
+        this.renderLargeMap({lat: this.coords.lat, lng: this.coords.lng})
+      }
+      this.largeMapTransitioning = false // release the lock
+    }, this.LARGE_MAP_CLEAR_SETTLE_MS)
 
     // 3. The minimap road cache only covers a tight radius around the user, so
     //    the far end of the route would have no background streets. Fetch roads
@@ -930,20 +1123,38 @@ export class NavigationController {
     let next: string | null = null
     let durationMs: number | undefined
 
+    // The next-turn display, derived from the live `maneuver` event via the
+    // SHARED helper the phone OrientationCard also uses. Computed once here
+    // so the glasses HUD and the phone card read the identical instruction /
+    // distance / arrow — single source of truth, no PivotEngine re-derivation.
+    const md = deriveManeuverDisplay(maneuver, status)
+
     // Mirrors the phone-side OrientationCard's pickDisplay() — same
-    // two-line layout, same pivot fields, same precedence. If you tweak
-    // one, tweak the other or they'll diverge.
+    // layout, same source, same precedence. If you tweak one, tweak the
+    // other or they'll diverge.
     if (status === "arrived") {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
-      const side = arrivalSide ? `, on your ${arrivalSide}` : ""
+      // Side of the destination: "on your left/right" when we know it, else
+      // "up ahead" (it's straight in front, not to a side).
+      const side = arrivalSide ? `, on your ${arrivalSide}` : ", up ahead"
       next = `You have arrived${at}${side}`
       durationMs = 10_000
-      // Welcome message disabled — don't show "Welcome to Mentra Maps!".
-      // } else if (!running && !this.hasCompletedTrip) {
-      //   next = "Welcome to Mentra Maps!\nPick a destination to get started."
-      //   durationMs = 5_000
+    } else if (!running && status !== "rerouting" && !this.hasCompletedTrip) {
+      // FRESH START ONLY: app just opened, no trip has run yet. Show the
+      // welcome prompt and leave it up INDEFINITELY (no durationMs → sticky)
+      // until the user picks a destination and a trip starts, at which point
+      // `running` flips true and the next-turn HUD takes over. The ~3s
+      // re-push in the coalescer keeps it on screen even if the G2 tears
+      // down the page.
+      //
+      // Gated on !hasCompletedTrip so that ENDING a navigation (nav:stop sets
+      // hasCompletedTrip=true) clears the glasses and leaves them blank —
+      // we do NOT bounce back to the welcome prompt after a trip. `next`
+      // stays null below, which clears the HUD.
+      next = "Welcome to Mentra Maps!\nPick a destination to get started."
     } else if (status === "rerouting") {
-      next = "Rebuilding route…"
+      // Mapbox detected the user off-route and is fetching a new route.
+      next = "Rerouting…"
     } else if (this.offRouteAdvisory && running) {
       // 15–30m advisory band. Replace the (now stale) maneuver text
       // with a return-to-route prompt + live distance back to the
@@ -952,71 +1163,37 @@ export class NavigationController {
       // flow takes over.
       const d = this.offRouteAdvisoryDistanceM
       next = d != null ? `Go back\n${formatDistance(d, this.unitSystem)}` : "Go back\nto route"
-    } else if (this.activePivot?.direction) {
-      // At the turn. Layout:
-      //   ←|→
-      //   Onto <toRoad>
-      //   Turn left|right
-      const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
-      const onto = isRealRoadName(this.activePivot.toRoad)
-      const topLine = onto ? `Onto ${onto}` : null
-      const rawTop = this.devSettings.useRawInstructions
-        ? this.lookupRawInstructionForPivot(this.activePivot)
-        : null
-      // Directional arrow on the top line. Mirrors the approaching-
-      // pivot branch, but since we're AT the corner there's no distance
-      // gate to apply — it's always the turn arrow, never ↑.
-      const arrow = arrowFor(this.activePivot.maneuver, this.activePivot.direction)
-      // At the pivot. With raw instructions on, Google's text already
-      // contains the verb ("Turn right onto X St"), so prepending our
-      // own "Turn right" line duplicates the verb. Use "Now" as the
-      // top line instead — same hierarchy as "In 198 m" above the
-      // line just before the turn fires.
-      next = rawTop ? `${arrow}\nNow\n${rawTop}` : [arrow, topLine, verb].filter(Boolean).join("\n")
-    } else if (this.upcomingPivot?.direction && this.coords) {
-      // Approaching the next turn. Layout:
-      //   Onto <toRoad>
-      //   Turn left|right in <distance>
-      const dist = haversineMeters(
-        {lat: this.coords.lat, lng: this.coords.lng},
-        {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng},
-      )
-      const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
-      const onto = isRealRoadName(this.upcomingPivot.toRoad)
-      const topLine = onto ? `Onto ${onto}` : null
-      // Direction arrow as its own top line so the user can read the
-      // turn at a glance before parsing the rest of the HUD. Pulled
-      // from the pivot's `maneuver` (richer than `direction`, includes
-      // SLIGHT_/SHARP_ variants) with `direction` as fallback.
+    } else if (md) {
+      // Next-turn HUD, driven by the SAME shared helper + SAME `maneuver`
+      // event the phone OrientationCard uses — so the glasses first text box
+      // and the phone card agree word-for-word on instruction, distance, and
+      // turn direction. We no longer re-derive turns from the PivotEngine
+      // (which could disagree with Mapbox on direction/road). Layout mirrors
+      // the card but keeps the directional arrow on top for glanceability:
       //
-      // Gated on distance: while still walking down the current street
-      // (>100m from the upcoming pivot) the arrow stays ↑ so it doesn't
-      // claim to be turning when there's nothing to turn at yet. Inside
-      // the approach threshold, the arrow flips to the actual turn
-      // direction.
-      //
-      //   ←|→|↑
-      //   In 198 m
-      //   Turn right onto Octavia St   (or Google's raw text)
-      const arrow =
-        dist < ARROW_APPROACH_M_WALKING
-          ? arrowFor(this.upcomingPivot.maneuver, this.upcomingPivot.direction)
-          : "↑"
-      const rawTop = this.devSettings.useRawInstructions
-        ? this.lookupRawInstructionForPivot(this.upcomingPivot)
-        : null
-      next = rawTop
-        ? `${arrow}\nIn ${formatDistance(dist, this.unitSystem)}\n${rawTop}`
-        : [arrow, topLine, `${verb} in ${formatDistance(dist, this.unitSystem)}`].filter(Boolean).join("\n")
-    } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
-      // Final-leg "Arriving in Xm" — no more pivots between here and
-      // the destination, so the directional arrow stays ↑ (straight
-      // ahead) until the ≤7m-remaining trigger flips status to
-      // "arrived". Matches the approach-pivot HUD's arrow-on-top
-      // layout for visual continuity.
-      next = `↑\nArriving in ${formatDistance(maneuver.distanceToDestinationMeters, this.unitSystem)}`
+      //   ←|→|↑                          ← arrow from maneuver.maneuverType
+      //   In 198 m  | Now | Arriving in 65 m
+      //   Turn left onto Market St       ← Mapbox's verbatim instruction
+      if (md.arriving) {
+        const distLine =
+          md.distanceMeters != null
+            ? `Arriving in ${formatDistance(md.distanceMeters, this.unitSystem)}`
+            : "Arriving"
+        next = `↑\n${distLine}`
+      } else {
+        const distLine = md.atTurn
+          ? "Now"
+          : md.distanceMeters != null
+            ? `In ${formatDistance(md.distanceMeters, this.unitSystem)}`
+            : null
+        next = [md.arrow, distLine, md.instruction].filter(Boolean).join("\n")
+      }
     } else if (running) {
-      next = `↑\nArriving`
+      // Running but no maneuver yet — the brief gap right after Start, before
+      // Mapbox emits the first step. Show a neutral "Starting…" with NO arrow
+      // (there's no turn/direction to point at yet) rather than "Arriving"
+      // (which wrongly implies we're about to reach the dest).
+      next = `Starting…`
     }
 
     if (next == null) {
@@ -1080,9 +1257,11 @@ export class NavigationController {
   }
 
   /**
-   * Render and push the 100×100 heading-up minimap. Drawn alongside the
-   * text HUD (non-overlapping regions of the main view). De-duped on the
-   * encoded PNG so we don't re-send identical frames while idle.
+   * Render and push the 100×100 NORTH-UP minimap (north fixed at top; the
+   * map never rotates to follow heading — only the position arrow rotates
+   * to show facing direction). Drawn alongside the text HUD (non-overlapping
+   * regions of the main view). De-duped on the encoded PNG so we don't
+   * re-send identical frames while idle.
    */
   // OSM-roads minimap: street network around the user's live position, with the
   // active route drawn on top. Roads are cached and only re-fetched from Overpass
@@ -1095,6 +1274,13 @@ export class NavigationController {
   private readonly OSM_LARGE_MAP_W = 288
   private readonly OSM_LARGE_MAP_H = 140
   private readonly OSM_REFETCH_THRESHOLD_M = 120
+  // Beat to wait after clear() before drawing the large map / repainting the
+  // HUD. Doubles as how long the "Loading large map" / "Loading main menu"
+  // top-left message stays up: held a full 3s so the loading text is clearly
+  // readable before the map (or HUD) replaces it. Also gives the G2 ample
+  // time to finish tearing down the old containers (clear is async on the
+  // glasses) so the new content draws onto an empty canvas.
+  private readonly LARGE_MAP_CLEAR_SETTLE_MS = 3000
   // Walking speed for the ETA fallback when the SDK hasn't sent a remaining-time
   // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
   private readonly FALLBACK_WALKING_M_PER_S = 1.4
@@ -1133,11 +1319,10 @@ export class NavigationController {
     // heading when there's no route to follow.
     const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
     const markerHeading = routeBearing ?? this.heading
-    // Heading-up: rotate the whole minimap so the direction of travel (route
-    // forward, or live compass heading as fallback) points UP. From the moment
-    // the route starts the road ahead is at the top of the HUD, instead of the
-    // map sitting north-up until the user turns. Null when we have no bearing
-    // yet (renderer falls back to north-up for that frame).
+    // NORTH-UP: the minimap is kept fixed with north at the top — it does NOT
+    // rotate to follow heading. Only the position marker rotates to show which
+    // way the user is facing (marker.headingDeg). `rotationDeg: 0` locks the
+    // map orientation north-up regardless of travel direction.
     const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
       center: me,
       width: this.OSM_MINIMAP_SIZE,
@@ -1145,7 +1330,7 @@ export class NavigationController {
       viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
       lineWidthPx: 2,
       route: this.trip.routePoints,
-      rotationDeg: markerHeading,
+      rotationDeg: 0,
       marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
     })
     // Live trip stats in the bottom-left: distance remaining + ETA, both of which
@@ -1308,101 +1493,28 @@ export class NavigationController {
       this.appendLog(`[NavOffRoute] ${msg}`)
       this.refreshHUD()
     } else if (bucket === 2) {
-      const msg = `> ${OFF_ROUTE_TRIGGER_M}m off route (${dist.toFixed(1)}m) — rebuilding`
+      // > TRIGGER_M off route. We NO LONGER auto-rebuild here — the host
+      // Mapbox Navigation SDK owns off-route detection + rerouting natively
+      // and pushes the new route through `onRoute` (the `rerouting` status
+      // arrives via the native maneuver/update stream). Re-firing nav:start
+      // from JS would double the reroute and fight the native engine (the
+      // bug where the puck froze + reroutes felt doubled). This branch is
+      // now log-only; the advisory HUD band (bucket 1) is unaffected.
+      const msg = `> ${OFF_ROUTE_TRIGGER_M}m off route (${dist.toFixed(1)}m) — native SDK will reroute`
       console.log(`[NavOffRoute] ${msg}`)
       this.appendLog(`[NavOffRoute] ${msg}`)
-      this.triggerAutoRebuild(here, dist)
     }
   }
 
-  // Schedule a delayed auto-rebuild. Crossing >30m flips the HUD to
-  // "Rebuilding route…" immediately (via status="rerouting"), then we
-  // wait REBUILD_DELAY_MS and re-check distance. If the user is still
-  // >30m off, fire nav:start; if they've returned closer, cancel and
-  // revert HUD. The delay also doubles as the "min 3s HUD show" rule —
-  // since REBUILD_DELAY_MS > 3s, the rerouting card is always on screen
-  // for at least 3s before any outcome.
-  //
-  // No-ops if the user hasn't actually moved from where the trip
-  // started (building edge case) or if a previous rebuild is still
-  // within its cooldown window.
-  private triggerAutoRebuild(here: {lat: number; lng: number}, dist: number): void {
-    const REBUILD_MIN_MOVE_M = 10
-    const REBUILD_COOLDOWN_MS = 5_000
-    const REBUILD_DELAY_MS = 4_000
-    const REBUILD_DISTANCE_M = OFF_ROUTE_TRIGGER_M
-
-    const opts = this.lastStartOpts
-    if (!opts) return
-
-    // Already a delayed rebuild in flight — don't stack another.
-    if (this.pendingRebuildTimer) return
-
-    const now = Date.now()
-    if (now - this.lastAutoRebuildAt < REBUILD_COOLDOWN_MS) {
-      this.appendLog(`[NavOffRoute] rebuild skipped (cooldown)`)
-      return
-    }
-
-    const start = this.tripStartCoords
-    if (start) {
-      const moved = haversineMeters(start, here)
-      if (moved < REBUILD_MIN_MOVE_M) {
-        this.appendLog(
-          `[NavOffRoute] rebuild skipped (user hasn't moved: ${moved.toFixed(1)}m from start, ${dist.toFixed(1)}m off route)`,
-        )
-        return
-      }
-    }
-
-    // Flip HUD immediately so "Rebuilding route…" is visible during
-    // the delay window. If the trip ends or a new route lands during
-    // the delay, cancelPendingRebuild() / the existing route handlers
-    // will revert this.
-    this.appendLog(`[NavOffRoute] rebuild armed — re-checking in ${REBUILD_DELAY_MS / 1000}s`)
-    this.trip = {...this.trip, status: "rerouting"}
-    this.ui.send("nav:trip-state", this.trip)
-    this.refreshHUD()
-
-    this.pendingRebuildTimer = setTimeout(() => {
-      this.pendingRebuildTimer = null
-
-      // Trip may have ended or status changed during the delay.
-      if (!this.trip.running && this.trip.status !== "rerouting") return
-      const route = this.trip.routePoints
-      if (!route || route.length < 2 || !this.coords) {
-        // Route or fix went away — revert.
-        this.trip = {...this.trip, status: "navigating"}
-        this.ui.send("nav:trip-state", this.trip)
-        this.refreshHUD()
-        return
-      }
-      const stillOff = distanceToPolylineMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
-      if (stillOff == null || stillOff < REBUILD_DISTANCE_M) {
-        this.appendLog(`[NavOffRoute] rebuild cancelled — back within range (${stillOff?.toFixed(1) ?? "?"}m)`)
-        this.trip = {...this.trip, status: "navigating"}
-        this.ui.send("nav:trip-state", this.trip)
-        this.refreshHUD()
-        return
-      }
-
-      this.lastAutoRebuildAt = Date.now()
-      this.appendLog(
-        `[NavOffRoute] auto-rebuild firing (${stillOff.toFixed(1)}m off) → ${opts.destinationName ?? "(unnamed)"}`,
-      )
-      // Re-anchor trip-start to the current position so the moved-guard
-      // re-arms against this new starting point.
-      this.tripStartCoords = {lat: this.coords!.lat, lng: this.coords!.lng}
-      void this.navigation.start(withPivotDefaults(opts)).then((res) => {
-        if (!res.ok) {
-          this.appendLog(`[NavOffRoute] auto-rebuild failed: ${res.error ?? "unknown"}`)
-          this.trip = {...this.trip, status: "navigating"}
-          this.ui.send("nav:trip-state", this.trip)
-          this.refreshHUD()
-        }
-      })
-    }, REBUILD_DELAY_MS)
-  }
+  // NOTE: the former `triggerAutoRebuild()` (JS-side off-route → re-fire
+  // nav:start) was removed in the Mapbox migration. The host Mapbox
+  // Navigation SDK owns off-route detection + rerouting natively and pushes
+  // the rerouted route through `onRoute`, with the `rerouting` status
+  // arriving via the native update stream. A JS-side rebuild would double
+  // the reroute and fight the native engine. The off-route distance check
+  // above is now log + advisory-HUD only. `cancelPendingRebuild()` and the
+  // rebuild-state fields are retained as harmless no-ops (the timer is
+  // never armed now) to avoid churn across the many lifecycle call sites.
 
   // ── Early arrival (≤7m of route remaining) ───────────────────────────
 

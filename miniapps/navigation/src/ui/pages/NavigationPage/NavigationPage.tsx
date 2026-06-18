@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, TravelMode} from "@mentra/miniapp"
 import {useRpc} from "@mentra/miniapp/ui"
 
@@ -11,6 +11,7 @@ import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
+import {useToast} from "@/ui/components/Toast/Toast"
 import {appVersion, isDev} from "@/ui/lib/env"
 import {toggleDevOverride, useDevOverride} from "@/ui/lib/devOverride"
 import {SimulationControls} from "@/ui/pages/NavigationPage/components/Controls/Controls"
@@ -199,6 +200,21 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
   const computeRoute = useRpc<Channels, "nav:compute-route">("nav:compute-route")
 
+  // Show a "Rerouting" toast when Mapbox decides to reroute. The native
+  // engine flips trip.status to "rerouting" (via its RerouteStateObserver),
+  // which arrives here through nav:trip-state. We fire the toast only on the
+  // TRANSITION into rerouting (tracked via a ref) so it doesn't re-toast on
+  // every render while the status stays "rerouting".
+  const toast = useToast()
+  const wasReroutingRef = useRef(false)
+  useEffect(() => {
+    const isRerouting = status === "rerouting"
+    if (isRerouting && !wasReroutingRef.current) {
+      toast("Rerouting")
+    }
+    wasReroutingRef.current = isRerouting
+  }, [status, toast])
+
   // ---- page-local UI state -------------------------------------------------
   const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
@@ -276,17 +292,32 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // Sticky off-route banner. The upstream `offRouteAt` flag only lives
   // for the ~100ms gap between the SDK's `off_route` event and the
   // controller flipping status to "rerouting" — too short to read.
-  // Latch it for OFF_ROUTE_STICKY_MS on the rising edge so the user
-  // sees the recalculating notice (plus spinner) even after the
-  // controller has moved on to actually rebuilding the route.
-  const OFF_ROUTE_STICKY_MS = 5_000
+  // Latch it on the rising edge so the user sees the recalculating notice
+  // (plus spinner) while the route is being rebuilt.
+  //
+  // Dismissal is driven by route progress, NOT just a fixed timer: Mapbox
+  // emits `off_route` on EVERY tick while you're off the path, so
+  // `offRouteAt` keeps changing and a `[offRouteAt]`-keyed timeout would
+  // restart forever — leaving the banner stuck. So we clear it the moment
+  // the trip is back to live navigation (a fresh route was fetched), with
+  // a max-duration safety timer as a backstop in case that signal is
+  // missed.
+  const OFF_ROUTE_STICKY_MS = 8_000
   const [offRouteSticky, setOffRouteSticky] = useState(false)
   useEffect(() => {
     if (offRouteAt == null) return
     setOffRouteSticky(true)
+    // Backstop only — normal dismissal comes from the status effect below.
     const t = setTimeout(() => setOffRouteSticky(false), OFF_ROUTE_STICKY_MS)
     return () => clearTimeout(t)
   }, [offRouteAt])
+  // Clear the banner as soon as navigation resumes on a fresh route. The
+  // reroute lifecycle is: navigating → (off_route) → rerouting →
+  // navigating. Once we're back to "navigating" the new route is in hand,
+  // so the recalculating notice has served its purpose.
+  useEffect(() => {
+    if (status === "navigating") setOffRouteSticky(false)
+  }, [status])
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   // Dev-only: turn points along the previewed route, used to draw red
@@ -646,6 +677,13 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   function handleDeviate() {
     append("deviate → +50m off-route")
     mentra.send("nav:deviate", {})
+  }
+
+  // Dev: snap the map back to the device's real current location. Handy
+  // after a simulated trip leaves the puck parked at the sim destination.
+  function handleResetLocation() {
+    append("reset → my location")
+    mentra.send("nav:reset-location", {})
   }
 
   // Cancel the current trip and immediately re-start it to the same
@@ -1105,6 +1143,17 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   </button>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">
+                    Both boxes 100→0 (sync test)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:count-both-boxes", undefined)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Start
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Arrow glyph on glasses</span>
                   <div className="flex gap-1.5">
                     {(
@@ -1149,6 +1198,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={handleRebuildRoute}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white disabled:opacity-40">
                 Rebuild
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Reset to my location</span>
+              <button
+                type="button"
+                onClick={handleResetLocation}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-emerald-600 text-white">
+                Reset
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">

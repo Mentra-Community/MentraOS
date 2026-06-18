@@ -48,6 +48,9 @@ export interface Channels {
   "nav:start": StartNavigationOptions & {destinationName?: string}
   "nav:stop": Record<string, never>
   "nav:deviate": Record<string, never>
+  /** Dev: stop any active trip/sim and snap the map back to the device's
+   *  real current location (forces a fresh one-shot fix). */
+  "nav:reset-location": Record<string, never>
   "nav:set-destination": PlaceDetails | null
   "nav:set-dev-settings": Partial<DevSettings>
   "nav:set-show-minimap": boolean
@@ -78,6 +81,13 @@ export interface Channels {
   /** PoC: pan the OSM map view by a small nudge in a direction, then redraw. */
   "test:pan-osm-map": Rpc<{dir: "up" | "down" | "left" | "right"}, {ok: boolean; error?: string}>
   "test:count-1-to-10": Rpc<void, void>
+  /**
+   * Delay-probe: show the minimap bitmap top-right, then count BOTH text
+   * containers (top-left maneuver + bottom-left stats) down from 100 to 0 on
+   * the same tick, through the real showManeuver/showTripStats queue. Lets
+   * you eyeball whether the two boxes stay in sync or one lags.
+   */
+  "test:count-both-boxes": Rpc<void, void>
   "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
   /** Test: render the large centered map bitmap at a given size on demand. */
   "test:show-large-map": Rpc<{size?: number}, {ok: boolean; error?: string}>

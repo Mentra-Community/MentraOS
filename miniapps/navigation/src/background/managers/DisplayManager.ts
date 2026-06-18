@@ -12,13 +12,64 @@ import {borderTestImageBase64} from "../lib/bmp"
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
+  // ── Text update throttle ─────────────────────────────────────────────
+  // The G2 firmware drops display updates that arrive too close together —
+  // pushing maneuver text + trip stats back-to-back (as refreshHUD does
+  // every tick) causes the first/third text containers to keep stale text.
+  // Per the firmware engineer, each text update needs ≥200ms of breathing
+  // room before the next one is sent.
+  //
+  // So text shows are SERIALIZED through a queue: at most one send per
+  // TEXT_MIN_GAP_MS, drained in order. Updates are COALESCED per "box" key
+  // (maneuver / stats / wall) — if a newer text for the same box is queued
+  // before the old one is sent, the old one is dropped, so we only ever
+  // send the latest state of each box and never replay stale frames.
+  private static readonly TEXT_MIN_GAP_MS = 200
+  /** Latest pending send per box key. Coalesces rapid updates. */
+  private readonly textQueue = new Map<string, () => void>()
+  private textPumpTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Enqueue a text send for `box`, coalescing with any pending send for the
+   * same box (only the latest survives). The pump fires queued sends one at
+   * a time, ≥TEXT_MIN_GAP_MS apart.
+   */
+  private enqueueText(box: string, fn: () => void): void {
+    this.textQueue.set(box, fn)
+    if (this.textPumpTimer == null) {
+      // Nothing in flight — send the first item immediately, then schedule
+      // the pump for the gap so subsequent items are spaced out.
+      this.pumpText()
+    }
+  }
+
+  private pumpText(): void {
+    // Pull the oldest queued box (insertion order; Map preserves it).
+    const next = this.textQueue.entries().next()
+    if (next.done) {
+      this.textPumpTimer = null
+      return
+    }
+    const [box, fn] = next.value
+    this.textQueue.delete(box)
+    this.safeCall(fn)
+    // Hold the line for TEXT_MIN_GAP_MS before the next send, even if the
+    // queue is currently empty — that guards against a fresh enqueue landing
+    // <200ms after this one (enqueueText only fires immediately when no
+    // pump is running).
+    this.textPumpTimer = setTimeout(() => {
+      this.textPumpTimer = null
+      if (this.textQueue.size > 0) this.pumpText()
+    }, DisplayManager.TEXT_MIN_GAP_MS)
+  }
+
   /**
    * Single line filling the glasses display.
    * `durationMs` is forwarded to the SDK; if set, the message auto-clears
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
-    this.safeCall(() =>
+    this.enqueueText("wall", () =>
       this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined),
     )
   }
@@ -86,16 +137,38 @@ export class DisplayManager {
   // more usable vertical text we split into two stacked positioned-text
   // containers: maneuver/directions on top, trip stats below.
   private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 190}
-  private static readonly STATS_REGION = {x: 0, y: 195, width: 576, height: 93}
+  // Stats pushed down ~30px (y 195 → 225) so the distance/ETA line sits
+  // lower on the canvas; height trimmed to 63 to stay within the 288 bottom.
+  private static readonly STATS_REGION = {x: 0, y: 225, width: 576, height: 63}
 
   /**
    * Maneuver / direction text in the TOP region of the canvas (its own G2 text
    * container), leaving the bottom region free for the stats container.
    */
   showManeuver(text: string): void {
-    this.safeCall(() =>
+    // Queued + ≥200ms-spaced (see enqueueText) so the maneuver container
+    // doesn't get a stale frame when refreshHUD also pushes trip stats in
+    // the same tick.
+    this.enqueueText("maneuver", () =>
       this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}),
     )
+  }
+
+  /**
+   * Transition status text in the TOP-LEFT maneuver region, shown IMMEDIATELY
+   * (bypasses the 200ms text queue) — used for "Loading large map" / "Loading
+   * main menu" while a swipe transition settles, so the user sees feedback in
+   * the gap rather than a blank/stale screen. Bypasses the queue because it
+   * must appear right at the swipe, before any HUD text, and the transition
+   * clear() has just purged the queue anyway.
+   */
+  showLoadingMessage(text: string): void {
+    this.safeCall(() => this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}))
+  }
+
+  /** Blank the top-left loading message (overwrite its region with empty text). */
+  clearLoadingMessage(): void {
+    this.safeCall(() => this.session.display.showTextAt("", {...DisplayManager.MANEUVER_REGION}))
   }
 
   /**
@@ -103,7 +176,8 @@ export class DisplayManager {
    * container stacked under the maneuver box.
    */
   showTripStats(text: string): void {
-    this.safeCall(() =>
+    // Queued + ≥200ms-spaced behind any maneuver update queued the same tick.
+    this.enqueueText("stats", () =>
       this.session.display.showTextAt(text, {...DisplayManager.STATS_REGION}),
     )
   }
@@ -164,9 +238,24 @@ export class DisplayManager {
     })
   }
 
-  /** Wipe whatever's on the glasses. */
+  /**
+   * Wipe whatever's on the glasses. Also DROPS any text queued in the 200ms
+   * pump — otherwise a maneuver/stats send enqueued just before clear()
+   * would flush AFTER the wipe and re-paint the HUD we just cleared (the
+   * "swipe-up doesn't clear, old HUD flashes on top of the large map" bug).
+   */
   clear(): void {
+    this.cancelQueuedText()
     this.safeCall(() => this.session.display.clear())
+  }
+
+  /** Drop all pending queued text and stop the pump. */
+  private cancelQueuedText(): void {
+    this.textQueue.clear()
+    if (this.textPumpTimer != null) {
+      clearTimeout(this.textPumpTimer)
+      this.textPumpTimer = null
+    }
   }
 
   private safeCall(fn: () => void): void {
