@@ -10,7 +10,7 @@
  * via `setNativeUdp` / `setSecureStorage` BEFORE the client is constructed.
  */
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 import {
   createCloudUdpSocket,
@@ -334,6 +334,15 @@ function buildAdapter(): CloudRuntimeAdapter {
  * in.
  */
 export const cloudClient = {
+  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
+    if (!client) {
+      this.init()
+    }
+    const c = client
+    if (!c?.core) throw new Error("cloud client core is unavailable")
+    return c.core.miniapps.getRegistry()
+  },
+
   async getMiniappAuthToken(packageName: string): Promise<MiniappAuthToken> {
     if (!client) {
       this.init()

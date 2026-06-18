@@ -67,6 +67,29 @@ export interface MiniappBundle {
   manifest: MiniappManifest;
 }
 
+export type PreinstalledInstallPolicy =
+  | "install_once"
+  | "keep_updated"
+  | "mandatory";
+
+export interface PreinstalledMiniappRegistryEntry {
+  packageName: string;
+  version: string;
+  bundleUrl: string;
+  bundleSha256: string;
+  required: boolean;
+  installPolicy: PreinstalledInstallPolicy;
+  channel: string;
+  minMobileVersion?: string;
+  maxMobileVersion?: string;
+  oemId?: string;
+}
+
+export interface PreinstalledMiniappRegistry {
+  generatedAt: string;
+  entries: PreinstalledMiniappRegistryEntry[];
+}
+
 /** The dependencies `cloud.core` is wired with. */
 export interface CoreDeps {
   http: HttpClient;
@@ -84,6 +107,7 @@ export class Core {
   readonly miniapps: {
     list(): Promise<MiniappListing[]>;
     getBundle(packageName: string, version?: string): Promise<MiniappBundle>;
+    getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
   };
 
   constructor(deps: CoreDeps) {
@@ -116,6 +140,19 @@ export class Core {
             ? base
             : `${base}?version=${encodeURIComponent(version)}`;
         return http.get<MiniappBundle>(path);
+      },
+
+      /**
+       * Fetch the admin-managed preinstalled miniapp registry for this device.
+       *
+       * The mobile client owns reconciliation: Core only returns the desired
+       * bundle versions and install policy for the current user/OEM/channel.
+       */
+      getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry> {
+        const query = opts?.environment
+          ? `?environment=${encodeURIComponent(opts.environment)}`
+          : "";
+        return http.get<PreinstalledMiniappRegistry>(`/api/client/miniapps/registry${query}`);
       },
     };
   }

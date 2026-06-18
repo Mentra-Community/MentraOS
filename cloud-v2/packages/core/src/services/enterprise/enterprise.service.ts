@@ -1,0 +1,226 @@
+import { ulid } from "ulid";
+import { EnterpriseOrgModel, type EnterpriseOrg } from "../../models/enterprise-org.model";
+import { TrustedIssuerModel, type TrustedIssuer } from "../../models/trusted-issuer.model";
+
+export interface EnterpriseUserIdentity {
+  id: string;
+  email: string;
+}
+
+export interface UpsertEnterpriseOrgInput {
+  displayName: string;
+  oemId: string;
+}
+
+export interface UpsertTrustedIssuerInput {
+  environmentName: string;
+  issuer: string;
+  jwksUrl: string;
+  subjectClaim?: string | null;
+  enabled?: boolean;
+}
+
+export class EnterpriseService {
+  async getPrimaryOrgForUser(user: EnterpriseUserIdentity) {
+    const org = await EnterpriseOrgModel.findOne({ ownerUserId: user.id })
+      .sort({ createdAt: 1 })
+      .lean();
+    return org ? serializeEnterpriseOrg(org) : null;
+  }
+
+  async upsertPrimaryOrg(user: EnterpriseUserIdentity, input: UpsertEnterpriseOrgInput) {
+    const displayName = normalizeDisplayName(input.displayName);
+    const oemId = normalizeOemId(input.oemId);
+    const slug = slugify(displayName);
+    const existing = await EnterpriseOrgModel.findOne({ ownerUserId: user.id }).sort({ createdAt: 1 });
+
+    if (!existing) {
+      await assertOemIdAvailable(oemId);
+      const created = await EnterpriseOrgModel.create({
+        enterpriseOrgId: `ent_${ulid()}`,
+        ownerUserId: user.id,
+        oemId,
+        displayName,
+        slug: await uniqueSlug(slug),
+        status: "active",
+      });
+      return serializeEnterpriseOrg(created.toObject());
+    }
+
+    existing.displayName = displayName;
+    if (existing.oemId !== oemId) {
+      const issuerCount = await TrustedIssuerModel.countDocuments({ enterpriseOrgId: existing.enterpriseOrgId });
+      if (issuerCount > 0) {
+        throw new EnterpriseServiceError("oem_id_locked", "OEM id cannot change after trusted issuers are created", 409);
+      }
+      await assertOemIdAvailable(oemId);
+      existing.oemId = oemId;
+    }
+    await existing.save();
+    return serializeEnterpriseOrg(existing.toObject());
+  }
+
+  async listTrustedIssuers(user: EnterpriseUserIdentity) {
+    const org = await this.requirePrimaryOrg(user);
+    const issuers = await TrustedIssuerModel.find({ enterpriseOrgId: org.id })
+      .sort({ environmentName: 1 })
+      .lean();
+    return { org, issuers: issuers.map(serializeTrustedIssuer) };
+  }
+
+  async upsertTrustedIssuer(user: EnterpriseUserIdentity, input: UpsertTrustedIssuerInput) {
+    const org = await this.requirePrimaryOrg(user);
+    const environmentName = normalizeEnvironmentName(input.environmentName);
+    const issuer = normalizeHttpsUrl(input.issuer, "issuer");
+    const jwksUrl = normalizeHttpsUrl(input.jwksUrl, "JWKS URL");
+    const subjectClaim = normalizeSubjectClaim(input.subjectClaim);
+
+    const existingIssuer = await TrustedIssuerModel.findOne({ issuer });
+    if (existingIssuer && existingIssuer.enterpriseOrgId !== org.id) {
+      throw new EnterpriseServiceError("issuer_taken", "issuer is already trusted by another enterprise org", 409);
+    }
+
+    const existingEnvironment = await TrustedIssuerModel.findOne({
+      enterpriseOrgId: org.id,
+      environmentName,
+    });
+
+    const target = existingEnvironment ?? new TrustedIssuerModel({
+      trustedIssuerId: `ti_${ulid()}`,
+      enterpriseOrgId: org.id,
+      createdBy: user.id,
+    });
+    if (target.issuer !== issuer && existingIssuer) {
+      throw new EnterpriseServiceError("issuer_taken", "issuer is already trusted by another enterprise org", 409);
+    }
+
+    target.environmentName = environmentName;
+    target.issuer = issuer;
+    target.jwksUrl = jwksUrl;
+    target.subjectClaim = subjectClaim;
+    target.enabled = input.enabled ?? true;
+    target.updatedBy = user.id;
+    await target.save();
+    return serializeTrustedIssuer(target.toObject());
+  }
+
+  async setTrustedIssuerEnabled(user: EnterpriseUserIdentity, trustedIssuerId: string, enabled: boolean) {
+    const org = await this.requirePrimaryOrg(user);
+    const issuer = await TrustedIssuerModel.findOne({ trustedIssuerId, enterpriseOrgId: org.id });
+    if (!issuer) throw new EnterpriseServiceError("not_found", "trusted issuer not found", 404);
+    issuer.enabled = enabled;
+    issuer.updatedBy = user.id;
+    await issuer.save();
+    return serializeTrustedIssuer(issuer.toObject());
+  }
+
+  private async requirePrimaryOrg(user: EnterpriseUserIdentity) {
+    const org = await this.getPrimaryOrgForUser(user);
+    if (!org) throw new EnterpriseServiceError("enterprise_org_required", "create an enterprise org first", 428);
+    if (org.status === "disabled") throw new EnterpriseServiceError("enterprise_org_disabled", "enterprise org is disabled", 403);
+    return org;
+  }
+}
+
+export class EnterpriseServiceError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "EnterpriseServiceError";
+  }
+}
+
+async function assertOemIdAvailable(oemId: string): Promise<void> {
+  const existing = await EnterpriseOrgModel.findOne({ oemId }).lean();
+  if (existing) throw new EnterpriseServiceError("oem_id_taken", "OEM id is already registered", 409);
+}
+
+async function uniqueSlug(base: string): Promise<string> {
+  let candidate = base;
+  let counter = 2;
+  while (await EnterpriseOrgModel.findOne({ slug: candidate }).lean()) {
+    candidate = `${base}-${counter}`;
+    counter += 1;
+  }
+  return candidate;
+}
+
+function normalizeDisplayName(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length < 2) throw new EnterpriseServiceError("invalid_name", "name must be at least 2 characters", 400);
+  if (normalized.length > 80) throw new EnterpriseServiceError("invalid_name", "name must be 80 characters or fewer", 400);
+  return normalized;
+}
+
+function normalizeOemId(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]{2,62}$/.test(normalized)) {
+    throw new EnterpriseServiceError("invalid_oem_id", "OEM id must be 3-63 lowercase letters, numbers, dashes, or underscores", 400);
+  }
+  return normalized;
+}
+
+function normalizeEnvironmentName(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(normalized)) {
+    throw new EnterpriseServiceError("invalid_environment", "environment name must be lowercase text like prod or sandbox", 400);
+  }
+  return normalized;
+}
+
+function normalizeHttpsUrl(value: string, label: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new EnterpriseServiceError("invalid_url", `${label} must be a valid URL`, 400);
+  }
+  if (url.protocol !== "https:") throw new EnterpriseServiceError("invalid_url", `${label} must use https`, 400);
+  if (url.search || url.hash) throw new EnterpriseServiceError("invalid_url", `${label} must not include query string or fragment`, 400);
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/$/, "");
+}
+
+function normalizeSubjectClaim(value: string | null | undefined): string {
+  const normalized = (value || "sub").trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$/.test(normalized)) {
+    throw new EnterpriseServiceError("invalid_subject_claim", "subject claim must be a JWT claim name", 400);
+  }
+  return normalized;
+}
+
+function slugify(value: string): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return slug || `enterprise-${ulid().toLowerCase()}`;
+}
+
+function serializeEnterpriseOrg(org: EnterpriseOrg & { createdAt?: Date; updatedAt?: Date }) {
+  return {
+    id: org.enterpriseOrgId,
+    ownerUserId: org.ownerUserId,
+    workosOrgId: org.workosOrgId ?? null,
+    oemId: org.oemId,
+    name: org.displayName,
+    slug: org.slug,
+    status: org.status,
+    createdAt: org.createdAt?.toISOString() ?? null,
+    updatedAt: org.updatedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeTrustedIssuer(issuer: TrustedIssuer & { createdAt?: Date; updatedAt?: Date }) {
+  return {
+    id: issuer.trustedIssuerId,
+    enterpriseOrgId: issuer.enterpriseOrgId,
+    environmentName: issuer.environmentName,
+    issuer: issuer.issuer,
+    jwksUrl: issuer.jwksUrl,
+    subjectClaim: issuer.subjectClaim,
+    enabled: issuer.enabled,
+    createdAt: issuer.createdAt?.toISOString() ?? null,
+    updatedAt: issuer.updatedAt?.toISOString() ?? null,
+  };
+}

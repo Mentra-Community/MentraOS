@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / runtime / proxy).",
-  "workspaces": ["packages/*", "test/*"],
+  "workspaces": ["packages/*", "test/*", "websites/*"],
   "engines": {
     "bun": ">=1.3.0"
   },
@@ -16,6 +16,15 @@
     "dev:audio": "bun run dev:runtime",
     "dev:proxy": "bun --watch packages/proxy/src/index.ts",
     "dev:test-oem": "bun --watch test/test-oem/src/index.ts",
+    "dev:console": "bun --cwd websites/console dev",
+    "dev:admin": "bun --cwd websites/admin dev",
+    "dev:portal": "bun --cwd websites/portal dev",
+    "build:console": "bun --cwd websites/console build",
+    "build:admin": "bun --cwd websites/admin build",
+    "build:portal": "bun --cwd websites/portal build",
+    "typecheck:console": "bun --cwd websites/console typecheck",
+    "typecheck:admin": "bun --cwd websites/admin typecheck",
+    "typecheck:portal": "bun --cwd websites/portal typecheck",
     "fault:e2e": "bun scripts/audio-fault-e2e.ts",
     "typecheck": "tsc -b",
     "test": "bun test"

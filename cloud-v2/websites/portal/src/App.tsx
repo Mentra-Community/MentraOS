@@ -1,0 +1,589 @@
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Building2, Clock, Fingerprint, Globe2, Loader2, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import mentraLogo from "./assets/mentra-logo.svg";
+
+type EnterpriseOrg = {
+  id: string;
+  oemId: string;
+  name: string;
+  slug: string;
+  status: "active" | "disabled" | "pending";
+};
+type PortalPageKey = "overview" | "environments" | "access";
+
+type TrustedIssuer = {
+  id: string;
+  environmentName: string;
+  issuer: string;
+  jwksUrl: string;
+  subjectClaim: string;
+  enabled: boolean;
+};
+
+type PortalUser = {
+  id: string;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 15_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+export function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <PortalPage />
+    </QueryClientProvider>
+  );
+}
+
+function PortalPage() {
+  const qc = useQueryClient();
+  const [page, setPage] = useState<PortalPageKey>("overview");
+  const me = useQuery({
+    queryKey: ["portal-me"],
+    queryFn: () => api<{ authenticated: true; user: PortalUser; onboardingRequired: boolean; org: EnterpriseOrg | null }>("/api/portal/me"),
+    retry: false,
+  });
+  const issuers = useQuery({
+    queryKey: ["trusted-issuers"],
+    queryFn: () => api<{ org: EnterpriseOrg; issuers: TrustedIssuer[] }>("/api/portal/trusted-issuers"),
+    enabled: Boolean(me.data?.org),
+  });
+
+  if (me.isLoading) return <Splash label="Checking enterprise session" />;
+  if (me.isError) return <LoginGate />;
+
+  const org = me.data?.org ?? issuers.data?.org ?? null;
+  const displayName = [me.data?.user.firstName, me.data?.user.lastName].filter(Boolean).join(" ") || me.data?.user.email || "Enterprise user";
+  const approved = org?.status === "active";
+
+  return (
+    <EnterpriseShell page={page} setPage={setPage} userLabel={displayName} org={org}>
+      {!org ? (
+        <EnterpriseOnboarding
+          user={me.data!.user}
+          onSaved={async () => {
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: ["portal-me"] }),
+              qc.invalidateQueries({ queryKey: ["trusted-issuers"] }),
+            ]);
+          }}
+        />
+      ) : !approved ? (
+        <ApprovalPending org={org} />
+      ) : (
+        <>
+          {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
+          {page === "environments" ? (
+            <section className="space-y-6">
+              <IssuerForm
+                disabled={!org}
+                onSaved={async () => {
+                  await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
+                }}
+              />
+              <IssuerList
+                issuers={issuers.data?.issuers ?? []}
+                loading={issuers.isLoading}
+                onChanged={async () => {
+                  await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
+                }}
+              />
+              <ReferencePanel org={org} />
+            </section>
+          ) : null}
+          {page === "access" ? <EnterpriseAccess org={org} /> : null}
+        </>
+      )}
+    </EnterpriseShell>
+  );
+}
+
+function EnterpriseShell(props: { children: React.ReactNode; page: PortalPageKey; setPage: (page: PortalPageKey) => void; userLabel: string; org: EnterpriseOrg | null }) {
+  const pageMeta = {
+    overview: ["Overview", "Enterprise account status and runtime setup."],
+    environments: ["Auth environments", "Manage issuer and JWKS configuration."],
+    access: ["Access", "Manage enterprise members and approval state."],
+  }[props.page];
+  const nav = [
+    { key: "overview" as const, label: "Overview", icon: Building2 },
+    { key: "environments" as const, label: "Auth environments", icon: Fingerprint },
+    { key: "access" as const, label: "Access", icon: Users },
+  ];
+
+  return (
+    <main className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
+      <aside className="border-b border-black/10 bg-white px-5 py-5 sm:fixed sm:inset-y-0 sm:left-0 sm:z-20 sm:flex sm:w-[260px] sm:flex-col sm:border-b-0 sm:border-r lg:w-[300px]">
+        <div className="flex items-center gap-3">
+          <div className="flex size-12 items-center justify-center rounded-[16px] border border-[#dfe5de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+            <img src={mentraLogo} alt="Mentra" className="h-[27px] w-[50px]" />
+          </div>
+          <div>
+            <div className="text-xl font-bold leading-6 tracking-[-0.03em]">Enterprise</div>
+            <div className="text-sm text-[#747780]">Portal</div>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-[10px] border border-[#e0e4de] bg-[#f7f8f6] px-3 py-2">
+          <div className="text-xs text-[#8a8d95]">Organization</div>
+          <div className="truncate text-sm font-semibold">{props.org?.name ?? "Not approved yet"}</div>
+        </div>
+
+        <nav className="mt-8 grid gap-2 sm:flex-1">
+          {nav.map(item => {
+            const Icon = item.icon;
+            const selected = props.page === item.key;
+            return (
+              <button
+                key={item.key}
+                className={`flex h-10 items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium transition ${
+                  selected ? "bg-[#111217] text-white" : "text-[#5d6068] hover:bg-[#f3f4f2] hover:text-[#111217]"
+                }`}
+                onClick={() => props.setPage(item.key)}
+              >
+                <Icon className="size-5" />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="mt-8 rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d] sm:absolute sm:bottom-5 sm:left-5 sm:right-5">
+          <div className="font-semibold text-[#111318]">Signed in</div>
+          <div className="truncate">{props.userLabel}</div>
+        </div>
+      </aside>
+
+      <section className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain sm:pl-[260px] lg:pl-[300px]">
+        <header className="sticky top-0 z-10 border-b border-black/10 bg-white/88 px-5 py-5 backdrop-blur">
+          <div className="mx-auto max-w-6xl">
+            <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-[#087d50]">Enterprise portal</div>
+            <h1 className="mt-1 font-display text-[30px] font-bold leading-9 tracking-[-0.04em]">{pageMeta[0]}</h1>
+            <p className="mt-1 max-w-2xl text-[#68746d]">{pageMeta[1]}</p>
+          </div>
+        </header>
+        <div className="mx-auto max-w-6xl px-5 py-6">{props.children}</div>
+      </section>
+    </main>
+  );
+}
+
+function EnterpriseOnboarding({ user, onSaved }: { user: PortalUser; onSaved: () => Promise<void> }) {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+      <OrgPanel org={null} user={user} onSaved={onSaved} />
+      <section className="space-y-4">
+        <InfoCard icon={<ShieldCheck className="size-5" />} title="Approval required" body="Creating an enterprise account submits it for admin approval. Runtime issuer configuration stays locked until approval." />
+        <InfoCard icon={<Users className="size-5" />} title="Invited orgs" body="If an admin invited you to an existing enterprise org, accept that invite instead of creating a new account." />
+        <InfoCard icon={<Building2 className="size-5" />} title="Request access" body="If your company already has an enterprise account, request access from that org owner." />
+      </section>
+    </div>
+  );
+}
+
+function ApprovalPending({ org }: { org: EnterpriseOrg }) {
+  return (
+    <section className="rounded-[24px] border border-[#e0e4de] bg-white p-8 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+      <div className="flex max-w-2xl gap-5">
+        <div className="flex size-14 shrink-0 items-center justify-center rounded-[18px] bg-[#fff7df] text-[#a66a00]">
+          <Clock className="size-7" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold tracking-[-0.03em]">Waiting for admin approval</h2>
+          <p className="mt-2 leading-7 text-[#68746d]">
+            {org.name} has been created, but issuer and JWKS management unlocks only after a Mentra admin approves the enterprise account.
+          </p>
+          <div className="mt-5 rounded-[18px] bg-[#f5f7f4] p-4 font-mono text-sm text-[#4f5d54]">{org.oemId}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EnterpriseOverview({ org, issuers }: { org: EnterpriseOrg; issuers: TrustedIssuer[] }) {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+      <section className="rounded-[24px] border border-[#e0e4de] bg-white p-6 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+        <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[#087d50]">Approved enterprise</p>
+        <h2 className="mt-2 text-4xl font-bold tracking-[-0.04em]">{org.name}</h2>
+        <p className="mt-3 max-w-2xl leading-7 text-[#68746d]">Configure sandbox and production issuers so your runtime can verify exchange tokens.</p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <Metric label="OEM id" value={org.oemId} />
+          <Metric label="Trusted issuers" value={String(issuers.length)} />
+        </div>
+      </section>
+      <ReferencePanel org={org} />
+    </div>
+  );
+}
+
+function EnterpriseAccess({ org }: { org: EnterpriseOrg }) {
+  return (
+    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+      <div className="border-b border-[#eceeeb] p-5">
+        <h2 className="text-xl font-bold">Enterprise access</h2>
+        <p className="mt-1 text-sm text-[#68746d]">Members and invite management will live here once WorkOS org membership is connected.</p>
+      </div>
+      <div className="p-5">
+        <div className="rounded-[18px] bg-[#f5f7f4] p-5">
+          <div className="text-sm text-[#68746d]">Current org</div>
+          <div className="mt-1 text-lg font-bold">{org.name}</div>
+          <span className="mt-4 inline-flex rounded-full border border-[#bdebd9] bg-[#e9f8f1] px-3 py-1 text-sm font-bold text-[#087d50]">Approved</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InfoCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+  return (
+    <div className="rounded-[24px] border border-[#e0e4de] bg-white p-5 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+      <div className="flex size-11 items-center justify-center rounded-[15px] bg-[#e9f8f1] text-[#087d50]">{icon}</div>
+      <h3 className="mt-4 text-lg font-bold">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-[#68746d]">{body}</p>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[18px] bg-[#f5f7f4] p-4">
+      <div className="text-sm text-[#68746d]">{label}</div>
+      <div className="mt-1 font-mono text-lg font-bold">{value}</div>
+    </div>
+  );
+}
+
+function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: PortalUser; onSaved: () => Promise<void> }) {
+  const [displayName, setDisplayName] = useState(org?.name ?? suggestedOrgName(user.email));
+  const [oemId, setOemId] = useState(org?.oemId ?? suggestedOemId(user.email));
+  const saveOrg = useMutation({
+    mutationFn: () => api<{ org: EnterpriseOrg }>("/api/portal/org", {
+      method: "PUT",
+      body: { displayName, oemId },
+    }),
+    onSuccess: onSaved,
+  });
+
+  useEffect(() => {
+    if (!org) return;
+    setDisplayName(org.name);
+    setOemId(org.oemId);
+  }, [org]);
+
+  const canSave = displayName.trim().length > 1 && oemId.trim().length > 2 && !saveOrg.isPending;
+
+  return (
+    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_10px_28px_-24px_rgba(20,21,27,0.42)]">
+      <div className="border-b border-[#eceeeb] p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">{org ? "Enterprise org" : "Create enterprise org"}</h2>
+            <p className="mt-1 text-sm leading-6 text-[#68746d]">
+              This org owns the OEM id that is embedded in trusted exchange tokens.
+            </p>
+          </div>
+          {org ? (
+            <span className="rounded-full border border-[#bdebd9] bg-[#e9f8f1] px-3 py-1 text-sm font-semibold text-[#087d50]">Active</span>
+          ) : null}
+        </div>
+      </div>
+      <form
+        className="space-y-4 p-5"
+        onSubmit={event => {
+          event.preventDefault();
+          if (canSave) saveOrg.mutate();
+        }}
+      >
+        <Field label="Organization name">
+          <Input value={displayName} onChange={event => setDisplayName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="Acme Optical" />
+        </Field>
+        <Field label="OEM id">
+          <Input
+            value={oemId}
+            onChange={event => setOemId(event.target.value.toLowerCase().replace(/\s+/g, ""))}
+            className="h-12 rounded-[12px] bg-white font-mono"
+            placeholder="acme"
+            disabled={Boolean(org)}
+          />
+        </Field>
+        <div className="rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d]">
+          <span className="font-semibold text-[#111318]">Issuer lookup:</span> tokens must include this OEM id so the runtime can find the right issuer configuration.
+        </div>
+        {saveOrg.isError ? <ErrorText error={saveOrg.error} /> : null}
+        <Button className="h-12 w-full rounded-full bg-[#111217] text-white hover:bg-[#25262c]" disabled={!canSave}>
+          {saveOrg.isPending ? "Saving..." : org ? "Save changes" : "Create org"}
+        </Button>
+      </form>
+    </section>
+  );
+}
+
+function IssuerForm({ disabled, onSaved }: { disabled: boolean; onSaved: () => Promise<void> }) {
+  const [environmentName, setEnvironmentName] = useState("sandbox");
+  const [issuer, setIssuer] = useState("");
+  const [jwksUrl, setJwksUrl] = useState("");
+  const [subjectClaim, setSubjectClaim] = useState("sub");
+  const createIssuer = useMutation({
+    mutationFn: () => api<{ issuer: TrustedIssuer }>("/api/portal/trusted-issuers", {
+      method: "POST",
+      body: { environmentName, issuer, jwksUrl, subjectClaim },
+    }),
+    onSuccess: async () => {
+      setIssuer("");
+      setJwksUrl("");
+      await onSaved();
+    },
+  });
+  const canSubmit = !disabled && environmentName && issuer && jwksUrl && !createIssuer.isPending;
+
+  return (
+    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_10px_28px_-24px_rgba(20,21,27,0.42)]">
+      <div className="border-b border-[#eceeeb] p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-[15px] bg-[#e9f8f1] text-[#087d50]">
+            <Fingerprint className="size-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">Add trusted issuer</h2>
+            <p className="mt-1 text-sm leading-6 text-[#68746d]">Use exact HTTPS issuer URLs. Query strings and fragments are rejected.</p>
+          </div>
+        </div>
+      </div>
+      <form
+        className="grid gap-4 p-5 md:grid-cols-2"
+        onSubmit={event => {
+          event.preventDefault();
+          if (canSubmit) createIssuer.mutate();
+        }}
+      >
+        <Field label="Environment">
+          <Input value={environmentName} onChange={event => setEnvironmentName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="sandbox" disabled={disabled} />
+        </Field>
+        <Field label="Subject claim">
+          <Input value={subjectClaim} onChange={event => setSubjectClaim(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="sub" disabled={disabled} />
+        </Field>
+        <Field label="Issuer URL">
+          <Input value={issuer} onChange={event => setIssuer(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com" disabled={disabled} />
+        </Field>
+        <Field label="JWKS URL">
+          <Input value={jwksUrl} onChange={event => setJwksUrl(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com/.well-known/jwks.json" disabled={disabled} />
+        </Field>
+        <div className="md:col-span-2">
+          {createIssuer.isError ? <ErrorText error={createIssuer.error} /> : null}
+          <Button className="h-11 rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c]" disabled={!canSubmit}>
+            <Plus className="size-4" />
+            Add issuer
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function IssuerList({ issuers, loading, onChanged }: { issuers: TrustedIssuer[]; loading: boolean; onChanged: () => Promise<void> }) {
+  const toggle = useMutation({
+    mutationFn: (input: { id: string; enabled: boolean }) => api<{ issuer: TrustedIssuer }>(`/api/portal/trusted-issuers/${input.id}`, {
+      method: "PATCH",
+      body: { enabled: input.enabled },
+    }),
+    onSuccess: onChanged,
+  });
+
+  return (
+    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+      <div className="flex items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
+        <div>
+          <h2 className="text-xl font-bold">Trusted issuers</h2>
+          <p className="mt-1 text-sm text-[#68746d]">Each environment maps one issuer URL to one JWKS endpoint.</p>
+        </div>
+        <span className="rounded-full border border-[#dfe3dc] bg-[#f6f7f5] px-3 py-1 text-sm font-semibold text-[#68746d]">{issuers.length} total</span>
+      </div>
+      {loading ? (
+        <div className="p-5"><InlineLoading label="Loading issuers" /></div>
+      ) : issuers.length === 0 ? (
+        <div className="flex min-h-[220px] flex-col items-center justify-center p-6 text-center">
+          <Fingerprint className="size-10 text-[#087d50]" />
+          <h3 className="mt-4 text-lg font-bold">No issuers yet</h3>
+          <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">Create an enterprise org, then add the sandbox or production issuer your auth backend uses in JWT `iss`.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-[#eceeeb]">
+          {issuers.map(issuer => (
+            <div key={issuer.id} className="grid gap-4 p-5 md:grid-cols-[140px_1fr_auto] md:items-center">
+              <div>
+                <div className="text-sm font-bold">{issuer.environmentName}</div>
+                <div className={`mt-1 text-xs font-semibold ${issuer.enabled ? "text-[#087d50]" : "text-[#a64235]"}`}>
+                  {issuer.enabled ? "Enabled" : "Disabled"}
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-mono text-sm">{issuer.issuer}</div>
+                <div className="mt-1 truncate font-mono text-xs text-[#747780]">{issuer.jwksUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                className="h-10 rounded-full px-4"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate({ id: issuer.id, enabled: !issuer.enabled })}
+              >
+                {issuer.enabled ? <ToggleRight className="size-5 text-[#087d50]" /> : <ToggleLeft className="size-5" />}
+                {issuer.enabled ? "Disable" : "Enable"}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReferencePanel({ org }: { org: EnterpriseOrg | null }) {
+  return (
+    <section className="rounded-[24px] bg-[#111318] p-5 text-white shadow-[0_18px_42px_-22px_rgba(20,21,27,0.55)]">
+      <div className="flex items-center gap-3">
+        <Globe2 className="size-5 text-[#57d391]" />
+        <h2 className="text-xl font-bold">Token exchange contract</h2>
+      </div>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
+        These are the claims your exchange token must carry before the runtime mints a runtime session token.
+      </p>
+      <div className="mt-4 grid gap-2 rounded-[18px] bg-black/30 p-4 font-mono text-sm leading-7 text-[#d9f8e7] sm:grid-cols-2">
+        <div><span className="text-white/45">iss</span> = trusted issuer URL</div>
+        <div><span className="text-white/45">aud</span> = cloud-runtime</div>
+        <div><span className="text-white/45">sub</span> = subjectClaim</div>
+        <div><span className="text-white/45">oemId</span> = {org?.oemId ?? "create-org-first"}</div>
+      </div>
+    </section>
+  );
+}
+
+function LoginGate() {
+  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(`${window.location.origin}/`)}`;
+
+  return (
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
+      <div className="pointer-events-none absolute left-[42%] top-[-54%] size-[980px] rounded-full bg-[radial-gradient(circle,rgba(201,244,232,0.78)_0%,rgba(228,246,240,0.46)_35%,rgba(255,255,255,0)_70%)] blur-[68px]" />
+      <div className="pointer-events-none absolute left-[-24%] top-[58%] size-[720px] rounded-full bg-[radial-gradient(circle,rgba(214,242,235,0.68)_0%,rgba(232,247,242,0.4)_42%,rgba(255,255,255,0)_72%)] blur-[62px]" />
+
+      <section className="relative flex w-full flex-col items-center justify-center gap-5">
+        <div className="relative w-full max-w-[440px] overflow-hidden rounded-[24px] p-9 shadow-[0_16px_40px_-8px_rgba(20,20,26,0.07),0_0_0_1px_rgba(20,20,26,0.07),inset_0_1px_0_rgba(255,255,255,0.9)]">
+          <div className="absolute inset-0 rounded-[24px] bg-[rgba(255,255,255,0.82)] backdrop-blur-[14px]" />
+          <div className="relative text-center">
+            <img src={mentraLogo} alt="Mentra" className="mx-auto h-[27px] w-[50px]" />
+
+            <div className="h-[22px]" />
+            <div className="mx-auto flex h-11 w-fit items-center gap-2 rounded-full bg-[#f0faf5] px-4 text-[12px] font-bold uppercase tracking-[0.14em] text-[#087d50] shadow-[0_0_0_1px_rgba(8,125,80,0.12)]">
+              <Building2 className="size-4" />
+              Enterprise
+            </div>
+
+            <div className="h-[18px]" />
+            <h1 className="font-display text-[28px] font-bold leading-[32px] tracking-[-0.64px] text-[#14141a]">
+              Sign into Mentra Enterprise Portal
+            </h1>
+
+            <div className="h-2.5" />
+            <p className="mx-auto max-w-[320px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
+              Manage OEM auth issuers and token exchange configuration for runtime deployments.
+            </p>
+
+            <div className="h-8" />
+            <a
+              className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
+              href={loginUrl}
+            >
+              Continue with Mentra login
+            </a>
+
+            <div className="h-5" />
+            <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
+              Enterprise access controls which issuers can mint exchange tokens.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Splash({ label }: { label: string }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f5f7f4] text-[#68746d]">
+      <Loader2 className="mr-3 size-5 animate-spin" />
+      {label}
+    </main>
+  );
+}
+
+function InlineLoading({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 text-sm text-[#68746d]">
+      <Loader2 className="size-4 animate-spin" />
+      {label}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Label className="block">
+      <span className="mb-2 block text-sm font-semibold">{label}</span>
+      {children}
+    </Label>
+  );
+}
+
+function ErrorText({ error }: { error: unknown }) {
+  return (
+    <div className="mb-3 rounded-[14px] bg-[#fff3f1] px-4 py-3 text-sm text-[#a64235]">
+      {error instanceof Error ? error.message : "Request failed"}
+    </div>
+  );
+}
+
+async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const response = await fetch(path, {
+    method: init?.method ?? "GET",
+    headers: {
+      accept: "application/json",
+      ...(init?.body ? { "content-type": "application/json" } : {}),
+    },
+    body: init?.body ? JSON.stringify(init.body) : undefined,
+  });
+  if (!response.ok) {
+    let message = `Request failed with ${response.status}`;
+    try {
+      const body = await response.json() as { error_description?: string; error?: string };
+      message = body.error_description || body.error || message;
+    } catch {
+      // Keep generic status text.
+    }
+    throw new Error(message);
+  }
+  return await response.json() as T;
+}
+
+function suggestedOrgName(email: string): string {
+  const domain = email.split("@")[1]?.split(".")[0];
+  return domain ? `${domain[0].toUpperCase()}${domain.slice(1)} Enterprise` : "Acme Enterprise";
+}
+
+function suggestedOemId(email: string): string {
+  return (email.split("@")[1]?.split(".")[0] ?? "acme").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+}
+
+export default App;

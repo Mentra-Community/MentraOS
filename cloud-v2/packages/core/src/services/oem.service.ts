@@ -22,8 +22,10 @@
 import crypto from "node:crypto";
 import * as jose from "jose";
 import { createLogger } from "@mentra/cloud-shared";
+import { EnterpriseOrgModel } from "../models/enterprise-org.model";
 import { OemModel, type Oem } from "../models/oem.model";
 import { SeenJtiModel } from "../models/seen-jti.model";
+import { TrustedIssuerModel, type TrustedIssuer } from "../models/trusted-issuer.model";
 import {
   InvalidGrant,
   InvalidRequest,
@@ -79,6 +81,9 @@ export async function verifyOemJwt(jwt: string): Promise<VerifiedOemJwt> {
 
   const oemId = typeof unverified.iss === "string" ? unverified.iss : null;
   if (!oemId) throw new InvalidRequest("subject_token missing 'iss' claim");
+
+  const trustedIssuerResult = await verifyTrustedIssuerJwt(jwt, oemId);
+  if (trustedIssuerResult) return trustedIssuerResult;
 
   // Step 2 — look up OEM, reject if unknown or disabled.
   const oem = await getOem(oemId);
@@ -164,6 +169,66 @@ async function verifySignatureWithOemKey(
   } catch (err) {
     if (err instanceof Error && err.name?.startsWith("JWT")) {
       // jose throws JWTExpired, JWTClaimValidationFailed, JWSSignatureVerificationFailed, etc.
+      throw new InvalidGrant(`subject_token rejected: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
+async function verifyTrustedIssuerJwt(jwt: string, issuer: string): Promise<VerifiedOemJwt | null> {
+  const trustedIssuer = await TrustedIssuerModel.findOne({ issuer, enabled: true }).lean();
+  if (!trustedIssuer) return null;
+
+  const enterpriseOrg = await EnterpriseOrgModel.findOne({
+    enterpriseOrgId: trustedIssuer.enterpriseOrgId,
+    status: "active",
+  }).lean();
+  if (!enterpriseOrg) throw new UnauthorizedClient(`enterprise org disabled for issuer: ${issuer}`);
+
+  const { payload } = await verifySignatureWithTrustedIssuer(jwt, trustedIssuer);
+  const subject = payload[trustedIssuer.subjectClaim];
+  if (typeof subject !== "string" || subject.length === 0) {
+    throw new InvalidGrant(`subject_token missing '${trustedIssuer.subjectClaim}' claim`);
+  }
+
+  const jti = typeof payload.jti === "string" ? payload.jti : null;
+  if (!jti) throw new InvalidGrant("subject_token missing 'jti' claim");
+  if (typeof payload.exp !== "number") throw new InvalidGrant("subject_token missing 'exp' claim");
+  if (typeof payload.iat !== "number") throw new InvalidGrant("subject_token missing 'iat' claim");
+
+  const passthroughClaims: Record<string, unknown> = {
+    enterprise_org_id: enterpriseOrg.enterpriseOrgId,
+    trusted_issuer_id: trustedIssuer.trustedIssuerId,
+    trusted_issuer_environment: trustedIssuer.environmentName,
+  };
+  for (const [k, v] of Object.entries(payload)) {
+    if (!STANDARD_CLAIMS.has(k)) passthroughClaims[k] = v;
+  }
+
+  return {
+    oemId: enterpriseOrg.oemId,
+    oemUserId: subject,
+    jti,
+    exp: payload.exp,
+    iat: payload.iat,
+    passthroughClaims,
+  };
+}
+
+async function verifySignatureWithTrustedIssuer(
+  jwt: string,
+  trustedIssuer: TrustedIssuer,
+): Promise<jose.JWTVerifyResult> {
+  try {
+    const jwks = getJwksFetcher(trustedIssuer.jwksUrl);
+    return await jose.jwtVerify(jwt, jwks, {
+      issuer: trustedIssuer.issuer,
+      audience: ["cloud-core", "mentra"],
+      algorithms: [...SUPPORTED_ALGS],
+      clockTolerance: "5 minutes",
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name?.startsWith("JWT")) {
       throw new InvalidGrant(`subject_token rejected: ${err.message}`);
     }
     throw err;

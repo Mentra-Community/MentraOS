@@ -14,6 +14,7 @@ import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
@@ -392,6 +393,11 @@ class MantleManager {
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+
+    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
+    // lets Core move users to newer bundled miniapp releases without shipping a
+    // new mobile binary.
+    await preinstalledMiniappSync.sync()
   }
 
   /**

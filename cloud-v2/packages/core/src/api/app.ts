@@ -23,7 +23,11 @@ import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/clou
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { requestContext } from "./middleware/context.middleware";
+import adminPreinstalled from "./admin/preinstalled.api";
 import clientAuth from "./client/auth.api";
+import clientMiniapps from "./client/miniapps.api";
+import consoleAuth from "./console/cli-auth.api";
+import portalEnterprise from "./portal/enterprise.api";
 import wellKnown from "./well-known.api";
 
 const logger = createLogger("core").child({ service: "app" });
@@ -55,6 +59,10 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
 
   // Audience mounts. Device-called auth lives under /api/client/*.
   app.route("/api/client/auth", clientAuth);
+  app.route("/api/client/miniapps", clientMiniapps);
+  app.route("/api/console", consoleAuth);
+  app.route("/api/portal", portalEnterprise);
+  app.route("/api/admin", adminPreinstalled);
 
   // Global error translator.
   app.onError((err, c) => {
