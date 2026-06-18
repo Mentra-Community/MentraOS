@@ -902,14 +902,10 @@ public class OtaHelper {
                     return false;
                 }
 
-                // Clean up the downloaded update file after install attempt. It is never
-                // reused as a cache source.
-                new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                    File downloadedApk = new File(localPath);
-                    if (downloadedApk.exists() && !downloadedApk.delete()) {
-                        Log.w(TAG, "Failed deleting downloaded APK after install: " + localPath);
-                    }
-                }, 30000);
+                // Leave the APK in place after the install broadcast because SystemUI
+                // consumes the pkpath asynchronously. This is not a cache source: the
+                // next OTA attempt deletes any stale APK before downloading a fresh,
+                // checksum-verified replacement.
 
                 return true;
             }
