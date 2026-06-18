@@ -417,15 +417,8 @@ jest.mock("@/services/WebSocketManager", () => {
   }
 })
 
-// Mock crust native module to avoid native bridge errors.
-// `virtual: true` so the mock doesn't require the bare "crust" specifier to
-// resolve on disk — the app imports the expo native module as `@mentra/crust`
-// and it can never load in the jest/node environment, so relying on it
-// resolving made the whole suite fail ("Cannot find module 'crust'") whenever a
-// runner's install didn't materialize it.
-jest.mock(
-  "crust",
-  () => ({
+// Mock crust native module to avoid native bridge errors
+jest.mock("@mentra/crust", () => ({
   default: {
     addListener: jest.fn(() => ({remove: jest.fn()})),
     showAVRoutePicker: jest.fn(),
@@ -440,9 +433,7 @@ jest.mock(
     stabilizeVideo: jest.fn(() => Promise.resolve({success: true})),
     saveToGalleryWithDate: jest.fn(() => Promise.resolve({success: true})),
   },
-  }),
-  {virtual: true},
-)
+}))
 
 // Silence the warning: Animated: `useNativeDriver` is not supported
 global.__reanimatedWorkletInit = jest.fn()
