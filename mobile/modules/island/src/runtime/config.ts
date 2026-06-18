@@ -342,8 +342,8 @@ export interface RuntimeHooks {
    */
   cloud?: CloudRuntimeAdapter
   audioPlayback?: AudioPlaybackAdapter
-  /** Returns the connected glasses' status snapshot. */
-  glassesStatus?: StoreAccessor<GlassesSnapshot>
+  // Glasses status read/subscribe moved into island — the runtime reads the island
+  // useGlassesStore directly (DisplayProcessor / LocalMiniappRuntime) — no longer hooks.
   settings?: SettingsAccessor
   // Device heading / compass moved into island (HeadingService, subscribed
   // directly by the runtime) — no longer a host-provided hook.
@@ -368,11 +368,6 @@ export interface RuntimeHooks {
   // and the mic control plane (setMicRequirements) moved into island — the runtime calls
   // BluetoothSdk directly (LocalDisplayManager / LocalSttFallbackCoordinator /
   // MicStateCoordinator) — no longer host hooks.
-  /**
-   * Subscribe to host glasses-status changes when the runtime needs live
-   * device-model updates. Returns an unsubscribe function.
-   */
-  subscribeGlassesStatus?: (onChange: (changed: Partial<GlassesSnapshot>) => void) => () => void
   // Photo capture + video recording + camera FOV moved into island (PhonePhotoCoordinator
   // / PhoneVideoCoordinator + a direct BluetoothSdk.setCameraFov call) — no longer host hooks.
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */

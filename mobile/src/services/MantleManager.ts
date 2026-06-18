@@ -176,20 +176,8 @@ class MantleManager {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
       },
-      glassesStatus: {
-        get: () => {
-          const s = useGlassesStore.getState()
-          // Spread first, then narrow to the canonical fields the runtime reads
-          // — so the canonical names always win over anything in the host store.
-          return {
-            ...s,
-            connected: isGlassesConnected(s.connection),
-            deviceModel: s.deviceModel,
-            batteryLevel: s.batteryLevel,
-            charging: s.charging,
-          }
-        },
-      },
+      // glassesStatus read/subscribe moved into island (DisplayProcessor /
+      // LocalMiniappRuntime read the island glasses store directly) — no longer hooks.
       settings: {
         getSetting: <T = unknown>(key: string): T | undefined =>
           useSettingsStore.getState().getSetting(key) as T | undefined,
@@ -211,8 +199,8 @@ class MantleManager {
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       // sendDisplayEvent / restartTranscriber / setMicRequirements moved into island
       // (LocalDisplayManager / LocalSttFallbackCoordinator / MicStateCoordinator call
-      // BluetoothSdk directly) — no longer host hooks.
-      subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
+      // BluetoothSdk directly) — no longer host hooks. glassesStatus read/subscribe also
+      // moved into island (the runtime reads the island glasses store directly).
       // photo capture + video recording moved into island (PhonePhotoCoordinator /
       // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
       // (The photo_response error-routing listener below still drives the coordinator.)
