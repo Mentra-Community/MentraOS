@@ -6,7 +6,6 @@ import * as Location from "expo-location"
 import {router} from "expo-router"
 import {shallow} from "zustand/shallow"
 
-import audioPlaybackService from "@/services/AudioPlaybackService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {phonePhotoCoordinator} from "@mentra/island"
 import {phoneStreamCoordinator} from "@mentra/island"
@@ -234,10 +233,8 @@ class MantleManager {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
-      audioPlayback: {
-        play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
-        stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
-      },
+      // audioPlayback (miniapp speaker / TTS playback) moved into island
+      // (AudioPlaybackService — pure expo-audio + btsdk volume control) — no longer a hook.
       // glassesStatus read/subscribe moved into island (DisplayProcessor /
       // LocalMiniappRuntime read the island glasses store directly) — no longer hooks.
       settings: {

@@ -35,6 +35,7 @@ import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
 import {isGlassesConnected} from "./GlassesReadiness"
+import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
 import {useGlassesStore} from "../stores/glasses"
 import localDisplayManager from "./LocalDisplayManager"
@@ -774,7 +775,7 @@ class LocalMiniappRuntime {
     resetPermissionWarnings(packageName)
 
     // Stop audio for this app
-    getRuntimeHooks().audioPlayback?.stopForApp(packageName)
+    audioPlaybackService.stopForApp(packageName)
 
     // Tear down this app's blob state: abort in-flight uploads + close readers
     // so a crashed/closed miniapp doesn't leak partial files or file handles.
@@ -1593,7 +1594,7 @@ class LocalMiniappRuntime {
     const stopOtherAudio = payload.stopOtherAudio !== false
 
     this.setSpeakerState(packageName, "loading")
-    getRuntimeHooks().audioPlayback?.play(
+    audioPlaybackService.play(
       {requestId: audioRequestId, audioUrl, appId: packageName, volume, stopOtherAudio},
       (_respId, success, error, duration) => {
         if (success) {
@@ -1627,7 +1628,7 @@ class LocalMiniappRuntime {
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
-    getRuntimeHooks().audioPlayback?.stopForApp(packageName)
+    audioPlaybackService.stopForApp(packageName)
     this.setSpeakerState(packageName, "stopped")
     this.sendResult(packageName, requestId, true)
   }
@@ -1655,20 +1656,9 @@ class LocalMiniappRuntime {
 
       this.setSpeakerState(packageName, "loading")
 
+      // audioPlaybackService is island-owned now (was a host audioPlayback hook), so
+      // it's always available — no host-not-configured guard needed.
       const hooks = getRuntimeHooks()
-      const audioPlayback = hooks.audioPlayback
-      if (!audioPlayback) {
-        const message = "audio playback unavailable"
-        this.setSpeakerState(packageName, "error", {
-          errorCode: MiniappErrorCode.INTERNAL,
-          errorMessage: message,
-        })
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message,
-        })
-        return
-      }
 
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
@@ -1729,7 +1719,7 @@ class LocalMiniappRuntime {
         }
 
         const generated = offlineGenerated
-        audioPlayback.play(
+        audioPlaybackService.play(
           {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
           (_respId, success, error, duration) => {
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
@@ -1763,7 +1753,7 @@ class LocalMiniappRuntime {
         }
 
         await Promise.resolve(
-          audioPlayback.play(
+          audioPlaybackService.play(
             {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
             (_respId, success, error, duration) => {
               if (!success && fallbackToOffline) {

@@ -137,28 +137,18 @@ export interface CloudRuntimeAdapter {
   isConnected: () => boolean
 }
 
-export interface AudioPlayRequest {
-  requestId: string
-  audioUrl: string
-  appId?: string
-  volume?: number
-  stopOtherAudio?: boolean
+/**
+ * Cloud connection state surface used by LocalSttFallbackCoordinator to decide when
+ * on-device STT should take over from cloud transcription. island's cloudClientService
+ * self-wires this from its own cloud-v2 liveness (no host injection).
+ */
+export interface CloudConnectionAdapter {
+  isConnected: () => boolean
+  addListener: (l: (connected: boolean) => void) => () => void
 }
 
-export interface AudioPlaybackAdapter {
-  /**
-   * Play audio for a specific app. Calls onComplete when playback finishes
-   * or errors. Returns a promise that resolves once playback is dispatched.
-   */
-  play: (
-    request: AudioPlayRequest,
-    onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void,
-  ) => Promise<void> | void
-  /**
-   * Stop playback for an app (e.g. on disconnect / close).
-   */
-  stopForApp: (packageName: string) => void
-}
+// Audio playback (miniapp speaker / TTS) moved into island (AudioPlaybackService —
+// pure expo-audio + btsdk volume control) — no longer a host hook.
 
 export interface MicRequirements {
   shouldSendPcm: boolean
@@ -360,15 +350,14 @@ export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   /**
    * Cloud-v2 (`@mentra/cloud-client`) runtime adapter. Additive alongside
-   * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
-   */
+  * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
+  */
   cloud?: CloudRuntimeAdapter
   /**
    * Package-scoped backend auth for local miniapps. The host owns the real
    * Core/runtime credentials; this adapter returns only miniapp tokens.
    */
   miniappAuth?: MiniappAuthAdapter
-  audioPlayback?: AudioPlaybackAdapter
   // Glasses status read/subscribe moved into island — the runtime reads the island
   // useGlassesStore directly (DisplayProcessor / LocalMiniappRuntime) — no longer hooks.
   settings?: SettingsAccessor

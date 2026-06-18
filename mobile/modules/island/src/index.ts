@@ -50,6 +50,7 @@ export {
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as navigationService} from "./services/NavigationService"
+export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 // Phone GPS — the background location task + tier control moved into island (was the
 // host locationTier hook + a MantleManager defineTask). Exported so the barrel load
 // registers the background task at @mentra/island import time.
@@ -180,8 +181,6 @@ export {
   type CloudRuntimeAdapter,
   type MiniappAuthAdapter,
   type MiniappAuthToken,
-  type AudioPlaybackAdapter,
-  type AudioPlayRequest,
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
