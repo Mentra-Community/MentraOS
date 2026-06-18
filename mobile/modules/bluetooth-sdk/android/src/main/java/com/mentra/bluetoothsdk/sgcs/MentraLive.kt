@@ -5165,7 +5165,6 @@ class MentraLive : SGCManager() {
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
         val compress = request.compress.value
-        val flash = request.flash
         val save = request.save
         val sound = request.sound
         val exposureTimeNs = request.exposureTimeNs
@@ -5184,8 +5183,6 @@ class MentraLive : SGCManager() {
                         (if (hasAuthToken) "***" else "none") +
                         ", compress=" +
                         compress +
-                        ", flash=" +
-                        flash +
                         ", save=" +
                         save +
                         ", sound=" +
@@ -5225,7 +5222,6 @@ class MentraLive : SGCManager() {
             } else {
                 json.put("compress", "none")
             }
-            json.put("flash", flash)
             json.put("save", save)
             json.put("sound", sound)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
@@ -6099,25 +6095,6 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: ✅ [SETTINGS_SYNC] Video settings transmitted via BLE")
         } catch (e: JSONException) {
             Log.e(TAG, "❌ [SETTINGS_SYNC] Error sending button video recording settings", e)
-        }
-    }
-
-    fun sendButtonCameraLedSetting(enabled: Boolean) {
-        sendButtonCameraLedSetting(null, enabled)
-    }
-
-    fun sendButtonCameraLedSetting(requestId: String?, enabled: Boolean) {
-        // Send LED setting to glasses
-        val command = JSONObject()
-        try {
-            command.put("type", "button_camera_led")
-            if (requestId != null && !requestId.isEmpty()) {
-                command.put("request_id", requestId)
-            }
-            command.put("enabled", enabled)
-            sendJson(command, true)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending button camera LED setting", e)
         }
     }
 
@@ -8031,9 +8008,6 @@ class MentraLive : SGCManager() {
         // Send button photo settings
         sendButtonPhotoSettings()
 
-        // Send button camera LED setting
-        sendButtonCameraLedSetting()
-
         // Send camera FOV setting (K900 / Mentra Live)
         sendCameraFovSetting()
 
@@ -8100,12 +8074,6 @@ class MentraLive : SGCManager() {
             null, size, mfnr, zsl, noiseReduction, edgeEnhancement,
             ispDigitalGain, ispAnalogGain, aeExposureDivisor, isoCap, compress, sound, false,
         )
-    }
-
-    /** Send button camera LED setting to glasses */
-    override fun sendButtonCameraLedSetting() {
-        val enabled = DeviceStore.get("bluetooth", "button_camera_led") as Boolean
-        sendButtonCameraLedSetting(null, enabled)
     }
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
@@ -8186,17 +8154,15 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
-        startVideoRecording(requestId, save, flash, sound, 0, 0, 0, 0) // Use defaults
+        startVideoRecording(requestId, save, sound, 0, 0, 0, 0) // Use defaults
     }
 
     /**
      * Start video recording with optional resolution settings
      * @param requestId Request ID for tracking
      * @param save Whether to save the video
-     * @param flash Whether to enable privacy flash LED
      * @param sound Whether to enable start/stop sounds
      * @param width Video width (0 for default)
      * @param height Video height (0 for default)
@@ -8206,7 +8172,6 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean,
             width: Int,
             height: Int,
@@ -8218,8 +8183,6 @@ class MentraLive : SGCManager() {
                         requestId +
                         ", save=" +
                         save +
-                        ", flash=" +
-                        flash +
                         ", sound=" +
                         sound +
                         ", resolution=" +
@@ -8243,7 +8206,6 @@ class MentraLive : SGCManager() {
             json.put("type", "start_video_recording")
             json.put("requestId", requestId)
             json.put("save", save)
-            json.put("flash", flash)
             json.put("sound", sound)
 
             // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.

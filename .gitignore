@@ -382,7 +382,11 @@ issues
 # Local session notes
 MEMORY.md
 # Cursor IDE local config (MCP, etc.)
-.cursor/
+.cursor/*
+!.cursor/BUGBOT.md
+
+# PR agent orchestrator local outputs
+.pr-agent/
 
 # Nested starter-kit repo (separate git history)
 Mentra-Bluetooth-SDK-Starter-Kit/

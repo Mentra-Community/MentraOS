@@ -47,8 +47,8 @@ public enum PhotoCompression: String {
     case heavy
 }
 
-public struct ButtonPhotoSettings {
-    public let size: ButtonPhotoSize?
+public struct PhotoCaptureDefaults {
+    public let size: PhotoSize?
     public let mfnr: Bool?
     public let zsl: Bool?
     public let noiseReduction: Bool?
@@ -62,7 +62,7 @@ public struct ButtonPhotoSettings {
     public let resetCaptureTuning: Bool?
 
     public init(
-        size: ButtonPhotoSize?,
+        size: PhotoSize? = nil,
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         noiseReduction: Bool? = nil,
@@ -89,12 +89,12 @@ public struct ButtonPhotoSettings {
         self.resetCaptureTuning = resetCaptureTuning
     }
 
-    static func from(params: [String: Any]) -> ButtonPhotoSettings {
-        let size = (params["size"] as? String).map { ButtonPhotoSize(normalizedRawValue: $0) }
+    static func from(params: [String: Any]) -> PhotoCaptureDefaults {
+        let size = (params["size"] as? String).map { PhotoSize(normalizedRawValue: $0) }
         let aeExposureDivisor =
             optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
-        return ButtonPhotoSettings(
+        return PhotoCaptureDefaults(
             size: size,
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
@@ -111,7 +111,7 @@ public struct ButtonPhotoSettings {
     }
 }
 
-public struct ButtonVideoRecordingSettings {
+public struct VideoRecordingDefaults {
     public let width: Int
     public let height: Int
     public let fps: Int
@@ -228,7 +228,6 @@ public struct PhotoRequest {
     public let webhookUrl: String?
     public let authToken: String?
     public let compress: PhotoCompression?
-    public let flash: Bool
     public let save: Bool
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
@@ -251,7 +250,6 @@ public struct PhotoRequest {
         webhookUrl: String? = nil,
         authToken: String? = nil,
         compress: PhotoCompression? = nil,
-        flash: Bool = true,
         save: Bool = false,
         sound: Bool,
         exposureTimeNs: Double? = nil,
@@ -271,7 +269,6 @@ public struct PhotoRequest {
         self.webhookUrl = webhookUrl
         self.authToken = authToken
         self.compress = compress
-        self.flash = flash
         self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
@@ -340,7 +337,6 @@ public struct PhotoRequest {
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
             compress: PhotoCompression(rawValue: compressRaw),
-            flash: params["flash"] as? Bool ?? true,
             save: (params["save"] as? Bool) ?? (params["saveToGallery"] as? Bool) ?? false,
             sound: params["sound"] as? Bool ?? true,
             exposureTimeNs: exposureTimeNs,

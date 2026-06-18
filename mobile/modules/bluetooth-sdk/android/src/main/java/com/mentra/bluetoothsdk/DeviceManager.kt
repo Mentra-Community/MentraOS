@@ -1365,7 +1365,6 @@ class DeviceManager {
 
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
-        message["flash"] = true
         sgc?.startStream(message)
     }
 
@@ -1435,10 +1434,10 @@ class DeviceManager {
     }
 
     fun sendButtonPhotoSettings(requestId: String, size: String) {
-        sendButtonPhotoSettings(requestId, ButtonPhotoSettings(ButtonPhotoSize.fromValue(size)))
+        sendButtonPhotoSettings(requestId, PhotoCaptureDefaults(PhotoSize.fromValue(size)))
     }
 
-    fun sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) {
+    fun sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonPhotoSettings(
             requestId,
@@ -1460,11 +1459,6 @@ class DeviceManager {
     fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
-    }
-
-    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
-        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.sendButtonCameraLedSetting(requestId, enabled)
     }
 
     fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
@@ -1565,11 +1559,11 @@ class DeviceManager {
             maxRecordingTimeMinutes: Int = 0,
     ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, sound=$sound, " +
                         "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
         sgc?.startVideoRecording(
-                requestId, save, true, sound, width, height, fps, maxRecordingTimeMinutes)
+                requestId, save, sound, width, height, fps, maxRecordingTimeMinutes)
     }
 
     fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
@@ -1606,11 +1600,11 @@ class DeviceManager {
         val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
         val routed =
                 request.copy(
-                    exposureTimeNs = exposureNs?.toDouble(),
-                    iso = manualIso,
+                        exposureTimeNs = exposureNs?.toDouble(),
+                        iso = manualIso,
                 )
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} flash=${routed.flash} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

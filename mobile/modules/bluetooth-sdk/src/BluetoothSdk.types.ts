@@ -396,7 +396,6 @@ export type SettingsAckSetting =
   | "gallery_mode"
   | "button_photo"
   | "button_video_recording"
-  | "button_camera_led"
   | "button_max_recording_time"
   | "camera_fov"
 
@@ -431,8 +430,8 @@ export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
-export type ButtonPhotoSettings = {
-  size: ButtonPhotoSize
+export type PhotoCaptureDefaults = {
+  size?: PhotoSize
   mfnr?: boolean
   zsl?: boolean
   noiseReduction?: boolean
@@ -448,9 +447,15 @@ export type ButtonPhotoSettings = {
 }
 export type PhotoCompression = "none" | "medium" | "heavy"
 
+export type VideoRecordingDefaults = {
+  width: number
+  height: number
+  fps: number
+}
+
 /**
  * Optional per-recording video settings for {@link startVideoRecording}. When
- * omitted, the glasses fall back to their saved button-video settings. Any
+ * omitted, the glasses fall back to their saved video recording defaults. Any
  * field left undefined is omitted from the BLE command (glasses default applies).
  */
 export interface VideoRecordingSettings {
@@ -565,8 +570,6 @@ export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
   streamId?: string
-  keepAlive?: boolean
-  keepAliveIntervalSeconds?: number
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
@@ -936,10 +939,9 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
+  setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
+  setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
@@ -1226,7 +1228,6 @@ export type BluetoothSettingsUpdate = Partial<{
   button_video_width: number
   button_video_height: number
   button_video_fps: number
-  button_camera_led: boolean
   button_max_recording_time: number
   camera_fov: NativeCameraFovSetting
   should_send_pcm: boolean

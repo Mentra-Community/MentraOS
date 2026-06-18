@@ -71,6 +71,7 @@ describe("StreamModule", () => {
     await expect(
       stream.startManaged({
         restreamDestinations: [{url: "rtmp://dest.example/live/key", name: "demo"}],
+        video: {fps: 24},
         audio: {sampleRate: 48_000},
       }),
     ).resolves.toEqual(result)
@@ -78,7 +79,7 @@ describe("StreamModule", () => {
       {
         type: MiniappRequestType.MANAGED_STREAM_START,
         restreamDestinations: [{url: "rtmp://dest.example/live/key", name: "demo"}],
-        video: undefined,
+        video: {fps: 24},
         audio: {sampleRate: 48_000},
         sound: true,
       },

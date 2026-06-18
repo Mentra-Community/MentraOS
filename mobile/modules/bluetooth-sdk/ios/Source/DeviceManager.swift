@@ -1115,7 +1115,6 @@ struct ViewState {
 
     func startStream(_ message: [String: Any]) {
         var message = message
-        message["flash"] = true
         Bridge.log("MAN: startStream: \(message)")
         sgc?.startStream(message)
     }
@@ -1193,20 +1192,16 @@ struct ViewState {
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
         try sendButtonPhotoSettings(
             requestId: requestId,
-            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
+            settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size))
         )
     }
 
-    func sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) throws {
+    func sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) throws {
         try liveSgc().sendButtonPhotoSettings(requestId: requestId, settings: settings)
     }
 
     func sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) throws {
         try liveSgc().sendButtonVideoRecordingSettings(requestId: requestId, width: width, height: height, fps: fps)
-    }
-
-    func sendButtonCameraLedSetting(requestId: String, enabled: Bool) throws {
-        try liveSgc().sendButtonCameraLedSetting(requestId: requestId, enabled: enabled)
     }
 
     func sendButtonMaxRecordingTime(requestId: String, minutes: Int) throws {
@@ -1248,10 +1243,10 @@ struct ViewState {
         _ fps: Int = 0, _ maxRecordingTimeMinutes: Int = 0
     ) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
         sgc?.startVideoRecording(
-            requestId: requestId, save: save, flash: true, sound: sound, width: width, height: height,
+            requestId: requestId, save: save, sound: sound, width: width, height: height,
             fps: fps, maxRecordingTimeMinutes: maxRecordingTimeMinutes
         )
     }
@@ -1334,7 +1329,6 @@ struct ViewState {
             webhookUrl: request.webhookUrl,
             authToken: request.authToken,
             compress: request.compress,
-            flash: request.flash,
             save: request.save,
             sound: request.sound,
             exposureTimeNs: manualExposureNs,
@@ -1349,7 +1343,7 @@ struct ViewState {
             ispAnalogGain: request.ispAnalogGain
         )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") flash=\(routed.flash) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(

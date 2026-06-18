@@ -405,8 +405,8 @@ await BluetoothSdk.startStream({
 await BluetoothSdk.stopStream()
 ```
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
-`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. Stream video input fields are `width`, `height`, `bitrate`, and `fps`. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
+`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight. The resolved effective frame rate is reported as `resolvedConfig.video.fps`.
 
 ## Events
 
@@ -459,13 +459,25 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
 
+For local Android source compile checks inside this monorepo, run from the
+MentraOS repo root:
+
+```sh
+./scripts/check-android-compile.sh bluetooth-sdk
+```
+
+The `android/` folder in this package is source for the generated Expo Android
+project, not the local Gradle entrypoint. The check script prepares
+`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
+matching the CI release workflow's public SDK dependency mode.
+
 For bare native iOS apps, use the public SwiftPM repository:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.13`, then add the `MentraBluetoothSDK` product to your app target.
+Select version `0.1.14`, then add the `MentraBluetoothSDK` product to your app target.
 
 For local SDK development, add this package folder directly in Xcode:
 

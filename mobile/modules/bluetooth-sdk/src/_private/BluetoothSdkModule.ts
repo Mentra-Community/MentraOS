@@ -4,7 +4,7 @@ import {
   BluetoothSettingsUpdate,
   BluetoothSdkModuleEvents,
   BluetoothStatus,
-  ButtonPhotoSettings,
+  PhotoCaptureDefaults,
   CalendarEvent,
   CAMERA_FOV_DEFAULT,
   CAMERA_FOV_MAX,
@@ -121,11 +121,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Gallery Commands
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
-  setButtonPhotoCaptureSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
+  setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
@@ -566,11 +564,6 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
-}
-
-const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
-  return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
 }
 
 export default NativeBluetoothSdkModule
