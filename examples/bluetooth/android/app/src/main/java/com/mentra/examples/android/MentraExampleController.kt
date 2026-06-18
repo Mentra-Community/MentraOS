@@ -44,8 +44,7 @@ import com.mentra.bluetoothsdk.HotspotErrorEvent
 import com.mentra.bluetoothsdk.HotspotStatus
 import com.mentra.bluetoothsdk.HotspotStatusEvent
 import com.mentra.bluetoothsdk.PhoneSdkRuntimeState
-import com.mentra.bluetoothsdk.ButtonPhotoSettings
-import com.mentra.bluetoothsdk.ButtonPhotoSize
+import com.mentra.bluetoothsdk.PhotoCaptureDefaults
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoResponse
@@ -335,8 +334,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var autoOtaCheckedConnectionKey: String? = null
     private var autoOtaCheckInProgress = false
     private var latestOtaVersionInfoSignature: String? = null
-    private val buttonPhotoSettingsSyncMutex = Mutex()
-    private var buttonPhotoSettingsSyncGeneration = 0
+    private val photoCaptureDefaultsSyncMutex = Mutex()
+    private var photoCaptureDefaultsSyncGeneration = 0
     private var otaDisplayProgressSessionKey: String? = null
     private var otaDisplayOverallPercent: Int? = null
     private var postOtaCheckInProgress = false
@@ -554,14 +553,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             if (enabled) {
                 scanButtonPreset()
             } else {
-                ButtonPhotoSettings(
-                    size = buttonPhotoSizeToSdk(state.photoSize),
+                PhotoCaptureDefaults(
+                    size = photoSizeToSdk(state.photoSize),
                     mfnr = true,
                     zsl = true,
                     resetCaptureTuning = true,
                 )
             }
-        syncButtonPhotoSettings(
+        syncPhotoCaptureDefaults(
             if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses",
             settings,
         )
@@ -584,8 +583,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun scanButtonPreset() =
-        ButtonPhotoSettings(
-            size = buttonPhotoSizeToSdk(state.photoSize),
+        PhotoCaptureDefaults(
+            size = photoSizeToSdk(state.photoSize),
             mfnr = state.photoMfnr,
             zsl = state.photoZsl,
             noiseReduction = state.photoNoiseReduction,
@@ -613,19 +612,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
-        syncButtonPhotoSettings("Apply scan preset on glasses", scanButtonPreset())
+        syncPhotoCaptureDefaults("Apply scan preset on glasses", scanButtonPreset())
     }
 
-    private fun syncButtonPhotoSettings(label: String, settings: ButtonPhotoSettings) {
-        val generation = ++buttonPhotoSettingsSyncGeneration
+    private fun syncPhotoCaptureDefaults(label: String, settings: PhotoCaptureDefaults) {
+        val generation = ++photoCaptureDefaultsSyncGeneration
         runAction(label) {
             requireConnected("sync photo capture settings")
-            buttonPhotoSettingsSyncMutex.withLock {
-                if (generation != buttonPhotoSettingsSyncGeneration) {
+            photoCaptureDefaultsSyncMutex.withLock {
+                if (generation != photoCaptureDefaultsSyncGeneration) {
                     return@withLock
                 }
                 withContext(Dispatchers.IO) {
-                    mentraBluetoothSdk.setButtonPhotoSettings(settings)
+                    mentraBluetoothSdk.setPhotoCaptureDefaults(settings)
                 }
             }
         }
@@ -3127,13 +3126,6 @@ fun photoSizeToSdk(size: String): PhotoSize = when (size) {
     "high" -> PhotoSize.HIGH
     "max", "full" -> PhotoSize.MAX
     else -> PhotoSize.MEDIUM
-}
-
-fun buttonPhotoSizeToSdk(size: String): ButtonPhotoSize = when (size) {
-    "low" -> ButtonPhotoSize.LOW
-    "high" -> ButtonPhotoSize.HIGH
-    "max", "full" -> ButtonPhotoSize.MAX
-    else -> ButtonPhotoSize.MEDIUM
 }
 
 val photoSizeOptions = listOf("low", "medium", "high", "max")

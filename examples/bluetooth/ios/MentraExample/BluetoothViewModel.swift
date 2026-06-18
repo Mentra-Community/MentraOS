@@ -272,8 +272,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActions: [Int: String] = [:]
     private var activeActionOrder: [Int] = []
     private var streamConfigurationChangeInProgress = false
-    private var buttonPhotoSettingsSyncGeneration = 0
-    private var buttonPhotoSettingsSyncTask: Task<Void, Never>?
+    private var photoCaptureDefaultsSyncGeneration = 0
+    private var photoCaptureDefaultsSyncTask: Task<Void, Never>?
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl {
         didSet {
@@ -648,12 +648,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         guard glassesConnected else { return }
         if enabled {
-            syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+            syncPhotoCaptureDefaults("Apply scan preset on glasses", settings: scanButtonPreset())
         } else {
-            let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
-            syncButtonPhotoSettings(
+            let size = PhotoSize(rawValue: photoSize.rawValue) ?? .max
+            syncPhotoCaptureDefaults(
                 "Restore photo preset on glasses",
-                settings: ButtonPhotoSettings(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
+                settings: PhotoCaptureDefaults(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
             )
         }
     }
@@ -678,21 +678,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pushScanButtonPreset() {
         guard glassesConnected else { return }
-        syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+        syncPhotoCaptureDefaults("Apply scan preset on glasses", settings: scanButtonPreset())
     }
 
-    private func syncButtonPhotoSettings(_ label: String, settings: ButtonPhotoSettings) {
-        buttonPhotoSettingsSyncGeneration += 1
-        let generation = buttonPhotoSettingsSyncGeneration
-        let previousTask = buttonPhotoSettingsSyncTask
-        buttonPhotoSettingsSyncTask = Task { @MainActor [weak self] in
+    private func syncPhotoCaptureDefaults(_ label: String, settings: PhotoCaptureDefaults) {
+        photoCaptureDefaultsSyncGeneration += 1
+        let generation = photoCaptureDefaultsSyncGeneration
+        let previousTask = photoCaptureDefaultsSyncTask
+        photoCaptureDefaultsSyncTask = Task { @MainActor [weak self] in
             await previousTask?.value
-            guard let self, generation == self.buttonPhotoSettingsSyncGeneration, self.glassesConnected else { return }
+            guard let self, generation == self.photoCaptureDefaultsSyncGeneration, self.glassesConnected else { return }
             let actionId = self.beginAction(label)
             self.lastAction = "Running: \(label)"
             self.append(tag: "TX", text: label)
             do {
-                _ = try await self.mentraBluetoothSdk.setButtonPhotoSettings(settings)
+                _ = try await self.mentraBluetoothSdk.setPhotoCaptureDefaults(settings)
                 self.lastAction = "Requested: \(label)"
             } catch {
                 self.cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
@@ -709,9 +709,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func scanButtonPreset() -> ButtonPhotoSettings {
-        ButtonPhotoSettings(
-            size: ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max,
+    private func scanButtonPreset() -> PhotoCaptureDefaults {
+        PhotoCaptureDefaults(
+            size: PhotoSize(rawValue: photoSize.rawValue) ?? .max,
             mfnr: photoMfnr,
             zsl: photoZsl,
             noiseReduction: photoNoiseReduction,
