@@ -89,6 +89,37 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Make the app feel native: chrome (labels, buttons, chips) can't be
+ * long-press selected. Only content explicitly tagged `.selectable-text`
+ * (the transcription text itself) is selectable.
+ */
+:root {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.selectable-text {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
+ * Form controls must stay selectable/editable — the global no-select rule
+ * inherits onto them and, on WebKit hosts, suppresses the caret/selection
+ * handles inside the search inputs. Opt them back in explicitly.
+ */
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
 @media (prefers-reduced-motion) {
   *,
   ::before,

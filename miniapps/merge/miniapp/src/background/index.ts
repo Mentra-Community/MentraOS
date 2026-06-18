@@ -63,7 +63,7 @@ interface AnalysisChunk {
   endedAt: number
 }
 
-const DEFAULT_BACKEND_URL = "http://localhost:3130"
+const DEFAULT_BACKEND_URL = "https://merge3.mentraglass.com"
 const SETTINGS_KEY = "merge:settings"
 const DISPLAY_DURATION_MS = 10_000
 const MAX_TRANSCRIPTS = 40
