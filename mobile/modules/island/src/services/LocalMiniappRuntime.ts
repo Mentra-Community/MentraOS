@@ -32,6 +32,7 @@ import {DeviceTypes, getModelCapabilities} from "../types"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
+import {islandNotifications} from "./NotificationsEmitter"
 import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
@@ -2777,6 +2778,13 @@ class LocalMiniappRuntime {
         code: MiniappErrorCode.APP_NOT_COMPATIBLE,
         message: `${target} is not compatible with the connected glasses`,
       })
+      islandNotifications.emit({
+        kind: "version_incompatible",
+        packageName: target,
+        reason: `${target} is not compatible with the connected glasses`,
+        metadata: {missingRequired: app.compatibility.missingRequired ?? [], via: "miniapps.start"},
+        timestamp: Date.now(),
+      })
       this.auditInterop({
         caller: packageName,
         op: "start",
@@ -2910,6 +2918,13 @@ class LocalMiniappRuntime {
       this.sendResult(callerPackageName, requestId, false, undefined, {
         code: MiniappErrorCode.APP_NOT_COMPATIBLE,
         message: `${target} is not compatible with the connected glasses`,
+      })
+      islandNotifications.emit({
+        kind: "version_incompatible",
+        packageName: target,
+        reason: `${target} is not compatible with the connected glasses`,
+        metadata: {missingRequired: app.compatibility.missingRequired ?? [], via: "miniapps.invoke"},
+        timestamp: Date.now(),
       })
       return
     }

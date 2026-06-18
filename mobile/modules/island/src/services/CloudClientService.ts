@@ -28,8 +28,25 @@ import {
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
+import {islandNotifications} from "./NotificationsEmitter"
+import {BgTimer} from "../utils/timers"
 
 const LOG_TAG = "cloudClient"
+
+// Persistent cloud-disconnect detector: the cloud-client reconnect loop is infinite
+// and never surfaces a "giving up" signal, so "persistent failure" = the session has
+// been continuously NOT connected for this long. A quick reconnect cancels it; brief
+// flaps that recover don't fire. Raised as toolkit.notifications(connection_failed_persistent).
+const CLOUD_PERSISTENT_FAILURE_MS = 60_000
+
+/** Cancel the pending persistent-failure alarm + re-arm for the next outage. */
+function clearPersistentFailureAlarm(): void {
+  if (persistentFailureTimer) {
+    BgTimer.clearTimeout(persistentFailureTimer)
+    persistentFailureTimer = null
+  }
+  persistentFailureNotified = false
+}
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
@@ -43,6 +60,8 @@ let client: CloudClient | null = null
 let adapter: CloudRuntimeAdapter | null = null
 let wired = false
 let connected = false
+let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
+let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
@@ -272,6 +291,9 @@ function construct(): void {
     if (c !== client) return
     connected = true
     console.log(`${LOG_TAG}: runtime connected`)
+    // Cloud is up — cancel any pending persistent-failure alarm and re-arm for the
+    // next outage.
+    clearPersistentFailureAlarm()
     // Re-apply any subscriptions queued before connect (or dropped across a
     // reconnect) — best-effort; never throw out of the connect handler.
     if (audioSubscriptions.length > 0) {
@@ -287,6 +309,21 @@ function construct(): void {
     if (c !== client) return
     connected = false
     console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
+    // Arm the persistent-failure alarm once; if we're still down when it fires, raise
+    // the notification. A reconnect within the window cancels it (onConnected above).
+    if (!persistentFailureTimer && !persistentFailureNotified) {
+      persistentFailureTimer = BgTimer.setTimeout(() => {
+        persistentFailureTimer = null
+        if (connected) return
+        persistentFailureNotified = true
+        islandNotifications.emit({
+          kind: "connection_failed_persistent",
+          reason: `Cloud session has been disconnected for over ${Math.round(CLOUD_PERSISTENT_FAILURE_MS / 1000)}s`,
+          metadata: {downForMs: CLOUD_PERSISTENT_FAILURE_MS, lastReason: info.reason},
+          timestamp: Date.now(),
+        })
+      }, CLOUD_PERSISTENT_FAILURE_MS)
+    }
     notifyConnectionListeners(false)
   })
   c.runtime.onError((err) => {
@@ -332,6 +369,7 @@ export const cloudClientService = {
       console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
     }
     clearRuntimeEventSubscriptions()
+    clearPersistentFailureAlarm()
 
     const wasConnected = connected
     client = null
@@ -351,6 +389,7 @@ export const cloudClientService = {
       console.warn(`${LOG_TAG}: stop close() failed: ${(err as Error)?.message ?? err}`)
     }
     clearRuntimeEventSubscriptions()
+    clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
     connected = false
