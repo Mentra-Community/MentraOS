@@ -168,7 +168,7 @@ handles the phone's whole connection to Cloud v2. The same library also runs on 
 server (in Node), and that's the trick: our backend test harness drives the exact
 same client the phone runs, so anything the tests prove also holds on the phone. It
 exposes three areas: `cloud.auth` (login and tokens), `cloud.runtime` (the live
-audio and event session), and `cloud.core` (the other v2 REST calls). The parts that
+audio and event session), and optional `cloud.core` (the other v2 REST calls). The parts that
 differ by platform (the WebSocket, the UDP socket, secure storage) are passed in from
 outside, so the one library runs unchanged on the phone and on a server. Full API in
 [`spec.md`](./spec.md).
@@ -192,23 +192,31 @@ Why a separate library instead of more methods on `SocketComms`:
   hand-maintaining strings: change a subscription or event type and it's a compile
   error everywhere it matters, and a green test-harness run is evidence the phone
   will work too.
-- **Auth in one place.** `cloud.auth` holds the v2 access token and mints the
-  miniapp-scoped tokens, so the phone stops hand-managing tokens for transport.
+- **Auth in one place.** `cloud.auth` supplies the `cloud-runtime` token for live
+  services and, when Core is configured, the `cloud-core` token plus
+  miniapp-scoped tokens. The phone stops hand-managing tokens for transport, and
+  runtime-only hosts do not need a dummy Core endpoint.
 
 ## 6. Auth: how the device and miniapps authenticate
 
 `cloud.auth` is the one owner of credentials on the device. It's a module of the
-cloud-client, so the same code authenticates the phone for Mentra and for OEMs, and
-issues the per-miniapp tokens auto-auth needs. The access token is sent as the Bearer
-on every call to Mentra's own APIs (cloud-core and cloud-runtime), but it's **never
-handed to a miniapp**: a miniapp only ever holds its own scoped token (below).
+cloud-client, so the same code authenticates the phone for Mentra and for OEMs,
+while allowing Runtime and Core to use different token providers. The Runtime token
+is sent as the Bearer to Cloud Runtime Services (`aud = "cloud-runtime"`). When Core
+is configured, the Core token is sent to Core-owned APIs (`aud = "cloud-core"`) and
+is used to mint per-miniapp tokens. Core/runtime bearer tokens are **never handed to
+a miniapp**: a miniapp only ever holds its own scoped token (below).
 
 ### Device auth (the phone proves who the user is to v2 cloud)
 
-The cloud-client is constructed with a **subject token** and exchanges it once at
-`POST /api/client/auth/exchange` for a v2 **access token** plus a refresh token, then
-owns refresh from there (`cloud.auth.getAccessToken()`). What the subject token is
-depends on who's running the app:
+In Core-backed deployments, the cloud-client is constructed with a **subject token**
+and exchanges it at `POST /api/client/auth/exchange` for Core credentials. Hosted
+Runtime can obtain a normalized `cloud-runtime` token through that same Core/Auth
+trust broker. Runtime-only deployments instead provide `auth.runtime.getToken()`
+from an OEM backend, local/dev issuer, or already-issued token and do not configure
+`endpoints.core`.
+
+What the subject token is depends on who's running the app:
 
 - **OEM users.** The OEM's own backend mints a short-lived signed JWT for the
   signed-in user (the OEM owns its accounts; there's no Mentra login screen). The
@@ -219,15 +227,17 @@ depends on who's running the app:
   the existing core token during the transition, a Supabase session at the end
   state, same endpoint.
 
-Either way the device ends up holding one Mentra-issued v2 access token, and
-`cloud.runtime` / `cloud.core` use it as the Bearer for every v2 call. Full
-mechanics: [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
+Either way, hosted deployments normalize identity to `mentraUserId` + `oemId`.
+`cloud.runtime` uses a `cloud-runtime` token; `cloud.core` uses a `cloud-core`
+token when configured. Full mechanics:
+[`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md) and
+[`../007-runtime-auth-independence/README.md`](../007-runtime-auth-independence/README.md).
 
 ### Miniapp auto-auth (a miniapp calls its own backend as the user)
 
 A miniapp with its own developer backend needs to call it as the current user, with
-no login. The access token never goes to the miniapp (it's the device's credential
-to all of Mentra). Instead:
+no login. Core/runtime bearer tokens never go to the miniapp (they are device
+credentials). Instead:
 
 1. At launch the runtime asks the cloud-client for a **miniapp-scoped token**:
    `cloud.auth.getMiniappToken(packageName)`. cloud-core mints an Ed25519 JWT with
@@ -253,13 +263,14 @@ is just one more message over them.
 Common questions this answers:
 
 - **"How does an OEM's user reach our cloud with no Mentra account?"** Their backend
-  vouches with a signed JWT; the exchange turns it into a Mentra token.
+  vouches with a signed JWT; Core/Auth can exchange that into Core credentials and,
+  for hosted Runtime, broker a normalized `cloud-runtime` token.
 - **"How does a miniapp know who the user is and call my backend safely?"** A
   per-miniapp token the backend verifies itself via JWKS, audience-pinned so a token
   for miniapp A can't be replayed against miniapp B.
-- **"Where do tokens live?"** `cloud.auth` owns the access token and sends it only as
-  the Bearer to Mentra's own APIs; a miniapp only ever holds its own scoped token,
-  never the access token.
+- **"Where do tokens live?"** `cloud.auth` owns Core/runtime bearer tokens and sends
+  them only to their matching services; a miniapp only ever holds its own scoped
+  token, never the Core/runtime bearer tokens.
 
 For the from-zero version of these terms (JWT, asymmetric signing, JWKS, audience,
 exchange), see [`../001-cloud-core/auth/concepts.md`](../001-cloud-core/auth/concepts.md).
@@ -296,9 +307,10 @@ translation coming back, managed photo / stream, TTS, telemetry. The local hardw
 path (display, BLE, mic, storage, IMU, notifications) is untouched. That keeps the
 change small and reviewable.
 
-**D5. Auth moves into `cloud.auth`.** The v2 access token and miniapp-scoped tokens
-are owned by the cloud-client; miniapps receive only the scoped token. See
-[`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
+**D5. Auth moves into `cloud.auth`.** Runtime and Core token providers plus
+miniapp-scoped tokens are owned by the cloud-client; miniapps receive only the
+scoped token. See [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md)
+and [`../007-runtime-auth-independence/README.md`](../007-runtime-auth-independence/README.md).
 
 **D6. Runtime status is a cloud-client concept, not a protocol enum.** The package
 exposes `RuntimeStatus`, `RuntimeAudioTransport`, and `RuntimeSnapshot` so the host

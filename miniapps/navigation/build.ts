@@ -12,7 +12,6 @@
  */
 
 import {rm} from "fs/promises"
-
 const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})

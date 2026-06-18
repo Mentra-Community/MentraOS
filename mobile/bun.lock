@@ -242,12 +242,14 @@
       },
       "devDependencies": {
         "@mentra/bluetooth-sdk": "workspace:*",
+        "@mentra/cloud-client": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "expo-module-scripts": "^55.0.2",
       },
       "peerDependencies": {
         "@dr.pogodin/react-native-fs": "*",
         "@mentra/bluetooth-sdk": "*",
+        "@mentra/cloud-client": "*",
         "@mentra/miniapp": "*",
         "@types/react": "*",
         "expo": "*",

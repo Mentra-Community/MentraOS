@@ -30,6 +30,9 @@ and payloads on top of it.
 
 ## Related
 
-- [`../001-cloud-core/auth/oem-auth.md`](../001-cloud-core/auth/oem-auth.md): the access tokens this product verifies.
+- [`007-runtime-auth-independence`](../007-runtime-auth-independence/README.md):
+  the `cloud-runtime` token and issuer/JWKS model this product verifies.
+- [`../001-cloud-core/auth/oem-auth.md`](../001-cloud-core/auth/oem-auth.md): the
+  OEM subject-token exchange Core/Auth can use to broker hosted Runtime tokens.
 - [`../../mentra-overhaul-plan.md`](../../mentra-overhaul-plan.md): the product
   and service taxonomy this issue sits within.

@@ -1,14 +1,20 @@
 {
   "name": "local-merge",
   "private": true,
-  "description": "Local Merge miniapp for cloud-v2 transcription fanout testing",
+  "description": "Local Merge proactive AI miniapp for conversation insights",
   "scripts": {
-    "dev": "mentra-miniapp dev",
-    "build": "bun run build.ts",
-    "pack": "mentra-miniapp pack"
+    "dev": "bun run backend:dev & bun run miniapp:dev; wait",
+    "backend:dev": "bun --watch backend/src/index.ts",
+    "backend:start": "bun backend/src/index.ts",
+    "miniapp:dev": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp dev",
+    "miniapp:build": "cd miniapp && bun run build.ts",
+    "miniapp:pack": "cd miniapp && rm -f build/com.mentra.local-merge-0.1.4.zip && bun ../node_modules/.bin/mentra-miniapp pack --no-build",
+    "build": "bun run miniapp:build",
+    "pack": "bun run miniapp:build && bun run miniapp:pack"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",
+    "hono": "^4.11.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.0.8"
@@ -17,6 +23,7 @@
     "@mentra/miniapp-cli": "workspace:*",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.6",
+    "bun-types": "^1.3.14",
     "bun-plugin-tailwind": "^0.1.2"
   }
 }

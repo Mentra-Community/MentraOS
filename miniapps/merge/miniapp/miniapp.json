@@ -1,9 +1,9 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.local-merge",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "name": "Local Merge",
-  "description": "Local Merge prototype. Runs as a background transcription subscriber so we can verify cloud-v2 dedupes one Soniox stream and fans transcripts out to multiple local miniapps.",
+  "description": "Local Merge proactive AI assistant. Listens to conversations and surfaces concise contextual insights through a backend that keeps AI secrets off-device.",
   "type": "background",
   "sdkVersion": "0.2.0",
   "minHostVersion": "1.42.0",

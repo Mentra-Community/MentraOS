@@ -15,7 +15,7 @@
  * Spec + design: cloud-v2/docs/issues/002-cloud-runtime/.
  */
 
-import { createLogger } from "@mentra/cloud-shared";
+import { assertRuntimeAuthConfigured, createLogger } from "@mentra/cloud-shared";
 import {
   connectRedis,
   disconnectRedis,
@@ -91,6 +91,8 @@ export interface RuntimeHandle {
 }
 
 export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<RuntimeHandle> {
+  assertRuntimeAuthConfigured();
+
   const httpPort = opts.httpPort ?? Number.parseInt(process.env.PORT ?? "3001", 10);
   const udpPort =
     opts.udpPort ?? Number.parseInt(process.env.AUDIO_UDP_PORT ?? "8000", 10);

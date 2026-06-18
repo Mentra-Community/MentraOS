@@ -1,10 +1,14 @@
 import {copyFile, rm} from "fs/promises"
+import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
 
 const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
 
 const define: Record<string, string> = {}
+define["process.env.MENTRA_PUBLIC_MERGE_BACKEND_URL"] = JSON.stringify(
+  process.env.MENTRA_PUBLIC_MERGE_BACKEND_URL ?? "",
+)
 for (const [key, value] of Object.entries(process.env)) {
   if (key.startsWith("MENTRA_PUBLIC_") && typeof value === "string") {
     define[`process.env.${key}`] = JSON.stringify(value)
@@ -31,7 +35,7 @@ const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [tailwind],
+  plugins: [tailwind, reactSingletonPlugin(import.meta.url)],
   minify: true,
   define,
 })
