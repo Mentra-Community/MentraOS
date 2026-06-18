@@ -14,7 +14,7 @@
  * `@/services/cloudClient` consumers keep working unchanged. (Endpoint
  * resolution moves into island later with the `dev` domain.)
  */
-import {cloudClientService} from "@mentra/island"
+import {cloudClientService, type MiniappAuthToken} from "@mentra/island"
 
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
@@ -111,6 +111,8 @@ export function cloudConfigValues(): {coreUrl: string; runtimeUrl: string; audio
 export const cloudClient = {
   init: (): void => cloudClientService.init(),
   reconnect: (): void => cloudClientService.reconnect(resolvedEndpoints()),
+  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> =>
+    cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedPhoto(opts),
   awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),
   startManagedStream: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedStream(opts),

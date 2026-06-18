@@ -12,6 +12,9 @@ module.exports = {
     // doesn't resolve in island's standalone build). Map it to the same source so
     // the jest.setup mock applies — otherwise requireActual loads the real native module.
     "bluetooth-sdk/build/_internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
+    "^react-native$": "<rootDir>/node_modules/react-native",
+    "^crust$": "<rootDir>/modules/crust/src",
   },
   testPathIgnorePatterns: [
     "<rootDir>/modules/island/",

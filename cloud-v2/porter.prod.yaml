@@ -1,8 +1,8 @@
 version: v2
-name: cloud-debug
+name: cloud-prod
 
 envGroups:
-  - cloud-v2-debug-doppler
+  - cloud-v2-prod-doppler
 
 build:
   method: docker
@@ -18,7 +18,8 @@ services:
     cpuCores: 0.25
     ramMegabytes: 1024
     domains:
-      - name: core.debug.us-west-2.mentraglass.com
+      - name: core.us-west-2.mentraglass.com
+      - name: core.mentraglass.com
     livenessCheck:
       enabled: true
       httpPath: /healthz
@@ -43,7 +44,8 @@ services:
     cpuCores: 0.5
     ramMegabytes: 2048
     domains:
-      - name: runtime.debug.us-west-2.mentraglass.com
+      - name: runtime.us-west-2.mentraglass.com
+      - name: runtime.mentraglass.com
     env:
       AUDIO_WORKERS: "1"
     livenessCheck:

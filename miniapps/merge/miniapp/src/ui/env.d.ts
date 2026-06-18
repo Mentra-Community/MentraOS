@@ -6,3 +6,9 @@ declare module "*.png" {
 }
 
 declare module "*.css" {}
+
+declare const process: {
+  env: {
+    MENTRA_PUBLIC_ENV_JSON?: string
+  }
+}

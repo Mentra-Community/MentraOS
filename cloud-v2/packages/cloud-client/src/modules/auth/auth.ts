@@ -52,7 +52,7 @@ export interface AuthModule {
   // current Core token, refreshing as needed (Core-backed mode only).
   getCoreToken(opts?: { forceRefresh?: boolean }): Promise<string>;
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
-  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>;
+  getMiniappToken(packageName: string, opts?: { minTtlMs?: number }): Promise<{ token: string; expiresAt: number }>;
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
   readonly identity: { mentraUserId: string; oemId: string };
@@ -215,9 +215,10 @@ export class Auth implements AuthModule {
    * one request. The access token is the Bearer here and is never exposed to the
    * miniapp; only the returned miniapp-scoped token is.
    */
-  async getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }> {
+  async getMiniappToken(packageName: string, opts?: { minTtlMs?: number }): Promise<{ token: string; expiresAt: number }> {
+    const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs);
     const cached = this.miniappCache.get(packageName);
-    if (cached && !this.isExpiring(cached.expiresAt)) {
+    if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
       return { token: cached.token, expiresAt: cached.expiresAt };
     }
 
@@ -225,7 +226,7 @@ export class Auth implements AuthModule {
       // Re-check the cache inside the flight: a concurrent mint that resolved
       // while we were queued may have already filled it.
       const fresh = this.miniappCache.get(packageName);
-      if (fresh && !this.isExpiring(fresh.expiresAt)) {
+      if (fresh && !this.isExpiring(fresh.expiresAt, marginSeconds)) {
         return { token: fresh.token, expiresAt: fresh.expiresAt };
       }
 
@@ -289,9 +290,16 @@ export class Auth implements AuthModule {
    * `exp` is Unix seconds (the JWT convention), so we compare against the clock
    * in seconds and subtract the margin.
    */
-  private isExpiring(expSeconds: number): boolean {
+  private isExpiring(expSeconds: number, marginSeconds = EXPIRY_MARGIN_SECONDS): boolean {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    return expSeconds - EXPIRY_MARGIN_SECONDS <= nowSeconds;
+    return expSeconds - marginSeconds <= nowSeconds;
+  }
+
+  private tokenMarginSeconds(minTtlMs?: number): number {
+    if (!Number.isFinite(minTtlMs) || !minTtlMs || minTtlMs <= 0) {
+      return EXPIRY_MARGIN_SECONDS;
+    }
+    return Math.max(EXPIRY_MARGIN_SECONDS, Math.ceil(minTtlMs / 1000));
   }
 
   /**

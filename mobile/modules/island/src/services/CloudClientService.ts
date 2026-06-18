@@ -24,7 +24,13 @@ import {
   configureRuntime,
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
+  type MiniappAuthToken,
 } from "../runtime/config"
+
+/** Core/cloud-client may speak Unix seconds while the miniapp SDK uses JS millis. */
+function normalizeExpiresAt(expiresAt: number): number {
+  return expiresAt < 10_000_000_000 ? expiresAt * 1000 : expiresAt
+}
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
@@ -441,6 +447,22 @@ export const cloudClientService = {
     connected = false
     resetRuntimeStatus()
     if (wasConnected) notifyConnectionListeners(false)
+  },
+
+  /** Package-scoped backend auth token for a local miniapp (cloud-v2 auth). The host
+   * owns the Core/runtime credentials; this returns only the miniapp token. */
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
+    if (!client) construct()
+    const c = client
+    if (!c) throw new Error("cloud client not initialized")
+    const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
+    const identity = c.auth.identity
+    return {
+      mentraUserId: identity.mentraUserId,
+      oemId: identity.oemId,
+      token,
+      expiresAt: normalizeExpiresAt(expiresAt),
+    }
   },
 
   /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */

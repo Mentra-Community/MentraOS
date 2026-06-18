@@ -10,6 +10,7 @@ export {
   registerDevApp,
   unregisterDevApp,
   getDevAppRecords,
+  getDevAppSourcePackage,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
 } from "./services/AppRegistry"
@@ -185,6 +186,8 @@ export {
   type SocketCommsAdapter,
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
+  type MiniappAuthAdapter,
+  type MiniappAuthToken,
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,

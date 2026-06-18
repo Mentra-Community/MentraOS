@@ -54,10 +54,9 @@ const CORE_ISSUER = "cloud-core";
 const CORE_AUDIENCE = "cloud-core";
 const MENTRA_ALG = "EdDSA";
 
-// Miniapp-scoped tokens use "mentra" as the issuer (per auth/spec.md "Miniapp-
-// scoped token") rather than "mentra-cloud", because developer backends key
-// their trust policy on this value and the spec pins it.
-const MINIAPP_ISSUER = "mentra";
+// Miniapp-scoped tokens are issued by cloud-core but signed with a separate
+// miniapp-token key. Developer backends verify iss/aud/signature via JWKS.
+const MINIAPP_ISSUER = "cloud-core";
 
 // The built-in "OEM zero". Mentra's own users (a phone logging in with a
 // Supabase session, or a legacy mentra-core token) resolve to this oemId. It

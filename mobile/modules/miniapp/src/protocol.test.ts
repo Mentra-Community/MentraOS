@@ -11,6 +11,7 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStream
 
 describe("MiniappRequestType wire values", () => {
   test("CONNECT", () => expect(MiniappRequestType.CONNECT).toBe("miniapp_connect"))
+  test("AUTH_REFRESH", () => expect(MiniappRequestType.AUTH_REFRESH).toBe("miniapp_auth_refresh"))
   test("SUBSCRIBE", () => expect(MiniappRequestType.SUBSCRIBE).toBe("miniapp_subscribe"))
   test("DISPLAY", () => expect(MiniappRequestType.DISPLAY).toBe("miniapp_display"))
   test("PLAY_AUDIO", () => expect(MiniappRequestType.PLAY_AUDIO).toBe("miniapp_play_audio"))

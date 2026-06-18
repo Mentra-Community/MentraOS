@@ -4,11 +4,14 @@ import type {CloudClientStatus, MiniappSession, TranscriptionData, UnsubscribeFn
 import type {Channels} from "../shared/channels"
 import type {
   FrequencyMode,
+  AnswerLanguage,
   MergeAnalysisTrigger,
   MergeBackendStatus,
   MergeDecision,
   MergeDecisionAction,
   MergeInsight,
+  MergeInsightProfiling,
+  MergeInsightSource,
   MergeSettings,
   MergeSnapshot,
   MergeTranscript,
@@ -23,6 +26,18 @@ type BackendInsightResponse =
       reasoning?: string
       confidence?: number
       urgency?: "low" | "medium" | "high"
+      sources?: MergeInsightSource[]
+      searchQueries?: string[]
+      profiling?: MergeInsightProfiling
+    }
+  | {
+      type: "defer"
+      reasoning?: string
+      confidence?: number
+      urgency?: "low" | "medium" | "high"
+      sources?: MergeInsightSource[]
+      searchQueries?: string[]
+      profiling?: MergeInsightProfiling
     }
   | {
       type: "insight"
@@ -32,6 +47,9 @@ type BackendInsightResponse =
       displayAction?: "show" | "replace" | "queue" | "drop"
       confidence?: number
       urgency?: "low" | "medium" | "high"
+      sources?: MergeInsightSource[]
+      searchQueries?: string[]
+      profiling?: MergeInsightProfiling
     }
 
 interface AnalysisChunk {
@@ -39,12 +57,13 @@ interface AnalysisChunk {
   text: string
   trigger: MergeAnalysisTrigger
   transcriptId: string
+  isFinal: boolean
   language: string | null
   startedAt: number
   endedAt: number
 }
 
-const DEFAULT_BACKEND_URL = "http://localhost:3123"
+const DEFAULT_BACKEND_URL = "http://localhost:3130"
 const SETTINGS_KEY = "merge:settings"
 const DISPLAY_DURATION_MS = 10_000
 const MAX_TRANSCRIPTS = 40
@@ -81,7 +100,7 @@ class MergeController {
   private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
   private backendStatus: MergeBackendStatus = "idle"
   private lastError: string | null = null
-  private settings: MergeSettings = {frequency: "medium"}
+  private settings: MergeSettings = {frequency: "medium", answerLanguage: "English"}
   private readonly backendUrl = configuredBackendUrl()
 
   private ui!: {
@@ -154,6 +173,11 @@ class MergeController {
         void this.setFrequency(frequency)
       }),
     )
+    this.unsubs.push(
+      this.ui.on("merge:set-answer-language", ({answerLanguage}) => {
+        void this.setAnswerLanguage(answerLanguage)
+      }),
+    )
   }
 
   private wireCloudStatus(): void {
@@ -174,8 +198,9 @@ class MergeController {
       const raw = await this.session.storage.get(SETTINGS_KEY)
       if (!raw) return
       const parsed = JSON.parse(raw) as Partial<MergeSettings>
-      if (parsed.frequency === "low" || parsed.frequency === "medium" || parsed.frequency === "high") {
-        this.settings = {frequency: parsed.frequency}
+      this.settings = {
+        frequency: isFrequencyMode(parsed.frequency) ? parsed.frequency : this.settings.frequency,
+        answerLanguage: isAnswerLanguage(parsed.answerLanguage) ? parsed.answerLanguage : this.settings.answerLanguage,
       }
     } catch (err) {
       console.log("LocalMerge: failed to load settings", err)
@@ -183,8 +208,18 @@ class MergeController {
   }
 
   private async setFrequency(frequency: FrequencyMode): Promise<void> {
-    this.settings = {frequency}
+    this.settings = {...this.settings, frequency}
     this.sendSnapshot()
+    await this.saveSettings()
+  }
+
+  private async setAnswerLanguage(answerLanguage: AnswerLanguage): Promise<void> {
+    this.settings = {...this.settings, answerLanguage}
+    this.sendSnapshot()
+    await this.saveSettings()
+  }
+
+  private async saveSettings(): Promise<void> {
     try {
       await this.session.storage.set(SETTINGS_KEY, JSON.stringify(this.settings))
     } catch (err) {
@@ -243,6 +278,7 @@ class MergeController {
       text: delta.length >= MIN_ANALYSIS_CHARS ? delta : entry.text,
       trigger: "final",
       transcriptId: entry.id,
+      isFinal: true,
       language: entry.language,
       startedAt: entry.receivedAt,
       endedAt: Date.now(),
@@ -266,6 +302,7 @@ class MergeController {
           text: delta,
           trigger: "sentence",
           transcriptId: entry.id,
+          isFinal: false,
           language: entry.language,
           startedAt: entry.receivedAt,
           endedAt: Date.now(),
@@ -285,6 +322,7 @@ class MergeController {
         text: clampAtWordBoundary(delta, 320),
         trigger: "interval",
         transcriptId: entry.id,
+        isFinal: false,
         language: entry.language,
         startedAt: entry.receivedAt,
         endedAt: now,
@@ -313,16 +351,24 @@ class MergeController {
     const chunkText = chunks.map((chunk) => chunk.text).join("\n").trim()
     if (!chunkText) return
 
+    const currentTranscript = this.transcripts.find((t) => t.id === primary.transcriptId)
+    const isFinal = primary.isFinal && primary.trigger === "final"
+    const isInterim = !isFinal
+
     this.setProcessing(true)
     this.setBackendStatus("processing", null)
 
     try {
-      const res = await fetch(`${this.backendUrl}/api/insights`, {
+      const requestStartedAt = Date.now()
+      const res = await this.session.auth.fetch(`${this.backendUrl}/api/insights`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
           userId: this.session.userId,
           frequency: this.settings.frequency,
+          settings: {
+            answerLanguage: this.settings.answerLanguage,
+          },
           analysis: {
             id: chunks.map((chunk) => chunk.id).join("+"),
             trigger: primary.trigger,
@@ -334,10 +380,15 @@ class MergeController {
             locale: userLocale(),
             localTime: userLocalTime(),
             pendingChunkCount: chunks.length,
+            isFinal,
+            isInterim,
+            canDefer: isInterim,
           },
           utterance: {
             id: primary.transcriptId,
             text: chunkText,
+            fullText: currentTranscript?.text ?? chunkText,
+            isFinal,
             language: primary.language,
             timestamp: primary.endedAt,
           },
@@ -346,6 +397,13 @@ class MergeController {
               .filter((t) => t.isFinal || t.id === primary.transcriptId)
               .slice(-10)
               .map((t) => t.text),
+            conversation: this.transcripts.slice(-10).map((t) => ({
+              id: t.id,
+              text: t.text,
+              isFinal: t.isFinal,
+              language: t.language,
+              timestamp: t.receivedAt,
+            })),
             insights: this.insights.slice(-8).map((i) => i.text),
             activeInsight: this.activeInsightForPrompt(),
           },
@@ -357,6 +415,12 @@ class MergeController {
       }
 
       const body = (await res.json()) as BackendInsightResponse
+      const profiling = body.profiling
+        ? {
+            ...body.profiling,
+            clientRoundTripMs: Date.now() - requestStartedAt,
+          }
+        : undefined
       this.setBackendStatus("ok", null)
       if (body.type === "insight" && body.text.trim()) {
         const insight: MergeInsight = {
@@ -369,6 +433,9 @@ class MergeController {
           displayAction: body.displayAction ?? "show",
           urgency: body.urgency,
           confidence: body.confidence,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
         }
         this.recordDecision({
           action: insight.displayAction ?? "show",
@@ -378,8 +445,23 @@ class MergeController {
           insightText: insight.text,
           confidence: body.confidence,
           urgency: body.urgency,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
         })
         this.addInsight(insight)
+      } else if (body.type === "defer") {
+        this.recordDecision({
+          action: "defer",
+          trigger: primary.trigger,
+          chunkText,
+          reasoning: body.reasoning ?? "Waiting for more conversation context",
+          confidence: body.confidence,
+          urgency: body.urgency,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
+        })
       } else {
         this.recordDecision({
           action: "silent",
@@ -388,6 +470,9 @@ class MergeController {
           reasoning: body.reasoning ?? "Model stayed silent",
           confidence: body.confidence,
           urgency: body.urgency,
+          sources: body.sources ?? [],
+          searchQueries: body.searchQueries ?? [],
+          profiling,
         })
       }
     } catch (err) {
@@ -417,6 +502,9 @@ class MergeController {
         insightText: insight.text,
         confidence: insight.confidence,
         urgency: insight.urgency,
+        sources: insight.sources ?? [],
+        searchQueries: insight.searchQueries ?? [],
+        profiling: insight.profiling,
       })
       return
     }
@@ -444,7 +532,10 @@ class MergeController {
   private showInsight(insight: MergeInsight): void {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
-    this.session.display.showTextWall(`// Merge\n${insight.text}`, {durationMs: DISPLAY_DURATION_MS})
+    this.session.display.showTextWall(`// Merge\n${insight.text}`, {
+      durationMs: DISPLAY_DURATION_MS,
+      breakMode: "word",
+    })
     this.scheduleNextQueuedDisplay()
   }
 
@@ -511,6 +602,25 @@ class MergeController {
   }
 }
 
+function isFrequencyMode(value: unknown): value is FrequencyMode {
+  return value === "low" || value === "medium" || value === "high"
+}
+
+function isAnswerLanguage(value: unknown): value is AnswerLanguage {
+  return (
+    value === "English" ||
+    value === "Spanish" ||
+    value === "French" ||
+    value === "German" ||
+    value === "Italian" ||
+    value === "Portuguese" ||
+    value === "Japanese" ||
+    value === "Korean" ||
+    value === "Chinese" ||
+    value === "Auto"
+  )
+}
+
 function normalizeInsight(text: string): string {
   return text
     .toLowerCase()
@@ -546,7 +656,7 @@ function clampAtWordBoundary(text: string, maxChars: number): string {
 function chooseDisplayAction(
   insight: MergeInsight,
   activeDisplayUntil: number,
-): Exclude<MergeDecisionAction, "silent" | "error"> {
+): NonNullable<MergeInsight["displayAction"]> {
   if (insight.displayAction === "drop") return "drop"
   if (Date.now() >= activeDisplayUntil) return insight.displayAction ?? "show"
   if (insight.displayAction === "replace" || insight.urgency === "high") return "replace"
@@ -562,7 +672,7 @@ function userTimezone(): string {
 }
 
 function userLocale(): string {
-  const nav = globalThis as {navigator?: {language?: string; languages?: string[]}}
+  const nav = globalThis as {navigator?: {language?: string; languages?: readonly string[]}}
   return nav.navigator?.languages?.[0] ?? nav.navigator?.language ?? "en-US"
 }
 
