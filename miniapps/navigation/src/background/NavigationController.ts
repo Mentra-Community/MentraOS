@@ -156,6 +156,7 @@ export class NavigationController {
     wrongSidewalk: false,
     skipCrossings: false,
     useRawInstructions: true,
+    largeMapEnabled: false,
   }
 
   // User's distance-unit preference. Loaded from storage in start() and
@@ -928,6 +929,13 @@ export class NavigationController {
           gesture === "scroll_bottom" ||
           gesture === "swipe_down"
         if (!isSwipe) return
+
+        // Large map is a dev-gated WIP feature, OFF by default. When disabled,
+        // swipes do nothing (no large-map switch).
+        if (!this.devSettings.largeMapEnabled) {
+          console.log(`[TOUCH] swipe ignored — large map disabled (dev toggle off)`)
+          return
+        }
 
         // LOCK: ignore swipes while a show/dismiss transition is mid-flight
         // (clear() → settle delay → render). Rapid/accidental repeat swipes

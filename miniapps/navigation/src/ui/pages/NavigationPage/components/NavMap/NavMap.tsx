@@ -89,7 +89,7 @@ export function NavMap({
    * destination so the preview drawer opens. Omitted → POI taps are
    * ignored.
    */
-  onPlaceTap?: (placeId: string) => void
+  onPlaceTap?: (name: string, coord: LatLng) => void
   /** Fires when the user taps the settings gear in the right-rail.
    *  Parent navigates to the settings page. */
   onOpenSettings?: () => void
@@ -238,15 +238,25 @@ export function NavMap({
     // and surface the feature name as a synthetic placeId. Parent resolves
     // it (places search) and opens the preview drawer.
     map.on("click", (e) => {
-      const handler = onPlaceTapRef.current
-      if (!handler) return
+      const placeHandler = onPlaceTapRef.current
+      if (!placeHandler) return
+      // ONLY react to taps on an actual landmark/POI label (a cafe, store,
+      // park, etc.) — taps on empty map do nothing. Read the rendered POI
+      // symbol features under the tap point.
       const feats = map.queryRenderedFeatures(e.point)
       const poi = feats.find(
         (f) => typeof f.layer?.id === "string" && /poi|place-label/i.test(f.layer.id) && f.properties?.name,
       )
-      if (poi?.properties?.name) {
-        handler(String(poi.properties.name))
-      }
+      if (!poi?.properties?.name) return
+      // Pass the POI's NAME plus ITS OWN coordinates (the label's geometry,
+      // not the raw tap point) so the parent can pin-point the landmark and
+      // reverse-geocode that exact spot for the real address.
+      const geom = poi.geometry
+      const coord =
+        geom?.type === "Point"
+          ? {lng: geom.coordinates[0] as number, lat: geom.coordinates[1] as number}
+          : {lng: e.lngLat.lng, lat: e.lngLat.lat}
+      placeHandler(String(poi.properties.name), coord)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])

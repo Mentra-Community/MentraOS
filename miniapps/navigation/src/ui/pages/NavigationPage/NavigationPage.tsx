@@ -287,6 +287,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
   const [useRawInstructions, setUseRawInstructions] = useState(true)
+  const [largeMapEnabled, setLargeMapEnabled] = useState(false)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   // Sticky off-route banner. The upstream `offRouteAt` flag only lives
@@ -722,18 +723,31 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // existing preview drawer takes care of the rest. No-op during a live
   // trip (the parent gates this via the prop) so a mid-walk tap can't
   // accidentally swap destinations.
-  function handleMapPoiTap(placeId: string) {
+  function handleMapPoiTap(name: string, coord: LatLng) {
     if (running) return
-    append(`POI tap → resolving ${placeId}`)
-    mentra
-      .request("places:details", {placeId})
-      .then((place) => {
-        setDestination(place)
-        append(`POI → ${place.name || place.address || placeId}`)
-      })
-      .catch((err) => {
-        append(`POI lookup failed: ${err instanceof Error ? err.message : String(err)}`)
-      })
+    append(`POI tap → ${name}`)
+    const pinId = `poi-pin-${Date.now()}`
+    // Pin the landmark immediately using its NAME as the label, with a
+    // geocoding skeleton for the address. The Mapbox POI feature only gives
+    // us a name + coords — no place ID — so we reverse-geocode the POI's
+    // coordinates to fill in the real street address (not raw lat/lng).
+    const pin: PlaceDetails = {
+      placeId: pinId,
+      lat: coord.lat,
+      lng: coord.lng,
+      name,
+      address: "",
+      isGeocoding: true,
+    }
+    setDestination(pin)
+    const finalize = (next: Partial<PlaceDetails>) => {
+      setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev))
+    }
+    void reverseGeocode(coord.lat, coord.lng).then((formatted) => {
+      // Keep the POI's own name as the label; use the geocoded string as the
+      // full address (fall back to coords only if geocoding returns nothing).
+      finalize({address: formatted || `${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)}`})
+    })
   }
 
   function handleMapLongPress(coord: LatLng) {
@@ -1378,6 +1392,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                 }`}>
                 {useRawInstructions ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium text-neutral-700">Large map (swipe) — WIP</span>
+                <span className="text-[11px] text-neutral-500">Swipe up/down to toggle full-screen map</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !largeMapEnabled
+                  setLargeMapEnabled(next)
+                  mentra.send("nav:set-dev-settings", {largeMapEnabled: next})
+                  append(`large-map → ${next ? "on" : "off"}`)
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  largeMapEnabled ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {largeMapEnabled ? "ON" : "OFF"}
               </button>
             </div>
             <LiveLog log={log} running={running} status={status} maneuver={maneuver} />

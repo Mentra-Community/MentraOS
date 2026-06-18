@@ -25,41 +25,51 @@ export class DisplayManager {
   // before the old one is sent, the old one is dropped, so we only ever
   // send the latest state of each box and never replay stale frames.
   private static readonly TEXT_MIN_GAP_MS = 200
-  /** Latest pending send per box key. Coalesces rapid updates. */
-  private readonly textQueue = new Map<string, () => void>()
-  private textPumpTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * Latest pending send per box key, drained one per TEXT_MIN_GAP_MS in
+   * INSERTION ORDER (Map preserves it; re-setting an existing key updates the
+   * thunk WITHOUT moving its position). The G2 firmware drops back-to-back
+   * updates, so every push — minimap bitmap AND both text containers — goes
+   * through here. Because refreshHUD enqueues minimap → maneuver → stats in
+   * that order, the glasses always receive them in that fixed sequence, ≥200ms
+   * apart. That kills the cross-pipeline race where the bottom text painted
+   * before the top, or the minimap didn't redraw at all, when switching
+   * between the main menu and the large map.
+   */
+  private readonly displayQueue = new Map<string, () => void>()
+  private displayPumpTimer: ReturnType<typeof setTimeout> | null = null
 
   /**
-   * Enqueue a text send for `box`, coalescing with any pending send for the
-   * same box (only the latest survives). The pump fires queued sends one at
-   * a time, ≥TEXT_MIN_GAP_MS apart.
+   * Enqueue a display send for `box`, coalescing with any pending send for the
+   * same box (only the latest survives, position preserved). The pump fires
+   * queued sends one at a time, ≥TEXT_MIN_GAP_MS apart, in insertion order.
    */
-  private enqueueText(box: string, fn: () => void): void {
-    this.textQueue.set(box, fn)
-    if (this.textPumpTimer == null) {
+  private enqueue(box: string, fn: () => void): void {
+    this.displayQueue.set(box, fn)
+    if (this.displayPumpTimer == null) {
       // Nothing in flight — send the first item immediately, then schedule
       // the pump for the gap so subsequent items are spaced out.
-      this.pumpText()
+      this.pump()
     }
   }
 
-  private pumpText(): void {
+  private pump(): void {
     // Pull the oldest queued box (insertion order; Map preserves it).
-    const next = this.textQueue.entries().next()
+    const next = this.displayQueue.entries().next()
     if (next.done) {
-      this.textPumpTimer = null
+      this.displayPumpTimer = null
       return
     }
     const [box, fn] = next.value
-    this.textQueue.delete(box)
+    this.displayQueue.delete(box)
     this.safeCall(fn)
     // Hold the line for TEXT_MIN_GAP_MS before the next send, even if the
     // queue is currently empty — that guards against a fresh enqueue landing
-    // <200ms after this one (enqueueText only fires immediately when no
-    // pump is running).
-    this.textPumpTimer = setTimeout(() => {
-      this.textPumpTimer = null
-      if (this.textQueue.size > 0) this.pumpText()
+    // <200ms after this one (enqueue only fires immediately when no pump is
+    // running).
+    this.displayPumpTimer = setTimeout(() => {
+      this.displayPumpTimer = null
+      if (this.displayQueue.size > 0) this.pump()
     }, DisplayManager.TEXT_MIN_GAP_MS)
   }
 
@@ -69,7 +79,7 @@ export class DisplayManager {
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
-    this.enqueueText("wall", () =>
+    this.enqueue("wall", () =>
       this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined),
     )
   }
@@ -97,7 +107,12 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-100, y: 0, width: 100, height: 100}))
+    // Minimap goes through the SAME queue as the text boxes, keyed "minimap".
+    // refreshHUD enqueues minimap → maneuver → stats in that order, so the G2
+    // receives them in a fixed sequence ≥200ms apart (no cross-pipeline race).
+    this.enqueue("minimap", () =>
+      this.session.display.showBitmapView(base64Bmp, {x: 576 - 100, y: 0, width: 100, height: 100}),
+    )
   }
 
   /**
@@ -146,10 +161,8 @@ export class DisplayManager {
    * container), leaving the bottom region free for the stats container.
    */
   showManeuver(text: string): void {
-    // Queued + ≥200ms-spaced (see enqueueText) so the maneuver container
-    // doesn't get a stale frame when refreshHUD also pushes trip stats in
-    // the same tick.
-    this.enqueueText("maneuver", () =>
+    // Queued under "maneuver" — drains after "minimap", before "stats".
+    this.enqueue("maneuver", () =>
       this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}),
     )
   }
@@ -176,8 +189,8 @@ export class DisplayManager {
    * container stacked under the maneuver box.
    */
   showTripStats(text: string): void {
-    // Queued + ≥200ms-spaced behind any maneuver update queued the same tick.
-    this.enqueueText("stats", () =>
+    // Queued under "stats" — drains last, after "minimap" and "maneuver".
+    this.enqueue("stats", () =>
       this.session.display.showTextAt(text, {...DisplayManager.STATS_REGION}),
     )
   }
@@ -245,16 +258,16 @@ export class DisplayManager {
    * "swipe-up doesn't clear, old HUD flashes on top of the large map" bug).
    */
   clear(): void {
-    this.cancelQueuedText()
+    this.cancelQueued()
     this.safeCall(() => this.session.display.clear())
   }
 
-  /** Drop all pending queued text and stop the pump. */
-  private cancelQueuedText(): void {
-    this.textQueue.clear()
-    if (this.textPumpTimer != null) {
-      clearTimeout(this.textPumpTimer)
-      this.textPumpTimer = null
+  /** Drop all pending queued sends (text + bitmap) and stop the pump. */
+  private cancelQueued(): void {
+    this.displayQueue.clear()
+    if (this.displayPumpTimer != null) {
+      clearTimeout(this.displayPumpTimer)
+      this.displayPumpTimer = null
     }
   }
 

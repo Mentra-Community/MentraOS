@@ -1,76 +1,94 @@
 /**
- * Promise wrapper over Google Maps' `Geocoder.geocode` for reverse
- * geocoding (lat/lng → formatted address). Resolves to the first
- * result's `formatted_address`, or `null` when the SDK isn't loaded,
- * the request fails, or no result comes back. Never rejects — callers
- * branch on null.
+ * Reverse geocoding (lat/lng → address) via the Mapbox Geocoding API v6.
+ *
+ * The front end migrated off Google Maps, so `window.google` no longer
+ * exists — these helpers hit Mapbox's v6 `/reverse` endpoint directly using
+ * the same access token the map uses (`getMapbox().apiKey`). Never reject;
+ * callers branch on `null`.
+ *
+ * v6 returns a GeoJSON FeatureCollection. For an `address` feature:
+ *   - `properties.full_address` → "369 Hayes Street, San Francisco, …"
+ *   - `properties.name`         → "369 Hayes Street" (the address line)
+ *   - `properties.context.street.name` → "Hayes Street" (street only)
  */
 
-type GeocoderAddressComponent = {long_name?: string; short_name?: string; types?: string[]}
-type GeocoderResultLike = {formatted_address?: string; address_components?: GeocoderAddressComponent[]}
-type GeocoderRequestLike = {location: {lat: number; lng: number}}
-type GeocoderLike = {
-  geocode(
-    request: GeocoderRequestLike,
-    callback: (results: GeocoderResultLike[] | null, status: string) => void,
-  ): void
+import {getMapbox} from "@/ui/lib/mapbox"
+
+const MAPBOX_GEOCODE_REVERSE = "https://api.mapbox.com/search/geocode/v6/reverse"
+
+type V6Feature = {
+  properties?: {
+    feature_type?: string
+    name?: string
+    full_address?: string
+    place_formatted?: string
+    context?: {street?: {name?: string}; address?: {name?: string}}
+  }
 }
 
-export function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
-  const GeocoderCtor = g?.maps?.Geocoder
-  if (!GeocoderCtor) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    try {
-      const geocoder = new GeocoderCtor()
-      geocoder.geocode({location: {lat, lng}}, (results, status) => {
-        const formatted = status === "OK" && results?.[0]?.formatted_address
-        resolve(formatted || null)
-      })
-    } catch (err) {
-      console.warn("[NAV-MINI] reverseGeocode failed:", err)
-      resolve(null)
-    }
+/** Resolve the Mapbox token (waits for map init), or "" if unavailable. */
+async function token(): Promise<string> {
+  try {
+    const mb = getMapbox()
+    await mb.whenReady()
+    return mb.apiKey || ""
+  } catch {
+    return ""
+  }
+}
+
+async function fetchReverse(lat: number, lng: number, types: string): Promise<V6Feature[]> {
+  const tok = await token()
+  if (!tok) return []
+  const params = new URLSearchParams({
+    longitude: String(lng),
+    latitude: String(lat),
+    types,
+    limit: "1",
+    access_token: tok,
   })
+  try {
+    const res = await fetch(`${MAPBOX_GEOCODE_REVERSE}?${params.toString()}`, {method: "GET"})
+    if (!res.ok) {
+      console.warn("[NAV-MINI] reverseGeocode: Geocoding API", res.status)
+      return []
+    }
+    const json = (await res.json()) as {features?: V6Feature[]}
+    return json.features ?? []
+  } catch (err) {
+    console.warn("[NAV-MINI] reverseGeocode failed:", err)
+    return []
+  }
 }
 
 /**
- * Reverse-geocode to just the road name (e.g. "Hayes St"), not the full
- * formatted address. Pulls the `route` component out of the geocoder's
- * structured response — the same field Google Maps uses for the road
- * label. Returns null when the SDK isn't loaded, the request fails, no
- * result comes back, or the nearest result has no road (e.g. middle of
- * a park / plaza with no named path nearby). Never rejects.
+ * Full street address for a coordinate — e.g. "369 Hayes Street, San
+ * Francisco, California 94102". Requests `address` features so the house
+ * number is included; prefers `full_address`, then `name`. Returns null when
+ * the token is missing, the request fails, or no address comes back.
  */
-export function reverseGeocodeRoadName(lat: number, lng: number): Promise<string | null> {
-  const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
-  const GeocoderCtor = g?.maps?.Geocoder
-  if (!GeocoderCtor) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    try {
-      const geocoder = new GeocoderCtor()
-      geocoder.geocode({location: {lat, lng}}, (results, status) => {
-        if (status !== "OK" || !results || results.length === 0) {
-          resolve(null)
-          return
-        }
-        // Walk results from closest to furthest, take the first one that
-        // has a `route` component. The closest result is often a building
-        // or POI that doesn't carry a road name; the next-out usually
-        // does. Stops at the first hit.
-        for (const r of results) {
-          const route = r.address_components?.find((c) => c.types?.includes("route"))
-          const name = route?.short_name || route?.long_name
-          if (name) {
-            resolve(name)
-            return
-          }
-        }
-        resolve(null)
-      })
-    } catch (err) {
-      console.warn("[NAV-MINI] reverseGeocodeRoadName failed:", err)
-      resolve(null)
-    }
-  })
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  // `address` first (carries the house number); fall back to broader types so
+  // we still return SOMETHING for a coord with no exact street address.
+  const features = await fetchReverse(lat, lng, "address,street,place")
+  const p = features[0]?.properties
+  if (!p) return null
+  const addr = (p.full_address ?? p.name ?? p.place_formatted ?? "").trim()
+  return addr || null
+}
+
+/**
+ * Reverse-geocode to just the road name (e.g. "Hayes Street"), not the full
+ * address. Reads the street from a street-type feature's name, else from
+ * `context.street.name`. Returns null when nothing usable comes back.
+ */
+export async function reverseGeocodeRoadName(lat: number, lng: number): Promise<string | null> {
+  const features = await fetchReverse(lat, lng, "address,street")
+  for (const f of features) {
+    const props = f.properties
+    const fromStreetType = props?.feature_type === "street" ? props?.name : undefined
+    const name = (fromStreetType ?? props?.context?.street?.name ?? "").trim()
+    if (name) return name
+  }
+  return null
 }
