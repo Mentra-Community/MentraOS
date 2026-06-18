@@ -39,11 +39,11 @@ const normalizeStreamVideoConfig = (value: unknown): StreamStartRequest["video"]
   const width = finiteNumber(value.width)
   const height = finiteNumber(value.height)
   const bitrate = finiteNumber(value.bitrate)
-  const fps = finiteNumber(value.fps)
+  const frameRate = finiteNumber(value.frameRate)
   if (width !== undefined) config.width = width
   if (height !== undefined) config.height = height
   if (bitrate !== undefined) config.bitrate = bitrate
-  if (fps !== undefined) config.fps = fps
+  if (frameRate !== undefined) config.frameRate = frameRate
   return Object.keys(config).length > 0 ? config : undefined
 }
 
