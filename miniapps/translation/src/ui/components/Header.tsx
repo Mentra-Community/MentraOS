@@ -3,16 +3,19 @@ import {Languages} from "lucide-react"
 import {TranslationSettings} from "../hooks/useSettings"
 import {getLanguageName, getFlagEmoji} from "../lib/languages"
 
+/**
+ * The fake app bar's surface — a light neutral that matches the chrome below
+ * it, with near-black title text. Exported so the App root can paint the
+ * top safe-area inset the same color, making the status-bar area blend into
+ * the app bar instead of showing the blue cloud-status gradient.
+ */
+export const APP_BAR_BACKGROUND = "#F4F4F5"
+export const APP_BAR_FOREGROUND = "#18181B"
+
 interface HeaderProps {
   connected: boolean
   accentColor: string
   accentForeground: string
-  /**
-   * Background for the header strip. Lets the host paint the chrome with a
-   * gradient (matching the app icon) while `accentColor` stays a flat fill
-   * for small elements like the target pill. Defaults to `accentColor`.
-   */
-  surfaceBackground?: string
   error: string | null
   settings: TranslationSettings | null
   onToggleTargetLanguageSelector: () => void
@@ -24,7 +27,6 @@ export function Header({
   connected,
   accentColor,
   accentForeground,
-  surfaceBackground,
   error,
   settings,
   onToggleTargetLanguageSelector,
@@ -36,14 +38,14 @@ export function Header({
       {/* Top header bar */}
       <div
         className="w-full h-[46px] px-6 backdrop-blur-lg flex justify-center items-center"
-        style={{background: surfaceBackground ?? accentColor}}>
+        style={{background: APP_BAR_BACKGROUND}}>
         {/* Title with icon */}
         <div className="flex justify-start items-center gap-2">
-          <Languages className="w-6 h-6" color={accentForeground} />
+          <Languages className="w-6 h-6" color={APP_BAR_FOREGROUND} />
           <div
             className="text-center text-lg font-semibold font-['Red_Hat_Display'] leading-6"
-            style={{color: accentForeground}}>
-            Local Translation
+            style={{color: APP_BAR_FOREGROUND}}>
+            Translation
           </div>
         </div>
       </div>

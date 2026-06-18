@@ -39,7 +39,7 @@ export function Header({
           <div
             className="text-center text-lg font-semibold font-['Red_Hat_Display'] leading-6"
             style={{color: accentForeground}}>
-            Local Captions
+            Captions
           </div>
         </div>
       </div>

@@ -80,7 +80,7 @@ export function TranscriptItem({
 
       {/* Transcript text */}
       <p
-        className={`self-stretch text-gray-800 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
+        className={`selectable-text self-stretch text-gray-800 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
           transcript.isFinal ? "" : "italic"
         }`}
       >
