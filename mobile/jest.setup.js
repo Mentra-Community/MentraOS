@@ -260,6 +260,7 @@ jest.mock("@mentra/island", () => {
   const realGlassesStatusProjection = jest.requireActual("./modules/island/src/services/GlassesStatusProjection")
   const realOtaService = jest.requireActual("./modules/island/src/services/OtaService")
   const realAudioCloudUplink = jest.requireActual("./modules/island/src/services/AudioCloudUplink")
+  const realDeviceEventRouter = jest.requireActual("./modules/island/src/services/DeviceEventRouter")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/island, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
@@ -318,6 +319,7 @@ jest.mock("@mentra/island", () => {
         realGlassesStatusProjection.startGlassesStatusProjection()
         realOtaService.startOtaService()
         realAudioCloudUplink.startAudioCloudUplink()
+        realDeviceEventRouter.startDeviceEventRouter()
         realGlassesSettingsSync.startGlassesSettingsSync()
         realPhoneNotificationsSync.startPhoneNotificationsSync()
         return Promise.resolve()
@@ -326,6 +328,7 @@ jest.mock("@mentra/island", () => {
         realGlassesStatusProjection.stopGlassesStatusProjection()
         realOtaService.stopOtaService()
         realAudioCloudUplink.stopAudioCloudUplink()
+        realDeviceEventRouter.stopDeviceEventRouter()
         realGlassesSettingsSync.stopGlassesSettingsSync()
         realPhoneNotificationsSync.stopPhoneNotificationsSync()
         return Promise.resolve()

@@ -14,6 +14,7 @@ import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/Glas
 import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
+import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {glasses} from "./facades/glasses"
 import {display} from "./facades/display"
@@ -53,6 +54,11 @@ export const toolkit = {
     // of the runtime reads). Established first so the stores are live before the
     // syncs below react to them.
     startGlassesStatusProjection()
+    // Route the rest of the inbound device events (wifi/hotspot/gallery -> stores+bus,
+    // photo/stream -> coordinators, button/touch/accel/head -> miniapps, save_setting ->
+    // store, miniapp_selected -> launcher) so a bare OEM gets device data, not just the
+    // Mentra app's MantleManager.
+    startDeviceEventRouter()
     // Project the glasses' OTA events into the store for the toolkit.ota read surface.
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
@@ -68,6 +74,7 @@ export const toolkit = {
   async stop() {
     stopGlassesSettingsSync()
     stopGlassesStatusProjection()
+    stopDeviceEventRouter()
     stopOtaService()
     stopAudioCloudUplink()
     stopPhoneNotificationsSync()
