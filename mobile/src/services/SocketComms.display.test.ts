@@ -36,7 +36,8 @@ jest.mock("@/services/RestComms", () => ({
   },
 }))
 
-jest.mock("@/services/AudioPlaybackService", () => ({__esModule: true, default: {}}))
+// AudioPlaybackService moved into @mentra/island; the global @mentra/island jest mock
+// supplies audioPlaybackService, so no local mock is needed.
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/UdpManager", () => ({__esModule: true, default: {cleanup: jest.fn()}}))
 jest.mock("@/utils/PermissionsUtils", () => ({

@@ -556,6 +556,10 @@ jest.mock("@mentra/island", () => {
     onGalleryNotice: jest.fn(() => () => {}),
     // island now owns the cloud client (keystone #5); the host wrapper delegates
     // to this. Mocked so host/service tests don't construct a real CloudClient.
+    audioPlaybackService: {
+      play: jest.fn(() => Promise.resolve()),
+      stopForApp: jest.fn(),
+    },
     cloudClientService: {
       init: jest.fn(),
       reconnect: jest.fn(),

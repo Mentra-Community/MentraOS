@@ -50,6 +50,7 @@
     "semver": "*",
     "zustand": "*",
     "expo-battery": "*",
+    "expo-audio": "*",
     "expo-clipboard": "*",
     "expo-location": "*",
     "expo-task-manager": "*",

@@ -111,28 +111,8 @@ export interface CloudConnectionAdapter {
   addListener: (l: (connected: boolean) => void) => () => void
 }
 
-export interface AudioPlayRequest {
-  requestId: string
-  audioUrl: string
-  appId?: string
-  volume?: number
-  stopOtherAudio?: boolean
-}
-
-export interface AudioPlaybackAdapter {
-  /**
-   * Play audio for a specific app. Calls onComplete when playback finishes
-   * or errors. Returns a promise that resolves once playback is dispatched.
-   */
-  play: (
-    request: AudioPlayRequest,
-    onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void,
-  ) => Promise<void> | void
-  /**
-   * Stop playback for an app (e.g. on disconnect / close).
-   */
-  stopForApp: (packageName: string) => void
-}
+// Audio playback (miniapp speaker / TTS) moved into island (AudioPlaybackService —
+// pure expo-audio + btsdk volume control) — no longer a host hook.
 
 export interface MicRequirements {
   shouldSendPcm: boolean
@@ -341,7 +321,6 @@ export interface RuntimeHooks {
    * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
    */
   cloud?: CloudRuntimeAdapter
-  audioPlayback?: AudioPlaybackAdapter
   // Glasses status read/subscribe moved into island — the runtime reads the island
   // useGlassesStore directly (DisplayProcessor / LocalMiniappRuntime) — no longer hooks.
   settings?: SettingsAccessor

@@ -2,7 +2,7 @@ import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEven
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {displayProcessor, localMiniappRuntime, micStateCoordinator, phoneLocationService, throttle} from "@mentra/island"
 
-import audioPlaybackService from "@/services/AudioPlaybackService"
+import {audioPlaybackService} from "@mentra/island"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import {
