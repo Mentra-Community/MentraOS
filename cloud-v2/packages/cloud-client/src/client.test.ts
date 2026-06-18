@@ -63,7 +63,7 @@ describe("CloudClient construction", () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
     let miniappMints = 0;
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.endsWith("/api/client/auth/refresh")) {
         return jsonResponse({
