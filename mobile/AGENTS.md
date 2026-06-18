@@ -1,7 +1,7 @@
 # MentraOS Manager Guidelines
 
 RULES:
-READ: mentraos-manager-guidelines.mdx
+READ: ../mintlify-docs/os-devs/contributing/mentraos-manager-guidelines.mdx
 
 ## Overview
 
@@ -46,6 +46,13 @@ The user-facing app version (`CFBundleShortVersionString` on iOS,
 - Run Maestro E2E tests: `bun test:maestro`
 - Lint code: `bun lint`
 - Type check: `bun compile`
+- Bluetooth SDK Android compile check: `../scripts/check-android-compile.sh bluetooth-sdk`
+
+`modules/bluetooth-sdk/android` contains the SDK Android sources, but local
+Gradle checks should run through the generated `mobile/android` project via the
+repo script above. The script installs mobile dependencies when needed, runs
+`bun expo prebuild --platform android`, uses the generated Gradle wrapper, and
+passes `-PmentraPublicSdk=true` for the SDK module check.
 
 ## Project Setup
 

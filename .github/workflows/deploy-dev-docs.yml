@@ -5,7 +5,7 @@ on:
     branches:
       - dev
     paths:
-      - docs/**
+      - mintlify-docs/**
       - package.json
       - bun.lock
       - .github/workflows/deploy-dev-docs.yml
@@ -37,7 +37,7 @@ jobs:
           bun-version: latest
 
       - name: Export Mintlify docs
-        working-directory: docs
+        working-directory: mintlify-docs
         run: bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs-dev.zip"
 
       - name: Prepare Cloudflare Pages artifact

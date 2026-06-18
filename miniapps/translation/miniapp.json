@@ -5,7 +5,7 @@
   "name": "Local Translation",
   "description": "Local cloud-v2 translation tester. Translates any detected source language into the selected target language and renders the result on the glasses display.",
   "type": "standard",
-  "sdkVersion": "0.2.0",
+  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "port": 3110,
   "entry": {

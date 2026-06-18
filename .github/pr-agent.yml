@@ -1,9 +1,9 @@
 # PR Agent Orchestrator configuration
-# See docs/pr-agent-orchestrator-setup.md
+# See notes/pr-agent-orchestrator-setup.md
 
 dryRun: true
 
-reviewModel: claude-sonnet-4-6
+reviewModel: claude-opus-4-8
 fixModel: claude-opus-4-8
 
 authors:
@@ -20,7 +20,7 @@ limits:
   maxBugbotWaitMin: 12
   maxCiWaitMin: 45
   maxNewBlockingPerCycle: 5
-  maxFixAgentTurns: 20
+  maxFixAgentTurns: 80
   consecutiveNoNewReviewsForHandoff: 2
   discoveryCycles: 1
 

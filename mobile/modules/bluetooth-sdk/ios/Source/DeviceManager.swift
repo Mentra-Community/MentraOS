@@ -1233,11 +1233,11 @@ struct ViewState {
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
         try sendButtonPhotoSettings(
             requestId: requestId,
-            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
+            settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size))
         )
     }
 
-    func sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) throws {
+    func sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) throws {
         try liveSgc().sendButtonPhotoSettings(requestId: requestId, settings: settings)
     }
 

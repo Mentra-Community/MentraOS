@@ -21,7 +21,7 @@ Status:
   "Remaining (cloud)").
 
 This doc captures the design and the implementation, following the established
-BLE command path documented in `docs/bluetooth-sdk-subsystem-tracing.md`
+BLE command path documented in `notes/bluetooth-sdk-subsystem-tracing.md`
 (`## BLE Command Path`).
 
 ## Background
@@ -230,5 +230,5 @@ message-handler layers.
 ## Related
 
 - Glasses commit: `dc35cc1` (feat: upload recorded video to webhook on stop)
-- BLE command path reference: `docs/bluetooth-sdk-subsystem-tracing.md`
+- BLE command path reference: `notes/bluetooth-sdk-subsystem-tracing.md`
 - Photo upload reference: `requestPhoto` path + `MediaCaptureService.performDirectUpload`

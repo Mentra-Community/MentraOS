@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - cloud-v2-auth
       - cloud-v2/debug
       - cloud-v2/debug/**
     paths:

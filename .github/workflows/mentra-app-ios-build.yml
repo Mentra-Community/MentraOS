@@ -11,6 +11,13 @@ on:
       - dev
   workflow_dispatch:
 
+# Cancel a branch's in-flight build when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; keeps the Mac runner
+# queue from filling with superseded builds.
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]

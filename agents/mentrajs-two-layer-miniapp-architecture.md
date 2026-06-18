@@ -2708,7 +2708,7 @@ the entire architecture.
   away on the UI side). New `useChannel<T>(name)` hook is the
   primary read path for state pushed by background.
 - Documentation: SDK reference, tutorial, **rewrite the existing
-  Mintlify docs** at `docs/docs.json` (and `cloud/docs/docs.json`
+  Mintlify docs** at `mintlify-docs/docs.json` (and `cloud/docs/docs.json`
   if it overlaps) to describe the two-layer model. Greenfield —
   no compat shim or migration guide for legacy single-bundle apps,
   per the "no installed base" decision. Realistic doc effort: 3-5
@@ -3104,7 +3104,7 @@ In addition to the example app, these shipped artifacts move:
 - **`@mentra/miniapp` package.json `exports`** — gain
   `./background` and `./ui` sub-paths; the bare `@mentra/miniapp`
   import is removed. Greenfield, no compat shim. (Phase 5.)
-- **Docs** (`docs/miniapp-*.md` if they exist; `sdk/example-miniapp/
+- **Docs** (`mintlify-docs/miniapp-*.md` if they exist; `sdk/example-miniapp/
   README.md`; `sdk/miniapp-cli/README.md`): rewrite. (Phase 5 +
   ongoing across phases as APIs stabilize — schedule a doc-update
   line item in each phase that lands a public-surface change.)

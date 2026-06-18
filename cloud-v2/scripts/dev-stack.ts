@@ -12,10 +12,16 @@
  *   auth     : http://127.0.0.1:3002   (local-dev runtime tokens)
  *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *
- * Auth flow the mobile replicates (same as the test client):
- *   1. POST {testOem}/test-oem/mint-jwt  -> OEM JWT
- *   2. POST {core}/api/client/auth/exchange -> v2 access token
- *   3. open ws://{runtime}/ws/session?token=<access_token>
+ * Runtime only accepts a `cloud-runtime` token (aud=cloud-runtime) — never the
+ * Core access token. Two flows produce one:
+ *   Core-brokered (hosted Mentra), what the mobile replicates:
+ *     1. POST {testOem}/test-oem/mint-jwt           -> OEM JWT
+ *     2. POST {core}/api/client/auth/exchange       -> Core access token (aud=cloud-core)
+ *     3. POST {core}/api/client/auth/runtime-token  -> runtime token (aud=cloud-runtime)
+ *        (Bearer = the Core access token from step 2)
+ *     4. open ws://{runtime}/ws/session?token=<runtime_token>
+ *   Runtime-only (what this self-check exercises): mint a runtime token from the
+ *   local auth issuer (:3002) and open ws://{runtime}/ws/session?token=<runtime_token>.
  *
  * Prereqs (same as the smoke test):
  *   - Local Mongo + Redis: `bun run setup:test`
