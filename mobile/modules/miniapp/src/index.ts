@@ -17,12 +17,15 @@ installDevReloadListenerIfDevMode()
 
 export {MiniappSession, NotConnectedError} from "./session"
 export type {
+  AuthUpdatePayload,
   ConnectAckPayload,
   GlassesCapabilities,
+  MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
+export type {AuthFetchOptions, AuthModule} from "./modules/auth"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"

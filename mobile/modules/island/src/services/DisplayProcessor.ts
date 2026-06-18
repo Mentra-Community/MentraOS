@@ -61,6 +61,7 @@ export interface DisplayEvent {
     title?: string
     topText?: string
     bottomText?: string
+    breakMode?: BreakMode
     data?: string // For bitmap_view
     x?: number // bitmap_view container position/size (forwarded to native, used by G2)
     y?: number
@@ -72,6 +73,7 @@ export interface DisplayEvent {
   title?: string
   topText?: string
   bottomText?: string
+  breakMode?: BreakMode
   [key: string]: unknown
 }
 
@@ -185,6 +187,10 @@ function replacePlaceholders(text: string): string {
     .replace(/\$GBATT\$/g, values.GBATT)
     .replace(/\$CONNECTION_STATUS\$/g, values.CONNECTION_STATUS)
     .replace(/\$no_datetime\$/g, `${values.DATE}, ${values.TIME12}`)
+}
+
+function isBreakMode(value: unknown): value is BreakMode {
+  return value === "character" || value === "character-no-hyphen" || value === "word" || value === "strict-word"
 }
 
 // =============================================================================
@@ -481,9 +487,10 @@ export class DisplayProcessor {
 
     // Replace placeholders BEFORE wrapping (so we measure actual content)
     const textWithPlaceholders = replacePlaceholders(text)
+    const breakMode = this.getEventBreakMode(event, layout)
 
     // Wrap the text
-    const lines = this.wrapText(textWithPlaceholders)
+    const lines = this.wrapText(textWithPlaceholders, breakMode ? {breakMode} : undefined)
     const wrappedText = lines.join("\n")
 
     // Update both root and nested layout if present
@@ -517,9 +524,10 @@ export class DisplayProcessor {
     const rows: string[] = Array.isArray(textField) ? textField : []
 
     // Replace placeholders and wrap each row
+    const breakMode = this.getEventBreakMode(event, layout)
     const wrappedRows = rows.map((row: string) => {
       const rowWithPlaceholders = replacePlaceholders(row)
-      const lines = this.wrapText(rowWithPlaceholders)
+      const lines = this.wrapText(rowWithPlaceholders, breakMode ? {breakMode} : undefined)
       return lines.join("\n")
     })
 
@@ -554,11 +562,15 @@ export class DisplayProcessor {
     // Replace placeholders BEFORE wrapping
     const titleWithPlaceholders = replacePlaceholders(title)
     const textWithPlaceholders = replacePlaceholders(text)
+    const breakMode = this.getEventBreakMode(event, layout)
 
     // Wrap title and text separately
     // Title typically gets 1 line, text gets remaining lines
-    const wrappedTitle = this.wrapText(titleWithPlaceholders, {maxLines: 1})
-    const wrappedText = this.wrapText(textWithPlaceholders, {maxLines: this.profile.maxLines - 1})
+    const wrappedTitle = this.wrapText(titleWithPlaceholders, {maxLines: 1, ...(breakMode ? {breakMode} : {})})
+    const wrappedText = this.wrapText(textWithPlaceholders, {
+      maxLines: this.profile.maxLines - 1,
+      ...(breakMode ? {breakMode} : {}),
+    })
 
     const processedLayout = event.layout
       ? {
@@ -599,9 +611,12 @@ export class DisplayProcessor {
     // Replace placeholders BEFORE composition (so we measure actual content)
     const leftTextWithPlaceholders = replacePlaceholders(leftText)
     const rightTextWithPlaceholders = replacePlaceholders(rightText)
+    const breakMode = this.getEventBreakMode(event, layout)
+    const composer =
+      breakMode && breakMode !== this.options.breakMode ? new ColumnComposer(this.profile, breakMode) : this.composer
 
     // Use ColumnComposer for pixel-precise column composition
-    const result = this.composer.composeDoubleTextWall(leftTextWithPlaceholders, rightTextWithPlaceholders)
+    const result = composer.composeDoubleTextWall(leftTextWithPlaceholders, rightTextWithPlaceholders)
 
     if (this.options.debug) {
       console.log(`[DisplayProcessor] double_text_wall composed:`)
@@ -669,6 +684,14 @@ export class DisplayProcessor {
 
     const result = this.wrapper.wrap(text, options)
     return result.lines
+  }
+
+  private getEventBreakMode(
+    event: DisplayEvent,
+    layout: DisplayEvent | NonNullable<DisplayEvent["layout"]>,
+  ): BreakMode | undefined {
+    const breakMode = layout.breakMode ?? event.breakMode
+    return isBreakMode(breakMode) ? breakMode : undefined
   }
 
   /**

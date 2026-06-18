@@ -32,6 +32,8 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
+  DEV_APP_PACKAGE_NAME,
+  getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
@@ -186,6 +188,15 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
+      miniappAuth: {
+        getToken: (packageName, opts) => {
+          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+          if (!authPackageName) {
+            throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
+          }
+          return cloudClient.getMiniappAuthToken(authPackageName, opts)
+        },
+      },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),

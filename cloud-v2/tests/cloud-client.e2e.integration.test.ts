@@ -45,6 +45,14 @@ if (!RUN) {
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPemWrap(
     access.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
   // Runtime verifies cloud-runtime tokens against these issuers; trust the
   // cloud-core issuer Core brokers its runtime tokens from (see issueRuntimeToken).

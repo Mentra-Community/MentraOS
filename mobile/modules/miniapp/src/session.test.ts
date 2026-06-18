@@ -138,61 +138,173 @@ describe("MiniappSession auto-PONG", () => {
   })
 })
 
-describe("MiniappSession canvas", () => {
-  test("session.canvas is constructed", () => {
-    const session = new MiniappSession({transport: new FakeTransport()})
-    expect(session.canvas).toBeDefined()
-  })
-
-  test("showBitmap produces a CANVAS envelope with operation + options", async () => {
+describe("MiniappSession auth", () => {
+  test("session.auth reads miniapp token from CONNECT_ACK", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport})
     const connectPromise = session.connect()
     transport.deliverFromPhone({
       type: MiniappResponseType.CONNECT_ACK,
-      userId: "u",
-      packageName: "com.test.canvas",
+      userId: "user_123",
+      packageName: "com.test.auth",
       capabilities: null,
+      auth: {
+        mentraUserId: "user_123",
+        oemId: "test-oem",
+        token: "miniapp-token",
+        expiresAt: Date.now() + 60_000,
+      },
     })
     await connectPromise
 
-    const before = transport.sent.length
-    session.canvas.showBitmap("BMP_DATA", {x: 10, y: 20, width: 100, height: 100})
-    expect(transport.sent.length).toBe(before + 1)
-
-    const env = parseEnvelope(transport.sent[transport.sent.length - 1]!)
-    const payload = env!.payload as {type: string; operation: string; options: Record<string, unknown>}
-    expect(payload.type).toBe(MiniappRequestType.CANVAS)
-    expect(payload.operation).toBe("show_bitmap")
-    expect(payload.options).toMatchObject({data: "BMP_DATA", x: 10, y: 20, width: 100, height: 100})
+    expect(await session.auth.getToken()).toBe("miniapp-token")
+    expect(await session.auth.getAuthHeader()).toBe("Bearer miniapp-token")
+    expect(session.auth.current?.mentraUserId).toBe("user_123")
   })
 
-  test("showText / clear emit their canvas operations", async () => {
+  test("session.auth waits for AUTH_UPDATE when token misses CONNECT_ACK", async () => {
     const transport = new FakeTransport()
     const session = new MiniappSession({transport})
     const connectPromise = session.connect()
     transport.deliverFromPhone({
       type: MiniappResponseType.CONNECT_ACK,
-      userId: "u",
-      packageName: "com.test.canvas2",
+      userId: "",
+      packageName: "com.test.auth.update",
       capabilities: null,
     })
     await connectPromise
 
-    session.canvas.showText("hi", {x: 0, y: 0})
-    let payload = parseEnvelope(transport.sent[transport.sent.length - 1]!)!.payload as {
-      operation: string
-      options: {text: string}
-    }
-    expect(payload.operation).toBe("show_text")
-    expect(payload.options.text).toBe("hi")
+    const tokenPromise = session.auth.getToken()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth: {
+        mentraUserId: "user_later",
+        token: "later-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
 
-    session.canvas.clear()
-    payload = parseEnvelope(transport.sent[transport.sent.length - 1]!)!.payload as {
-      operation: string
-      options: {text: string}
+    expect(await tokenPromise).toBe("later-token")
+    expect(session.userId).toBe("user_later")
+  })
+
+  test("session.auth requests a fresh token when the cached token expires", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_expired",
+      packageName: "com.test.auth.expired",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_expired",
+        token: "expired-token",
+        expiresAt: Date.now() - 1_000,
+      },
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    const outbound = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    expect((outbound!.payload as {type?: string}).type).toBe(MiniappRequestType.AUTH_REFRESH)
+    expect(outbound!.requestId).toBeDefined()
+
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {
+          auth: {
+            mentraUserId: "user_expired",
+            token: "fresh-token",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      },
+      outbound!.requestId!,
+    )
+
+    expect(await tokenPromise).toBe("fresh-token")
+    expect(session.auth.current?.token).toBe("fresh-token")
+  })
+
+  test("session.auth.fetch attaches bearer token", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch",
+      packageName: "com.test.auth.fetch",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch",
+        token: "fetch-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    let observedAuth = ""
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      observedAuth = new Headers(init?.headers).get("Authorization") ?? ""
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedAuth).toBe("Bearer fetch-token")
+    } finally {
+      globalThis.fetch = originalFetch
     }
-    expect(payload.operation).toBe("clear")
+  })
+
+  test("session.auth.fetch works when Headers is unavailable", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch_no_headers",
+      packageName: "com.test.auth.fetch.noheaders",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch_no_headers",
+        token: "fetch-token-no-headers",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    const originalHeaders = globalThis.Headers
+    let observedHeaders: HeadersInit | undefined
+    globalThis.Headers = undefined as never
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      observedHeaders = init?.headers
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedHeaders).toEqual({
+        "Content-Type": "application/json",
+        Authorization: "Bearer fetch-token-no-headers",
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.Headers = originalHeaders
+    }
   })
 })
 
@@ -383,5 +495,33 @@ describe("MiniappSession transport disconnect", () => {
     expect(caught).toBeDefined()
     expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
     expect(session.ready).toBe(false)
+  })
+
+  test("disconnect rejects pending auth waiters instead of leaving them to time out", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    // CONNECT_ACK without an auth block, so getToken() must register a waiter
+    // and wait for an AUTH_UPDATE that will never arrive once the transport drops.
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "",
+      packageName: "com.test.auth.disc",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    transport.fireDisconnect("test disconnect")
+
+    let caught: unknown
+    try {
+      await tokenPromise
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeDefined()
+    expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
+    expect((caught as Error).message).toContain("test disconnect")
   })
 })

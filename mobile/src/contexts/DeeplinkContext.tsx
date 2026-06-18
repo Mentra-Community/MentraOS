@@ -208,6 +208,21 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
     requiresAuth: true,
   },
+  {
+    pattern: "/applet/local",
+    handler: async (url: string, params: Record<string, string>) => {
+      const nav = useNavigationStore.getState()
+      const routeParams = new URLSearchParams()
+      for (const key of ["packageName", "appName", "version", "devUrl", "iconUrl", "devPort"]) {
+        const value = params[key]
+        if (value) routeParams.set(key, value)
+      }
+
+      await waitForActive()
+      nav.push(`/applet/local?${routeParams.toString()}` as any)
+    },
+    requiresAuth: true,
+  },
 
   // Authentication routes
   {
@@ -490,10 +505,11 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
    * Find matching route for the given URL
    */
   const findMatchingRoute = (url: URL): DeepLinkRoute | null => {
-    let pathname = url.pathname
     const host = url.host
-    if (host === "auth") {
-      pathname = `/auth${pathname}`
+    let pathname = url.pathname
+    const isAppScheme = url.protocol === `${config.scheme}:`
+    if (isAppScheme && host) {
+      pathname = `/${host}${pathname}`
     }
 
     for (const route of config.routes) {

@@ -20,7 +20,7 @@ export interface MergeBackendHandle {
 }
 
 export async function startMergeBackend(opts: StartMergeBackendOptions = {}): Promise<MergeBackendHandle> {
-  const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3123", 10)
+  const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3130", 10)
   const app = createApp()
   const server = Bun.serve({port, fetch: app.fetch})
   const boundPort = server.port!

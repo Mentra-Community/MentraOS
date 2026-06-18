@@ -20,7 +20,8 @@ services:
     type: web
     run: bun packages/core/src/index.ts
     port: 3000
-    cpuCores: 1
+    instances: 1
+    cpuCores: 0.25
     ramMegabytes: 1024
     domains:
       - name: core.us-west-2.dev.mentraglass.com
@@ -53,7 +54,8 @@ services:
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
-    cpuCores: 2
+    instances: 1
+    cpuCores: 0.5
     ramMegabytes: 2048
     domains:
       - name: runtime.us-west-2.dev.mentraglass.com
@@ -62,9 +64,7 @@ services:
       AUDIO_UDP_PORT: "8000"
       LOG_STDOUT_JSON: "true"
       SERVICE_NAME: "runtime"
-      # Worker count default — tune per-pod-size in env group when we know
-      # the actual CPU limits we get in each environment.
-      AUDIO_WORKERS: "2"
+      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

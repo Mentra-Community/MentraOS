@@ -29,21 +29,26 @@ export type LayoutType =
   | "positioned_text"
   | "clear_view"
 
+export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
+
 export interface TextWall {
   layoutType: "text_wall"
   text: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface DoubleTextWall {
   layoutType: "double_text_wall"
   topText: string
   bottomText: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface ReferenceCard {
   layoutType: "reference_card"
   title: string
   text: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface DashboardCard {
@@ -99,6 +104,7 @@ export type Layout =
 export interface DisplayOptions {
   view?: ViewType
   durationMs?: number
+  breakMode?: DisplayBreakMode
 }
 
 export interface BitmapOptions extends DisplayOptions {
@@ -131,10 +137,12 @@ export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
   private send(layout: Layout, options: DisplayOptions = {}): void {
+    const payloadLayout =
+      options.breakMode && supportsBreakMode(layout) ? {...layout, breakMode: options.breakMode} : layout
     this.session.sendOneShot({
       type: MiniappRequestType.DISPLAY,
       view: options.view ?? "main",
-      layout: layout,
+      layout: payloadLayout,
       durationMs: options.durationMs,
     })
   }
@@ -195,4 +203,8 @@ export class DisplayManager {
   clear(view: ViewType = "main"): void {
     this.send({layoutType: "clear_view"}, {view})
   }
+}
+
+function supportsBreakMode(layout: Layout): layout is TextWall | DoubleTextWall | ReferenceCard {
+  return layout.layoutType === "text_wall" || layout.layoutType === "double_text_wall" || layout.layoutType === "reference_card"
 }

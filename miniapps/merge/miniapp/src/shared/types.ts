@@ -7,10 +7,29 @@ export interface CloudClientStatus {
 }
 
 export type FrequencyMode = "low" | "medium" | "high"
+export type AnswerLanguage = "English" | "Spanish" | "French" | "German" | "Italian" | "Portuguese" | "Japanese" | "Korean" | "Chinese" | "Auto"
 
 export type MergeBackendStatus = "idle" | "processing" | "ok" | "unconfigured" | "error"
 export type MergeAnalysisTrigger = "final" | "sentence" | "interval"
-export type MergeDecisionAction = "silent" | "show" | "replace" | "queue" | "drop" | "error"
+export type MergeDisplayAction = "show" | "replace" | "queue" | "drop"
+export type MergeDecisionAction = "silent" | "defer" | MergeDisplayAction | "error"
+
+export interface MergeInsightSource {
+  title: string
+  uri: string
+  domain?: string
+}
+
+export interface MergeInsightProfiling {
+  totalMs: number
+  clientRoundTripMs?: number
+  geminiMs?: number
+  parseMs?: number
+  model: string
+  webSearchEnabled: boolean
+  grounded: boolean
+  sourceCount: number
+}
 
 export interface MergeTranscript {
   id: string
@@ -29,13 +48,17 @@ export interface MergeInsight {
   agentType: string
   reasoning?: string
   transcriptId?: string
-  displayAction?: Exclude<MergeDecisionAction, "silent" | "error">
+  displayAction?: MergeDisplayAction
   urgency?: "low" | "medium" | "high"
   confidence?: number
+  sources?: MergeInsightSource[]
+  searchQueries?: string[]
+  profiling?: MergeInsightProfiling
 }
 
 export interface MergeSettings {
   frequency: FrequencyMode
+  answerLanguage: AnswerLanguage
 }
 
 export interface MergeDecision {
@@ -48,6 +71,9 @@ export interface MergeDecision {
   insightText?: string
   confidence?: number
   urgency?: "low" | "medium" | "high"
+  sources?: MergeInsightSource[]
+  searchQueries?: string[]
+  profiling?: MergeInsightProfiling
 }
 
 export interface MergeSnapshot {
