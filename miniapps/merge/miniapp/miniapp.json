@@ -5,7 +5,7 @@
   "name": "Local Merge",
   "description": "Local Merge proactive AI assistant. Listens to conversations and surfaces concise contextual insights through a backend that keeps AI secrets off-device.",
   "type": "background",
-  "sdkVersion": "0.2.0",
+  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "port": 3122,
   "entry": {
