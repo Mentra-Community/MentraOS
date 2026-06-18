@@ -1,16 +1,21 @@
 import {Languages, Settings as SettingsGlyph} from "lucide-react"
 
+import type {HoldHandlers} from "../hooks/useDeveloperMode"
+
 interface BottomNavProps {
   activeTab?: "translation" | "settings"
   onTabChange?: (tab: "translation" | "settings") => void
   accentColor?: string
   accentForeground?: string
+  /** Press-and-hold handlers wired to the settings gear to toggle developer mode. */
+  settingsHoldHandlers?: HoldHandlers
 }
 
 export function BottomNav({
   activeTab = "translation",
   onTabChange,
   accentColor = "#2089F3",
+  settingsHoldHandlers,
 }: BottomNavProps) {
   const activeIconColor = readableIconColor(accentColor)
   const inactiveIconColor = "#3F3F46"
@@ -42,6 +47,10 @@ export function BottomNav({
             <button
               aria-label="Settings"
               onClick={() => onTabChange?.("settings")}
+              onPointerDown={settingsHoldHandlers?.onPointerDown}
+              onPointerUp={settingsHoldHandlers?.onPointerUp}
+              onPointerLeave={settingsHoldHandlers?.onPointerLeave}
+              onPointerCancel={settingsHoldHandlers?.onPointerCancel}
               className="w-12 h-7 p-2 rounded-3xl inline-flex justify-center items-center gap-2 transition-colors"
               style={activeTab === "settings" ? {backgroundColor: accentColor} : {backgroundColor: "transparent"}}>
               <SettingsGlyph
