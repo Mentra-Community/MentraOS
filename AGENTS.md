@@ -12,7 +12,7 @@ MentraOS is an open source operating system, app store, and development framewor
 - iOS native module: `mobile/ios`
 - Backend & web portals: `cloud` (includes developer portal & app store)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- MentraOS Store: `cloud/store/` (web app for app discovery)
+- MentraOS Store: `cloud/websites/store/` (web app for app discovery)
 - Developer Console: `cloud/websites/console/` (web app for app management)
 
 ## Monorepo Structure
@@ -28,7 +28,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the TypeScript SDK, and the store front end sit in `cloud/packages/`, with integration tests in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Notes and plans live in `agents/` and `docs/`.
+Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/`.
 
 ## Build Commands
 
@@ -41,6 +41,19 @@ Core client app lives in `mobile/` (Expo React Native). Backend services, the Ty
 - Lint code: `npm run lint` or `bun lint`
 - iOS setup: `cd ios && pod install && cd ..`
 - Prebuild: `bun expo prebuild` (syncs native projects - NEVER use --clean or --clear flags!)
+
+### Local Android compile checks
+
+- ASG client compile check: `./scripts/check-android-compile.sh asg`
+- Bluetooth SDK Android compile check: `./scripts/check-android-compile.sh bluetooth-sdk`
+- Both checks: `./scripts/check-android-compile.sh`
+
+The Bluetooth SDK Android sources under `mobile/modules/bluetooth-sdk/android`
+are compiled through the generated Expo Android project at `mobile/android`,
+matching CI. Do not rely on a system `gradle` install from the SDK source
+directory; use the repo script so the Gradle wrapper and prebuild setup are
+consistent. The Bluetooth SDK check runs with `-PmentraPublicSdk=true` so it
+validates the public Maven artifact dependency shape.
 
 ### Cloud Backend (cloud)
 
@@ -164,5 +177,6 @@ export MENTRA_AGENT_API_KEY=your-api-key
 
 ## Additional Documentation
 
-- Architecture specs and design docs: `/docs/`
+- Mintlify docs: `/mintlify-docs/`
+- Architecture specs, design docs, and working notes: `/notes/`
 - Module-specific implementation details: See module-specific `AGENTS.md` files

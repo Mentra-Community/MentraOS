@@ -3,7 +3,7 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
-  ButtonPhotoSettings,
+  VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
@@ -85,19 +85,11 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: (settings: ButtonPhotoSettings) => {
-    // setButtonPhotoCaptureSettings is available in SDK 0.1.13+. Guard for OTA version-skew
-    // where a new JS bundle runs against an older native module that only has the string form.
-    if (typeof PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings === "function") {
-      return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings)
-    }
-    // Legacy fallback: old native bridge only accepts a size string
-    return PrivateBluetoothSdkModule.setButtonPhotoSettings({size: settings.size ?? "max"} as any)
-  },
-  setButtonVideoRecordingSettings:
-    PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
-  setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
-  setButtonMaxRecordingTime: PrivateBluetoothSdkModule.setButtonMaxRecordingTime.bind(PrivateBluetoothSdkModule),
+  setPhotoCaptureDefaults: PrivateBluetoothSdkModule.setPhotoCaptureDefaults.bind(PrivateBluetoothSdkModule),
+  setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) =>
+    PrivateBluetoothSdkModule.setVideoRecordingDefaults(width, height, fps),
+  setCaptureLedEnabled: PrivateBluetoothSdkModule.setCaptureLedEnabled.bind(PrivateBluetoothSdkModule),
+  setMaxVideoRecordingDuration: PrivateBluetoothSdkModule.setMaxVideoRecordingDuration.bind(PrivateBluetoothSdkModule),
   setCameraFov: PrivateBluetoothSdkModule.setCameraFov.bind(PrivateBluetoothSdkModule),
   queryGalleryStatus: PrivateBluetoothSdkModule.queryGalleryStatus.bind(PrivateBluetoothSdkModule),
   requestPhoto: PrivateBluetoothSdkModule.requestPhoto.bind(PrivateBluetoothSdkModule),
@@ -155,7 +147,7 @@ export type {
   BluetoothSdkPublicModule as BluetoothSdkModule,
   BluetoothSdkSubscription,
   ButtonPhotoSize,
-  ButtonPhotoSettings,
+  PhotoCaptureDefaults,
   ButtonPressEvent,
   CameraFovPreset,
   CameraFovRequest,
@@ -226,6 +218,7 @@ export type {
   SwipeVolumeStatusEvent,
   SwitchStatusEvent,
   TouchEvent,
+  VideoRecordingDefaults,
   VideoRecordingStartedStatusEvent,
   VideoRecordingStatusEvent,
   VideoRecordingStatusState,

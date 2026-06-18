@@ -32,6 +32,9 @@ export function photoRequestParamsForNative(
     flash: true,
     sound: params.sound,
   }
+  if (params.save != null) {
+    payload.save = params.save
+  }
   if (params.authToken != null && params.authToken.length > 0) {
     payload.authToken = params.authToken
   }
