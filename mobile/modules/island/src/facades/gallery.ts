@@ -30,9 +30,20 @@ export type GallerySyncStatus = ReturnType<typeof projectStatus>
 export const gallery = {
   /** Snapshot of the current sync state + progress. */
   status: (): GallerySyncStatus => projectStatus(),
-  /** Subscribe to sync-state changes; returns an unsubscribe. */
-  onStatus: (cb: (status: GallerySyncStatus) => void): (() => void) =>
-    useGallerySyncStore.subscribe(() => cb(projectStatus())),
+  /** Subscribe to sync-state changes; returns an unsubscribe. Deduped on the projected
+   * status (the gallerySync store mutates many unrelated fields during a sync), so the
+   * host only re-renders when the projection actually changes — matches the other
+   * read-model facades. */
+  onStatus: (cb: (status: GallerySyncStatus) => void): (() => void) => {
+    let last = JSON.stringify(projectStatus())
+    return useGallerySyncStore.subscribe(() => {
+      const status = projectStatus()
+      const serialized = JSON.stringify(status)
+      if (serialized === last) return
+      last = serialized
+      cb(status)
+    })
+  },
   /** Subscribe to user-actionable notices (host renders alerts / settings deep-links). */
   onNotice: (cb: (notice: GalleryNotice) => void): (() => void) => onGalleryNotice(cb),
 
