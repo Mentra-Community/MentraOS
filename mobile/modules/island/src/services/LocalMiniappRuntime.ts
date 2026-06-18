@@ -45,10 +45,9 @@ import {
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
   type InteropAuditEvent,
-  type StreamAudioConfig,
-  type StreamVideoConfig,
   type TtsSynthesisResult,
 } from "../runtime/config"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import type {
   AudioSubscription,
   LanguageSource,
@@ -85,38 +84,6 @@ interface ConnectedMiniapp {
    * see {@link LOCATION_RATE_PRIORITY}.
    */
   requestedLocationRate: string | null
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
-const finiteNumber = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined
-
-const normalizeStreamVideoConfig = (value: unknown): StreamVideoConfig | undefined => {
-  if (!isRecord(value)) return undefined
-  const config: StreamVideoConfig = {}
-  const width = finiteNumber(value.width)
-  const height = finiteNumber(value.height)
-  const bitrate = finiteNumber(value.bitrate)
-  const frameRate = finiteNumber(value.frameRate)
-  if (width !== undefined) config.width = width
-  if (height !== undefined) config.height = height
-  if (bitrate !== undefined) config.bitrate = bitrate
-  if (frameRate !== undefined) config.frameRate = frameRate
-  return Object.keys(config).length > 0 ? config : undefined
-}
-
-const normalizeStreamAudioConfig = (value: unknown): StreamAudioConfig | undefined => {
-  if (!isRecord(value)) return undefined
-  const config: StreamAudioConfig = {}
-  const bitrate = finiteNumber(value.bitrate)
-  const sampleRate = finiteNumber(value.sampleRate)
-  if (bitrate !== undefined) config.bitrate = bitrate
-  if (sampleRate !== undefined) config.sampleRate = sampleRate
-  if (typeof value.echoCancellation === "boolean") config.echoCancellation = value.echoCancellation
-  if (typeof value.noiseSuppression === "boolean") config.noiseSuppression = value.noiseSuppression
-  return Object.keys(config).length > 0 ? config : undefined
 }
 
 /**
