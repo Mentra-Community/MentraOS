@@ -65,7 +65,11 @@ import com.mentra.examples.android.cameraRoiPositions
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.isGlassesWifiConnected
+import com.mentra.examples.android.photoAeExposureDivisorOptions
 import com.mentra.examples.android.photoCompressionOptions
+import com.mentra.examples.android.photoIspAnalogGainOptions
+import com.mentra.examples.android.photoIspDigitalGainOptions
+import com.mentra.examples.android.photoIsoCapOptions
 import com.mentra.examples.android.photoSizeOptions
 import com.mentra.examples.android.roiPositionLabel
 import com.mentra.examples.android.ui.AppColor
@@ -104,14 +108,20 @@ fun CameraScreen(controller: MentraExampleController) {
         if (videoMode) "video" else "photo",
         state.photoSize,
         state.photoCompression,
+        state.photoAeExposureDivisor,
+        state.photoIsoCap,
+        state.photoNoiseReduction,
+        state.photoEdgeEnhancement,
+        state.photoMfnr,
+        state.photoZsl,
+        state.photoIspDigitalGain,
+        state.photoIspAnalogGain,
         state.photoExposureManual,
         state.photoExposureTimeNs,
         state.photoIso,
         state.cameraFov,
         state.cameraRoiPosition,
         state.scanMode,
-        state.scanAeDivisor,
-        state.scanIsoCap,
     )
     val clipboardManager = LocalClipboardManager.current
     var photoDetailsExpanded by remember { mutableStateOf(false) }
@@ -121,7 +131,8 @@ fun CameraScreen(controller: MentraExampleController) {
             state.videoRecording ||
                 state.activeAction == "Start video recording" ||
                 state.activeAction == "Stop & upload video" -> captureMode = CameraCaptureMode.VIDEO
-            state.activeAction == "Capture & upload" -> captureMode = CameraCaptureMode.PHOTO
+            state.activeAction == "Capture & upload" ||
+                state.activeAction == "Capture scan photo" -> captureMode = CameraCaptureMode.PHOTO
         }
     }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
@@ -545,8 +556,7 @@ fun CameraScreen(controller: MentraExampleController) {
                         photoSizeOptions.forEach { size ->
                             OptionChip(
                                 size,
-                                !state.scanMode && state.photoSize == size,
-                                enabled = !state.scanMode,
+                                state.photoSize == size,
                             ) { controller.setPhotoSize(size) }
                         }
                     }
@@ -558,6 +568,7 @@ fun CameraScreen(controller: MentraExampleController) {
                         }
                     }
                     ExposureSettingsCard(controller)
+                    PhotoRequestTuningSettingsCard(controller)
                 }
                 CameraFovSettingsCard(controller)
             }
@@ -582,7 +593,7 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("SCAN MODE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                 Text(
-                    if (state.scanMode) "Document / barcode capture preset" else "Standard photo capture",
+                    if (state.scanMode) "Barcode capture preset" else "Standard photo capture",
                     color = AppColor.greenAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -592,25 +603,11 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
         }
         if (state.scanMode) {
             Text(
-                "Syncs max-size preset to the glasses hardware button. Tap Capture to take a max-res, no-compression scan photo via the app.",
+                "Applies the AE-divisor / ISO-cap barcode preset and keeps the glasses button preset in sync.",
                 color = AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                "AE÷ and ISO cap will ship on app captures in SDK 0.1.13+. Until then these chips only update the hardware button preset.",
-                color = AppColor.muted,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Normal,
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("AE ÷3", state.scanAeDivisor == 3, enabled = false) { controller.setScanAeDivisor(3) }
-                OptionChip("AE ÷5", state.scanAeDivisor == 5, enabled = false) { controller.setScanAeDivisor(5) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OptionChip("ISO 800", state.scanIsoCap == 800, enabled = false) { controller.setScanIsoCap(800) }
-                OptionChip("ISO 400", state.scanIsoCap == 400, enabled = false) { controller.setScanIsoCap(400) }
-            }
         }
     }
 }
@@ -628,9 +625,9 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("EXPOSURE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text("MANUAL EXPOSURE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                 Text(
-                    if (state.photoExposureManual) exposureLabel(state.photoExposureTimeNs) else "Auto exposure",
+                    if (state.photoExposureManual) exposureLabel(state.photoExposureTimeNs) else "Auto metered by glasses",
                     color = AppColor.greenAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -638,68 +635,133 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
             }
             Switch(checked = state.photoExposureManual, onCheckedChange = controller::setPhotoExposureManual)
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoExposureTimeNs > PHOTO_EXPOSURE_MIN_NS) {
-                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs - 500_000)
+        if (state.photoExposureManual) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SliderNudgeButton("-", enabled = state.photoExposureTimeNs > PHOTO_EXPOSURE_MIN_NS) {
+                    controller.setPhotoExposureTimeNs(state.photoExposureTimeNs - 500_000)
+                }
+                Slider(
+                    value = state.photoExposureTimeNs.toFloat(),
+                    onValueChange = { controller.setPhotoExposureTimeNs((it / 500_000f).roundToInt() * 500_000) },
+                    valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
+                    modifier = Modifier.weight(1f),
+                )
+                SliderNudgeButton("+", enabled = state.photoExposureTimeNs < PHOTO_EXPOSURE_MAX_NS) {
+                    controller.setPhotoExposureTimeNs(state.photoExposureTimeNs + 500_000)
+                }
             }
-            Slider(
-                enabled = state.photoExposureManual,
-                value = state.photoExposureTimeNs.toFloat(),
-                onValueChange = { controller.setPhotoExposureTimeNs((it / 500_000f).roundToInt() * 500_000) },
-                valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoExposureTimeNs < PHOTO_EXPOSURE_MAX_NS) {
-                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs + 500_000)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Preset 1/120s",
+                    color = AppColor.greenAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
+                )
+                Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Default 1/120s",
-                color = AppColor.greenAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
-            )
-            Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(4.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("ISO", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
             Text(
-                if (state.photoExposureManual) "ISO ${state.photoIso}" else "Auto ISO",
+                if (state.photoExposureManual) "ISO ${state.photoIso}" else "Auto / derived ISO",
                 color = AppColor.greenAccent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
             )
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoIso > PHOTO_ISO_MIN) {
-                controller.setPhotoIso(state.photoIso - 50)
+        if (state.photoExposureManual) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SliderNudgeButton("-", enabled = state.photoIso > PHOTO_ISO_MIN) {
+                    controller.setPhotoIso(state.photoIso - 50)
+                }
+                Slider(
+                    value = state.photoIso.toFloat(),
+                    onValueChange = { controller.setPhotoIso((it / 50f).roundToInt() * 50) },
+                    valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
+                    modifier = Modifier.weight(1f),
+                )
+                SliderNudgeButton("+", enabled = state.photoIso < PHOTO_ISO_MAX) {
+                    controller.setPhotoIso(state.photoIso + 50)
+                }
             }
-            Slider(
-                enabled = state.photoExposureManual,
-                value = state.photoIso.toFloat(),
-                onValueChange = { controller.setPhotoIso((it / 50f).roundToInt() * 50) },
-                valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoIso < PHOTO_ISO_MAX) {
-                controller.setPhotoIso(state.photoIso + 50)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Preset ISO $PHOTO_ISO_DEFAULT",
+                    color = AppColor.greenAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { controller.setPhotoIso(PHOTO_ISO_DEFAULT) }
+                )
+                Text("ISO $PHOTO_ISO_MAX", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun PhotoRequestTuningSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    val scanExposureEnabled = !state.photoExposureManual
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("PHOTO REQUEST TUNING", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
             Text(
-                "Default ISO $PHOTO_ISO_DEFAULT",
+                if (state.photoExposureManual) "AE divisor / ISO cap disabled in manual mode" else "Optional request parameters",
                 color = AppColor.greenAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { controller.setPhotoIso(PHOTO_ISO_DEFAULT) }
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
             )
-            Text("ISO $PHOTO_ISO_MAX", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
+        CameraOptionGroup("ae divisor") {
+            OptionChip("Unset", state.photoAeExposureDivisor == null, enabled = scanExposureEnabled) { controller.setPhotoAeExposureDivisor(null) }
+            photoAeExposureDivisorOptions.forEach { divisor ->
+                OptionChip("÷$divisor", state.photoAeExposureDivisor == divisor, enabled = scanExposureEnabled) {
+                    controller.setPhotoAeExposureDivisor(divisor)
+                }
+            }
+        }
+        CameraOptionGroup("iso cap") {
+            OptionChip("Unset", state.photoIsoCap == null, enabled = scanExposureEnabled) { controller.setPhotoIsoCap(null) }
+            photoIsoCapOptions.forEach { isoCap ->
+                OptionChip("$isoCap", state.photoIsoCap == isoCap, enabled = scanExposureEnabled) { controller.setPhotoIsoCap(isoCap) }
+            }
+        }
+        TuningFlagOptionGroup("noise reduction", state.photoNoiseReduction, controller::setPhotoNoiseReduction)
+        TuningFlagOptionGroup("edge enhancement", state.photoEdgeEnhancement, controller::setPhotoEdgeEnhancement)
+        TuningFlagOptionGroup("mfnr", state.photoMfnr, controller::setPhotoMfnr)
+        TuningFlagOptionGroup("zsl", state.photoZsl, controller::setPhotoZsl)
+        CameraOptionGroup("isp digital gain") {
+            OptionChip("Unset", state.photoIspDigitalGain == null) { controller.setPhotoIspDigitalGain(null) }
+            photoIspDigitalGainOptions.forEach { gain ->
+                OptionChip("$gain", state.photoIspDigitalGain == gain) { controller.setPhotoIspDigitalGain(gain) }
+            }
+        }
+        CameraOptionGroup("isp analog gain") {
+            OptionChip("Unset", state.photoIspAnalogGain == null) { controller.setPhotoIspAnalogGain(null) }
+            photoIspAnalogGainOptions.forEach { gain ->
+                OptionChip(gain, state.photoIspAnalogGain == gain) { controller.setPhotoIspAnalogGain(gain) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TuningFlagOptionGroup(label: String, value: Boolean?, onChange: (Boolean?) -> Unit) {
+    CameraOptionGroup(label) {
+        OptionChip("Unset", value == null) { onChange(null) }
+        OptionChip("On", value == true) { onChange(true) }
+        OptionChip("Off", value == false) { onChange(false) }
     }
 }
 
@@ -758,7 +820,7 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("${CAMERA_FOV_MIN}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Default ${CAMERA_FOV_DEFAULT}°",
+                "Preset ${CAMERA_FOV_DEFAULT}°",
                 color = if (controlsEnabled) AppColor.greenAccent else AppColor.muted,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -1207,13 +1269,28 @@ private fun CameraOptionGroup(label: String, content: @Composable RowScope.() ->
 
 @Composable
 private fun OptionChip(value: String, active: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val backgroundColor = when {
+        !enabled -> Color.White.copy(alpha = 0.32f)
+        active -> AppColor.greenAccent.copy(alpha = 0.16f)
+        else -> Color.White.copy(alpha = 0.6f)
+    }
+    val borderColor = when {
+        !enabled -> AppColor.ink.copy(alpha = 0.04f)
+        active -> AppColor.greenAccent.copy(alpha = 0.32f)
+        else -> AppColor.ink.copy(alpha = 0.06f)
+    }
+    val textColor = when {
+        !enabled -> AppColor.muted.copy(alpha = 0.7f)
+        active -> AppColor.greenAccent
+        else -> AppColor.ink
+    }
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(if (active) AppColor.greenAccent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.6f))
+            .background(backgroundColor)
             .border(
                 1.dp,
-                if (active) AppColor.greenAccent.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.06f),
+                borderColor,
                 RoundedCornerShape(999.dp)
             )
             .clickable(enabled = enabled) { onClick() }
@@ -1222,6 +1299,6 @@ private fun OptionChip(value: String, active: Boolean, enabled: Boolean = true, 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(value, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
