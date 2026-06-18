@@ -612,6 +612,10 @@ class SocketComms {
     const streamId = typeof msg.streamId === "string" ? msg.streamId : undefined
     const video = normalizeStreamVideoConfig(msg.video)
     const audio = normalizeStreamAudioConfig(msg.audio)
+    // Cloud start_stream messages also carry cloud/session bookkeeping and
+    // historical fields such as flash, stream, and keepAlive*. The ASG
+    // start_stream parser only supports this explicit subset; keep-alives are
+    // separate commands, and ASG forces the capture privacy light on.
     const request: StreamStartRequest = {
       type: "start_stream",
       streamUrl: msg.streamUrl,
