@@ -476,6 +476,8 @@ const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 export const PHOTO_BLE_FALLBACK_QUALITY_WARNING =
   'Wi-Fi upload failed; photo was compressed for Bluetooth fallback, so image quality is lower.';
+const PHOTO_BLE_FALLBACK_COMPRESSION_MESSAGE =
+  'Wi-Fi upload failed; compressing photo for Bluetooth fallback.';
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
 const ANDROID_12_API_LEVEL = 31;
@@ -1638,6 +1640,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       handlePhotoResponse(response);
     } catch (error) {
       if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+        clearPhotoUploadTimeout();
         markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
         return;
       }
@@ -4111,7 +4114,7 @@ function photoStatusLabel(event: PhotoStatusEvent, galleryModeButtonPhoto = fals
 
 function photoBleFallbackMessage(status: string) {
   return status === 'ble_fallback_compression'
-    ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
+    ? PHOTO_BLE_FALLBACK_COMPRESSION_MESSAGE
     : null;
 }
 

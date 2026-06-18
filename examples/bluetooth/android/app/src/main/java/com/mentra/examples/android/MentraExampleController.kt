@@ -596,7 +596,18 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             isoCap = state.photoIsoCap,
             compress = state.photoCompression,
             sound = false,
+            resetCaptureTuning = shouldResetCaptureTuning(),
         )
+
+    private fun shouldResetCaptureTuning() =
+        state.photoAeExposureDivisor == null ||
+            state.photoIsoCap == null ||
+            state.photoNoiseReduction == null ||
+            state.photoEdgeEnhancement == null ||
+            state.photoMfnr == null ||
+            state.photoZsl == null ||
+            state.photoIspDigitalGain == null ||
+            state.photoIspAnalogGain == null
 
     private fun pushScanButtonPreset() {
         if (!isGlassesConnected()) {

@@ -721,8 +721,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             aeExposureDivisor: photoAeExposureDivisor,
             isoCap: photoIsoCap,
             compress: photoCompression.rawValue,
-            sound: false
+            sound: false,
+            resetCaptureTuning: shouldResetCaptureTuning()
         )
+    }
+
+    private func shouldResetCaptureTuning() -> Bool {
+        photoAeExposureDivisor == nil ||
+            photoIsoCap == nil ||
+            photoNoiseReduction == nil ||
+            photoEdgeEnhancement == nil ||
+            photoMfnr == nil ||
+            photoZsl == nil ||
+            photoIspDigitalGain == nil ||
+            photoIspAnalogGain == nil
     }
 
     func setPhotoAeExposureDivisor(_ divisor: Int?) {
