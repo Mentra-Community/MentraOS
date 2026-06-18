@@ -23,6 +23,7 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
+        // ASG stream parsers shipped with the BLE key named "frameRate".
         if let fps { values["frameRate"] = fps }
         return values
     }
@@ -219,31 +220,22 @@ public struct StreamResolvedConfig: Equatable {
 public struct StreamRequest {
     public let streamUrl: String
     public let streamId: String
-    public let keepAlive: Bool
-    public let keepAliveIntervalSeconds: Int
     public let sound: Bool
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
-    public let extraValues: [String: Any]
 
     public init(
         streamUrl: String,
         streamId: String = "",
-        keepAlive: Bool = true,
-        keepAliveIntervalSeconds: Int = 5,
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
-        audio: StreamAudioConfig? = nil,
-        extraValues: [String: Any] = [:]
+        audio: StreamAudioConfig? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
-        self.keepAlive = keepAlive
-        self.keepAliveIntervalSeconds = keepAliveIntervalSeconds
         self.sound = sound
         self.video = video
         self.audio = audio
-        self.extraValues = extraValues
     }
 
     init(values: [String: Any]) {
@@ -254,25 +246,17 @@ public struct StreamRequest {
                 ?? values["whipUrl"] as? String
                 ?? "",
             streamId: values["streamId"] as? String ?? "",
-            keepAlive: values["keepAlive"] as? Bool ?? true,
-            keepAliveIntervalSeconds: intValue(values["keepAliveIntervalSeconds"]) ?? 5,
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
-            audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
-            extraValues: values
+            audio: StreamAudioConfig(values: values["audio"] as? [String: Any])
         )
     }
 
     public var values: [String: Any] {
-        var values = extraValues
-        values.removeValue(forKey: "keepAliveMode")
+        var values: [String: Any] = [:]
         values["type"] = "start_stream"
         values["streamUrl"] = streamUrl
         values["streamId"] = streamId
-        values["keepAlive"] = keepAlive
-        values["keepAliveIntervalSeconds"] = keepAliveIntervalSeconds
-        // The camera light is a privacy indicator and cannot be disabled by SDK callers.
-        values["flash"] = true
         values["sound"] = sound
         if let videoValues = video?.dictionary, !videoValues.isEmpty {
             values["video"] = videoValues
@@ -284,33 +268,24 @@ public struct StreamRequest {
     }
 }
 
-extension StreamRequest {
-    var isExternallyManagedKeepAlive: Bool {
-        stringValue(extraValues, "keepAliveMode") == "external"
-    }
-}
-
 struct StreamKeepAliveRequest {
     let streamId: String
     let ackId: String
-    let extraValues: [String: Any]
 
-    init(streamId: String, ackId: String, extraValues: [String: Any] = [:]) {
+    init(streamId: String, ackId: String) {
         self.streamId = streamId
         self.ackId = ackId
-        self.extraValues = extraValues
     }
 
     init(values: [String: Any]) {
         self.init(
             streamId: values["streamId"] as? String ?? "",
-            ackId: values["ackId"] as? String ?? "",
-            extraValues: values
+            ackId: values["ackId"] as? String ?? ""
         )
     }
 
     var values: [String: Any] {
-        var values = extraValues
+        var values: [String: Any] = [:]
         values["type"] = "keep_stream_alive"
         values["streamId"] = streamId
         values["ackId"] = ackId

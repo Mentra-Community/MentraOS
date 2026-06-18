@@ -206,7 +206,7 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "0.1.13",
+      "version": "0.1.14",
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
       },

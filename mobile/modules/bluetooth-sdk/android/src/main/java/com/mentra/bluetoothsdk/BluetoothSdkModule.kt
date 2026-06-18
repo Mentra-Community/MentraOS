@@ -449,10 +449,6 @@ class BluetoothSdkModule : Module() {
             requireSdk().setVideoRecordingDefaults(VideoRecordingDefaults(width, height, fps)).values
         }
 
-        AsyncFunction("setCaptureLedEnabled") { enabled: Boolean ->
-            requireSdk().setCaptureLedEnabled(enabled).values
-        }
-
         AsyncFunction("setMaxVideoRecordingDuration") { minutes: Int ->
             requireSdk().setMaxVideoRecordingDuration(minutes).values
         }
@@ -476,7 +472,7 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
             requireSdk().requestPhoto(req).values
         }
@@ -555,6 +551,10 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("startStream") { params: Map<String, Any> ->
             requireSdk().startStream(StreamRequest.fromMap(params)).values
+        }
+
+        AsyncFunction("startExternallyManagedStream") { params: Map<String, Any> ->
+            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
         }
 
         AsyncFunction("stopStream") { requireSdk().stopStream().values }

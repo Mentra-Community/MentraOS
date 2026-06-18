@@ -20,7 +20,7 @@ abstract class SGCManager {
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
 
     /**
      * Start video recording with optional per-recording resolution/fps. A width,
@@ -32,14 +32,13 @@ abstract class SGCManager {
     open fun startVideoRecording(
         requestId: String,
         save: Boolean,
-        flash: Boolean,
         sound: Boolean,
         width: Int,
         height: Int,
         fps: Int,
         maxRecordingTimeMinutes: Int,
     ) {
-        startVideoRecording(requestId, save, flash, sound)
+        startVideoRecording(requestId, save, sound)
     }
 
     abstract fun stopVideoRecording(requestId: String)
@@ -59,7 +58,6 @@ abstract class SGCManager {
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
     abstract fun sendCameraFovSetting()
 
     // Display Control

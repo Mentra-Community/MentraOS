@@ -73,7 +73,7 @@ print("photo delivered: \(photo.requestId)")
 
 `requestPhoto(...)` resolves when the full photo action reaches terminal success: capture completed and the JPEG was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. It rejects or throws when the glasses report a terminal `photo_response` error, when phone-side fallback upload fails, when the SDK cannot send the command, or when no terminal response arrives before the command timeout. Use `photo_status` for intermediate progress such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_response` is the final success/error result. The returned success includes `uploadUrl`, and may include webhook-returned metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`.
 
-The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. React Native enables the capture light for photo requests; native Android and iOS expose a `flash` request option that defaults to `true`.
+The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The capture light is always enabled for photo, video, and stream capture as a privacy indicator.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
@@ -91,7 +91,6 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 | `compress` | React Native, Android, iOS | Upload compression: `none`, `medium`, or `heavy`. Omitted native values default to `none`. |
 | `save` | React Native, Android, iOS | Keeps the captured photo in the glasses gallery after delivery when `true`. When `false`, the photo is only used for the requested delivery. Defaults to `false`. |
 | `sound` | React Native, Android, iOS | Plays the shutter sound when `true`; defaults to `true`. |
-| `flash` | Android, iOS | Enables the capture flash/privacy light for this request; defaults to `true`. React Native always sends `true`. |
 | `exposureTimeNs` | React Native, Android, iOS | Optional manual sensor exposure time in nanoseconds. Omit or pass `null` / `nil` for auto exposure. |
 | `iso` | React Native, Android, iOS | Optional manual ISO. Used only when `exposureTimeNs` enables manual exposure. |
 | `aeExposureDivisor` | React Native, Android, iOS | Optional scan-style auto-exposure divisor. Values must be greater than `1`. |
@@ -297,6 +296,7 @@ await BluetoothSdk.startStream({
   type: 'start_stream',
   streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
   streamId,
+  video: {fps: 15},
 });
 
 await BluetoothSdk.stopStream();
@@ -312,6 +312,7 @@ sdk.startStream(
     StreamRequest(
         streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
         streamId = streamId,
+        video = StreamVideoConfig(fps = 15),
     )
 )
 
@@ -327,7 +328,8 @@ let streamId = "stream-\(Date().timeIntervalSince1970)"
 try await sdk.startStream(
     StreamRequest(
         streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
-        streamId: streamId
+        streamId: streamId,
+        video: StreamVideoConfig(fps: 15)
     )
 )
 

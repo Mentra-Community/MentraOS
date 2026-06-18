@@ -396,7 +396,6 @@ export type SettingsAckSetting =
   | "gallery_mode"
   | "button_photo"
   | "button_video_recording"
-  | "button_camera_led"
   | "button_max_recording_time"
   | "camera_fov"
 
@@ -571,8 +570,6 @@ export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
   streamId?: string
-  keepAlive?: boolean
-  keepAliveIntervalSeconds?: number
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
@@ -954,7 +951,6 @@ export interface BluetoothSdkPublicModule {
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
-  setCaptureLedEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
@@ -1243,7 +1239,6 @@ export type BluetoothSettingsUpdate = Partial<{
   button_video_width: number
   button_video_height: number
   button_video_fps: number
-  button_camera_led: boolean
   button_max_recording_time: number
   camera_fov: NativeCameraFovSetting
   should_send_pcm: boolean

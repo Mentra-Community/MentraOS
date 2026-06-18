@@ -89,7 +89,6 @@ export default function CameraSettingsScreen() {
   const [_devMode, _setDevMode] = useSetting(SETTINGS.debug_mode.key)
   const [storedPhotoSize, setPhotoSize] = useSetting(SETTINGS.button_photo_size.key)
   const photoSize = normalizeButtonPhotoSize(storedPhotoSize)
-  const [_ledEnabled, setLedEnabled] = useSetting(SETTINGS.button_camera_led.key)
   const [videoSettings, setVideoSettings] = useSetting(SETTINGS.button_video_settings.key)
   const [maxRecordingTime, setMaxRecordingTime] = useSetting(SETTINGS.button_max_recording_time.key)
   const [cameraFovSetting, setCameraFovSetting] = useSetting(SETTINGS.camera_fov.key)
@@ -188,14 +187,6 @@ export default function CameraSettingsScreen() {
       button_video_height: height,
       button_video_fps: fps,
     })
-  }
-
-  const _handleLedToggle = (enabled: boolean) => {
-    if (!glassesConnected) {
-      console.log("Cannot toggle LED - glasses not connected")
-      return
-    }
-    setLedEnabled(enabled)
   }
 
   const handleMaxRecordingTimeChange = (time: MaxRecordingTime) => {
