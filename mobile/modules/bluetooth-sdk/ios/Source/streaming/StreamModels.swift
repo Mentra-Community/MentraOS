@@ -4,18 +4,18 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
-    public let frameRate: Int?
+    public let fps: Int?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        frameRate: Int? = nil
+        fps: Int? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
-        self.frameRate = frameRate
+        self.fps = fps
     }
 
     var dictionary: [String: Any] {
@@ -23,7 +23,8 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
-        if let frameRate { values["frameRate"] = frameRate }
+        // ASG stream parsers shipped with the BLE key named "frameRate".
+        if let fps { values["frameRate"] = fps }
         return values
     }
 
@@ -33,7 +34,7 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            frameRate: intValue(values["frameRate"])
+            fps: intValue(values["fps"])
         )
     }
 }

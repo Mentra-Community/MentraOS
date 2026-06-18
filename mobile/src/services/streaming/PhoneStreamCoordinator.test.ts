@@ -170,7 +170,7 @@ describe("PhoneStreamCoordinator", () => {
       const result = await coord.startManaged("com.a", {
         audio: {bitrate: 64_000},
         sound: false,
-        video: {frameRate: 30},
+        video: {fps: 30},
       })
       expect(result.streamId).toMatch(/^phone-m-/)
       expect(result.status).toBe("streaming")
@@ -189,7 +189,7 @@ describe("PhoneStreamCoordinator", () => {
       // HLS playback or recording, and SRT survives RTMPS-hostile firewalls.
       expect(arg.streamUrl).toBe("srt://ingest.test/abc")
       expect(arg.sound).toBe(false)
-      expect(arg.video).toEqual({frameRate: 30})
+      expect(arg.video).toEqual({fps: 30})
       expect(arg.audio).toEqual({bitrate: 64_000})
       expect("keepAlive" in arg).toBe(false)
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
