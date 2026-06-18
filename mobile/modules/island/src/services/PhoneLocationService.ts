@@ -46,8 +46,19 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
 /** Map a MentraOS location tier/accuracy string to an expo-location accuracy. */
 export function getLocationAccuracy(accuracy: string | undefined): Location.LocationAccuracy {
   switch (accuracy) {
+    // Aggregate miniapp tiers (LocalMiniappRuntime.recomputeLocation → "passive" |
+    // "low" | "high" | "realtime"). Previously only "realtime" mapped; "passive"/"low"/
+    // "high" fell through to Lowest, so a miniapp asking for high-rate GPS got the
+    // coarsest accuracy.
     case "realtime":
       return Location.LocationAccuracy.BestForNavigation
+    case "high":
+      return Location.LocationAccuracy.High
+    case "low":
+      return Location.LocationAccuracy.Low
+    case "passive":
+      return Location.LocationAccuracy.Lowest
+    // Accuracy-string vocabulary (persisted location_tier setting / boot path).
     case "tenMeters":
       return Location.LocationAccuracy.High
     case "hundredMeters":
