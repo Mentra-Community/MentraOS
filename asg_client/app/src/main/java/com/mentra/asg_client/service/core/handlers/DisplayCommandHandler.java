@@ -9,8 +9,10 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -29,10 +31,22 @@ import java.util.Set;
  *
  * Renders a full-screen semi-transparent overlay on the glasses display
  * using a system-level window so it appears over all apps.
+ *
+ * text_wall / double_text_wall content is wrapped in a ScrollView and
+ * auto-scrolled to the bottom after layout. On the Go2's small (640x480)
+ * panel, longer captions can need more vertical space than the screen has;
+ * this guarantees the most recent lines (the bottom of the message) stay
+ * on-screen, with any overflow clipped from the top instead of the bottom.
  */
 public class DisplayCommandHandler implements ICommandHandler {
 
     private static final String TAG = "DisplayCommandHandler";
+
+    // Text sizes (sp). Reduced from the original 28/22/26 to leave more
+    // headroom on the 480px-tall panel before scrolling/clipping kicks in.
+    private static final int TEXT_SIZE_SINGLE         = 22; // text_wall
+    private static final int TEXT_SIZE_DOUBLE_TOP     = 18; // double_text_wall top line
+    private static final int TEXT_SIZE_DOUBLE_BOTTOM  = 22; // double_text_wall bottom line
 
     private final Context context;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -98,7 +112,7 @@ public class DisplayCommandHandler implements ICommandHandler {
     }
 
     // -----------------------------------------------------------------------
-    // text_wall / double_text_wall overlay rendering (unchanged)
+    // text_wall / double_text_wall overlay rendering
     // -----------------------------------------------------------------------
 
     private void showTextOverlay(final String topText, final String bottomText) {
@@ -107,7 +121,9 @@ public class DisplayCommandHandler implements ICommandHandler {
                 // Remove any existing overlay first
                 removeOverlay();
 
-                // Root layout — full screen, black background
+                // Content layout — sized to its natural content height (which
+                // may be taller than the screen); centered within the
+                // ScrollView's viewport when it fits on its own.
                 LinearLayout root = new LinearLayout(context);
                 root.setOrientation(LinearLayout.VERTICAL);
                 root.setBackgroundColor(Color.argb(220, 0, 0, 0));
@@ -116,11 +132,11 @@ public class DisplayCommandHandler implements ICommandHandler {
 
                 if (bottomText == null || bottomText.isEmpty()) {
                     // Single text_wall — centred, large
-                    TextView tv = makeTextView(topText, 28, true, Color.WHITE);
+                    TextView tv = makeTextView(topText, TEXT_SIZE_SINGLE, true, Color.WHITE);
                     root.addView(tv);
                 } else {
                     // double_text_wall — top smaller, bottom larger
-                    TextView tvTop = makeTextView(topText, 22, false, Color.WHITE);
+                    TextView tvTop = makeTextView(topText, TEXT_SIZE_DOUBLE_TOP, false, Color.WHITE);
                     tvTop.setPadding(0, 0, 0, 20);
                     root.addView(tvTop);
 
@@ -132,11 +148,13 @@ public class DisplayCommandHandler implements ICommandHandler {
                     divider.setLayoutParams(dp);
                     root.addView(divider);
 
-                    TextView tvBottom = makeTextView(bottomText, 26, true, Color.WHITE);
+                    TextView tvBottom = makeTextView(bottomText, TEXT_SIZE_DOUBLE_BOTTOM, true, Color.WHITE);
                     root.addView(tvBottom);
                 }
 
-                addOverlayView(root);
+                ScrollView scrollable = wrapInScrollableContainer(root);
+                addOverlayView(scrollable);
+                scrollToBottomAfterLayout(scrollable);
                 Log.d(TAG, "📺 Overlay displayed");
 
             } catch (Exception e) {
@@ -236,6 +254,8 @@ public class DisplayCommandHandler implements ICommandHandler {
         tpNextView = makeTextView("", 20, false, Color.argb(160, 200, 200, 200));
         root.addView(tpNextView);
 
+        // Note: teleprompter is a fixed 3-line layout, so it's added directly
+        // (not scroll-wrapped) — there's no growing/overflowing content here.
         addOverlayView(root);
         teleprompterActive = true;
         Log.d(TAG, "📺 Teleprompter overlay built");
@@ -244,6 +264,38 @@ public class DisplayCommandHandler implements ICommandHandler {
     // -----------------------------------------------------------------------
     // Shared overlay helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Wraps content in a ScrollView so it can be measured at its full natural
+     * height (even when taller than the screen) rather than being clamped —
+     * and therefore silently bottom-clipped — to the window's height.
+     * fillViewport keeps the original centered look when content is short
+     * enough to fit on its own.
+     */
+    private ScrollView wrapInScrollableContainer(LinearLayout content) {
+        content.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ScrollView scrollView = new ScrollView(context);
+        scrollView.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrollView.setFillViewport(true);
+        scrollView.setVerticalScrollBarEnabled(false);
+        scrollView.addView(content);
+        return scrollView;
+    }
+
+    /**
+     * Scrolls to the bottom once the view has gone through layout, so the
+     * tail of the message — the newest lines — is what stays visible if the
+     * content is taller than the screen. Older/top lines scroll out of view
+     * instead of the bottom getting clipped.
+     */
+    private void scrollToBottomAfterLayout(ScrollView scrollView) {
+        scrollView.post(() -> scrollView.fullScroll(View.FOCUS_DOWN));
+    }
 
     private void addOverlayView(View root) {
         int overlayType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
