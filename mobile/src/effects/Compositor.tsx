@@ -62,7 +62,7 @@ const SWITCHER_COMMIT_VELOCITY = -500
 // How far the overlay shrinks while the bottom swipe-up follows the finger.
 const SWIPE_UP_SCALE_TO = 0.5
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 850 : 1200
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 400 : 500
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
