@@ -1,3 +1,4 @@
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
 import sttModelManager from "./STTModelManager"
 
@@ -114,7 +115,8 @@ class LocalSttFallbackCoordinator {
       return
     }
     try {
-      await getRuntimeHooks().restartTranscriber?.()
+      // Direct btsdk call now (was a host restartTranscriber hook).
+      await BluetoothSdk.restartTranscriber()
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
     }

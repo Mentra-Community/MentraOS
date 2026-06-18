@@ -9,7 +9,7 @@
  * BluetoothSdk so the mic runs whenever at least one consumer needs it.
  */
 
-import {getRuntimeHooks} from "../runtime/config"
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 
 const LOG_TAG = "MIC_COORDINATOR"
 
@@ -78,17 +78,14 @@ class MicStateCoordinator {
     //   `${LOG_TAG}: applying union — pcm=${shouldSendPcm} lc3=${shouldSendLc3} transcript=${shouldSendTranscript}`,
     // )
 
-    const setMicRequirements = getRuntimeHooks().setMicRequirements
-    if (!setMicRequirements) {
-      return
-    }
-
+    // The mic control plane is a direct btsdk call now (was a host setMicRequirements
+    // hook) so a bare OEM streams audio without wiring it.
     try {
       void Promise.resolve(
-        setMicRequirements({
-          shouldSendPcm,
-          shouldSendLc3,
-          shouldSendTranscript,
+        BluetoothSdk.updateBluetoothSettings({
+          should_send_pcm: shouldSendPcm,
+          should_send_lc3: shouldSendLc3,
+          should_send_transcript: shouldSendTranscript,
         }),
       ).catch((err) => {
         console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
