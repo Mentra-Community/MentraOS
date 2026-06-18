@@ -22,7 +22,7 @@ import { Hono, type Context } from "hono";
 import {
   AccessTokenError,
   createLogger,
-  verifyAccessTokenSignature,
+  verifyRuntimeToken,
 } from "@mentra/cloud-shared";
 import { photoOptionsSchema, streamOptionsSchema } from "../protocol/camera";
 import { getStorageProvider } from "../services/storage/storage.service";
@@ -47,7 +47,7 @@ async function authUser(
     return { error: c.json({ error: "missing or malformed Authorization" }, 401) };
   }
   try {
-    const verified = await verifyAccessTokenSignature(token);
+    const verified = await verifyRuntimeToken(token);
     return { mentraUserId: verified.mentraUserId };
   } catch (err) {
     if (err instanceof AccessTokenError) {

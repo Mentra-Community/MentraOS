@@ -1,0 +1,44 @@
+{
+  "name": "example-oem-app",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild"
+  },
+  "dependencies": {
+    "@mentra/island": "workspace:*",
+    "@mentra/bluetooth-sdk": "workspace:*",
+    "@dr.pogodin/react-native-fs": "^2.37.0",
+    "expo": "~55.0.24",
+    "expo-battery": "^55.0.13",
+    "expo-build-properties": "~55.0.14",
+    "expo-clipboard": "~55.0.13",
+    "expo-file-system": "~55.0.20",
+    "expo-location": "~55.1.10",
+    "expo-status-bar": "~55.0.6",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-mmkv": "4.0.0",
+    "react-native-nitro-bg-timer": "^0.1.0",
+    "react-native-share": "^12.2.5",
+    "react-native-zip-archive": "^7.0.2",
+    "semver": "^7.7.4",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@types/react": "~19.2.14",
+    "@types/semver": "^7.7.1",
+    "babel-preset-expo": "~55.0.22",
+    "typescript": "~5.9.2"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "../../mobile/modules"
+    }
+  }
+}

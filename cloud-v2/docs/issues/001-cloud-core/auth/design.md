@@ -16,16 +16,22 @@ for the from-zero primer (JWTs, asymmetric signing, JWKS, audiences, exchange).
 1. A user signs in. For an OEM user the OEM's backend mints a short-lived subject
    JWT; for a Mentra user the subject is the existing core token (transition) or a
    Supabase session (end state).
-2. The **cloud-client** exchanges the subject token at
-   `POST /api/client/auth/exchange` for a Mentra **access token** (+ refresh), and
-   owns refresh from there. The access token carries `sub = mentraUserId`, `oemId`.
-3. For each running miniapp, the cloud-client mints a **miniapp-scoped token**
+2. In Core-backed mode, the **cloud-client** exchanges the subject token at
+   `POST /api/client/auth/exchange` for a **Core access token** (+ refresh), and
+   owns refresh from there. The Core token carries `sub = mentraUserId`, `oemId`,
+   and `aud = "cloud-core"`.
+3. Runtime live services use a separate **runtime token** with
+   `aud = "cloud-runtime"` (issue 007). In hosted deployments, Core/Auth can
+   broker or mint that runtime token after verifying the same OEM subject token;
+   in OEM-hosted runtime deployments, the runtime may trust the OEM's own issuer
+   directly.
+4. For each running miniapp, the cloud-client mints a **miniapp-scoped token**
    (`POST /api/client/auth/miniapp-token`, `aud = <packageName>`), caches it, and
    refreshes before expiry.
-4. The on-device runtime delivers the miniapp token to the miniapp's background
+5. The on-device runtime delivers the miniapp token to the miniapp's background
    JSContext (which owns the session); the UI gets it over RPC if it needs it. The
-   access token never reaches the miniapp.
-5. The bundle calls its developer backend with the miniapp token. The backend
+   Core/runtime tokens never reach the miniapp.
+6. The bundle calls its developer backend with the miniapp token. The backend
    verifies it against Mentra's **JWKS**, checks `aud`, and applies its `oemId`
    trust policy. No per-request call to Mentra.
 
@@ -46,7 +52,7 @@ specified in [`oem-auth.md`](./oem-auth.md#collection-users).
 "Mentra's own users" spans the consumer app, the Dev Console website, and the
 App/MiniApp Store website. Today all three use **one** identity system: Supabase
 sign-in plus a core-token exchange (not three separate systems). v2 keeps them on a
-single identity system and unifies them on the Mentra access token.
+single identity system and unifies them on the Core-backed auth path.
 
 Architecturally Mentra's app is just the first consumer of the OEM Toolkit (Mentra
 is "OEM zero"), so Mentra issues its users' tokens as its own **reserved OEM**
@@ -57,8 +63,9 @@ the same exchange. For Mentra-direct users the `oemUserId` is the Supabase `sub`
 ### OEM users
 
 An OEM owns its users' identity. The OEM mints a subject JWT, exchanges it via RFC
-8693 for the Mentra access token; Mentra maps `(oemId, oemUserId)` to a
-`mentraUserId`, created on first sight. The dev-backend handoff carries
+8693 for Core-backed tokens in hosted deployments; Mentra maps
+`(oemId, oemUserId)` to a `mentraUserId`, created on first sight. The
+dev-backend handoff carries
 `mentraUserId` + `oemId` (the miniapp auto-auth flow below). Full mechanics in
 [`oem-auth.md`](./oem-auth.md).
 
@@ -79,24 +86,25 @@ Context for the migration bridge below. In v1:
   consumer app, Dev Console, and Store, with a shared secret only the cloud can
   verify, and no public-key (JWKS) verification anywhere.
 
-### Migration bridge: core token to v2 access token
+### Migration bridge: core token to v2 Core and Runtime tokens
 
 During the v1 to v2 transition the client authenticates to both clouds: the legacy
-v1 path (existing miniapps, the v1 WS/REST) still wants the core token, and the v2
-path (cloud-runtime, the cloud-client) wants the Mentra access token. The simplest
-bridge leaves the existing login untouched and derives the v2 token from the core
-token:
+v1 path (existing miniapps, the v1 WS/REST) still wants the core token, Core APIs
+want a `cloud-core` token, and Runtime Services want a `cloud-runtime` token. The
+simplest bridge leaves the existing login untouched and lets Core/Auth derive v2
+credentials from the v1 core token:
 
 1. The client logs in exactly as today (Supabase to core token at v1) and uses the
    core token for the v1 path, unchanged.
 2. Cloud Core v2 exposes the RFC 8693 exchange where, for the reserved `mentra`
    OEM, the **subject token is the core token**. Mentra is "OEM zero," and its
    "OEM-signed JWT" is the core token it already issues.
-3. Cloud Core verifies the core token (it knows the shared secret), maps
+3. Cloud Core/Auth verifies the core token (it knows the shared secret), maps
    `(oemId = "mentra", oemUserId = the Supabase sub carried in the core token)` to
-   a `mentraUserId`, and returns the v2 access + refresh tokens.
-4. The client now holds **both** tokens at once: core token for v1, access token
-   for v2 (cloud-runtime plus miniapp-token minting).
+   a `mentraUserId`, and returns the v2 Core credential. The same broker can mint
+   a normalized `cloud-runtime` token for hosted Runtime.
+4. The client now holds the v1 core token for legacy APIs plus v2 credentials:
+   a Core token for Core-owned APIs and a Runtime token for live services.
 
 Two details:
 
@@ -108,9 +116,10 @@ Two details:
   token already carries as its own `sub`.
 
 End state: once v2 is primary, swap the subject token from "core token" to a
-Supabase session (direct Mentra login), same endpoint, and retire the bridge. The
-v1 webview auth path (temp token, `frontendToken`, the API-key hash) is replaced by
-the asymmetric JWKS flow (see auto-auth below); it stays until v1 is retired.
+cleaner Mentra-direct issuer credential, same broker/exchange concept, and retire
+the bridge. The v1 webview auth path (temp token, `frontendToken`, the API-key
+hash) is replaced by the asymmetric JWKS flow (see auto-auth below); it stays until
+v1 is retired.
 
 **Tracked separately:** v1 keyed users (and dev backends) on email. Migrating
 existing email-based Mentra users to `mentraUserId` is its own spec.
@@ -149,12 +158,12 @@ API key (symmetric) and a hardcoded Mentra public key; `userId` is the email.
 
 Two things changed, and together they force the redesign: miniapps are now **local**
 (a bundle running on-device in the Runtime, with no remote webview URL to inject
-into), and v2 has a **real public-key token** (the Ed25519 access token, which
-anyone can verify with Mentra's public key via JWKS). The mechanism:
+into), and v2 has **real public-key tokens** (the Core/miniapp tokens, which
+verifiers can check with a JWKS). The mechanism:
 
 1. The miniapp declares it has a backend (in `miniapp.json`), with the
    audience/key id it expects.
-2. At launch, the on-device runtime (holding the user's access token) obtains a
+2. At launch, the on-device runtime (holding the user's Core credential) obtains a
    short-lived **miniapp-scoped token**: an Ed25519 Mentra-signed JWT with
    `sub = mentraUserId`, `oemId`, `aud = <packageName>`, short expiry. Minted by
    `POST /api/client/auth/miniapp-token` (see [`spec.md`](./spec.md)). Minting is
@@ -179,9 +188,9 @@ same miniapp-scoped token (v1's Path B carried forward, issuing the v2 token).
 
 ### On-device injection
 
-The miniapp receives only the **miniapp-scoped token**; the access token stays in
-the cloud-client and is never handed to a bundle. The on-device Runtime obtains the
-scoped token from `cloud.auth.getMiniappToken(packageName)` and delivers it.
+The miniapp receives only the **miniapp-scoped token**; Core/runtime tokens stay in
+the cloud-client and are never handed to a bundle. The on-device Runtime obtains
+the scoped token from `cloud.auth.getMiniappToken(packageName)` and delivers it.
 
 - **The session is background-only.** The miniapp's `session` (and so its
   authed-fetch helper) lives in the background JSContext (a headless JavaScript
@@ -232,8 +241,9 @@ await fetch("https://api.theirapp.com/...", {
   call `/exchange`; own refresh via `/refresh`.
 - `getMiniappToken(packageName)`: call the mint endpoint, cache per package,
   re-mint before expiry.
-- Expose `identity { mentraUserId, oemId }` (decoded from the access token).
-- Never expose the access token to a bundle.
+- Expose `identity { mentraUserId, oemId }` from the active Core/runtime
+  credential path.
+- Never expose Core or Runtime bearer tokens to a bundle.
 
 ### 3. On-device runtime (the bundle host)
 

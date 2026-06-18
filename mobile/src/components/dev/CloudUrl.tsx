@@ -9,8 +9,12 @@ import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 import showAlert from "@/utils/AlertUtils"
 
-const AWS_DEV_CORE_URL = "https://core.us-west-2.dev.mentraglass.com"
-const AWS_DEV_RUNTIME_URL = "https://runtime.us-west-2.dev.mentraglass.com"
+const CLOUD_DEV_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
+const CLOUD_DEV_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
+const CLOUD_DEBUG_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
+const CLOUD_DEBUG_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
+const CLOUD_STAGING_CORE_URL = "https://core.staging.us-west-2.mentraglass.com"
+const CLOUD_STAGING_RUNTIME_URL = "https://runtime.staging.us-west-2.mentraglass.com"
 
 const LOCAL_CORE_PORT = 3000
 const LOCAL_RUNTIME_PORT = 3001
@@ -72,9 +76,7 @@ export default function CloudUrl() {
     const isHttp = (u: string) => u.startsWith("http://") || u.startsWith("https://")
     const isValid = (u: string) => u === METRO_AUTO || isHttp(u)
     if (!isValid(core) || !isValid(runtime)) {
-      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [
-        {text: "OK"},
-      ])
+      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
       return
     }
 
@@ -147,8 +149,8 @@ export default function CloudUrl() {
       <View className="flex-1">
         <Text className="flex-wrap text-base text-foreground">Cloud V2</Text>
         <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
-          New audio/captions cloud; the v1 backend URL above is the legacy cloud. Override the Cloud V2 core and
-          runtime endpoints. Leave blank to use env/default.
+          New audio/captions cloud; the v1 backend URL above is the legacy cloud. Override the Cloud V2 core and runtime
+          endpoints. Leave blank to use env/default.
         </Text>
 
         <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Core URL</Text>
@@ -185,39 +187,67 @@ export default function CloudUrl() {
           editable={!isSaving}
         />
 
-        <View className="mt-3 flex-row justify-between">
+        <View className="mt-3 flex-row gap-3">
           <Button
             text={isSaving ? "Testing..." : "Save & Test"}
             onPress={handleSave}
             disabled={isSaving}
             preset="alternate"
             flexContainer={false}
+            flex
           />
-          <Button text="Reset" onPress={handleReset} disabled={isSaving} preset="alternate" flexContainer={false} />
-        </View>
-
-        {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
-        <View className="mt-3 flex-row justify-between gap-3">
           <Button
-            compact
-            text="AWS us-west-2 (dev)"
-            onPress={() => applyPreset(AWS_DEV_CORE_URL, AWS_DEV_RUNTIME_URL)}
+            text="Reset"
+            onPress={handleReset}
+            disabled={isSaving}
+            preset="alternate"
             flexContainer={false}
             flex
           />
-          {/* Only offered when a Metro dev server is actually detectable.
-              Fills both fields with the metro-auto sentinel: the SAVED value
-              is "my laptop", resolved live on every connect, so it follows
-              the laptop across networks instead of freezing today's IP. */}
-          {metroHost && (
+        </View>
+
+        {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
+        <View className="mt-3 gap-3">
+          <View className="flex-row gap-3">
             <Button
               compact
-              text={`Local (auto: ${metroHost})`}
-              onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
+              text="Cloud Dev"
+              onPress={() => applyPreset(CLOUD_DEV_CORE_URL, CLOUD_DEV_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
-          )}
+            <Button
+              compact
+              text="Cloud Debug"
+              onPress={() => applyPreset(CLOUD_DEBUG_CORE_URL, CLOUD_DEBUG_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+          </View>
+          <View className="flex-row gap-3">
+            <Button
+              compact
+              text="Cloud Staging"
+              onPress={() => applyPreset(CLOUD_STAGING_CORE_URL, CLOUD_STAGING_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+            {/* Only offered when a Metro dev server is actually detectable.
+                Fills both fields with the metro-auto sentinel: the SAVED value
+                is "my laptop", resolved live on every connect, so it follows
+                the laptop across networks instead of freezing today's IP. */}
+            {metroHost ? (
+              <Button
+                compact
+                text={`Local (auto: ${metroHost})`}
+                onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
+                flexContainer={false}
+                flex
+              />
+            ) : (
+              <View className="flex-1" />
+            )}
+          </View>
         </View>
       </View>
     </GlassView>

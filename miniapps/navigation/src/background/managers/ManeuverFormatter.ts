@@ -13,6 +13,7 @@
 
 import type {NavManeuver} from "@mentra/miniapp"
 
+import type {UnitSystem} from "../../shared/types"
 import {formatDistance, formatDuration} from "../lib/formatDistance"
 
 /** Distance threshold below which a turn becomes the active instruction. */
@@ -105,16 +106,16 @@ export class ManeuverFormatter {
    *   "Continue straight"
    *   "Arriving in 35 m"
    */
-  headline(m: NavManeuver): string {
+  headline(m: NavManeuver, unit: UnitSystem = "metric"): string {
     const verb = this.humanize(m.maneuverType)
     if (m.maneuverType === "ARRIVE") {
-      return m.distanceMeters > 0 ? `Arriving in ${formatDistance(m.distanceMeters)}` : "Arriving"
+      return m.distanceMeters > 0 ? `Arriving in ${formatDistance(m.distanceMeters, unit)}` : "Arriving"
     }
     if (m.maneuverType === "STRAIGHT") {
       return "Continue straight"
     }
     if (m.distanceMeters > 0) {
-      return `In ${formatDistance(m.distanceMeters)}, ${verb}`
+      return `In ${formatDistance(m.distanceMeters, unit)}, ${verb}`
     }
     return this.cap(verb)
   }
@@ -124,7 +125,7 @@ export class ManeuverFormatter {
    * Returns `next: null` when the imminent turn IS the active instruction
    * (≤ IMMINENT_M), in which case the caller falls back to a single line.
    */
-  glassesLines(m: NavManeuver): {now: string; next: string | null} {
+  glassesLines(m: NavManeuver, unit: UnitSystem = "metric"): {now: string; next: string | null} {
     const dist = m.distanceMeters
     const isStraightT = this.isStraight(m)
     const arrowed = (verb: string) => `${this.arrow(m.maneuverType)} ${verb}`
@@ -139,7 +140,7 @@ export class ManeuverFormatter {
     }
 
     const road = this.cleanRoad(m.fromRoad, m.maneuverType)
-    const distStr = dist > 0 ? formatDistance(dist) : null
+    const distStr = dist > 0 ? formatDistance(dist, unit) : null
     const nowLine =
       road && distStr
         ? `↑ ${road} • ${distStr}`
@@ -162,13 +163,13 @@ export class ManeuverFormatter {
    * the engine hasn't supplied trip totals yet (-1 sentinels), so the UI
    * can hide the line instead of rendering em-dashes.
    */
-  glassesProgressLine(m: NavManeuver): string | null {
+  glassesProgressLine(m: NavManeuver, unit: UnitSystem = "metric"): string | null {
     const dist = m.distanceToDestinationMeters
     const time = m.timeToDestinationSeconds
     const haveDist = typeof dist === "number" && dist >= 0
     const haveTime = typeof time === "number" && time >= 0
     if (!haveDist && !haveTime) return null
-    const distStr = haveDist ? `${formatDistance(dist!)} to destination` : null
+    const distStr = haveDist ? `${formatDistance(dist!, unit)} to destination` : null
     const timeStr = haveTime ? formatDuration(time!) : null
     return [distStr, timeStr].filter(Boolean).join(" · ")
   }

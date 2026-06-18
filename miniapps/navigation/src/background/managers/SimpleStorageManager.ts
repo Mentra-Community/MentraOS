@@ -12,6 +12,7 @@
 
 import type {MiniappSession} from "@mentra/miniapp"
 import type {PlaceDetails, SavedPlace} from "../lib/places"
+import type {UnitSystem} from "../../shared/types"
 
 export class SimpleStorageManager {
   constructor(private readonly session: MiniappSession) {}
@@ -103,5 +104,18 @@ export class SimpleStorageManager {
     if (next.length !== current.length) {
       await this.setJSON(SimpleStorageManager.SAVED_PLACES_KEY, next)
     }
+  }
+
+  private static readonly UNIT_SYSTEM_KEY = "unitSystem"
+
+  /** Returns the saved distance-unit preference, defaulting to "metric". */
+  async getUnitSystem(): Promise<UnitSystem> {
+    const raw = await this.get(SimpleStorageManager.UNIT_SYSTEM_KEY)
+    return raw === "imperial" ? "imperial" : "metric"
+  }
+
+  /** Persists the distance-unit preference. */
+  async setUnitSystem(unit: UnitSystem): Promise<void> {
+    await this.set(SimpleStorageManager.UNIT_SYSTEM_KEY, unit)
   }
 }
