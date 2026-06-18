@@ -1,1 +1,9 @@
-* @Mentra-Community/core
+# The last matching CODEOWNERS pattern wins, so keep @aisraelov on each narrower rule.
+* @aisraelov
+
+miniapps/ @aisraelov @AryanFP @isaiahb
+mobile/ @aisraelov @AryanFP
+cloud-v2/ @aisraelov @AryanFP @isaiahb
+cloud/ @aisraelov @isaiahb
+mintlify-docs/ @aisraelov @isaiahb
+mobile/modules/bluetooth-sdk/ @aisraelov @AryanFP @PhilippeFerreiraDeSousa
