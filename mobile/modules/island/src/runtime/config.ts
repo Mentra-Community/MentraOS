@@ -101,16 +101,6 @@ export interface CloudRuntimeAdapter {
   isConnected: () => boolean
 }
 
-/**
- * Cloud connection state surface used by LocalSttFallbackCoordinator to
- * decide when on-device STT should take over from cloud transcription.
- * Hosts wrap their own WebSocket-status store.
- */
-export interface CloudConnectionAdapter {
-  isConnected: () => boolean
-  addListener: (l: (connected: boolean) => void) => () => void
-}
-
 export interface AudioPlayRequest {
   requestId: string
   audioUrl: string
@@ -464,8 +454,6 @@ export interface RuntimeHooks {
   heading?: HeadingAdapter
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
   locationTier?: LocationTierAdapter
-  /** Cloud WebSocket connection state surface. */
-  cloudConnection?: CloudConnectionAdapter
   /**
    * The dev machine's live LAN host (no port), derived by the host from
    * Metro's `hostUri` — the address this dev bundle was actually served from,

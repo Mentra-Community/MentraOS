@@ -5,6 +5,9 @@ import { printQR } from './qr.js';
 import { validateManifest } from './manifest.js';
 import { startDevSidecar } from './dev-server.js';
 
+const DEFAULT_DEV_PORT = 3000;
+const DEV_PORT_SCAN_LIMIT = 50;
+
 function getLanIp(): string | null {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -27,6 +30,36 @@ function contentTypeFor(path: string): string {
   if (path.endsWith('.svg')) return 'image/svg+xml';
   if (path.endsWith('.map')) return 'application/json; charset=utf-8';
   return 'application/octet-stream';
+}
+
+function canListenOnPort(port: number): boolean {
+  try {
+    const server = Bun.serve({
+      hostname: '0.0.0.0',
+      port,
+      fetch: () => new Response(),
+    });
+    server.stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pickDevPort(start: number): number {
+  for (let i = 0; i < DEV_PORT_SCAN_LIMIT; i++) {
+    const port = start + i;
+    if (canListenOnPort(port) && canListenOnPort(port + 1)) {
+      return port;
+    }
+  }
+
+  const end = start + DEV_PORT_SCAN_LIMIT - 1;
+  console.error(
+    `Error: no free adjacent dev port pair found between base ports ${start} and ${end}. ` +
+      '`mentra-miniapp dev` needs one port for static files and the next port for live reload.',
+  );
+  process.exit(1);
 }
 
 /**
@@ -96,9 +129,13 @@ export async function dev(): Promise<void> {
 
   const name: string = (manifest.name as string) ?? 'unnamed';
   const packageName: string = (manifest.packageName as string) ?? 'unknown';
-  const port: number = (manifest.port as number) ?? 3000;
+  const requestedPort: number = (manifest.port as number) ?? DEFAULT_DEV_PORT;
+  const port = pickDevPort(requestedPort);
 
   console.log(`Starting dev server for ${name} (${packageName}) on port ${port}...`);
+  if (port !== requestedPort) {
+    console.log(`Port ${requestedPort} was unavailable; using ${port} instead.`);
+  }
 
   // Initial build before serving — a fresh `bun run dev` should always
   // start from a clean, current `dist/`.

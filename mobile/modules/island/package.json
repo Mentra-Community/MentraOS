@@ -34,6 +34,7 @@
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
     "@mentra/miniapp": "workspace:*"
   },
   "peerDependencies": {

@@ -54,6 +54,7 @@ interface LocalMiniappViewProps {
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
 function LocalMiniappView({
@@ -65,6 +66,7 @@ function LocalMiniappView({
   devPort,
   onExit,
   onShouldCapture = () => undefined,
+  showCapsule = false,
 }: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
@@ -284,6 +286,12 @@ function LocalMiniappView({
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
+      // if (devUrl) {
+      //   // failed to load the dev url (we probably are connected to a different wifi network)
+      //   useAppStatusStore.getState().clearForeground()
+      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
+      //   return
+      // }
       fail(e.message)
     })
 
@@ -457,7 +465,7 @@ function LocalMiniappView({
           label={label}
           devApp={isDevApp}
         />
-        <CapsuleMenu forceShow={true} />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -532,7 +540,7 @@ function LocalMiniappView({
           devApp={isDevApp}
           disableFadeIn={true}
         />
-        <CapsuleMenu forceShow={true} />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -596,7 +604,7 @@ function LocalMiniappView({
         disableFadeIn={true}
       />
       {/* <View className="flex-1 bg-red-500"/> */}
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }
