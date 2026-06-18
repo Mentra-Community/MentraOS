@@ -1963,7 +1963,7 @@ class G2: NSObject, SGCManager {
         self.sendMenuApps()
 
         // order the calendar (Schedule) widget first on the dashboard
-        self.setCalendarWidgetFirst()
+        // self.setCalendarWidgetFirst()
 
         // send calendar events
         let calendarEvents =
@@ -2227,7 +2227,8 @@ class G2: NSObject, SGCManager {
                     mapFragmentPacketSize: Int32(fragment.count),
                     mapRawData: Data(fragment)
                 )
-                sendEvenHubCommand(msg)
+                // sendEvenHubCommand(msg)
+                queueEvenHubCommand(msg)// if the queue is backed up, the message will fail the ack check but that's fine
                 // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
@@ -2420,7 +2421,7 @@ class G2: NSObject, SGCManager {
             await sendImageData(
                 containerID: container.id, containerName: container.name, bmpData: container.bmpData
             )
-            try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms between containers
+            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms between containers
         }
 
         // go through each text container and send the data:
