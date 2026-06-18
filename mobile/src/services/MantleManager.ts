@@ -3,7 +3,6 @@ import CrustModule from "crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
-import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
@@ -24,6 +23,7 @@ import {
   configureRuntime,
   displayProcessor,
   toolkit,
+  phoneLocationService,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
@@ -45,8 +45,6 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {Buffer} from "@craftzdog/react-native-buffer"
-
-const LOCATION_TASK_NAME = "handleLocationUpdates"
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -78,33 +76,9 @@ function parseBundledMiniappName(name: string): {packageName: string; version: s
   }
 }
 
-// @ts-ignore
-TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
-  if (error) {
-    // check `error.message` for more details.
-    // console.error("Error handling location updates", error)
-    return
-  }
-  const locs = locations as Location.LocationObject[]
-  if (locs.length === 0) {
-    console.log("MANTLE: LOCATION: No locations received")
-    return
-  }
-
-  // console.log("Received new locations", locations)
-  const first = locs[0]!
-  // socketComms.sendLocationUpdate(first.coords.latitude, first.coords.longitude, first.coords.accuracy ?? undefined)
-  restComms.sendLocationData(first)
-
-  // Direct forward to local miniapps. Cloud path (relayMessageToApps) never
-  // reaches __phone__, so local miniapps rely on this direct push.
-  localMiniappRuntime.forwardEvent("location_update", {
-    lat: first.coords.latitude,
-    lng: first.coords.longitude,
-    accuracy: first.coords.accuracy ?? undefined,
-    timestamp: first.timestamp,
-  })
-})
+// The background phone-location task + its tier control moved into island
+// (PhoneLocationService). MantleManager now drives it through the island service
+// (setupSubscriptions / cleanup) instead of defining the task here.
 
 class MantleManager {
   private static instance: MantleManager | null = null
@@ -247,16 +221,14 @@ class MantleManager {
       // photo capture + video recording moved into island (PhonePhotoCoordinator /
       // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
       // (The photo_response error-routing listener below still drives the coordinator.)
-      cameraSettings: {
-        setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
-      },
+      // camera FOV moved into island too (LocalMiniappRuntime calls BluetoothSdk.setCameraFov
+      // directly) — no longer a host cameraSettings hook.
       // Navigation (Google Nav SDK) moved into island (NavigationService, called
       // directly by the runtime's NavigationHandlers) — no longer a host hook.
       // heading / compass moved into island (HeadingService, subscribed directly by
       // the runtime) — no longer a host hook.
-      locationTier: {
-        setLocationTier: (rate) => this.setLocationTier(rate),
-      },
+      // phone GPS / location tier moved into island (PhoneLocationService, driven
+      // directly by the runtime's recomputeLocation) — no longer a host locationTier hook.
       // streaming (RTMP/SRT/WHIP) moved into island (PhoneStreamCoordinator, called
       // directly by the runtime) — no longer a host hook. (The stream_status /
       // keep_alive_ack listeners below still route events to the coordinator.)
@@ -337,7 +309,7 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+    phoneLocationService.stopPhoneLocation()
     this.transcriptProcessor.clear()
 
     localMiniappRuntime.cleanup()
@@ -439,14 +411,12 @@ class MantleManager {
     ) // 1 hour
 
     try {
-      // only start location updates if we have the location permission:
+      // only start location updates if we have the location permission (host UI gate);
+      // the island PhoneLocationService owns the background task + accuracy at the saved tier.
       const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
       if (hasLocation) {
-        let locationAccuracy = await useSettingsStore.getState().getSetting(SETTINGS.location_tier.key)
-        let properAccuracy = this.getLocationAccuracy(locationAccuracy)
-        Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: properAccuracy,
-        })
+        const savedTier = await useSettingsStore.getState().getSetting(SETTINGS.location_tier.key)
+        await phoneLocationService.setLocationTier(savedTier)
       }
     } catch (error) {
       console.error("MANTLE: Error starting location updates", error)
@@ -1125,56 +1095,16 @@ class MantleManager {
     // socketComms.sendLocationUpdate(location)
   }
 
-  public getLocationAccuracy(accuracy: string) {
-    switch (accuracy) {
-      case "realtime":
-        return Location.LocationAccuracy.BestForNavigation
-      case "tenMeters":
-        return Location.LocationAccuracy.High
-      case "hundredMeters":
-        return Location.LocationAccuracy.Balanced
-      case "kilometer":
-        return Location.LocationAccuracy.Low
-      case "threeKilometers":
-        return Location.LocationAccuracy.Lowest
-      case "reduced":
-        return Location.LocationAccuracy.Lowest
-      default:
-        // console.error("MANTLE: unknown accuracy: " + accuracy)
-        return Location.LocationAccuracy.Lowest
-    }
-  }
-
-  public async setLocationTier(tier: string) {
-    console.log("MANTLE: setLocationTier()", tier)
-    try {
-      const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
-      if (isRegistered) {
-        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
-      }
-      // "off" means no app is asking for location — leave the task
-      // stopped so the OS can power GPS down. Anything else: restart
-      // the task at the matching accuracy.
-      if (tier === "off") {
-        console.log("MANTLE: setLocationTier() stopped — no active subscribers")
-        return
-      }
-      const accuracy = this.getLocationAccuracy(tier)
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy,
-        pausesUpdatesAutomatically: false,
-      })
-      console.log("MANTLE: setLocationTier() success —", tier)
-    } catch (error) {
-      console.log("MANTLE: Error setting location tier", error)
-    }
-  }
-
+  // getLocationAccuracy + setLocationTier (+ the background location task) moved into
+  // island (PhoneLocationService). requestSingleLocation stays here for now — it's a
+  // one-shot that still forwards over v1 socketComms (deleted at v1 retirement).
   public async requestSingleLocation(accuracy: string, correlationId: string) {
     console.log("MANTLE: requestSingleLocation()")
     // restComms.sendLocationData({tier})
     try {
-      const location = await Location.getCurrentPositionAsync({accuracy: this.getLocationAccuracy(accuracy)})
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: phoneLocationService.getLocationAccuracy(accuracy),
+      })
       socketComms.sendLocationUpdate(
         location.coords.latitude,
         location.coords.longitude,

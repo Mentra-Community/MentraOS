@@ -51,6 +51,7 @@
     "expo-battery": "*",
     "expo-clipboard": "*",
     "expo-location": "*",
+    "expo-task-manager": "*",
     "react-native-share": "*",
     "@dr.pogodin/react-native-fs": "*",
     "@mentra/bluetooth-sdk": "*",

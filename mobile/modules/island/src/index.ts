@@ -48,6 +48,10 @@ export {
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as navigationService} from "./services/NavigationService"
+// Phone GPS — the background location task + tier control moved into island (was the
+// host locationTier hook + a MantleManager defineTask). Exported so the barrel load
+// registers the background task at @mentra/island import time.
+export {phoneLocationService, stopPhoneLocation} from "./services/PhoneLocationService"
 // Clock-skew utils (used by OTA + the host gallery sync) moved into island.
 export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
 export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
