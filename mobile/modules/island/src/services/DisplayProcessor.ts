@@ -28,6 +28,8 @@ import {
 } from "../utils/display"
 
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected} from "./GlassesReadiness"
 
 // =============================================================================
 // Types
@@ -155,12 +157,13 @@ function getPlaceholderValues(): PlaceholderValues {
   const day = now.getDate()
   const DATE = `${month}/${day}`
 
-  // Get battery level from glasses store
-  const batteryLevel = getRuntimeHooks().glassesStatus?.get().batteryLevel ?? -1
+  // Battery + connection read from the island glasses store directly (was a host
+  // glassesStatus hook).
+  const batteryLevel = useGlassesStore.getState().batteryLevel ?? -1
   const GBATT = batteryLevel === -1 ? "" : `${batteryLevel}%`
 
   // Connection status
-  const connected = getRuntimeHooks().glassesStatus?.get().connected ?? false
+  const connected = isGlassesConnected(useGlassesStore.getState().connection)
   const CONNECTION_STATUS = connected ? "Connected" : ""
 
   return {TIME12, TIME24, DATE, GBATT, CONNECTION_STATUS}
@@ -307,8 +310,8 @@ export class DisplayProcessor {
     }
 
     const hooks = getRuntimeHooks()
-    if (!hooks.settings && !hooks.subscribeGlassesStatus) {
-      // Hooks not configured yet; bail and let the host call us back after configureRuntime().
+    if (!hooks.settings) {
+      // Settings hook not configured yet; bail and let the host call us back after configureRuntime().
       return
     }
 
@@ -318,13 +321,14 @@ export class DisplayProcessor {
       console.log(`DISPLAY_PROCESSOR: Initialized DisplayProcessor with default wearable: ${defaultWearable}`)
     }
 
-    if (hooks.subscribeGlassesStatus) {
-      this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus((changed) => {
-        if (changed.deviceModel) {
-          this.setDeviceModel(String(changed.deviceModel))
-        }
-      })
-    }
+    // Track device-model changes off the island glasses store directly (was a host
+    // subscribeGlassesStatus hook).
+    this.unsubscribeGlassesStatus = useGlassesStore.subscribe(
+      (s) => s.deviceModel,
+      (deviceModel) => {
+        if (deviceModel) this.setDeviceModel(String(deviceModel))
+      },
+    )
 
     this.runtimeAttached = true
   }

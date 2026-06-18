@@ -34,7 +34,9 @@ import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
+import {isGlassesConnected} from "./GlassesReadiness"
 import {phoneLocationService} from "./PhoneLocationService"
+import {useGlassesStore} from "../stores/glasses"
 import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
@@ -1383,7 +1385,14 @@ class LocalMiniappRuntime {
    * are pure event streams with no "current value" to snapshot.
    */
   private emitInitialSnapshots(packageName: string, streams: string[]): void {
-    const glassesState = getRuntimeHooks().glassesStatus?.get() ?? {connected: false}
+    // Read the island glasses store directly (was a host glassesStatus hook).
+    const gs = useGlassesStore.getState()
+    const glassesState = {
+      connected: isGlassesConnected(gs.connection),
+      deviceModel: gs.deviceModel,
+      batteryLevel: gs.batteryLevel,
+      charging: gs.charging,
+    }
     const isSimulated = (glassesState.deviceModel || "").toLowerCase().includes("simulated")
 
     for (const stream of streams) {
