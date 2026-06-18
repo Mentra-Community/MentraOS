@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, Loader2, PackageCheck, Rocket, ShieldCheck, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 
@@ -67,6 +68,12 @@ const queryClient = new QueryClient({
   },
 });
 
+const ADMIN_NAV: readonly NavItem[] = [
+  { key: "preinstalled", label: "Preinstalled miniapps", icon: PackageCheck },
+  { key: "review", label: "Miniapp review", icon: ClipboardList },
+  { key: "incidents", label: "Incident system", icon: Bug },
+];
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -81,6 +88,17 @@ function AdminPage() {
   const [environment, setEnvironment] = useState<Environment>("dev");
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
+    } catch {
+      // best-effort; reload still drops us at the login gate
+    }
+    window.location.reload();
+  }
 
   const me = useQuery({
     queryKey: ["admin-me"],
@@ -192,105 +210,62 @@ function AdminPage() {
   if (me.isError) return <LoginGate />;
 
   return (
-    <main className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
-      <AdminSidebar userEmail={me.data?.user?.email ?? "Admin"} page={page} setPage={setPage} />
-
-      <section className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain sm:pl-[260px] lg:pl-[300px]">
-        <header className="sticky top-0 z-10 border-b border-black/10 bg-white/88 px-5 py-5 backdrop-blur">
-          <div className="mx-auto max-w-6xl">
-            <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-[#087d50]">{pageMeta.eyebrow}</div>
-            <div className="mt-1 flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <h1 className="font-display text-[30px] font-bold leading-9 tracking-[-0.04em]">{pageMeta.title}</h1>
-                <p className="mt-1 max-w-2xl text-[#68746d]">{pageMeta.body}</p>
-              </div>
-              {page === "preinstalled" ? (
-                <div className="rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-sm font-semibold text-[#4f5d54]">
-                  {selectedReleases.length} selected
-                </div>
-              ) : null}
-            </div>
+    <AppShell
+      brandTitle="Admin"
+      brandSubtitle="MentraOS"
+      badge={
+        <div className="flex h-9 items-center gap-2 rounded-[10px] border border-[#dceee4] bg-[#f0faf5] px-3 text-xs font-semibold uppercase tracking-[0.1em] text-[#087d50]">
+          <ShieldCheck className="size-4 shrink-0" />
+          Internal admin
+        </div>
+      }
+      nav={ADMIN_NAV}
+      activeKey={page}
+      onSelect={key => setPage(key as AdminPageKey)}
+      title={pageMeta.title}
+      description={pageMeta.body}
+      userEmail={me.data?.user?.email ?? "Admin"}
+      accountLabel="Admin"
+      onSignOut={signOut}
+      signingOut={signingOut}
+      headerAction={
+        page === "preinstalled" ? (
+          <div className="rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-sm font-semibold text-[#4f5d54]">
+            {selectedReleases.length} selected
           </div>
-        </header>
+        ) : undefined
+      }
+    >
+      {page === "preinstalled" ? (
+        <PreinstalledPage
+          environment={environment}
+          setEnvironment={setEnvironment}
+          releases={releases.data?.releases ?? []}
+          loading={releases.isLoading}
+          selectedReleaseIds={selectedReleaseIds}
+          setSelectedReleaseIds={setSelectedReleaseIds}
+          onPublish={() => publishRegistry.mutate()}
+          publishing={publishRegistry.isPending}
+          error={publishRegistry.error}
+          message={message}
+          activeRegistry={activeRegistry}
+          revisions={revisions.data?.revisions ?? []}
+          selectedReleases={selectedReleases}
+          auditEvents={audit.data?.events ?? []}
+        />
+      ) : null}
 
-        <div className="mx-auto max-w-6xl px-5 py-6">
-          {page === "preinstalled" ? (
-            <PreinstalledPage
-              environment={environment}
-              setEnvironment={setEnvironment}
-              releases={releases.data?.releases ?? []}
-              loading={releases.isLoading}
-              selectedReleaseIds={selectedReleaseIds}
-              setSelectedReleaseIds={setSelectedReleaseIds}
-              onPublish={() => publishRegistry.mutate()}
-              publishing={publishRegistry.isPending}
-              error={publishRegistry.error}
-              message={message}
-              activeRegistry={activeRegistry}
-              revisions={revisions.data?.revisions ?? []}
-              selectedReleases={selectedReleases}
-              auditEvents={audit.data?.events ?? []}
-            />
-          ) : null}
+      {page === "review" ? (
+        <ReviewQueue
+          submissions={submissions.data?.submissions ?? []}
+          loading={submissions.isLoading}
+          pending={reviewMutation.isPending}
+          onAction={(releaseId, action) => reviewMutation.mutate({ releaseId, action })}
+        />
+      ) : null}
 
-          {page === "review" ? (
-            <ReviewQueue
-              submissions={submissions.data?.submissions ?? []}
-              loading={submissions.isLoading}
-              pending={reviewMutation.isPending}
-              onAction={(releaseId, action) => reviewMutation.mutate({ releaseId, action })}
-            />
-          ) : null}
-
-          {page === "incidents" ? <IncidentTodo /> : null}
-        </div>
-      </section>
-    </main>
-  );
-}
-
-function AdminSidebar(props: { userEmail: string; page: AdminPageKey; setPage: (page: AdminPageKey) => void }) {
-  const navItems: Array<{ key: AdminPageKey; label: string; icon: React.ReactNode }> = [
-    { key: "preinstalled", label: "Preinstalled miniapps", icon: <PackageCheck className="size-5" /> },
-    { key: "review", label: "Miniapp review", icon: <ClipboardList className="size-5" /> },
-    { key: "incidents", label: "Incident system", icon: <Bug className="size-5" /> },
-  ];
-
-  return (
-    <aside className="border-b border-black/10 bg-white px-5 py-5 sm:fixed sm:inset-y-0 sm:left-0 sm:z-20 sm:flex sm:w-[260px] sm:flex-col sm:border-b-0 sm:border-r lg:w-[300px]">
-      <div className="flex items-center gap-3">
-        <div className="flex size-12 items-center justify-center rounded-[16px] border border-[#dfe5de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <img src={mentraLogo} alt="Mentra" className="h-[27px] w-[50px]" />
-        </div>
-        <div>
-          <div className="text-xl font-bold leading-6 tracking-[-0.03em]">Admin</div>
-          <div className="text-sm text-[#747780]">MentraOS</div>
-        </div>
-      </div>
-
-      <nav className="mt-8 grid gap-2 sm:flex-1">
-        {navItems.map(item => {
-          const selected = props.page === item.key;
-          return (
-            <button
-              key={item.key}
-              className={`flex h-10 items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium transition ${
-                selected ? "bg-[#111217] text-white" : "text-[#5d6068] hover:bg-[#f3f4f2] hover:text-[#111217]"
-              }`}
-              onClick={() => props.setPage(item.key)}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          );
-        })}
-      </nav>
-
-      <div className="mt-8 rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d] sm:absolute sm:bottom-5 sm:left-5 sm:right-5">
-        <div className="font-semibold text-[#111318]">Signed in</div>
-        <div className="truncate">{props.userEmail}</div>
-      </div>
-    </aside>
+      {page === "incidents" ? <IncidentTodo /> : null}
+    </AppShell>
   );
 }
 

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, Fingerprint, Globe2, Loader2, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Building2, Clock, Fingerprint, Globe2, Loader2, LogOut, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,9 +50,22 @@ export function App() {
   );
 }
 
+const PORTAL_NAV: readonly NavItem[] = [
+  { key: "overview", label: "Overview", icon: Building2 },
+  { key: "environments", label: "Auth environments", icon: Fingerprint },
+  { key: "access", label: "Access", icon: Users },
+];
+
+const PORTAL_PAGE_META: Record<PortalPageKey, { title: string; description: string }> = {
+  overview: { title: "Overview", description: "Enterprise account status and runtime setup." },
+  environments: { title: "Auth environments", description: "Manage trusted issuer and JWKS configuration." },
+  access: { title: "Access", description: "Manage enterprise members and approval state." },
+};
+
 function PortalPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState<PortalPageKey>("overview");
+  const [signingOut, setSigningOut] = useState(false);
   const me = useQuery({
     queryKey: ["portal-me"],
     queryFn: () => api<{ authenticated: true; user: PortalUser; onboardingRequired: boolean; org: EnterpriseOrg | null }>("/api/portal/me"),
@@ -67,14 +81,27 @@ function PortalPage() {
   if (me.isError) return <LoginGate />;
 
   const org = me.data?.org ?? issuers.data?.org ?? null;
-  const displayName = [me.data?.user.firstName, me.data?.user.lastName].filter(Boolean).join(" ") || me.data?.user.email || "Enterprise user";
+  const displayName =
+    [me.data?.user.firstName, me.data?.user.lastName].filter(Boolean).join(" ") || me.data?.user.email || "Enterprise user";
   const approved = org?.status === "active";
 
-  return (
-    <EnterpriseShell page={page} setPage={setPage} userLabel={displayName} org={org}>
-      {!org ? (
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
+    } catch {
+      // best-effort; reload still drops us at the login gate
+    }
+    window.location.reload();
+  }
+
+  // Onboarding (no org) and pending approval are focused, nav-free states —
+  // the issuer/environment pages stay locked until a Mentra admin approves.
+  if (!org) {
+    return (
+      <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
         <EnterpriseOnboarding
-          user={me.data!.user}
+          user={me.data?.user ?? { id: "preview", email: displayName }}
           onSaved={async () => {
             await Promise.all([
               qc.invalidateQueries({ queryKey: ["portal-me"] }),
@@ -82,102 +109,100 @@ function PortalPage() {
             ]);
           }}
         />
-      ) : !approved ? (
+      </FocusShell>
+    );
+  }
+
+  if (!approved) {
+    return (
+      <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
         <ApprovalPending org={org} />
-      ) : (
-        <>
-          {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
-          {page === "environments" ? (
-            <section className="space-y-6">
-              <IssuerForm
-                disabled={!org}
-                onSaved={async () => {
-                  await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
-                }}
-              />
-              <IssuerList
-                issuers={issuers.data?.issuers ?? []}
-                loading={issuers.isLoading}
-                onChanged={async () => {
-                  await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
-                }}
-              />
-              <ReferencePanel org={org} />
-            </section>
-          ) : null}
-          {page === "access" ? <EnterpriseAccess org={org} /> : null}
-        </>
-      )}
-    </EnterpriseShell>
+      </FocusShell>
+    );
+  }
+
+  const meta = PORTAL_PAGE_META[page];
+
+  return (
+    <AppShell
+      brandTitle="Enterprise"
+      brandSubtitle="Portal"
+      badge={
+        <div className="rounded-[10px] border border-[#e0e4de] bg-[#f7f8f6] px-3 py-2">
+          <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[#a0a3aa]">Organization</div>
+          <div className="truncate text-sm font-semibold text-[#1c1d22]">{org.name}</div>
+        </div>
+      }
+      nav={PORTAL_NAV}
+      activeKey={page}
+      onSelect={key => setPage(key as PortalPageKey)}
+      title={meta.title}
+      description={meta.description}
+      userEmail={displayName}
+      accountLabel="Enterprise"
+      onSignOut={signOut}
+      signingOut={signingOut}
+    >
+      {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
+      {page === "environments" ? (
+        <section className="space-y-6">
+          <IssuerForm
+            disabled={!org}
+            onSaved={async () => {
+              await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
+            }}
+          />
+          <IssuerList
+            issuers={issuers.data?.issuers ?? []}
+            loading={issuers.isLoading}
+            onChanged={async () => {
+              await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
+            }}
+          />
+          <ReferencePanel org={org} />
+        </section>
+      ) : null}
+      {page === "access" ? <EnterpriseAccess org={org} /> : null}
+    </AppShell>
   );
 }
 
-function EnterpriseShell(props: { children: React.ReactNode; page: PortalPageKey; setPage: (page: PortalPageKey) => void; userLabel: string; org: EnterpriseOrg | null }) {
-  const pageMeta = {
-    overview: ["Overview", "Enterprise account status and runtime setup."],
-    environments: ["Auth environments", "Manage issuer and JWKS configuration."],
-    access: ["Access", "Manage enterprise members and approval state."],
-  }[props.page];
-  const nav = [
-    { key: "overview" as const, label: "Overview", icon: Building2 },
-    { key: "environments" as const, label: "Auth environments", icon: Fingerprint },
-    { key: "access" as const, label: "Access", icon: Users },
-  ];
-
+/** Focused, nav-free layout for the onboarding + approval-pending states. */
+function FocusShell({
+  children,
+  userLabel,
+  onSignOut,
+  signingOut,
+}: {
+  children: ReactNode;
+  userLabel: string;
+  onSignOut: () => void;
+  signingOut?: boolean;
+}) {
   return (
-    <main className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
-      <aside className="border-b border-black/10 bg-white px-5 py-5 sm:fixed sm:inset-y-0 sm:left-0 sm:z-20 sm:flex sm:w-[260px] sm:flex-col sm:border-b-0 sm:border-r lg:w-[300px]">
-        <div className="flex items-center gap-3">
-          <div className="flex size-12 items-center justify-center rounded-[16px] border border-[#dfe5de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-            <img src={mentraLogo} alt="Mentra" className="h-[27px] w-[50px]" />
+    <div className="min-h-dvh bg-[#f5f6f4] text-[#14151b]">
+      <header className="border-b border-[#e4e6e2] bg-white">
+        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5">
+          <div className="flex items-center gap-3">
+            <img src={mentraLogo} alt="" className="h-[22px] w-[41px]" />
+            <div>
+              <div className="font-display text-[15px] font-bold leading-5 text-[#14151b]">Enterprise Portal</div>
+              <div className="text-xs leading-4 text-[#8a8d95]">MentraOS · {userLabel}</div>
+            </div>
           </div>
-          <div>
-            <div className="text-xl font-bold leading-6 tracking-[-0.03em]">Enterprise</div>
-            <div className="text-sm text-[#747780]">Portal</div>
-          </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-full border border-[#e0e4de] px-4 py-2 text-sm font-medium text-[#5d6068] hover:bg-[#f3f4f2] disabled:opacity-60"
+            disabled={signingOut}
+            onClick={onSignOut}
+          >
+            <LogOut className="size-4" />
+            {signingOut ? "Signing out..." : "Sign out"}
+          </button>
         </div>
-
-        <div className="mt-6 rounded-[10px] border border-[#e0e4de] bg-[#f7f8f6] px-3 py-2">
-          <div className="text-xs text-[#8a8d95]">Organization</div>
-          <div className="truncate text-sm font-semibold">{props.org?.name ?? "Not approved yet"}</div>
-        </div>
-
-        <nav className="mt-8 grid gap-2 sm:flex-1">
-          {nav.map(item => {
-            const Icon = item.icon;
-            const selected = props.page === item.key;
-            return (
-              <button
-                key={item.key}
-                className={`flex h-10 items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium transition ${
-                  selected ? "bg-[#111217] text-white" : "text-[#5d6068] hover:bg-[#f3f4f2] hover:text-[#111217]"
-                }`}
-                onClick={() => props.setPage(item.key)}
-              >
-                <Icon className="size-5" />
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="mt-8 rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d] sm:absolute sm:bottom-5 sm:left-5 sm:right-5">
-          <div className="font-semibold text-[#111318]">Signed in</div>
-          <div className="truncate">{props.userLabel}</div>
-        </div>
-      </aside>
-
-      <section className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain sm:pl-[260px] lg:pl-[300px]">
-        <header className="sticky top-0 z-10 border-b border-black/10 bg-white/88 px-5 py-5 backdrop-blur">
-          <div className="mx-auto max-w-6xl">
-            <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-[#087d50]">Enterprise portal</div>
-            <h1 className="mt-1 font-display text-[30px] font-bold leading-9 tracking-[-0.04em]">{pageMeta[0]}</h1>
-            <p className="mt-1 max-w-2xl text-[#68746d]">{pageMeta[1]}</p>
-          </div>
-        </header>
-        <div className="mx-auto max-w-6xl px-5 py-6">{props.children}</div>
-      </section>
-    </main>
+      </header>
+      <main className="mx-auto max-w-5xl px-5 py-10">{children}</main>
+    </div>
   );
 }
 
