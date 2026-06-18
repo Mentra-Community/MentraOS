@@ -230,8 +230,8 @@ These are the supported React Native app developer entrypoints:
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
-| Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
+| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults`, `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
@@ -311,10 +311,9 @@ sdk.setDashboardPosition(height = 4, depth = 6)
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
 sdk.setGalleryModeEnabled(true)
-sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
-sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
-sdk.setButtonCameraLed(enabled = true)
-sdk.setButtonMaxRecordingTime(minutes = 3)
+sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM))
+sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width = 1280, height = 720, fps = 30))
+sdk.setMaxVideoRecordingDuration(minutes = 3)
 val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
 println("Camera FOV applied at ${cameraFov.fov}°")
 ```
@@ -329,10 +328,9 @@ try await sdk.setDashboardPosition(height: 4, depth: 6)
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 try await sdk.setGalleryModeEnabled(true)
-try await sdk.setButtonPhotoSettings(size: .medium)
-try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
-try await sdk.setButtonCameraLed(enabled: true)
-try await sdk.setButtonMaxRecordingTime(minutes: 3)
+try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium))
+try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: 1280, height: 720, fps: 30))
+try await sdk.setMaxVideoRecordingDuration(minutes: 3)
 let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
 print("Camera FOV applied at \(cameraFov.fov)°")
 ```
@@ -347,10 +345,9 @@ await BluetoothSdk.setHeadUpAngle(20);
 await BluetoothSdk.setScreenDisabled(false);
 await BluetoothSdk.setGalleryModeEnabled(true);
 await BluetoothSdk.setGalleryModeEnabled(false);
-await BluetoothSdk.setButtonPhotoSettings('medium');
-await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
-await BluetoothSdk.setButtonCameraLed(true);
-await BluetoothSdk.setButtonMaxRecordingTime(3);
+await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'});
+await BluetoothSdk.setVideoRecordingDefaults({width: 1280, height: 720, fps: 30});
+await BluetoothSdk.setMaxVideoRecordingDuration(3);
 const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
 console.log(`Camera FOV applied at ${cameraFov.fov}°`);
 ```
@@ -618,9 +615,14 @@ Android:
 ```kotlin
 val streamId = "stream-${System.currentTimeMillis()}"
 
-val started = sdk.startStream(StreamRequest(streamUrl = streamUrl, streamId = streamId))
+val started = sdk.startStream(
+    StreamRequest(
+        streamUrl = streamUrl,
+        streamId = streamId,
+        video = StreamVideoConfig(fps = 15),
+    )
+)
 println("Stream started: ${started.status}")
-sdk.keepStreamAlive(StreamKeepAliveRequest(streamId = streamId, ackId = "ack-${System.currentTimeMillis()}"))
 val stopped = sdk.stopStream()
 println("Stream stopped: ${stopped.status}")
 ```
@@ -630,9 +632,14 @@ iOS:
 ```swift
 let streamId = "stream-\(Int(Date().timeIntervalSince1970 * 1000))"
 
-let started = try await sdk.startStream(StreamRequest(streamUrl: streamUrl, streamId: streamId))
+let started = try await sdk.startStream(
+    StreamRequest(
+        streamUrl: streamUrl,
+        streamId: streamId,
+        video: StreamVideoConfig(fps: 15)
+    )
+)
 print("Stream started: \(started.status)")
-sdk.keepStreamAlive(StreamKeepAliveRequest(streamId: streamId, ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"))
 let stopped = try await sdk.stopStream()
 print("Stream stopped: \(stopped.status)")
 ```
@@ -642,14 +649,18 @@ React Native:
 ```ts
 const streamId = `stream-${Date.now()}`;
 
-const started = await BluetoothSdk.startStream({type: 'start_stream', streamUrl, streamId});
+const started = await BluetoothSdk.startStream({
+  type: 'start_stream',
+  streamUrl,
+  streamId,
+  video: {fps: 15},
+});
 console.log('Stream started', started.status);
-await BluetoothSdk.keepStreamAlive({type: 'keep_stream_alive', streamId, ackId: `ack-${Date.now()}`});
 const stopped = await BluetoothSdk.stopStream();
 console.log('Stream stopped', stopped.status);
 ```
 
-When `keepAlive` is enabled, call `keepStreamAlive` about every 15 seconds while the stream is active. For local streaming development, use `examples/local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
+The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. For local streaming development, use `examples/local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
 
 ## Wi-Fi And Hotspot
 
@@ -832,7 +843,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
 | `startVideoRecording` / `stopVideoRecording` | `startVideoRecording` resolves from `recording_started`. `stopVideoRecording` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus video `media_success` and rejects on video `media_error`. |
-| `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
+| `StreamRequest` / `startStream` | `sound = true` by default in native SDK calls. The SDK sends stream keep-alives automatically, and the camera light is always enabled while streaming. |
 
 ## Error Handling
 
