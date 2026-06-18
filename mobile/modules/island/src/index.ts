@@ -50,6 +50,9 @@ export {
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as navigationService} from "./services/NavigationService"
+// Clock-skew utils (used by OTA + the host gallery sync) moved into island.
+export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
+export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
 export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 export {

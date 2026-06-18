@@ -4,7 +4,6 @@ import {useEffect, useRef} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
 import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
-import {maybeFixGlassesClockFromVersionInfo} from "@/services/asg/glassesClockSync"
 import {
   getGlassesSystemTimeMs,
   isGlassesConnected,
@@ -16,7 +15,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import {BgTimer} from "@mentra/island"
+import {BgTimer, maybeFixGlassesClockFromVersionInfo} from "@mentra/island"
 
 export interface VersionInfo {
   versionCode: number
