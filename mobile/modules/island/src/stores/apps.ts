@@ -26,6 +26,7 @@ import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import {islandNotifications} from "../services/NotificationsEmitter"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -345,6 +346,21 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     if (hostHooks.beforeStart) {
       const proceed = await hostHooks.beforeStart(app, opts)
       if (!proceed) return false
+    }
+
+    // Island-native incompatibility gate. The Mentra app's beforeStart already
+    // rejects incompatible apps (with its own alert) above, so this is reached only
+    // when no host gate handled it — i.e. a bare OEM. Block the launch and raise a
+    // structured notification the OEM host can render off toolkit.notifications.
+    if (app.compatibility?.isCompatible === false) {
+      islandNotifications.emit({
+        kind: "version_incompatible",
+        packageName,
+        reason: `${app.name ?? packageName} is not compatible with the connected glasses`,
+        metadata: {missingRequired: app.compatibility.missingRequired ?? []},
+        timestamp: Date.now(),
+      })
+      return false
     }
 
     // If the tapped app is already running, this is a re-open: the nav/foreground
