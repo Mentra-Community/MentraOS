@@ -18,7 +18,7 @@ services:
     cpuCores: 0.25
     ramMegabytes: 512
     domains:
-      - name: merge.dev.us-west-2.mentraglass.com
+      - name: merge3.dev.mentraglass.com
     livenessCheck:
       enabled: true
       httpPath: /healthz
