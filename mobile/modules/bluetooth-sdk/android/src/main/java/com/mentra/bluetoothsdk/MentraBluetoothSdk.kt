@@ -540,13 +540,6 @@ class MentraBluetoothSdk private constructor(
             },
         )
 
-    fun setCaptureLedEnabled(enabled: Boolean): SettingsAckEvent =
-        performSettingsCommand(
-            setting = "button_camera_led",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
-            send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
-        )
-
     fun setMaxVideoRecordingDuration(minutes: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_max_recording_time",
@@ -751,7 +744,16 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun startStream(request: StreamRequest): StreamStatusEvent {
+    fun startStream(request: StreamRequest): StreamStatusEvent =
+        startStream(request, startSdkKeepAlive = true)
+
+    internal fun startExternallyManagedStream(request: StreamRequest): StreamStatusEvent =
+        startStream(request, startSdkKeepAlive = false)
+
+    private fun startStream(
+        request: StreamRequest,
+        startSdkKeepAlive: Boolean,
+    ): StreamStatusEvent {
         val message = request.toMap().toMutableMap()
         val streamId = (message["streamId"] as? String)?.takeIf { it.isNotBlank() }
                 ?: "sdk-${UUID.randomUUID()}"
@@ -762,8 +764,8 @@ class MentraBluetoothSdk private constructor(
         try {
             deviceManager.startStream(message)
             val event = pending.await(STREAM_START_TIMEOUT_MS)
-            if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
-                startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+            if (startSdkKeepAlive) {
+                startStreamKeepAliveMonitor(streamId, DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS)
             }
             return event
         } finally {
