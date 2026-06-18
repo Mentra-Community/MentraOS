@@ -65,6 +65,14 @@ export function configureIsland(hooks: IslandHostHooks): void {
 
 interface AppStatusState {
   apps: ClientApp[]
+  /**
+   * Source of truth for which app is foregrounded in the Compositor overlay.
+   * The per-app `foregrounded` boolean is derived from this in `projectApps`
+   * so a refresh can never drop the flag when an app is transiently missing
+   * from one of the two refresh passes (local-only then merged). See
+   * `projectApps` / `setForeground` / `clearForeground`.
+   */
+  foregroundedPackage: string | null
   refresh: () => Promise<void>
   /** Resolves true if the app actually started; false if a host gate aborted it or its JS context failed to spawn. */
   start: (app: ClientApp, opts?: StartOptions) => Promise<boolean>
@@ -197,15 +205,20 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[], extr
     screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
     compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
     hidden: previousState.getHiddenStatus(app.packageName),
-    // Carry over the foreground flag across refreshes (same reasoning as
-    // screenshot): a cloud/local refresh shouldn't drop the WebView the
-    // Compositor is currently rendering. Normalized to a concrete boolean.
-    foregrounded: previousByPackage.get(app.packageName)?.foregrounded ?? false,
+    // Derive the foreground flag from the store's single source of truth
+    // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
+    // per-app meant a refresh that momentarily omitted an app (e.g. the
+    // two-pass local-only → merged emit) would reset its flag to false — which
+    // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
+    // through to the root router (restart). Deriving here keeps the flag stable
+    // across both passes.
+    foregrounded: app.packageName === previousState.foregroundedPackage,
   }))
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+  foregroundedPackage: null,
 
   refresh: async () => {
     // Two-pass: local apps first (fast, no network), then merge cloud
@@ -378,6 +391,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // (the phase machine), so foregrounding needn't wait for it.
     saveLastOpenTime(packageName)
     set((s) => ({
+      foregroundedPackage: packageName,
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
 
@@ -392,6 +406,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   clearForeground: () => {
     set((s) => ({
+      foregroundedPackage: null,
       apps: s.apps.some((a) => a.foregrounded)
         ? s.apps.map((a) => (a.foregrounded ? {...a, foregrounded: false} : a))
         : s.apps,
