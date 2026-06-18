@@ -34,6 +34,7 @@ import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
+import {phoneLocationService} from "./PhoneLocationService"
 import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
@@ -1967,7 +1968,7 @@ class LocalMiniappRuntime {
     if (next === this.lastAppliedLocationRate) return
     this.lastAppliedLocationRate = next
     console.log(`[LOCATION] aggregate tier → ${next}`)
-    getRuntimeHooks().locationTier?.setLocationTier(next)
+    void phoneLocationService.setLocationTier(next)
   }
 
   // ---------------------------------------------------------------------------
@@ -2192,22 +2193,15 @@ class LocalMiniappRuntime {
       return
     }
 
-    const cameraSettings = getRuntimeHooks().cameraSettings
-    if (!cameraSettings) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.NOT_IMPLEMENTED,
-        message: "Camera FOV settings are not configured on this host",
-      })
-      return
-    }
-
     try {
       const request = normalizeCameraFovPayload(payload)
       const description =
         "preset" in request ? `preset=${request.preset}` : `fov=${request.fov} roi=${request.roiPosition ?? "center"}`
       console.log(`${LOG_TAG}: camera_fov_set ${description}`)
 
-      const result = await cameraSettings.setFov(packageName, request)
+      // Camera FOV is a direct btsdk call now (was the host-injected `cameraSettings`
+      // runtime hook — a pure BluetoothSdk.setCameraFov passthrough with no host coupling).
+      const result = await BluetoothSdk.setCameraFov(request)
 
       getRuntimeHooks().settings?.setSetting(
         ISLAND_SETTINGS_KEYS.cameraFov,

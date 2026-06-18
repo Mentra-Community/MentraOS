@@ -270,14 +270,9 @@ export type NavTripSnapshot = {
  * HeadingService wraps native sensor output; the runtime only needs the
  * subscribe-and-unsubscribe surface.
  */
-/**
- * Location-tier control. Used by the runtime to request a higher GPS
- * sample rate while a miniapp is subscribed to `location_update`.
- * Implemented by the host's MantleManager (or equivalent).
- */
-export interface LocationTierAdapter {
-  setLocationTier: (rate: "off" | "passive" | "low" | "high" | "realtime") => void
-}
+// Location-tier control + the background GPS task moved into island
+// (PhoneLocationService, driven directly by the runtime's recomputeLocation) — no
+// longer a host-provided hook.
 
 // Streaming (RTMP/SRT/WHIP publishing) moved into island (PhoneStreamCoordinator,
 // called directly by the runtime) — no longer a host-provided hook.
@@ -301,13 +296,9 @@ export interface CameraFovResult {
   timestamp: number
 }
 
-/**
- * Camera settings adapter. Used for local miniapp camera.setFov so the
- * miniapp Promise resolves from the glasses-side hardware-applied ack flow.
- */
-export interface CameraSettingsAdapter {
-  setFov: (packageName: string, request: CameraFovRequest) => Promise<CameraFovResult>
-}
+// Camera FOV moved into island — LocalMiniappRuntime calls BluetoothSdk.setCameraFov
+// directly (a pure passthrough with no host coupling) — no longer a host hook.
+// CameraFovRequest/CameraFovResult below stay: they're the miniapp-facing payload types.
 
 /** One audited inter-miniapp call. An LLM caller (Mentra AI) will eventually do
  * something a user wants to trace — every interop op emits one of these. */
@@ -383,8 +374,9 @@ export interface RuntimeHooks {
   settings?: SettingsAccessor
   // Device heading / compass moved into island (HeadingService, subscribed
   // directly by the runtime) — no longer a host-provided hook.
-  /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
-  locationTier?: LocationTierAdapter
+  // Location-tier + GPS task moved into island (PhoneLocationService) — no longer a hook.
+  /** Cloud WebSocket connection state surface. */
+  cloudConnection?: CloudConnectionAdapter
   /**
    * The dev machine's live LAN host (no port), derived by the host from
    * Metro's `hostUri` — the address this dev bundle was actually served from,
@@ -416,13 +408,11 @@ export interface RuntimeHooks {
   restartTranscriber?: () => Promise<void> | void
   /**
    * Apply the union of cloud and local microphone requirements through the
-   * host's native Bluetooth bridge.
-   */
+  * host's native Bluetooth bridge.
+  */
   setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
-  // Photo capture + video recording moved into island (PhonePhotoCoordinator /
-  // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
-  /** Phone-orchestrated camera settings (session.camera.setFov). */
-  cameraSettings?: CameraSettingsAdapter
+  // Photo capture + video recording + camera FOV moved into island (PhonePhotoCoordinator
+  // / PhoneVideoCoordinator + a direct BluetoothSdk.setCameraFov call) — no longer host hooks.
   /** Open the glasses Wi-Fi setup flow on the phone (session.glasses.requestWifiSetup). */
   wifiSetup?: WifiSetupAdapter
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */

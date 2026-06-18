@@ -1,6 +1,6 @@
 import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
+import {displayProcessor, localMiniappRuntime, micStateCoordinator, phoneLocationService, throttle} from "@mentra/island"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import mantle from "@/services/MantleManager"
@@ -542,7 +542,7 @@ class SocketComms {
       return
     }
     console.log("SOCKET: set_location_tier()", tier)
-    mantle.setLocationTier(tier)
+    void phoneLocationService.setLocationTier(tier)
   }
 
   private handle_request_single_location(msg: any) {
