@@ -7,10 +7,22 @@
  * Install ACTIONS (check/install/retry) land in Phase 2 (the install orchestration
  * moves out of the host progress screen; bootloop-risk, needs on-device verification).
  */
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {OtaStatus, OtaUpdateInfo} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
 
 export const ota = {
+  // --- actions ---
+  /**
+   * Start the firmware install with the resolved OTA manifest URL. Progress lands on
+   * `status()`/`onStatus()`. (The host resolves the manifest URL — dev-override/env/prod
+   * resolution stays with the OTA config; the host-side stuck/retry watchdog is its own
+   * resilience layer on top of this command.)
+   */
+  install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
+  /** Re-query the glasses for an available update (e.g. after a clock-fix or failure). */
+  retry: () => BluetoothSdk.retryOtaVersionCheck(),
+
   /** Current available-update info (versionName/updates/totalSize/cacheReady), or null. */
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
