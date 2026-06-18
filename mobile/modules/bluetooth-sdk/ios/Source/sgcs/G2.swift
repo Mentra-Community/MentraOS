@@ -1372,45 +1372,6 @@ private final class ImgAckBox {
     }
 }
 
-/// A minimal FIFO async lock that serializes display mutations.
-///
-/// `G2` is `@MainActor`, which only guarantees mutual exclusion *between*
-/// suspension points — not across an `await`. Two display operations can
-/// therefore interleave while one is suspended in `awaitImageAck`, and the
-/// second would overwrite the single-slot [ImgAckBox], stranding the first
-/// continuation (its image-send `Task` then hangs forever). Serializing every
-/// display mutation through this lock keeps exactly one image transfer in
-/// flight at a time, matching the Android client's `displayMutex` invariant.
-///
-/// State is only touched inside `acquire`/`release`, which run synchronously on
-/// the main actor (no `await` between the read and the write), so the state
-/// itself needs no extra locking.
-@MainActor
-private final class DisplayMutex {
-    private var locked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    /// Suspend until the lock is free, then take it.
-    func acquire() async {
-        if !locked {
-            locked = true
-            return
-        }
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            waiters.append(cont)
-        }
-    }
-
-    /// Hand the lock to the next waiter (preserving ownership), or free it.
-    func release() {
-        if waiters.isEmpty {
-            locked = false
-        } else {
-            waiters.removeFirst().resume()
-        }
-    }
-}
-
 // MARK: - G2 Class (SGCManager implementation)
 
 /// Actor for reconnection logic (matches G1 pattern)
@@ -1555,24 +1516,24 @@ class G2: NSObject, SGCManager {
     /// Lock-protected, non-isolated holder for the in-flight image ACK so the BLE-queue notify
     /// callback can resolve it without bouncing through the main actor (see [ImgAckBox]).
     private let imgAckBox = ImgAckBox()
-    /// Serializes display mutations so only one image transfer is ever in flight; without it a
-    /// second display op can clobber `imgAckBox` while the first is suspended (see [DisplayMutex]).
-    private let displayMutex = DisplayMutex()
+    /// Background loop that owns ALL display sends (text + images): each pass pushes dirty text
+    /// containers, then dirty image containers one at a time. Because it's the sole sender, exactly
+    /// one `sendImageData` is ever in flight by construction — no serializing lock needed; display
+    /// ops just mark containers dirty and signal `displayDirtySignal`.
+    private var displayReconcileTask: Task<Void, Never>?
+    /// ~100ms ticker that nudges the reconcile loop while idle, so text resends and image retries
+    /// still happen with no new mutations. Just yields into `displayDirtySignal`.
+    private var displayTickTask: Task<Void, Never>?
+    /// Wakes the reconcile loop the instant a container is marked dirty, instead of waiting out the
+    /// idle tick. `signalDisplayDirty()` (and the ticker) yield into this; the loop drains it.
+    private var displayDirtySignal: AsyncStream<Void>.Continuation?
     private let IMG_ACK_TIMEOUT_NS: UInt64 = 2_000_000_000  // 1000ms timeout (matches Dart host)
     private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
-    private var evenHubQueueTask: Task<Void, Never>?
-    // FIFO of pending text-container updates. A single-slot var here used to let
-    // a later update (e.g. the constantly-refreshing maneuver text) overwrite an
-    // earlier one for a DIFFERENT container (e.g. the bottom-left trip stats),
-    // so the second container's content never reached the glasses. A queue lets
-    // updates to distinct containers each get drained.
-    private var pendingTextMsgs: [Data] = []
-    private var lastEvenHubMsg: Data?
-    private var lastEvenHubResendsRemaining: Int = 0
+    /// How many redundant resends each text update gets (text has no ACK). The reconcile loop sets a
+    /// container's `pendingSends` to `1 + EVEN_HUB_RESEND_COUNT` on change.
     private let EVEN_HUB_RESEND_COUNT: Int = 1
-    private let evenHubQueueLock = NSLock()
     private var authStarted: Bool = false
 
     /// Dashboard menu: appId → packageName mapping for selection reverse lookup
@@ -1598,6 +1559,11 @@ class G2: NSObject, SGCManager {
             "img-\(id)"
         }
         var bmpData: Data
+        /// Set true when `bmpData` changes and the new pixels haven't been pushed to the glasses yet.
+        /// The reconcile loop (see `displayReconcileTask`) is the sole sender; it clears this once the
+        /// exact bytes it sent still match the container. Lets every display op be a pure state
+        /// mutation, so only one `sendImageData` is ever in flight (no DisplayMutex needed).
+        var dirty: Bool = false
 
         func matches(x: Int32, y: Int32, width: Int32, height: Int32) -> Bool {
             self.x == x && self.y == y && self.width == width && self.height == height
@@ -1615,6 +1581,10 @@ class G2: NSObject, SGCManager {
         let borderColor: Int32
         let borderRadius: Int32
         let paddingLength: Int32
+        /// Remaining sends the reconcile loop owes this container. Text has no ACK, so each content
+        /// change schedules `1 + EVEN_HUB_RESEND_COUNT` sends (the update + a redundant resend on a
+        /// later tick) as a delivery hedge; the loop sends once and decrements per tick until 0.
+        var pendingSends: Int = 0
         var name: String {
             "text-\(id)"
         }
@@ -1986,15 +1956,32 @@ class G2: NSObject, SGCManager {
             }
         }
 
-        // EvenHub text command queue: drain the most recent pending updateText every 100ms
-        evenHubQueueTask?.cancel()
-        evenHubQueueTask = Task { [weak self] in
+        // Display reconcile loop: push any dirty text containers (one send each, with a redundant
+        // resend), then any dirty image containers one at a time. Single sender, so a `sendImageData`
+        // never overlaps another and can't clobber imgAckBox — the invariant DisplayMutex used to
+        // enforce. The loop wakes on each stream element: mutations yield one immediately (instant
+        // reaction), and a ~100ms ticker yields one when idle so periodic work (text resends, image
+        // retries) still runs. The 1-deep buffer coalesces bursts into a single wake.
+        displayReconcileTask?.cancel()
+        displayTickTask?.cancel()
+        // Closure-based initializer (not makeStream, which is iOS 16+). 1-deep newest buffer so a
+        // burst of mutations coalesces into a single wake.
+        var signalContinuation: AsyncStream<Void>.Continuation!
+        let signalStream = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            signalContinuation = continuation
+        }
+        displayDirtySignal = signalContinuation
+        displayTickTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    self?.drainEvenHubQueue()
-                }
+                self?.displayDirtySignal?.yield()
+            }
+        }
+        displayReconcileTask = Task { [weak self] in
+            for await _ in signalStream {
+                if Task.isCancelled { break }
+                await self?.reconcileDisplay()
             }
         }
     }
@@ -2002,13 +1989,19 @@ class G2: NSObject, SGCManager {
     private func stopHeartbeats() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
-        evenHubQueueTask?.cancel()
-        evenHubQueueTask = nil
-        evenHubQueueLock.lock()
-        pendingTextMsgs.removeAll()
-        lastEvenHubMsg = nil
-        lastEvenHubResendsRemaining = 0
-        evenHubQueueLock.unlock()
+        displayTickTask?.cancel()
+        displayTickTask = nil
+        displayReconcileTask?.cancel()
+        displayReconcileTask = nil
+        displayDirtySignal?.finish()
+        displayDirtySignal = nil
+    }
+
+    /// Wake the reconcile loop now (a container was just marked dirty / had sends scheduled). Cheap
+    /// and idempotent: coalesced by the stream's 1-deep buffer, so a burst of mutations yields at
+    /// most one extra wake.
+    private func signalDisplayDirty() {
+        displayDirtySignal?.yield()
     }
 
     private func sendEvenHubHeartbeat() {
@@ -2106,38 +2099,41 @@ class G2: NSObject, SGCManager {
         let paddingLength = paddingLength ?? G2.defaultTextContainer.paddingLength
         let content = text.isEmpty ? " " : text
 
-        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
-        var container: TextContainer
+        // Pure state mutation: update the container's content and schedule its sends; the reconcile
+        // loop (`displayReconcileTask`) does the actual updateText writes. Reuse an existing container
+        // if the rect matches exactly; otherwise add a new one.
         if let i = textContainers.firstIndex(where: {
             $0.matches(
                 x: rx, y: ry, width: rw, height: rh, borderWidth: borderWidth,
                 borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
         }) {
             textContainers[i].content = content
-            container = textContainers[i]
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+            signalDisplayDirty()
+            let container = textContainers[i]
             Bridge.log(
                 "G2: sendText() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
+            // A brand-new page needs its structure built first; pendingSends stays set so the loop
+            // pushes the content once the page exists.
             if !pageCreated {
                 await rebuildPage()
-                return
             }
-            let msg = EvenHubProto.updateTextMessage(
-                containerID: container.id,
-                contentOffset: 0,
-                contentLength: Int32(container.content.utf8.count),
-                content: container.content
-            )
-            queueEvenHubCommand(msg)
             return
         }
 
-        container = addTextContainer(
+        let container = addTextContainer(
             x: rx, y: ry, width: rw, height: rh, content: content, borderWidth: borderWidth,
             borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
         Bridge.log(
             "G2: sendText() - added text container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
         )
+        // New container changes page structure: rebuild it (the rebuild embeds initial content), then
+        // schedule sends so the loop refreshes it.
+        if let j = textContainers.firstIndex(where: { $0.id == container.id }) {
+            textContainers[j].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+        }
+        signalDisplayDirty()
         await rebuildPage()
     }
 
@@ -2161,15 +2157,17 @@ class G2: NSObject, SGCManager {
         // reset the content of all text containers to empty:
         for i in textContainers.indices {
             textContainers[i].content = " "
+            // The rebuild below re-embeds this blank content via createPageWithContainers, so no
+            // separate updateText send is needed — drop any scheduled sends.
+            textContainers[i].pendingSends = 0
         }
         for i in imageContainers.indices {
+            // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
             imageContainers[i].bmpData = Data()
+            imageContainers[i].dirty = false
         }
         // shutdown the page and then recreate the containers without the content:
-        // Serialize the teardown so it can't tear the page down mid image-send (see DisplayMutex).
         Task {
-            await displayMutex.acquire()
-            defer { displayMutex.release() }
             await rebuildPage()
             // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
             // createPageWithContainers()
@@ -2227,8 +2225,9 @@ class G2: NSObject, SGCManager {
                     mapFragmentPacketSize: Int32(fragment.count),
                     mapRawData: Data(fragment)
                 )
-                // sendEvenHubCommand(msg)
-                queueEvenHubCommand(msg)
+                // Send the fragment directly: the reconcile loop already serializes whole image
+                // sends, and the per-fragment ACK gate below provides pacing — no transmit queue.
+                sendEvenHubCommand(msg)
                 // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
                 // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
@@ -2295,11 +2294,9 @@ class G2: NSObject, SGCManager {
         base64ImageData: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil,
         height: Int32? = nil
     ) async -> Bool {
-        // Serialize against other display mutations so two image sends can't overlap and
-        // clobber the single-slot imgAckBox (see DisplayMutex).
-        await displayMutex.acquire()
-        defer { displayMutex.release() }
-
+        // Pure state mutation: update the target container's bytes and mark it dirty. The reconcile
+        // loop (`displayReconcileTask`) is the sole sender, so two displayBitmap calls can never
+        // overlap a `sendImageData` and clobber the single-slot imgAckBox — no lock needed.
         let rx = x ?? G2.defaultImgContainer.x
         let ry = y ?? G2.defaultImgContainer.y
         let rw = width ?? G2.defaultImgContainer.width
@@ -2325,31 +2322,82 @@ class G2: NSObject, SGCManager {
         }
 
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
-        var container: ImgContainer
         if let i = imageContainers.firstIndex(where: {
             $0.matches(x: rx, y: ry, width: rw, height: rh)
         }) {
             imageContainers[i].bmpData = bmpData
-            container = imageContainers[i]
+            imageContainers[i].dirty = true
+            signalDisplayDirty()
+            let container = imageContainers[i]
             Bridge.log(
                 "G2: displayBitmap() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
+            // A brand-new page needs its structure built before the loop can push pixels; the dirty
+            // flag stays set so the reconcile loop sends the image once the page exists.
             if !pageCreated {
                 await rebuildPage()
-                return true
             }
-            await sendImageData(
-                containerID: container.id, containerName: container.name, bmpData: container.bmpData
-            )
-            return true
         } else {
-            container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
+            let container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
+            if let j = imageContainers.firstIndex(where: { $0.id == container.id }) {
+                imageContainers[j].dirty = true
+            }
+            signalDisplayDirty()
             Bridge.log(
                 "G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
             )
+            // New container changes page structure: rebuild it, then the loop sends the pixels.
             await rebuildPage()
         }
         return true
+    }
+
+    /// Push pending display state to the glasses: dirty text containers first (one updateText each,
+    /// with a redundant resend per `pendingSends`), then dirty image containers one at a time. The
+    /// loop awaits this, and this awaits each `sendImageData` in turn, so image sends never overlap
+    /// and `imgAckBox` is never clobbered. A failed image send leaves the container dirty for the
+    /// next cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
+    private func reconcileDisplay() async {
+        guard pageCreated else { return }
+
+        // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
+        for i in textContainers.indices where textContainers[i].pendingSends > 0 {
+            let container = textContainers[i]
+            let msg = EvenHubProto.updateTextMessage(
+                containerID: container.id,
+                contentOffset: 0,
+                contentLength: Int32(container.content.utf8.count),
+                content: container.content
+            )
+            sendEvenHubCommand(msg)
+            textContainers[i].pendingSends -= 1
+        }
+
+        // Images: ACK-gated, exactly one in flight. Cap iterations defensively so a container that
+        // keeps being re-dirtied mid-send can't spin this pass forever (next tick picks it up).
+        var guardCount = 0
+        while pageCreated, guardCount < imageContainerIDPool.count,
+            let i = imageContainers.firstIndex(where: { $0.dirty })
+        {
+            guardCount += 1
+            let container = imageContainers[i]
+            let sentBytes = container.bmpData
+            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
+            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            if sentBytes.isEmpty {
+                imageContainers[i].dirty = false
+                continue
+            }
+            await sendImageData(
+                containerID: container.id, containerName: container.name, bmpData: sentBytes
+            )
+            // Re-find by id: the array may have shifted (eviction) during the await.
+            if let j = imageContainers.firstIndex(where: { $0.id == container.id }),
+                imageContainers[j].bmpData == sentBytes
+            {
+                imageContainers[j].dirty = false
+            }
+        }
     }
 
     /// Add a new image container for `rect`, evicting the oldest when the list is full (max 4).
@@ -2400,42 +2448,25 @@ class G2: NSObject, SGCManager {
         // await rebuildState()
     }
 
-    // re-creates the containers and sends all images and text again to the glasses:
+    // re-creates the containers and re-sends all images to the glasses:
     private func rebuildState() async {
-        // Hold the display lock for the whole rebuild so its per-container sendImageData calls
-        // can't interleave with a concurrent displayBitmap (see DisplayMutex).
-        await displayMutex.acquire()
-        defer { displayMutex.release() }
-
         Bridge.log("G2: rebuildState()")
-        // recreate the containers:
+        // recreate the containers (sets pageCreated = true; embeds text content directly):
         createPageWithContainers()
 
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
-        // send any image containers we have
-        // go through each container and send the data:
-        for container in imageContainers {
+        // Mark every image container dirty and let the reconcile loop re-send them, one at a time.
+        // Doing the sends here directly is what used to race a concurrent displayBitmap and clobber
+        // imgAckBox; routing through the dirty flag keeps a single sender (see displayReconcileTask).
+        // Text needs no resend here: createPageWithContainers already embeds each container's content.
+        for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
             Bridge.log(
-                "G2: rebuildState() - sending image data to container \(container.id), \(container.bmpData.count) bytes"
+                "G2: rebuildState() - marking container \(imageContainers[i].id) dirty (\(imageContainers[i].bmpData.count) bytes)"
             )
-            await sendImageData(
-                containerID: container.id, containerName: container.name, bmpData: container.bmpData
-            )
-            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms between containers
+            imageContainers[i].dirty = true
         }
+        signalDisplayDirty()
 
-        // go through each text container and send the data:
-        // disabled because text containers are initialized with their content:
-        // for container in textContainers {
-        //     let msg = EvenHubProto.updateTextMessage(
-        //         containerID: container.id,
-        //         contentOffset: 0,
-        //         contentLength: Int32(container.content.utf8.count),
-        //         content: container.content
-        //     )
-        //     sendEvenHubCommand(msg)
-        // }
-        
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
         restartMicIfAlreadyEnabled()
     }
@@ -2886,38 +2917,6 @@ class G2: NSObject, SGCManager {
         }
         sendEvenHubCommand(msg)
         pageCreated = true
-    }
-
-    private func queueEvenHubCommand(_ payload: Data) {
-        evenHubQueueLock.lock()
-        // Append rather than overwrite so updates to different text containers
-        // (maneuver text + bottom-left trip stats) all survive. Cap the backlog
-        // so a stall can't grow it unbounded; dropping the oldest is fine since
-        // text updates are idempotent (the next frame re-pushes current content).
-        pendingTextMsgs.append(payload)
-        if pendingTextMsgs.count > 8 {
-            pendingTextMsgs.removeFirst(pendingTextMsgs.count - 8)
-        }
-        evenHubQueueLock.unlock()
-    }
-
-    private func drainEvenHubQueue() {
-        evenHubQueueLock.lock()
-        let toSend: Data?
-        if !pendingTextMsgs.isEmpty {
-            let msg = pendingTextMsgs.removeFirst()
-            lastEvenHubMsg = msg
-            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
-            toSend = msg
-        } else if lastEvenHubResendsRemaining > 0, let last = lastEvenHubMsg {
-            lastEvenHubResendsRemaining -= 1
-            toSend = last
-        } else {
-            toSend = nil
-        }
-        evenHubQueueLock.unlock()
-        guard let toSend = toSend else { return }
-        sendEvenHubCommand(toSend)
     }
 
     private func restartMicIfAlreadyEnabled() {

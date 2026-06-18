@@ -121,12 +121,15 @@ type CornerCode = "TL" | "TR" | "BR" | "BL" | "CE" | "full"
 // Positioned text containers on the 576×288 canvas — one per corner, each a
 // 180×80 box with a rounded border so the container bounds are visible on
 // glass. Demonstrates `showText`'s x/y/width/height + borderWidth/borderRadius.
+// Codes are prefixed "t" so their press counts don't collide with the bitmap
+// corners above (which reuse TL/TR/BR/BL).
 const TEXT_SLOTS = [
-  {code: "TL", x: 0, y: 0},
-  {code: "TR", x: 396, y: 0},
-  {code: "BR", x: 396, y: 208},
-  {code: "BL", x: 0, y: 208},
+  {code: "tTL", x: 0, y: 0},
+  {code: "tTR", x: 396, y: 0},
+  {code: "tBR", x: 396, y: 208},
+  {code: "tBL", x: 0, y: 208},
 ] as const
+type TextSlotCode = (typeof TEXT_SLOTS)[number]["code"] | "tCE"
 const TEXT_BOX = {width: 180, height: 80, borderWidth: 2, borderRadius: 8} as const
 
 export default function CanvasPage() {
@@ -136,14 +139,21 @@ export default function CanvasPage() {
   const {invoke, lastError} = useTester("canvas")
   const [text, setText] = useState("Hello from MentraJS!")
   const [pageId, setPageId] = useState("home")
-  // Per-corner press counts. 0 = not yet pressed (first press shows the code).
-  const [counts, setCounts] = useState<Record<CornerCode, number>>({
+  // Per-button press counts. 0 = not yet pressed. Each press bumps the count so
+  // re-pressing a button sends different content (label / text suffix), updating
+  // that container in place. Covers both bitmap corners and text slots.
+  const [counts, setCounts] = useState<Record<CornerCode | TextSlotCode, number>>({
     TL: 0,
     TR: 0,
     BR: 0,
     BL: 0,
     CE: 0,
     full: 0,
+    tTL: 0,
+    tTR: 0,
+    tBR: 0,
+    tBL: 0,
+    tCE: 0,
   })
   // Synchronous mirror of `counts` so rapid presses (faster than a React
   // re-render) read the up-to-date value instead of a stale render closure,
@@ -157,7 +167,7 @@ export default function CanvasPage() {
     invoke("showBitmap", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}]).catch(() => {})
   }
 
-  const incrementCount = (code: CornerCode) => {
+  const incrementCount = (code: CornerCode | TextSlotCode) => {
     const next = countsRef.current[code] + 1
     countsRef.current = {...countsRef.current, [code]: next}
     setCounts(countsRef.current)
@@ -187,20 +197,29 @@ export default function CanvasPage() {
           drops a {`${TEXT_BOX.width}×${TEXT_BOX.height}`} bordered container; Center places one with no border.
         </p>
         <div className="flex flex-row gap-2">
-          {TEXT_SLOTS.map(({code, x, y}) => (
-            <Button
-              key={code}
-              className="w-1/5"
-              onClick={() => invoke("showText", [`${code}: ${text}`, {x, y, ...TEXT_BOX}]).catch(() => {})}>
-              {code}
-            </Button>
-          ))}
+          {TEXT_SLOTS.map(({code, x, y}) => {
+            const label = code.slice(1) // strip the "t" prefix → TL/TR/BR/BL
+            return (
+              <Button
+                key={code}
+                className="w-1/5"
+                onClick={() => {
+                  const next = incrementCount(code)
+                  // Re-pressing updates the same container in place with new content.
+                  invoke("showText", [`${label} ${next}: ${text}`, {x, y, ...TEXT_BOX}]).catch(() => {})
+                }}>
+                {label}
+                {` ${counts[code]}`}
+              </Button>
+            )
+          })}
         </div>
         <div className="flex flex-row gap-2 mt-2">
           <Button
-            onClick={() =>
-              invoke("showText", [text, {x: 198, y: 104, width: 180, height: 80}]).catch(() => {})
-            }>
+            onClick={() => {
+              const next = incrementCount("tCE")
+              invoke("showText", [`CE ${next}: ${text}`, {x: 198, y: 104, width: 180, height: 80}]).catch(() => {})
+            }}>
             Center (no border)
           </Button>
         </div>
@@ -254,7 +273,7 @@ export default function CanvasPage() {
           <Button
             variant="destructive"
             onClick={() => {
-              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
+              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0, tTL: 0, tTR: 0, tBR: 0, tBL: 0, tCE: 0}
               countsRef.current = zero
               setCounts(zero)
               invoke("clear", []).catch(() => {})

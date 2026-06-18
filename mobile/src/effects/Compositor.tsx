@@ -62,7 +62,7 @@ const SWITCHER_COMMIT_VELOCITY = -500
 // How far the overlay shrinks while the bottom swipe-up follows the finger.
 const SWIPE_UP_SCALE_TO = 0.5
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 400 : 500
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 900 : 500
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
@@ -342,6 +342,11 @@ export default function Compositor() {
         ref={viewShotRef}>
         {isOfflineHosted(renderedApp.packageName) ? (
           <OfflineAppHost
+            // Key by package for the same reason as LocalMiniappView below:
+            // switching between two offline-hosted apps must mount a fresh host
+            // (the internal stack only seeds from def.initialRoute on mount, so
+            // a reused instance would keep the previous app's stack).
+            key={renderedApp.packageName}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             iconUrl={renderedApp.logoUrl}
@@ -352,6 +357,13 @@ export default function Compositor() {
           />
         ) : (
           <LocalMiniappView
+            // Key by package so switching from app A to app B mounts a FRESH
+            // WebView instead of navigating the existing one to B's URL. Reusing
+            // the instance left A's page in WKWebView's back-history, so
+            // `webViewCanGoBack` became true under B — which disabled the
+            // Compositor's minimize-swipe and made the back-swipe pop to A's
+            // page instead of returning home.
+            key={renderedApp.packageName}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             version={renderedApp.version}
