@@ -64,6 +64,10 @@ let photoIsoDefault = 200
 let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
+let photoAeExposureDivisorOptions = [2, 3, 5]
+let photoIsoCapOptions = [400, 800, 1600]
+let photoIspDigitalGainOptions = [0, 1, 2, 4]
+let photoIspAnalogGainOptions = ["low"]
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
@@ -268,6 +272,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActions: [Int: String] = [:]
     private var activeActionOrder: [Int] = []
     private var streamConfigurationChangeInProgress = false
+    private var buttonPhotoSettingsSyncGeneration = 0
+    private var buttonPhotoSettingsSyncTask: Task<Void, Never>?
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl {
         didSet {
@@ -287,6 +293,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var scanAeDivisor = 3
     @Published private(set) var scanIsoCap = 800
     @Published private(set) var photoCompression: PhotoCompression = .none
+    @Published private(set) var photoAeExposureDivisor: Int?
+    @Published private(set) var photoIsoCap: Int?
+    @Published private(set) var photoNoiseReduction: Bool?
+    @Published private(set) var photoEdgeEnhancement: Bool?
+    @Published private(set) var photoMfnr: Bool?
+    @Published private(set) var photoZsl: Bool?
+    @Published private(set) var photoIspDigitalGain: Int?
+    @Published private(set) var photoIspAnalogGain: String?
     @Published private(set) var photoExposureManual = false
     @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
     @Published private(set) var photoIso = photoIsoDefault
@@ -619,62 +633,171 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func setPhotoSize(_ size: PhotoSize) {
         photoSize = size
+        syncScanButtonPresetIfEnabled()
     }
 
     func setPhotoCompression(_ compression: PhotoCompression) {
         photoCompression = compression
+        syncScanButtonPresetIfEnabled()
     }
 
     func setScanMode(_ enabled: Bool) {
         scanMode = enabled
+        if enabled {
+            applyBarcodeScanPhotoPreset()
+        }
         guard glassesConnected else { return }
-        Task {
-            do {
-                if enabled {
-                    // Keep hardware-button captures at max detail while scan mode is enabled.
-                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(size: .max)
-                    )
-                } else {
-                    let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
-                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(size: size)
-                    )
-                }
-            } catch {
-                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
-            }
+        if enabled {
+            syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+        } else {
+            let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
+            syncButtonPhotoSettings(
+                "Restore photo preset on glasses",
+                settings: ButtonPhotoSettings(size: size, mfnr: true, zsl: true, resetCaptureTuning: true)
+            )
         }
     }
 
     func setScanAeDivisor(_ divisor: Int) {
         let nextDivisor = divisor > 3 ? 5 : 3
         scanAeDivisor = nextDivisor
+        photoAeExposureDivisor = nextDivisor
         if scanMode {
-            pushScanButtonPreset(aeDivisor: nextDivisor, isoCap: scanIsoCap)
+            pushScanButtonPreset()
         }
     }
 
     func setScanIsoCap(_ isoCap: Int) {
         let nextIsoCap = isoCap <= 400 ? 400 : 800
         scanIsoCap = nextIsoCap
+        photoIsoCap = nextIsoCap
         if scanMode {
-            pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: nextIsoCap)
+            pushScanButtonPreset()
         }
     }
 
-    private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
+    private func pushScanButtonPreset() {
         guard glassesConnected else { return }
-        // Re-assert the max-size scan button preset so the hardware button stays in sync.
-        Task {
+        syncButtonPhotoSettings("Apply scan preset on glasses", settings: scanButtonPreset())
+    }
+
+    private func syncButtonPhotoSettings(_ label: String, settings: ButtonPhotoSettings) {
+        buttonPhotoSettingsSyncGeneration += 1
+        let generation = buttonPhotoSettingsSyncGeneration
+        let previousTask = buttonPhotoSettingsSyncTask
+        buttonPhotoSettingsSyncTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard let self, generation == self.buttonPhotoSettingsSyncGeneration, self.glassesConnected else { return }
+            let actionId = self.beginAction(label)
+            self.lastAction = "Running: \(label)"
+            self.append(tag: "TX", text: label)
             do {
-                _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(size: .max)
-                )
+                _ = try await self.mentraBluetoothSdk.setButtonPhotoSettings(settings)
+                self.lastAction = "Requested: \(label)"
             } catch {
-                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+                self.cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+                self.lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                self.append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
             }
+            self.endAction(actionId)
         }
+    }
+
+    private func syncScanButtonPresetIfEnabled() {
+        if scanMode {
+            pushScanButtonPreset()
+        }
+    }
+
+    private func scanButtonPreset() -> ButtonPhotoSettings {
+        ButtonPhotoSettings(
+            size: ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max,
+            mfnr: photoMfnr,
+            zsl: photoZsl,
+            noiseReduction: photoNoiseReduction,
+            edgeEnhancement: photoEdgeEnhancement,
+            ispDigitalGain: photoIspDigitalGain,
+            ispAnalogGain: photoIspAnalogGain,
+            aeExposureDivisor: photoAeExposureDivisor,
+            isoCap: photoIsoCap,
+            compress: photoCompression.rawValue,
+            sound: false,
+            resetCaptureTuning: shouldResetCaptureTuning()
+        )
+    }
+
+    private func shouldResetCaptureTuning() -> Bool {
+        photoAeExposureDivisor == nil ||
+            photoIsoCap == nil ||
+            photoNoiseReduction == nil ||
+            photoEdgeEnhancement == nil ||
+            photoMfnr == nil ||
+            photoZsl == nil ||
+            photoIspDigitalGain == nil ||
+            photoIspAnalogGain == nil
+    }
+
+    func setPhotoAeExposureDivisor(_ divisor: Int?) {
+        photoAeExposureDivisor = divisor.flatMap { photoAeExposureDivisorOptions.contains($0) ? $0 : nil }
+        if photoAeExposureDivisor == 3 || photoAeExposureDivisor == 5 {
+            scanAeDivisor = photoAeExposureDivisor!
+        }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIsoCap(_ isoCap: Int?) {
+        photoIsoCap = isoCap.flatMap { photoIsoCapOptions.contains($0) ? $0 : nil }
+        if photoIsoCap == 400 || photoIsoCap == 800 {
+            scanIsoCap = photoIsoCap!
+        }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoNoiseReduction(_ value: Bool?) {
+        photoNoiseReduction = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoEdgeEnhancement(_ value: Bool?) {
+        photoEdgeEnhancement = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoMfnr(_ value: Bool?) {
+        photoMfnr = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoZsl(_ value: Bool?) {
+        photoZsl = value
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIspDigitalGain(_ gain: Int?) {
+        photoIspDigitalGain = gain.flatMap { photoIspDigitalGainOptions.contains($0) ? $0 : nil }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func setPhotoIspAnalogGain(_ gain: String?) {
+        photoIspAnalogGain = gain.flatMap { photoIspAnalogGainOptions.contains($0) ? $0 : nil }
+        syncScanButtonPresetIfEnabled()
+    }
+
+    func applyBarcodeScanPhotoPreset() {
+        // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
+        photoSize = .max
+        photoCompression = .none
+        photoExposureManual = false
+        scanAeDivisor = 3
+        scanIsoCap = 800
+        photoAeExposureDivisor = 3
+        photoIsoCap = 800
+        photoNoiseReduction = false
+        photoEdgeEnhancement = false
+        photoMfnr = false
+        photoZsl = false
+        photoIspDigitalGain = 0
+        photoIspAnalogGain = "low"
     }
 
     func setPhotoExposureManual(_ enabled: Bool) {
@@ -726,7 +849,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func captureAndUpload() {
-        runAsyncAction("Capture & upload") { [self] in
+        runAsyncAction(scanMode ? "Capture scan photo" : "Capture & upload") { [self] in
             try requireConnected("capture photos")
             try requireGlassesWifi("capture photos")
             if photoDestination == .thisPhone {
@@ -804,27 +927,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
-        if scanMode {
-            // Hardware-button scan settings are synced separately.
-            // App-triggered captures use max detail to match the scan preset's output tier.
-            return PhotoRequest(
-                requestId: requestId,
-                appId: appId,
-                size: .max,
-                webhookUrl: webhookUrl,
-                compress: PhotoCompression.none,
-                sound: false
-            )
-        }
         return PhotoRequest(
             requestId: requestId,
             appId: appId,
             size: photoSize,
             webhookUrl: webhookUrl,
             compress: photoCompression,
-            sound: true,
+            sound: !scanMode,
             exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-            iso: photoExposureManual ? photoIso : nil
+            iso: photoExposureManual ? photoIso : nil,
+            aeExposureDivisor: photoExposureManual ? nil : photoAeExposureDivisor,
+            isoCap: photoExposureManual ? nil : photoIsoCap,
+            noiseReduction: photoNoiseReduction,
+            edgeEnhancement: photoEdgeEnhancement,
+            mfnr: photoMfnr,
+            zsl: photoZsl,
+            ispDigitalGain: photoIspDigitalGain,
+            ispAnalogGain: photoIspAnalogGain
         )
     }
 
@@ -1601,7 +1720,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         } else if !wasConnected {
             // Re-apply scan preset on reconnect so button captures stay in sync.
             if scanMode {
-                pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: scanIsoCap)
+                pushScanButtonPreset()
             }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")

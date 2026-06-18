@@ -13,21 +13,29 @@ import {
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
   CAMERA_ROI_POSITIONS,
+  PHOTO_BLE_FALLBACK_QUALITY_WARNING,
+  PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS,
   PHOTO_COMPRESSIONS,
   PHOTO_EXPOSURE_DEFAULT_NS,
   PHOTO_EXPOSURE_MAX_NS,
   PHOTO_EXPOSURE_MIN_NS,
+  PHOTO_ISO_CAP_OPTIONS,
   PHOTO_ISO_DEFAULT,
   PHOTO_ISO_MAX,
   PHOTO_ISO_MIN,
+  PHOTO_ISP_ANALOG_GAIN_OPTIONS,
+  PHOTO_ISP_DIGITAL_GAIN_OPTIONS,
   PHOTO_SIZES,
-  SCAN_AE_DIVISOR_OPTIONS,
-  SCAN_ISO_CAP_OPTIONS,
+  PHOTO_TUNING_FLAG_OPTIONS,
   type BluetoothSdkExampleModel,
+  type PhotoAeExposureDivisor,
   type PhotoCompression,
+  type PhotoIsoCap,
+  type PhotoIspAnalogGain,
+  type PhotoIspDigitalGain,
   type PhotoPreviewDetails,
   type PhotoSize,
-  type ScanAeDivisor,
+  type PhotoTuningFlag,
   type VideoPreviewDetails,
 } from '../useBluetoothSdkExample';
 
@@ -36,40 +44,50 @@ const PHOTO_ISO_STEP = 50;
 const CAMERA_FOV_STEP = 1;
 type CameraCaptureMode = 'photo' | 'video';
 
+function tuningFlagLine(name: string, value: PhotoTuningFlag) {
+  if (value === 'unset') {
+    return null;
+  }
+  return `  ${name}: ${value === 'on' ? 'true' : 'false'},`;
+}
+
 function photoSdkCall(
   size: PhotoSize,
   compression: PhotoCompression,
   useCloudServer: boolean,
+  aeExposureDivisor: PhotoAeExposureDivisor | null,
+  isoCap: PhotoIsoCap | null,
+  noiseReduction: PhotoTuningFlag,
+  edgeEnhancement: PhotoTuningFlag,
+  mfnr: PhotoTuningFlag,
+  zsl: PhotoTuningFlag,
+  ispDigitalGain: PhotoIspDigitalGain | null,
+  ispAnalogGain: PhotoIspAnalogGain | null,
   exposureManual: boolean,
   exposureTimeNs: number,
   iso: number,
   cameraFov: number,
   cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
   scanMode: boolean,
-  scanAeDivisor: ScanAeDivisor,
-  scanIsoCap: number,
 ) {
   const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
 console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
-  const requestFields = scanMode
-    ? `  size: "max",
-  compress: "none",
-  sound: false,
-  aeExposureDivisor: ${scanAeDivisor},
-  isoCap: ${scanIsoCap},
-  noiseReduction: false,
-  edgeEnhancement: false,
-  mfnr: false,
-  ispDigitalGain: 0,
-  ispAnalogGain: "low",`
-    : [
+  const requestFields = [
         `  size: "${size}",`,
         `  compress: "${compression}",`,
-        '  sound: true,',
+        `  sound: ${scanMode ? 'false' : 'true'},`,
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
         exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO',
-      ].join('\n');
+        !exposureManual && aeExposureDivisor !== null ? `  aeExposureDivisor: ${aeExposureDivisor},` : null,
+        !exposureManual && isoCap !== null ? `  isoCap: ${isoCap},` : null,
+        tuningFlagLine('noiseReduction', noiseReduction),
+        tuningFlagLine('edgeEnhancement', edgeEnhancement),
+        tuningFlagLine('mfnr', mfnr),
+        tuningFlagLine('zsl', zsl),
+        ispDigitalGain !== null ? `  ispDigitalGain: ${ispDigitalGain},` : null,
+        ispAnalogGain !== null ? `  ispAnalogGain: "${ispAnalogGain}",` : null,
+      ].filter((line): line is string => line !== null).join('\n');
   if (!useCloudServer) {
     return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
 const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
@@ -130,7 +148,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   );
   const bleFallbackWarning = sdk.photoPreviewDetails?.bleFallbackUsed
     ? sdk.photoPreviewDetails.bleFallbackMessage ??
-      'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+      PHOTO_BLE_FALLBACK_QUALITY_WARNING
     : null;
   const cloudSetupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const photoStateText = sdk.photoPreviewUrl
@@ -149,14 +167,20 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         sdk.photoSize,
         sdk.photoCompression,
         sdk.photoCloudServerEnabled,
+        sdk.photoAeExposureDivisor,
+        sdk.photoIsoCap,
+        sdk.photoNoiseReduction,
+        sdk.photoEdgeEnhancement,
+        sdk.photoMfnr,
+        sdk.photoZsl,
+        sdk.photoIspDigitalGain,
+        sdk.photoIspAnalogGain,
         sdk.photoExposureManual,
         sdk.photoExposureTimeNs,
         sdk.photoIso,
         sdk.cameraFov,
         sdk.cameraRoiPosition,
         sdk.scanMode,
-        sdk.scanAeDivisor,
-        sdk.scanIsoCap,
       );
 
   React.useEffect(() => {
@@ -296,12 +320,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </Pressable>
         <View style={styles.scanModeBelowCapture}>
           <ScanModeSettingsCard
-            aeDivisor={sdk.scanAeDivisor}
             enabled={sdk.scanMode}
-            isoCap={sdk.scanIsoCap}
-            onAeDivisorChange={sdk.setScanAeDivisor}
             onEnabledChange={sdk.setScanMode}
-            onIsoCapChange={sdk.setScanIsoCap}
           />
         </View>
         <PhotoDetailsCard
@@ -495,8 +515,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           {PHOTO_SIZES.map((size) => (
             <Chip
               key={size}
-              active={!sdk.scanMode && sdk.photoSize === size}
-              disabled={sdk.scanMode}
+              active={sdk.photoSize === size}
               value={size}
               onPress={() => sdk.setPhotoSize(size)}
             />
@@ -507,20 +526,37 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Chip
               key={compression}
               active={sdk.photoCompression === compression}
-              disabled={sdk.scanMode}
               value={compression}
               onPress={() => sdk.setPhotoCompression(compression)}
             />
           ))}
         </OptionGroup>
         <ExposureControl
-          disabled={sdk.scanMode}
           enabled={sdk.photoExposureManual}
           onEnabledChange={sdk.setPhotoExposureManual}
           onIsoChange={sdk.setPhotoIso}
           onValueChange={sdk.setPhotoExposureTimeNs}
           iso={sdk.photoIso}
           value={sdk.photoExposureTimeNs}
+        />
+        <PhotoRequestTuningControl
+          aeExposureDivisor={sdk.photoAeExposureDivisor}
+          edgeEnhancement={sdk.photoEdgeEnhancement}
+          ispAnalogGain={sdk.photoIspAnalogGain}
+          ispDigitalGain={sdk.photoIspDigitalGain}
+          isoCap={sdk.photoIsoCap}
+          mfnr={sdk.photoMfnr}
+          noiseReduction={sdk.photoNoiseReduction}
+          onAeExposureDivisorChange={sdk.setPhotoAeExposureDivisor}
+          onEdgeEnhancementChange={sdk.setPhotoEdgeEnhancement}
+          onIspAnalogGainChange={sdk.setPhotoIspAnalogGain}
+          onIspDigitalGainChange={sdk.setPhotoIspDigitalGain}
+          onIsoCapChange={sdk.setPhotoIsoCap}
+          onMfnrChange={sdk.setPhotoMfnr}
+          onNoiseReductionChange={sdk.setPhotoNoiseReduction}
+          onZslChange={sdk.setPhotoZsl}
+          manualExposure={sdk.photoExposureManual}
+          zsl={sdk.photoZsl}
         />
           </>
         )}
@@ -989,27 +1025,19 @@ function photoCaptureMetadataDetail(config: PhotoStatusExtras['captureMetadata']
 }
 
 function ScanModeSettingsCard({
-  aeDivisor,
   enabled,
-  isoCap,
-  onAeDivisorChange,
   onEnabledChange,
-  onIsoCapChange,
 }: {
-  aeDivisor: ScanAeDivisor;
   enabled: boolean;
-  isoCap: number;
-  onAeDivisorChange: (divisor: ScanAeDivisor) => void;
   onEnabledChange: (enabled: boolean) => void;
-  onIsoCapChange: (isoCap: number) => void;
 }) {
   return (
     <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.settingLabel}>SCAN MODE</Text>
+          <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
           <Text style={styles.settingHint}>
-            {enabled ? `Max res · AE÷${aeDivisor} · ISO cap ${isoCap}` : 'Document / barcode capture preset'}
+            {enabled ? 'Barcode scanning on' : 'Standard photo capture'}
           </Text>
         </View>
         <Switch
@@ -1021,34 +1049,12 @@ function ScanModeSettingsCard({
         />
       </View>
       {enabled ? (
-        <>
-          <Text style={styles.settingDescription}>
-            Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn on NR/ISP). Capture still sends AE÷ and ISO cap in take_photo.
-          </Text>
-          <OptionGroup label="ae divisor">
-            {SCAN_AE_DIVISOR_OPTIONS.map((option) => (
-              <Chip
-                key={option}
-                active={aeDivisor === option}
-                value={`÷${option}`}
-                onPress={() => onAeDivisorChange(option)}
-              />
-            ))}
-          </OptionGroup>
-          <OptionGroup label="iso cap">
-            {SCAN_ISO_CAP_OPTIONS.map((option) => (
-              <Chip
-                key={option}
-                active={isoCap === option}
-                value={String(option)}
-                onPress={() => onIsoCapChange(option)}
-              />
-            ))}
-          </OptionGroup>
-        </>
+        <Text style={styles.settingDescription}>
+          Applies the AE-divisor / ISO-cap barcode preset and scans captured photo previews for barcodes.
+        </Text>
       ) : (
         <Text style={styles.settingDescription}>
-          Off — capture uses the size, compress, and exposure options below.
+          Off - capture uses the current fields below without barcode recognition.
         </Text>
       )}
     </View>
@@ -1072,13 +1078,12 @@ function ExposureControl({
   iso: number;
   value: number;
 }) {
-  const controlsDisabled = disabled || !enabled;
   return (
     <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
       <View style={styles.settingHeader}>
         <View>
-          <Text style={styles.settingLabel}>EXPOSURE</Text>
-          <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto exposure'}</Text>
+          <Text style={styles.settingLabel}>MANUAL EXPOSURE</Text>
+          <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto metered by glasses'}</Text>
         </View>
         <Switch
           disabled={disabled}
@@ -1089,43 +1094,214 @@ function ExposureControl({
           value={enabled}
         />
       </View>
-      <RangeSlider
-        disabled={controlsDisabled}
-        max={PHOTO_EXPOSURE_MAX_NS}
-        min={PHOTO_EXPOSURE_MIN_NS}
-        onChange={onValueChange}
-        step={PHOTO_EXPOSURE_STEP_NS}
-        value={value}
-      />
-      <View style={styles.settingRangeRow}>
-        <Text style={styles.settingRangeText}>1/1000s</Text>
-        <Pressable onPress={() => onValueChange(PHOTO_EXPOSURE_DEFAULT_NS)}>
-          <Text style={styles.settingHint}>Default 1/120s</Text>
-        </Pressable>
-        <Text style={styles.settingRangeText}>1/30s</Text>
-      </View>
+      {enabled ? (
+        <>
+          <RangeSlider
+            disabled={disabled}
+            max={PHOTO_EXPOSURE_MAX_NS}
+            min={PHOTO_EXPOSURE_MIN_NS}
+            onChange={onValueChange}
+            step={PHOTO_EXPOSURE_STEP_NS}
+            value={value}
+          />
+          <View style={styles.settingRangeRow}>
+            <Text style={styles.settingRangeText}>1/1000s</Text>
+            <Pressable disabled={disabled} onPress={() => onValueChange(PHOTO_EXPOSURE_DEFAULT_NS)}>
+              <Text style={styles.settingHint}>Preset 1/120s</Text>
+            </Pressable>
+            <Text style={styles.settingRangeText}>1/30s</Text>
+          </View>
+        </>
+      ) : null}
       <View style={styles.isoHeader}>
         <View>
           <Text style={styles.settingLabel}>ISO</Text>
-          <Text style={styles.settingHint}>{enabled ? `ISO ${iso}` : 'Auto ISO'}</Text>
+          <Text style={styles.settingHint}>{enabled ? `ISO ${iso}` : 'Auto / derived ISO'}</Text>
         </View>
       </View>
-      <RangeSlider
-        disabled={controlsDisabled}
-        max={PHOTO_ISO_MAX}
-        min={PHOTO_ISO_MIN}
-        onChange={onIsoChange}
-        step={PHOTO_ISO_STEP}
-        value={iso}
-      />
-      <View style={styles.settingRangeRow}>
-        <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MIN}</Text>
-        <Pressable onPress={() => onIsoChange(PHOTO_ISO_DEFAULT)}>
-          <Text style={styles.settingHint}>Default ISO {PHOTO_ISO_DEFAULT}</Text>
-        </Pressable>
-        <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MAX}</Text>
-      </View>
+      {enabled ? (
+        <>
+          <RangeSlider
+            disabled={disabled}
+            max={PHOTO_ISO_MAX}
+            min={PHOTO_ISO_MIN}
+            onChange={onIsoChange}
+            step={PHOTO_ISO_STEP}
+            value={iso}
+          />
+          <View style={styles.settingRangeRow}>
+            <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MIN}</Text>
+            <Pressable disabled={disabled} onPress={() => onIsoChange(PHOTO_ISO_DEFAULT)}>
+              <Text style={styles.settingHint}>Preset ISO {PHOTO_ISO_DEFAULT}</Text>
+            </Pressable>
+            <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MAX}</Text>
+          </View>
+        </>
+      ) : null}
     </View>
+  );
+}
+
+function PhotoRequestTuningControl({
+  aeExposureDivisor,
+  disabled = false,
+  edgeEnhancement,
+  ispAnalogGain,
+  ispDigitalGain,
+  isoCap,
+  manualExposure,
+  mfnr,
+  noiseReduction,
+  onAeExposureDivisorChange,
+  onEdgeEnhancementChange,
+  onIspAnalogGainChange,
+  onIspDigitalGainChange,
+  onIsoCapChange,
+  onMfnrChange,
+  onNoiseReductionChange,
+  onZslChange,
+  zsl,
+}: {
+  aeExposureDivisor: PhotoAeExposureDivisor | null;
+  disabled?: boolean;
+  edgeEnhancement: PhotoTuningFlag;
+  ispAnalogGain: PhotoIspAnalogGain | null;
+  ispDigitalGain: PhotoIspDigitalGain | null;
+  isoCap: PhotoIsoCap | null;
+  manualExposure: boolean;
+  mfnr: PhotoTuningFlag;
+  noiseReduction: PhotoTuningFlag;
+  onAeExposureDivisorChange: (divisor: PhotoAeExposureDivisor | null) => void;
+  onEdgeEnhancementChange: (value: PhotoTuningFlag) => void;
+  onIspAnalogGainChange: (gain: PhotoIspAnalogGain | null) => void;
+  onIspDigitalGainChange: (gain: PhotoIspDigitalGain | null) => void;
+  onIsoCapChange: (isoCap: PhotoIsoCap | null) => void;
+  onMfnrChange: (value: PhotoTuningFlag) => void;
+  onNoiseReductionChange: (value: PhotoTuningFlag) => void;
+  onZslChange: (value: PhotoTuningFlag) => void;
+  zsl: PhotoTuningFlag;
+}) {
+  const scanExposureDisabled = disabled || manualExposure;
+
+  return (
+    <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
+      <View style={styles.settingHeader}>
+        <View>
+          <Text style={styles.settingLabel}>PHOTO REQUEST TUNING</Text>
+          <Text style={styles.settingHint}>
+            {manualExposure ? 'AE divisor / ISO cap disabled in manual mode' : 'Optional request parameters'}
+          </Text>
+        </View>
+      </View>
+      <OptionGroup label="ae divisor">
+        <Chip
+          active={aeExposureDivisor === null}
+          disabled={scanExposureDisabled}
+          value="Unset"
+          onPress={() => onAeExposureDivisorChange(null)}
+        />
+        {PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS.map((option) => (
+          <Chip
+            key={option}
+            active={aeExposureDivisor === option}
+            disabled={scanExposureDisabled}
+            value={`÷${option}`}
+            onPress={() => onAeExposureDivisorChange(option)}
+          />
+        ))}
+      </OptionGroup>
+      <OptionGroup label="iso cap">
+        <Chip
+          active={isoCap === null}
+          disabled={scanExposureDisabled}
+          value="Unset"
+          onPress={() => onIsoCapChange(null)}
+        />
+        {PHOTO_ISO_CAP_OPTIONS.map((option) => (
+          <Chip
+            key={option}
+            active={isoCap === option}
+            disabled={scanExposureDisabled}
+            value={String(option)}
+            onPress={() => onIsoCapChange(option)}
+          />
+        ))}
+      </OptionGroup>
+      <TuningFlagGroup
+        disabled={disabled}
+        label="noise reduction"
+        onChange={onNoiseReductionChange}
+        value={noiseReduction}
+      />
+      <TuningFlagGroup
+        disabled={disabled}
+        label="edge enhancement"
+        onChange={onEdgeEnhancementChange}
+        value={edgeEnhancement}
+      />
+      <TuningFlagGroup disabled={disabled} label="mfnr" onChange={onMfnrChange} value={mfnr} />
+      <TuningFlagGroup disabled={disabled} label="zsl" onChange={onZslChange} value={zsl} />
+      <OptionGroup label="isp digital gain">
+        <Chip
+          active={ispDigitalGain === null}
+          disabled={disabled}
+          value="Unset"
+          onPress={() => onIspDigitalGainChange(null)}
+        />
+        {PHOTO_ISP_DIGITAL_GAIN_OPTIONS.map((option) => (
+          <Chip
+            key={option}
+            active={ispDigitalGain === option}
+            disabled={disabled}
+            value={String(option)}
+            onPress={() => onIspDigitalGainChange(option)}
+          />
+        ))}
+      </OptionGroup>
+      <OptionGroup label="isp analog gain">
+        <Chip
+          active={ispAnalogGain === null}
+          disabled={disabled}
+          value="Unset"
+          onPress={() => onIspAnalogGainChange(null)}
+        />
+        {PHOTO_ISP_ANALOG_GAIN_OPTIONS.map((option) => (
+          <Chip
+            key={option}
+            active={ispAnalogGain === option}
+            disabled={disabled}
+            value={option}
+            onPress={() => onIspAnalogGainChange(option)}
+          />
+        ))}
+      </OptionGroup>
+    </View>
+  );
+}
+
+function TuningFlagGroup({
+  disabled,
+  label,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  label: string;
+  onChange: (value: PhotoTuningFlag) => void;
+  value: PhotoTuningFlag;
+}) {
+  return (
+    <OptionGroup label={label}>
+      {PHOTO_TUNING_FLAG_OPTIONS.map((option) => (
+        <Chip
+          key={option}
+          active={value === option}
+          disabled={disabled}
+          value={option === 'unset' ? 'Unset' : option === 'on' ? 'On' : 'Off'}
+          onPress={() => onChange(option)}
+        />
+      ))}
+    </OptionGroup>
   );
 }
 
@@ -1177,7 +1353,7 @@ function CameraSettingsControl({
         <Text style={styles.settingRangeText}>{CAMERA_FOV_MIN}°</Text>
         <Pressable disabled={controlsDisabled} onPress={() => onFovChange(CAMERA_FOV_DEFAULT)}>
           <Text style={[styles.settingHint, controlsDisabled && styles.settingRangeText]}>
-            Default {CAMERA_FOV_DEFAULT}°
+            Preset {CAMERA_FOV_DEFAULT}°
           </Text>
         </Pressable>
         <Text style={styles.settingRangeText}>{CAMERA_FOV_MAX}°</Text>
