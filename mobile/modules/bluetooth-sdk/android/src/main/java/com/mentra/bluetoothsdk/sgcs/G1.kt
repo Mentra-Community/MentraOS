@@ -1584,7 +1584,7 @@ class G1 : SGCManager() {
 
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
 
     }
 
@@ -1597,10 +1597,6 @@ class G1 : SGCManager() {
     }
 
     override fun sendButtonVideoRecordingSettings() {
-
-    }
-
-    override fun sendButtonCameraLedSetting() {
 
     }
 

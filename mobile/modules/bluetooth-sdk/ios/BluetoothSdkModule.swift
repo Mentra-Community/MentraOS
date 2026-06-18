@@ -336,11 +336,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: width, height: height, fps: fps)).values
         }
 
-        AsyncFunction("setCaptureLedEnabled") { (enabled: Bool) in
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setCaptureLedEnabled(enabled).values
-        }
-
         AsyncFunction("setMaxVideoRecordingDuration") { (minutes: Int) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setMaxVideoRecordingDuration(minutes: minutes).values
@@ -465,6 +460,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("startStream") { (params: [String: Any]) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.startStream(StreamRequest(values: params)).values
+        }
+
+        AsyncFunction("startExternallyManagedStream") { (params: [String: Any]) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.startExternallyManagedStream(StreamRequest(values: params)).values
         }
 
         AsyncFunction("stopStream") {

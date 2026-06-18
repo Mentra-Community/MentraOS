@@ -190,8 +190,10 @@ class MantleManager {
       cloud,
       miniappAuth: {
         getToken: (packageName, opts) => {
-          const authPackageName =
-            packageName === DEV_APP_PACKAGE_NAME ? (getDevAppSourcePackage() ?? packageName) : packageName
+          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+          if (!authPackageName) {
+            throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
+          }
           return cloudClient.getMiniappAuthToken(authPackageName, opts)
         },
       },

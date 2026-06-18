@@ -312,14 +312,28 @@ export interface LocationTierAdapter {
  * miniapps. The runtime calls these from its stream request handlers; the
  * host's PhoneStreamCoordinator implements them.
  */
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
 export interface StreamingAdapter {
   /** Glasses-confirmed publisher start result. */
   startUnmanaged: (
     packageName: string,
     opts: {
       streamUrl: string
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
     },
   ) => Promise<StreamPublisherStartResult>
@@ -327,8 +341,8 @@ export interface StreamingAdapter {
     packageName: string,
     opts: {
       restreamDestinations?: Array<string | {url: string; name?: string}>
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
       /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
       ingest?: "srt" | "whip"
