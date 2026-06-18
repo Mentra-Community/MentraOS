@@ -28,7 +28,7 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
+import {distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {borderTestImageBase64} from "./lib/bmp"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
@@ -1242,7 +1242,14 @@ export class NavigationController {
     this.lastHudKey = key
 
     this.display.showManeuver(next)
-    if (stats) this.display.showTripStats(stats)
+    if (stats) {
+      this.display.showTripStats(stats)
+    } else {
+      // No trip stats to show (e.g. arrived / not running) — actively BLANK
+      // the bottom container so it doesn't keep the last "X m · ⊙ Y min"
+      // frame on the glasses after arrival.
+      this.display.showTripStats("")
+    }
   }
 
   /**
@@ -1327,6 +1334,13 @@ export class NavigationController {
     // heading when there's no route to follow.
     const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
     const markerHeading = routeBearing ?? this.heading
+    // Only draw the route AHEAD of the user: trim the part already walked so
+    // the line behind the position marker disappears as they progress.
+    const remainingRoute = remainingRoutePoints(me, this.trip.routePoints)
+    // Destination = the last point of the FULL route (the route's end), drawn
+    // as a small circle so the user can see where they're headed.
+    const fullRoute = this.trip.routePoints
+    const destination = fullRoute && fullRoute.length > 0 ? fullRoute[fullRoute.length - 1] : null
     // NORTH-UP: the minimap is kept fixed with north at the top — it does NOT
     // rotate to follow heading. Only the position marker rotates to show which
     // way the user is facing (marker.headingDeg). `rotationDeg: 0` locks the
@@ -1337,7 +1351,8 @@ export class NavigationController {
       height: this.OSM_MINIMAP_SIZE,
       viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
       lineWidthPx: 2,
-      route: this.trip.routePoints,
+      route: remainingRoute,
+      destination,
       rotationDeg: 0,
       marker: markerHeading != null ? {at: me, headingDeg: markerHeading} : null,
     })

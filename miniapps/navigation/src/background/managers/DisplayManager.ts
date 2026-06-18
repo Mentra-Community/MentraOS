@@ -12,65 +12,14 @@ import {borderTestImageBase64} from "../lib/bmp"
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
-  // ── Text update throttle ─────────────────────────────────────────────
-  // The G2 firmware drops display updates that arrive too close together —
-  // pushing maneuver text + trip stats back-to-back (as refreshHUD does
-  // every tick) causes the first/third text containers to keep stale text.
-  // Per the firmware engineer, each text update needs ≥200ms of breathing
-  // room before the next one is sent.
-  //
-  // So text shows are SERIALIZED through a queue: at most one send per
-  // TEXT_MIN_GAP_MS, drained in order. Updates are COALESCED per "box" key
-  // (maneuver / stats / wall) — if a newer text for the same box is queued
-  // before the old one is sent, the old one is dropped, so we only ever
-  // send the latest state of each box and never replay stale frames.
-  private static readonly TEXT_MIN_GAP_MS = 200
-  /**
-   * Latest pending send per box key, drained one per TEXT_MIN_GAP_MS in
-   * INSERTION ORDER (Map preserves it; re-setting an existing key updates the
-   * thunk WITHOUT moving its position). The G2 firmware drops back-to-back
-   * updates, so every push — minimap bitmap AND both text containers — goes
-   * through here. Because refreshHUD enqueues minimap → maneuver → stats in
-   * that order, the glasses always receive them in that fixed sequence, ≥200ms
-   * apart. That kills the cross-pipeline race where the bottom text painted
-   * before the top, or the minimap didn't redraw at all, when switching
-   * between the main menu and the large map.
-   */
-  private readonly displayQueue = new Map<string, () => void>()
-  private displayPumpTimer: ReturnType<typeof setTimeout> | null = null
-
-  /**
-   * Enqueue a display send for `box`, coalescing with any pending send for the
-   * same box (only the latest survives, position preserved). The pump fires
-   * queued sends one at a time, ≥TEXT_MIN_GAP_MS apart, in insertion order.
-   */
-  private enqueue(box: string, fn: () => void): void {
-    this.displayQueue.set(box, fn)
-    if (this.displayPumpTimer == null) {
-      // Nothing in flight — send the first item immediately, then schedule
-      // the pump for the gap so subsequent items are spaced out.
-      this.pump()
-    }
-  }
-
-  private pump(): void {
-    // Pull the oldest queued box (insertion order; Map preserves it).
-    const next = this.displayQueue.entries().next()
-    if (next.done) {
-      this.displayPumpTimer = null
-      return
-    }
-    const [box, fn] = next.value
-    this.displayQueue.delete(box)
+  // ── Display sends ────────────────────────────────────────────────────
+  // Sends are INSTANT — each show fires immediately, no spacing/throttle.
+  // (We previously serialized text through a 200ms queue, but that's removed:
+  // `enqueue` now just fires the thunk right away. The `box` key is kept in
+  // the signature only so call sites read clearly and so a future throttle
+  // could be reintroduced without touching them.)
+  private enqueue(_box: string, fn: () => void): void {
     this.safeCall(fn)
-    // Hold the line for TEXT_MIN_GAP_MS before the next send, even if the
-    // queue is currently empty — that guards against a fresh enqueue landing
-    // <200ms after this one (enqueue only fires immediately when no pump is
-    // running).
-    this.displayPumpTimer = setTimeout(() => {
-      this.displayPumpTimer = null
-      if (this.displayQueue.size > 0) this.pump()
-    }, DisplayManager.TEXT_MIN_GAP_MS)
   }
 
   /**
@@ -251,24 +200,9 @@ export class DisplayManager {
     })
   }
 
-  /**
-   * Wipe whatever's on the glasses. Also DROPS any text queued in the 200ms
-   * pump — otherwise a maneuver/stats send enqueued just before clear()
-   * would flush AFTER the wipe and re-paint the HUD we just cleared (the
-   * "swipe-up doesn't clear, old HUD flashes on top of the large map" bug).
-   */
+  /** Wipe whatever's on the glasses. */
   clear(): void {
-    this.cancelQueued()
     this.safeCall(() => this.session.display.clear())
-  }
-
-  /** Drop all pending queued sends (text + bitmap) and stop the pump. */
-  private cancelQueued(): void {
-    this.displayQueue.clear()
-    if (this.displayPumpTimer != null) {
-      clearTimeout(this.displayPumpTimer)
-      this.displayPumpTimer = null
-    }
   }
 
   private safeCall(fn: () => void): void {

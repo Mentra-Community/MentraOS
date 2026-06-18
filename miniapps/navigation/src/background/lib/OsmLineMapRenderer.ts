@@ -57,6 +57,26 @@ class Raster {
       }
     }
   }
+  /**
+   * Hollow circle outline of radius `r` and `thickness` px, centered at
+   * (cx, cy). Used for the destination marker on the route. A pixel is "on"
+   * when its distance from center falls within [r - thickness, r].
+   */
+  ring(cx: number, cy: number, r: number, v: number, thickness: number): void {
+    cx = Math.round(cx)
+    cy = Math.round(cy)
+    const rOuter = Math.max(1, Math.round(r))
+    const rInner = Math.max(0, rOuter - Math.max(1, Math.round(thickness)))
+    const o2 = rOuter * rOuter
+    const i2 = rInner * rInner
+    for (let dy = -rOuter; dy <= rOuter; dy++) {
+      for (let dx = -rOuter; dx <= rOuter; dx++) {
+        const d2 = dx * dx + dy * dy
+        if (d2 <= o2 && d2 >= i2) this.set(cx + dx, cy + dy, v)
+      }
+    }
+  }
+
   /** Filled triangle via barycentric coverage test (used for the heading arrow). */
   triangle(
     ax: number,
@@ -126,6 +146,11 @@ export type OsmLineMapOptions = {
   route?: LatLng[] | null
   /** Width of the route overlay line (defaults to lineWidthPx + 2). */
   routeWidthPx?: number
+  /**
+   * Destination point — drawn as a small hollow circle at the end of the
+   * route so the user can see where they're headed. Omit / null for none.
+   */
+  destination?: LatLng | null
   /**
    * "You are here" heading marker, drawn last (on top) as a filled arrow.
    * `at` is projected like any other point; `headingDeg` is a compass bearing
@@ -254,6 +279,18 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
       const b = project(route[i + 1]!)
       raster.line(a.x, a.y, b.x, b.y, ROUTE, routeWidth * ss)
     }
+  }
+
+  // Destination: a small hollow circle at the route's end so the user can see
+  // where they're headed. Drawn after the route, before the heading marker.
+  // Kept small + thin so it's "barely visible" — just enough to read as a
+  // target without dominating the tiny minimap.
+  const destination = opts.destination
+  if (destination) {
+    const d = project(destination)
+    const ringR = 3.9 * ss // ~3.9px target radius (30% larger than the prior 3px)
+    const ringT = Math.max(1, Math.round(ss)) // ~1px stroke
+    raster.ring(d.x, d.y, ringR, ROUTE, ringT)
   }
 
   // Heading marker: a filled arrowhead at the user's position, rotated to the
