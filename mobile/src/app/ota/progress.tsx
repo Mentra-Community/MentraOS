@@ -1,5 +1,6 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import {toolkit} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -343,7 +344,7 @@ export default function OtaProgressScreen() {
       const glassesState = useGlassesStore.getState()
       const otaVersionUrl = getAsgOtaVersionUrl(glassesState.otaVersionUrl, glassesState.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
-      await BluetoothSdk.startOtaUpdate(otaVersionUrl)
+      await toolkit.ota.install(otaVersionUrl)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
       clearRetryTimeout()
