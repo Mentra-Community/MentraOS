@@ -45,6 +45,7 @@
     "@types/react": "*",
     "react-native-mmkv": "*",
     "react-native-nitro-bg-timer": "*",
+    "react-native-nitro-modules": "*",
     "expo-file-system": "*",
     "react-native-zip-archive": "*",
     "semver": "*",

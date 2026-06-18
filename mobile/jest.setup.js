@@ -707,6 +707,22 @@ jest.mock("@mentra/island", () => {
     },
     throttle: jest.fn((callback) => callback),
     configureRuntime: jest.fn(),
+    configureLauncher: jest.fn(),
+    miniappLauncher: {
+      ensureConnected: jest.fn(() => Promise.resolve(true)),
+      ensureRunning: jest.fn(() => Promise.resolve(true)),
+      resolveBundle: jest.fn(() => Promise.resolve(null)),
+      stop: jest.fn(() => Promise.resolve()),
+    },
+    ensureMiniappEngine: jest.fn(() => ({
+      router: {logRing: {snapshot: jest.fn(() => [])}},
+      uiRouter: {bindWebView: jest.fn(), unbindWebView: jest.fn(), notifyReopen: jest.fn()},
+      crashController: {},
+    })),
+    getMiniappEngine: jest.fn(() => null),
+    sttModelManager: {
+      isModelAvailable: jest.fn(() => Promise.resolve(false)),
+    },
     getRuntimeHooks: jest.fn(() => ({})),
     ISLAND_SETTINGS_KEYS: {},
     normalizeManifestPermissions: jest.fn(),
