@@ -3388,6 +3388,7 @@ class G2: NSObject, SGCManager {
     func sendButtonPhotoSettings() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
+    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 
