@@ -53,6 +53,22 @@ export {default as navigationService} from "./services/NavigationService"
 // Clock-skew utils (used by OTA + the host gallery sync) moved into island.
 export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
 export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
+// Gallery cluster — the sync orchestrator + glasses-camera HTTP API + media/storage,
+// moved into island. Host Gallery UI + tests import these from @mentra/island.
+export {gallerySyncService} from "./services/asg/gallerySyncService"
+export {asgCameraApi} from "./services/asg/asgCameraApi"
+export {localStorageService} from "./services/asg/localStorageService"
+export {mediaProcessingQueue} from "./services/asg/mediaProcessingQueue"
+export {gallerySettingsService} from "./services/asg/gallerySettingsService"
+export {
+  INVALID_DOWNLOADED_MEDIA,
+  validateCaptureMetadataForDownload,
+  validateDownloadedMediaFile,
+} from "./services/asg/galleryMediaValidation"
+export {emitGalleryNotice, onGalleryNotice, type GalleryNotice, type GalleryNoticeCode} from "./services/asg/galleryNotices"
+export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
+export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
+export type {CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
 export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 export {

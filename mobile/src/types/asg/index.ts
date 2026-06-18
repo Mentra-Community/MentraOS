@@ -1,51 +1,16 @@
 /**
- * Type definitions for the ASG package
+ * Type definitions for the ASG package.
+ *
+ * These moved into `@mentra/island` (with the gallerySync store + asgCameraApi that own
+ * them); this host module re-exports them so existing `@/types/asg` importers stay
+ * unchanged.
  */
-
-// PhotoInfo moved into @mentra/island (with the gallerySync store that owns it).
-// Imported as a local name (sibling types below use it) and re-exported so existing
-// `@/types/asg` importers stay unchanged.
-import type {PhotoInfo} from "@mentra/island"
-export type {PhotoInfo}
-
-export interface CaptureFile {
-  name: string // "IMG_xxx/base.jpg" or "IMG_xxx.jpg" (legacy)
-  size: number
-  role: "primary" | "bracket" | "sidecar"
-}
-
-export interface CaptureGroup {
-  capture_id: string // folder name: "IMG_20250302_143022_456_123"
-  type: "photo" | "video"
-  timestamp: number
-  total_size: number
-  files: CaptureFile[]
-  thumbnail_data?: string
-  duration?: number // video only
-}
-
-export interface GalleryResponse {
-  status: "success" | "error"
-  data: {
-    photos: PhotoInfo[]
-  }
-}
-
-export interface ServerStatus {
-  status: string
-  uptime: number
-  version: string
-  timestamp: string
-}
-
-export interface HealthResponse {
-  status: "healthy" | "unhealthy"
-  timestamp: string
-  version: string
-}
-
-export interface GalleryEvent {
-  type: "photo_added" | "photo_deleted" | "gallery_updated"
-  photo?: PhotoInfo
-  timestamp: string
-}
+export type {
+  PhotoInfo,
+  CaptureFile,
+  CaptureGroup,
+  GalleryResponse,
+  ServerStatus,
+  HealthResponse,
+  GalleryEvent,
+} from "@mentra/island"

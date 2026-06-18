@@ -1,7 +1,6 @@
 import {useEffect} from "react"
 
-import {useGlassesStore} from "@/stores/glasses"
-import {asgCameraApi} from "@/services/asg/asgCameraApi"
+import {asgCameraApi, useGlassesStore} from "@mentra/island"
 
 export function NetworkMonitoring() {
   const hotspotLocalIp = useGlassesStore((state) =>

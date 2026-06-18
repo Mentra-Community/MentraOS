@@ -5,9 +5,9 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-import {PhotoInfo} from "@/types/asg"
-import {BgTimer} from "@mentra/island"
-import {storage} from "@/utils/storage"
+import {PhotoInfo} from "../../types/asg"
+import {BgTimer} from "../../utils/timers"
+import {storage} from "../../utils/storage"
 
 export interface DownloadedFile {
   name: string

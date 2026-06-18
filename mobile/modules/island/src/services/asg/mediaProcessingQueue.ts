@@ -8,12 +8,12 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import CrustModule from "@mentra/crust"
 
-import {asgCameraApi} from "@/services/asg/asgCameraApi"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {INVALID_DOWNLOADED_MEDIA, validateDownloadedMediaFile} from "@/services/asg/galleryMediaValidation"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {BgTimer} from "@mentra/island"
-import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import {asgCameraApi} from "./asgCameraApi"
+import {localStorageService} from "./localStorageService"
+import {INVALID_DOWNLOADED_MEDIA, validateDownloadedMediaFile} from "./galleryMediaValidation"
+import {useGallerySyncStore} from "../../stores/gallerySync"
+import {BgTimer} from "../../utils/timers"
+import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
 
 const TAG = "[MediaProcessingQueue]"
 

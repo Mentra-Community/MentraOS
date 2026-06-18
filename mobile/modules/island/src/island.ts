@@ -22,6 +22,7 @@ import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
 import {incidents} from "./facades/incidents"
 import {ota} from "./facades/ota"
+import {gallery} from "./facades/gallery"
 import {miniapps} from "./facades/miniapps"
 import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
@@ -80,6 +81,8 @@ export const toolkit = {
   incidents,
   /** Firmware OTA read/observe surface (updateAvailable/status + on* subscriptions). */
   ota,
+  /** Gallery sync: status/onStatus · onNotice (host renders) · sync/cancel. */
+  gallery,
   /** Miniapp lifecycle (the WebView bridge primitives are exported separately). */
   miniapps,
   /** First-time glasses discovery + pairing. */

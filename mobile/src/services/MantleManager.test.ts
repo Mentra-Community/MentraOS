@@ -104,11 +104,8 @@ jest.mock("@/services/SocketComms", () => ({
   },
 }))
 
-jest.mock("@/services/asg/gallerySyncService", () => ({
-  gallerySyncService: {
-    initialize: jest.fn(),
-  },
-}))
+// gallerySyncService moved into @mentra/island; the global @mentra/island jest mock
+// already supplies it (gallerySyncService.initialize), so no local mock is needed.
 
 jest.mock("@/services/UdpManager", () => ({
   __esModule: true,
