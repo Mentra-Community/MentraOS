@@ -47,7 +47,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                 "button_video_recording_setting",
                 "button_max_recording_time",
                 "button_photo_setting",
-                "button_camera_led",
                 "button_mode_setting",
                 "camera_fov_setting");
     }
@@ -64,8 +63,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                     return handleButtonMaxRecordingTime(data);
                 case "button_photo_setting":
                     return handleButtonPhotoSetting(data);
-                case "button_camera_led":
-                    return handleButtonCameraLedSetting(data);
                 case "button_mode_setting":
                     return handleButtonModeSetting(data);
                 case "camera_fov_setting":
@@ -359,37 +356,6 @@ public class SettingsCommandHandler implements ICommandHandler {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling button photo setting", e);
-            return false;
-        }
-    }
-
-    /** Handle button camera LED setting command */
-    public boolean handleButtonCameraLedSetting(JSONObject data) {
-        try {
-            String requestId = getRequestId(data);
-            boolean enabled = data.optBoolean("enabled", true);
-
-            Log.d(TAG, "📱 Received button camera LED setting: " + enabled);
-
-            AsgSettings asgSettings = serviceManager.getAsgSettings();
-            if (asgSettings != null) {
-                asgSettings.setButtonCameraLedEnabled(enabled);
-                Log.d(TAG, "✅ Button camera LED setting saved: " + enabled);
-                JSONObject values = new JSONObject();
-                values.put("enabled", enabled);
-                sendSettingsAck(requestId, "button_camera_led", STATUS_APPLIED, values);
-                return true;
-            } else {
-                Log.e(TAG, "Settings not available");
-                sendSettingsError(
-                        requestId,
-                        "button_camera_led",
-                        "settings_unavailable",
-                        "Settings are not available.");
-                return false;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling button camera LED setting", e);
             return false;
         }
     }

@@ -20,14 +20,13 @@ abstract class ControllerManager {
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: Map<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)

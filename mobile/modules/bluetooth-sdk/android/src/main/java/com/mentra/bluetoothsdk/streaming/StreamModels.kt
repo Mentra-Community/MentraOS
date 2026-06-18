@@ -175,23 +175,19 @@ data class StreamRequest @JvmOverloads constructor(
     val sound: Boolean = true,
     val video: StreamVideoConfig? = null,
     val audio: StreamAudioConfig? = null,
-    val extraValues: Map<String, Any> = emptyMap(),
+    val keepAliveMode: String? = null,
 ) {
-    fun toMap(): Map<String, Any> {
-        val values = extraValues.toMutableMap()
-        values.remove("keepAliveMode")
-        values["type"] = "start_stream"
-        values["streamUrl"] = streamUrl
-        values["streamId"] = streamId
-        values["keepAlive"] = keepAlive
-        values["keepAliveIntervalSeconds"] = keepAliveIntervalSeconds
-        // The camera light is a privacy indicator and cannot be disabled by SDK callers.
-        values["flash"] = true
-        values["sound"] = sound
-        video?.toMap()?.takeIf { it.isNotEmpty() }?.let { values["video"] = it }
-        audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { values["audio"] = it }
-        return values
-    }
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            put("type", "start_stream")
+            put("streamUrl", streamUrl)
+            put("streamId", streamId)
+            put("keepAlive", keepAlive)
+            put("keepAliveIntervalSeconds", keepAliveIntervalSeconds)
+            put("sound", sound)
+            video?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("video", it) }
+            audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("audio", it) }
+        }
 
     companion object {
         @JvmStatic
@@ -206,26 +202,24 @@ data class StreamRequest @JvmOverloads constructor(
                 sound = values["sound"] as? Boolean ?: true,
                 video = StreamVideoConfig.fromMap(stringMapValue(values["video"])),
                 audio = StreamAudioConfig.fromMap(stringMapValue(values["audio"])),
-                extraValues = values,
+                keepAliveMode = stringValue(values, "keepAliveMode"),
             )
     }
 }
 
 internal fun StreamRequest.isExternallyManagedKeepAlive(): Boolean =
-    stringValue(extraValues, "keepAliveMode") == "external"
+    keepAliveMode == "external"
 
 internal data class StreamKeepAliveRequest @JvmOverloads constructor(
     val streamId: String,
     val ackId: String,
-    val extraValues: Map<String, Any> = emptyMap(),
 ) {
-    fun toMap(): Map<String, Any> {
-        val values = extraValues.toMutableMap()
-        values["type"] = "keep_stream_alive"
-        values["streamId"] = streamId
-        values["ackId"] = ackId
-        return values
-    }
+    fun toMap(): Map<String, Any> =
+        mapOf(
+            "type" to "keep_stream_alive",
+            "streamId" to streamId,
+            "ackId" to ackId,
+        )
 
     companion object {
         @JvmStatic
@@ -233,7 +227,6 @@ internal data class StreamKeepAliveRequest @JvmOverloads constructor(
             StreamKeepAliveRequest(
                 streamId = values["streamId"] as? String ?: "",
                 ackId = values["ackId"] as? String ?: "",
-                extraValues = values,
             )
     }
 }

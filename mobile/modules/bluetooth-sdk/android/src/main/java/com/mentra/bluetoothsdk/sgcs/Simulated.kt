@@ -34,7 +34,7 @@ class Simulated : SGCManager() {
 
     // Camera & Media
     override fun requestPhoto(request: PhotoRequest) {
-        Bridge.log("requestPhoto flash=${request.flash}, save=${request.save}, sound=${request.sound}")
+        Bridge.log("requestPhoto save=${request.save}, sound=${request.sound}")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -49,8 +49,8 @@ class Simulated : SGCManager() {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
-        Bridge.log("startVideoRecording flash=$flash, sound=$sound")
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
+        Bridge.log("startVideoRecording sound=$sound")
     }
 
     override fun stopVideoRecording(requestId: String) {
@@ -68,10 +68,6 @@ class Simulated : SGCManager() {
 
     override fun sendButtonMaxRecordingTime() {
         Bridge.log("sendButtonMaxRecordingTime")
-    }
-
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
     }
 
     override fun sendCameraFovSetting() {
