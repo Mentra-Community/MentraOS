@@ -31,4 +31,4 @@ jobs:
           PORTER_PROJECT: 15081
           PORTER_APP_NAME: merge-prod
           PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
-          PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_5783 }}
+          PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_5783 || secrets.PORTER_TOKEN }}
