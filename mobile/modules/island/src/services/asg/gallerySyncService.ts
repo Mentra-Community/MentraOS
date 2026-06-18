@@ -42,6 +42,9 @@ const TIMING = {
   IOS_WIFI_MAX_RETRIES: 5, // Retry multiple times to give user time to accept
   // WiFi initialization cooldown - prevents repeated "enable WiFi" alerts while WiFi is initializing
   WIFI_COOLDOWN_MS: 3000, // Wait 3 seconds after user visits WiFi settings before showing alert again
+  // Cap the native location-services (GPS) check so a hung CrustModule call can't freeze
+  // the sync pre-flight (mirrors the host's former PermissionsUtils guard).
+  LOCATION_SERVICES_CHECK_TIMEOUT_MS: 5000,
 } as const
 
 type SyncManifestData = {
@@ -369,6 +372,34 @@ class GallerySyncService {
     return this.syncStartPromise
   }
 
+  /**
+   * Native location-services (GPS on/off) check, raced against a timeout so a hung
+   * CrustModule call can't freeze the sync pre-flight. Mirrors the host's former
+   * PermissionsUtils.isLocationServicesEnabled exactly: on timeout assume enabled
+   * (proceed); on any other native error assume disabled (block + prompt). Android-only
+   * callers; iOS doesn't need location for BLE since iOS 13.
+   */
+  private async isLocationServicesEnabled(): Promise<boolean> {
+    try {
+      return await Promise.race([
+        CrustModule.isLocationServicesEnabled(),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Location services check timed out")),
+            TIMING.LOCATION_SERVICES_CHECK_TIMEOUT_MS,
+          ),
+        ),
+      ])
+    } catch (error) {
+      console.error("[GallerySyncService] Error checking location services:", error)
+      if (error instanceof Error && error.message.includes("timed out")) {
+        console.warn("[GallerySyncService] Location services check timed out — assuming enabled so sync can proceed")
+        return true
+      }
+      return false
+    }
+  }
+
   private shouldAbortPreFlight(): boolean {
     if (this.startAborted) {
       this.startAborted = false
@@ -586,7 +617,7 @@ class GallerySyncService {
     if (Platform.OS === "android") {
       console.log("[GallerySyncService]   📍 Checking Location Services status...")
       try {
-        const locationServicesEnabled = await CrustModule.isLocationServicesEnabled()
+        const locationServicesEnabled = await this.isLocationServicesEnabled()
         console.log("[GallerySyncService]   📍 Location Services enabled:", locationServicesEnabled)
 
         if (!locationServicesEnabled) {
