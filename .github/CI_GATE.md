@@ -26,10 +26,24 @@ posts a single `ci-gate-dev` commit status:
 | A gated workflow that ran is still in progress / queued | ⏳ pending |
 | A gated workflow **did not run** (path filter didn't match this PR) | not gated — ignored |
 
-So a **cloud-only PR** is gated on the cloud builds + cloud tests and is **not**
-gated on iOS/Android/ASG (those never ran). A **mobile-only PR** is gated on
-iOS/Android/jest and not on cloud. Each PR is gated **only on the areas it
-touches** — which is the requirement.
+Two kinds of gated workflow, with different "runs when" behavior:
+
+- **Path-filtered builders** — iOS/Android/ASG/jest and `Run Cloud Tests ☁️`
+  only run when their area changes (`mobile/**`, `asg_client/**`, `cloud/**`). On
+  a PR that doesn't touch their area they **don't run at all**, so the gate never
+  waits on them. This is the heavy work (Mac builds, device tests) we want
+  scoped — a cloud-only PR never runs iOS/Android, and vice-versa.
+- **Always-on cloud builds** — the four `🧪 Test * build` workflows have an
+  **unfiltered** `pull_request` trigger, so they run on **every** `dev` PR. They
+  self-skip internally (via `dorny/paths-filter`) when their package didn't
+  change, reporting `success` quickly. So the gate technically always includes
+  them, but on an unrelated PR they finish near-instantly and don't meaningfully
+  block.
+
+Net effect: each PR is gated on the **heavy** builders only for the areas it
+touches (the requirement — your cloud engineer never runs iOS/Android), plus the
+four lightweight cloud build checks that run-and-pass on everything. Nothing that
+doesn't run is ever waited on.
 
 ### Why match by workflow name, not job/check-run name
 
