@@ -2,7 +2,7 @@ version: v2
 name: merge-prod
 
 envGroups:
-  - merge-prod-runtime
+  - merge-prod-doppler
 
 build:
   method: docker
