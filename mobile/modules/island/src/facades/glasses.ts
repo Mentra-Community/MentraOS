@@ -60,8 +60,8 @@ export const glasses = {
    * native first, so they're primed before the connect handshake replays them to
    * the glasses (this used to be a host-side step before `connectDefault`).
    */
-  connectDefault: (): Promise<void> => {
-    pushAllBluetoothSettings()
+  connectDefault: async (): Promise<void> => {
+    await pushAllBluetoothSettings()
     return BluetoothSdk.connectDefault()
   },
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
@@ -81,7 +81,7 @@ export const glasses = {
     const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
     if (!defaultWearable) return false
     if (isGlassesConnected(useGlassesStore.getState().connection)) return true
-    pushAllBluetoothSettings()
+    await pushAllBluetoothSettings()
     await BluetoothSdk.connectDefault()
     return true
   },

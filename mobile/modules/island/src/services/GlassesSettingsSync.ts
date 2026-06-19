@@ -28,8 +28,11 @@ let unsubConnect: (() => void) | null = null
  * `toolkit.glasses.connectDefault()`, so native has the phone's settings primed
  * before the connect handshake replays them to the glasses.
  */
-export function pushAllBluetoothSettings(): void {
-  BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+export async function pushAllBluetoothSettings(): Promise<void> {
+  // Returns the native write promise so callers can await the seed before the
+  // connect handshake replays settings to the glasses (otherwise the handshake
+  // can race ahead and replay stale native settings).
+  await BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
 }
 
 export function startGlassesSettingsSync(): void {
