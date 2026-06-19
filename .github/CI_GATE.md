@@ -12,63 +12,84 @@ every `dev` PR (#3204, #3205, #3206, …): the required contexts
 come from `staging-builds.yml`, which only runs on **push to `staging`** — never
 on a PR — so they could never report.
 
-## How `ci-gate` works
+## How `ci-gate-dev` works
 
 `.github/workflows/ci-gate.yml` runs on every PR into `dev` and again each time a
-builder workflow finishes. It reads the check-runs that **actually exist** for the
-PR head commit and posts a single `ci-gate` commit status:
+gated builder workflow starts/finishes. It gates on the **workflow runs** for the
+PR head commit — matched by **workflow name** against an explicit allowlist — and
+posts a single `ci-gate-dev` commit status:
 
-| Situation | `ci-gate` |
+| Situation | `ci-gate-dev` |
 |---|---|
-| Every builder that ran finished success / skipped / neutral | ✅ success |
-| Any builder that ran finished failure / cancelled / timed_out | ❌ failure |
-| A builder that ran is still in progress | ⏳ pending |
-| A builder **did not run** (path filter didn't match this PR) | not gated — ignored |
+| Every gated workflow that ran finished success / skipped / neutral | ✅ success |
+| Any gated workflow that ran finished failure / cancelled / timed_out / … | ❌ failure |
+| A gated workflow that ran is still in progress / queued | ⏳ pending |
+| A gated workflow **did not run** (path filter didn't match this PR) | not gated — ignored |
 
 So a **cloud-only PR** is gated on the cloud builds + cloud tests and is **not**
 gated on iOS/Android/ASG (those never ran). A **mobile-only PR** is gated on
 iOS/Android/jest and not on cloud. Each PR is gated **only on the areas it
 touches** — which is the requirement.
 
-### Builders aggregated
+### Why match by workflow name, not job/check-run name
 
-| Area | Workflow | Check name(s) | Runs when |
-|---|---|---|---|
-| iOS | Mobile App iOS Build | `build` | `mobile/**` |
-| Android | Mobile App Android Build | `build` | `mobile/**` |
-| ASG | MentraOS ASG Client Build | `build` | `asg_client/**` |
-| Mobile jest | Mobile App Quality Checks | `test` | `mobile/**` |
-| Cloud | 🧪 Test Cloud build | `Build cloud/packages/cloud` | all dev PRs (self-skips internally) |
-| SDK | 🧪 Test SDK build | `Build cloud/packages/sdk` | all dev PRs (self-skips internally) |
-| Console | 🧪 Test Console build | `Build cloud/websites/console` | all dev PRs (self-skips internally) |
-| Store | 🧪 Test Store build | `Build cloud/websites/store` | all dev PRs (self-skips internally) |
-| Cloud tests | Run Cloud Tests ☁️ | `Build & Test` | `cloud/**` (PR trigger added in this PR) |
+Several workflows name their job `build` (iOS, Android, ASG — **and the unrelated
+`Recovery Worker Build`**), so matching gated checks by the job name `build` is
+ambiguous and would pull in workflows we never meant to gate on. The gate instead
+reads `GET /actions/runs?head_sha=…`, which exposes each run's **unique workflow
+name** plus its overall status/conclusion, and matches against the allowlist
+below. `Recovery Worker Build` is deliberately excluded.
+
+### Workflows aggregated (the allowlist)
+
+| Area | Workflow name | Runs when |
+|---|---|---|
+| iOS | `Mobile App iOS Build` | `mobile/**` |
+| Android | `Mobile App Android Build` | `mobile/**` |
+| ASG | `MentraOS ASG Client Build` | `asg_client/**` |
+| Mobile jest | `Mobile App Quality Checks` | `mobile/**` |
+| Cloud | `🧪 Test Cloud build` | all dev PRs (self-skips internally) |
+| SDK | `🧪 Test SDK build` | all dev PRs (self-skips internally) |
+| Console | `🧪 Test Console build` | all dev PRs (self-skips internally) |
+| Store | `🧪 Test Store build` | all dev PRs (self-skips internally) |
+| Cloud tests | `Run Cloud Tests ☁️` | `cloud/**` (PR trigger added in this PR) |
+
+If you add or remove a builder, update the `GATED` set **and** the `workflow_run`
+`workflows:` list in `ci-gate.yml` — both must list the same workflow names.
+
+## Naming: `ci-gate-dev`
+
+The status context is `ci-gate-dev` (not just `ci-gate`) so a future
+`ci-gate-staging` can mirror this file for the `staging` branch without a name
+clash. Each branch gets its own gate context.
 
 ## Rollout (manual step — do AFTER this PR merges to `dev`)
 
 `workflow_run` triggers only fire for a workflow that exists **on the default/base
-branch**. So `ci-gate` becomes active only once this PR is merged to `dev`. Then:
+branch**. So `ci-gate-dev` becomes active only once this PR is merged to `dev`.
+Then:
 
-1. Open a throwaway PR to `dev` touching `mobile/**`; confirm `ci-gate` goes
+1. Open a throwaway PR to `dev` touching `mobile/**`; confirm `ci-gate-dev` goes
    pending → success and that iOS/Android/jest are the builders it waited on.
-2. Open one touching only `cloud/**`; confirm `ci-gate` waits on the cloud builds
-   + `Build & Test` and **not** on mobile.
-3. Set branch protection on `dev` to require the single context **`ci-gate`**
+2. Open one touching only `cloud/**`; confirm `ci-gate-dev` waits on the cloud
+   builds + `Run Cloud Tests ☁️` and **not** on mobile.
+3. Set branch protection on `dev` to require the single context **`ci-gate-dev`**
    (Settings → Branches → `dev`, or the API call below). Remove the old
    `Build Mobile App (*)`, `Build ASG Client`, `Upload to staging-builds release`,
-   and the individual `Build cloud/*` contexts — `ci-gate` subsumes them.
+   and the individual `Build cloud/*` contexts — `ci-gate-dev` subsumes them.
 
 ```bash
 gh api -X PATCH repos/Mentra-Community/MentraOS/branches/dev/protection/required_status_checks \
   -f strict=false \
-  -f 'contexts[]=ci-gate'
+  -f 'contexts[]=ci-gate-dev'
 ```
 
-> ⚠️ Never rename the `ci-gate` context. Branch protection pins to that exact
+> ⚠️ Never rename the `ci-gate-dev` context. Branch protection pins to that exact
 > string; renaming it re-introduces the "waiting forever" block.
 
 ## Note on `staging-builds.yml`
 
 `Upload to staging-builds release` and the staging mobile/iOS/ASG builds are
-**deliberately not** part of `ci-gate` — they publish OTA manifests and release
-assets and must stay `staging`-push-only. They should not be required on `dev`.
+**deliberately not** part of `ci-gate-dev` — they publish OTA manifests and
+release assets and must stay `staging`-push-only. They should not be required on
+`dev`. A future `ci-gate-staging` would gate the `staging` branch separately.
