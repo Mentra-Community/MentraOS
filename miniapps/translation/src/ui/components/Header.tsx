@@ -4,13 +4,12 @@ import {TranslationSettings} from "../hooks/useSettings"
 import {getLanguageName, getFlagEmoji} from "../lib/languages"
 
 /**
- * The fake app bar's surface — a light neutral that matches the chrome below
- * it, with near-black title text. Exported so the App root can paint the
- * top safe-area inset the same color, making the status-bar area blend into
- * the app bar instead of showing the blue cloud-status gradient.
+ * The fake app bar's surface — the app's primary blue, with white title text.
+ * Exported so the App root can paint the top safe-area inset the same color,
+ * making the status-bar area blend into the app bar.
  */
-export const APP_BAR_BACKGROUND = "#F4F4F5"
-export const APP_BAR_FOREGROUND = "#18181B"
+export const APP_BAR_BACKGROUND = "#2089F3"
+export const APP_BAR_FOREGROUND = "#FFFFFF"
 
 interface HeaderProps {
   connected: boolean
