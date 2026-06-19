@@ -667,7 +667,7 @@ public final class MentraBluetoothSDK {
             return results
         } catch {
             let fallbackResults: [WifiScanResult]
-            if (error as? BluetoothError)?.code == "request_timeout", pendingWifiScan === request {
+            if (error as? BluetoothError)?.code == "request_timeout" {
                 fallbackResults = request.latestResults
             } else {
                 fallbackResults = []
