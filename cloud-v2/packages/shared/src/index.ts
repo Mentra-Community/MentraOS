@@ -11,8 +11,12 @@ export {
 } from "./health";
 export {
   verifyAccessTokenSignature,
+  assertRuntimeAuthConfigured,
+  verifyRuntimeToken,
+  signRuntimeToken,
   AccessTokenError,
   resetMentraKeyCache,
+  resetRuntimeAuthCache,
   type VerifiedAccessToken,
 } from "./auth";
 

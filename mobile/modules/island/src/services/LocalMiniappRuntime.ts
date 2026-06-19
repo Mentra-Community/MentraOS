@@ -18,6 +18,7 @@ import * as Location from "expo-location"
 import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
+  CanvasOperation,
   MiniappErrorCode,
   MiniappRequestType,
   MiniappResponseType,
@@ -45,6 +46,7 @@ import {
   type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
   type InteropAuditEvent,
+  type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
@@ -74,6 +76,7 @@ interface ConnectedMiniapp {
   sendMessage: (raw: string) => void
   lastPongAt: number
   installedManifest?: InstalledMiniappManifest
+  authRefreshTimerId: number | null
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /**
@@ -104,8 +107,27 @@ function locationRateRank(rate: string | null | undefined): number {
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (value: T | null) => {
+      if (settled) return
+      settled = true
+      BgTimer.clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = BgTimer.setTimeout(() => done(null), timeoutMs)
+    promise.then(
+      (value) => done(value),
+      () => done(null),
+    )
+  })
+}
+
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
+const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
+const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -518,6 +540,10 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      if (existing.authRefreshTimerId !== null) {
+        BgTimer.clearTimeout(existing.authRefreshTimerId)
+        existing.authRefreshTimerId = null
+      }
       for (const stream of existing.subscriptions) {
         const subs = this.streamSubscribers.get(stream)
         if (subs) {
@@ -533,6 +559,7 @@ class LocalMiniappRuntime {
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       installedManifest,
+      authRefreshTimerId: null,
       speakerState: "idle",
       requestedLocationRate: null,
     })
@@ -643,6 +670,7 @@ class LocalMiniappRuntime {
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     this.clearForegroundProbe(packageName)
+    this.clearMiniappAuthRefresh(packageName)
     // Drop the handshake flag and fail any in-flight waitForConnect() callers
     // (e.g. a wake that's mid-handshake when the app is torn down). Done before
     // the early-return so it runs even if the connectedApps entry is already gone.
@@ -786,13 +814,19 @@ class LocalMiniappRuntime {
     // Dispatch
     switch (requestType) {
       case MiniappRequestType.CONNECT:
-        this.handleConnect(packageName, payload, requestId)
+        void this.handleConnect(packageName, payload, requestId)
+        break
+      case MiniappRequestType.AUTH_REFRESH:
+        void this.handleAuthRefresh(packageName, payload, requestId)
         break
       case MiniappRequestType.SUBSCRIBE:
         this.handleSubscribe(packageName, payload, requestId)
         break
       case MiniappRequestType.DISPLAY:
         this.handleDisplay(packageName, payload, requestId)
+        break
+      case MiniappRequestType.CANVAS:
+        this.handleCanvas(packageName, payload, requestId)
         break
       case MiniappRequestType.PLAY_AUDIO:
         this.handlePlayAudio(packageName, payload, requestId)
@@ -952,10 +986,8 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handleConnect(packageName: string, _payload: Record<string, unknown>, requestId?: string): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
-
-    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -977,6 +1009,10 @@ class LocalMiniappRuntime {
     // to false; this is manifest-declaration tracking only — OS-grant state
     // is intentionally not modeled here.
     const declaredPermissions = computeDeclaredPermissionRecord(existing.installedManifest)
+    const authPromise = this.requestMiniappAuth(packageName)
+    const initialAuth = await withTimeout(authPromise, 1_500)
+    const userId = initialAuth?.mentraUserId ?? ""
+    if (initialAuth) this.scheduleMiniappAuthRefresh(packageName, initialAuth)
 
     this.sendToMiniapp(
       packageName,
@@ -986,14 +1022,96 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
     )
+    if (!initialAuth) {
+      authPromise
+        .then((auth) => {
+          if (!auth) return
+          this.scheduleMiniappAuthRefresh(packageName, auth)
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.AUTH_UPDATE,
+            auth,
+          })
+        })
+        .catch((err) => {
+          console.warn(`${LOG_TAG}: miniapp auth unavailable for ${packageName}: ${(err as Error)?.message ?? err}`)
+        })
+    }
     this.sendCloudStatusToMiniapp(packageName)
 
     // Handshake complete — unblock any launcher.waitForConnect() callers.
     this.handshookApps.add(packageName)
     this.flushConnectWaiters(packageName)
+  }
+
+  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = getRuntimeHooks().miniappAuth
+    if (!auth) return null
+    return auth.getToken(packageName, opts)
+  }
+
+  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
+      if (!auth) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_CONNECTED,
+          message: "Miniapp auth is not configured",
+        })
+        return
+      }
+      this.sendResult(packageName, requestId, true, {auth})
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (err as Error)?.message ?? "Miniapp auth refresh failed",
+      })
+    }
+  }
+
+  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = await this.requestMiniappAuth(packageName, opts)
+    if (!auth) return null
+    this.scheduleMiniappAuthRefresh(packageName, auth)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth,
+    })
+    return auth
+  }
+
+  private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
+    const minTtlMs = Number(payload.minTtlMs)
+    if (!Number.isFinite(minTtlMs) || minTtlMs <= 0) return undefined
+    return {minTtlMs}
+  }
+
+  private scheduleMiniappAuthRefresh(packageName: string, auth: MiniappAuthToken): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    this.clearMiniappAuthRefresh(packageName)
+
+    const refreshAt = auth.expiresAt - MINIAPP_AUTH_REFRESH_HEADROOM_MS
+    const delay = Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now())
+    app.authRefreshTimerId = BgTimer.setTimeout(() => {
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      current.authRefreshTimerId = null
+      void this.refreshMiniappAuth(packageName).catch((err) => {
+        console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
+      })
+    }, delay)
+  }
+
+  private clearMiniappAuthRefresh(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authRefreshTimerId === null) return
+    const timerId = app.authRefreshTimerId
+    BgTimer.clearTimeout(timerId)
+    app.authRefreshTimerId = null
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -1200,6 +1318,74 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Display error",
+      })
+    }
+  }
+
+  /**
+   * Canvas commands (session.canvas.*). A distinct command vocabulary from
+   * DISPLAY — `{operation, options}` rather than `{view, layout}`. The glasses
+   * have no native canvas surface yet, so each operation is translated into the
+   * equivalent display event and routed through LocalDisplayManager, reusing its
+   * boot/throttle/arbitration/expiry + native BluetoothSdk.displayEvent path.
+   *
+   * `show_page` is the one operation with no native target today (there's no
+   * host-side page concept); it's a recognized no-op so callers don't error.
+   */
+  private handleCanvas(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    try {
+      const operation = payload.operation as CanvasOperation | undefined
+      const options = (payload.options as Record<string, unknown> | undefined) ?? {}
+
+      let layout: DisplayPayload["layout"] | null = null
+      switch (operation) {
+        case CanvasOperation.SHOW_TEXT:
+          layout = {
+            layoutType: "positioned_text",
+            text: options.text,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+            borderWidth: options.borderWidth,
+            borderRadius: options.borderRadius,
+          }
+          break
+        case CanvasOperation.SHOW_BITMAP:
+          layout = {
+            layoutType: "bitmap_view",
+            data: options.data,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+          }
+          break
+        case CanvasOperation.CLEAR:
+          layout = {layoutType: "clear_view"}
+          break
+        case CanvasOperation.SHOW_PAGE:
+          // No native page surface yet — recognize the command and ack so the
+          // miniapp's showPage() resolves. Render wiring is future work.
+          console.log(`${LOG_TAG}: canvas show_page (no native target yet):`, options.id)
+          this.sendResult(packageName, requestId, true)
+          return
+        default:
+          this.sendResult(packageName, requestId, false, undefined, {
+            code: MiniappErrorCode.INTERNAL,
+            message: `unknown canvas operation "${String(operation)}"`,
+          })
+          return
+      }
+
+      localDisplayManager.request(packageName, {view: "main", layout})
+
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: canvas error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Canvas error",
       })
     }
   }

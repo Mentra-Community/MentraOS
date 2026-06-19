@@ -5,11 +5,12 @@ verified with `test-oem`; this doc is under review).
 
 **TL;DR:** How an OEM proves who its user is to Mentra, and how Mentra exposes that
 user's identity to miniapp backends. An OEM's backend mints a short-lived signed
-JWT per user; the client exchanges it (RFC 8693) for a Mentra access token; Mentra
-maps `(oemId, oemUserId)` to a `mentraUserId`. The handoff to miniapp backends
-carries `oemId` so developers can set their own trust policy. This doc carries both
-the decision (which integration shape and why) and the implementation (endpoints,
-data model, token formats, lifecycles, security).
+JWT per user; the client exchanges it (RFC 8693) for Core-backed credentials, and
+hosted deployments can derive a normalized `cloud-runtime` token from the same
+trust decision. Mentra maps `(oemId, oemUserId)` to a `mentraUserId`. The handoff
+to miniapp backends carries `oemId` so developers can set their own trust policy.
+This doc carries both the decision (which integration shape and why) and the
+implementation (endpoints, data model, token formats, lifecycles, security).
 
 New here? Read [`concepts.md`](./concepts.md) for the from-zero primer (JWTs,
 asymmetric signing, JWKS, audiences, token exchange). The consolidated v2 endpoint
@@ -37,9 +38,10 @@ person.
 
 **Decision: token exchange (the Firebase Custom Auth shape).** The OEM's backend
 signs a per-user JWT with a key registered with Mentra at onboarding; the client
-exchanges it at Mentra's token endpoint (RFC 8693) for a Mentra-issued access +
-refresh token; the SDK then uses the Mentra access token and refreshes against
-Mentra (the OEM backend is out of the refresh path).
+exchanges it at Mentra's token endpoint (RFC 8693) for Mentra-issued Core
+credentials and, for hosted Runtime, a normalized runtime credential. The SDK then
+uses Mentra-issued credentials and refreshes against Mentra where applicable (the
+OEM backend is out of the Core refresh path).
 
 Options surveyed and why they lose (the research is in `concepts.md`'s prior-art
 note and the git history of this doc):
@@ -51,10 +53,10 @@ note and the git history of this doc):
 | **Token exchange (Firebase Custom Auth)** | OEM JWT exchanged once for Mentra tokens | **Chosen**: server-side revocation, refresh independence, Mentra-defined claims, standardized via RFC 8693 |
 | Server-to-server registration API | OEM backend calls Mentra with an API key, no JWT crypto | Deferred: functionally equivalent outcome without OEM signing; ship one path for v2, revisit if OEMs want it |
 
-Why token exchange: Mentra controls session lifetime (kill the refresh token in our
-DB and the session ends), the SDK refreshes against Mentra so OEM downtime affects
-only new logins, and internal services see `mentraUserId` / `oemId` in our claim
-shape with no per-request resolution.
+Why token exchange: Mentra controls Core session lifetime (kill the refresh token in
+our DB and the session ends), the SDK refreshes against Mentra so OEM downtime
+affects only new logins, and hosted services see normalized `mentraUserId` /
+`oemId` claims with no per-request resolution.
 
 ## Q2: Mentra to miniapp identity
 
@@ -122,7 +124,8 @@ OEM-backend endpoints live under `/api/oem/...`.
 ### `POST /api/client/auth/exchange`
 
 Token exchange (RFC 8693). The OEM's mobile app presents a JWT signed by the OEM's
-backend; Mentra returns a Mentra access token + refresh token.
+backend; Mentra returns Core-backed credentials. Hosted Runtime can derive or mint
+a separate `cloud-runtime` token from the same verified identity; see issue 007.
 
 ```
 POST /api/client/auth/exchange
@@ -321,19 +324,20 @@ quickly; `revokedJtis` populates only on explicit revoke.
 `ES256` (`none` rejected). Required claims `iss`, `sub`, `aud`, `exp`, `iat`,
 `jti`. Recommended TTL 5 minutes.
 
-**Mentra-issued access token (returned).** JWT signed by Mentra's access-token key,
-`EdDSA`:
+**Core access token (returned).** JWT signed by Mentra's access-token key, used for
+Core-owned APIs:
 
 ```json
-{ "iss": "mentra-cloud", "sub": "507f1f77bcf86cd799439011",
-  "aud": "mentra-cloud", "exp": 1736815945, "iat": 1736812345,
+{ "iss": "cloud-core", "sub": "507f1f77bcf86cd799439011",
+  "aud": "cloud-core", "exp": 1736815945, "iat": 1736812345,
   "jti": "01HGZ...", "oem_id": "acme-oem",
   "scope": "audio transcription translation" }
 ```
 
-Every Mentra service verifies the signature against Mentra's public key, checks
-`aud === "mentra-cloud"`, checks `exp`, and checks `jti` is not in `revokedJtis`.
-TTL 1 hour.
+Core services verify the signature against Mentra's public key, check
+`aud === "cloud-core"`, check `exp`, and check `jti` is not in `revokedJtis`.
+Runtime Services use a separate `cloud-runtime` token and deployment-configured
+issuer/JWKS trust. TTL 1 hour.
 
 **Mentra-issued refresh token (returned).** Not a JWT: an opaque random string (256
 bits, base64url). Mentra stores a **hash** (bcrypt or argon2) in `refreshTokens`
@@ -469,7 +473,7 @@ environments.
 
 ## Open questions
 
-- **Specific TTLs.** Proposed: 5-minute OEM-JWT, 1-hour Mentra access token, 30-day
+- **Specific TTLs.** Proposed: 5-minute OEM-JWT, 1-hour Core access token, 30-day
   refresh token. Worth a team pass on the UX tradeoff.
 - **Session id addressability.** `DELETE /api/oem/sessions/:sessionId` needs a
   stable session id: derive from the refresh-token hash, or store a separate field.

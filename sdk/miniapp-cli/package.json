@@ -6,6 +6,10 @@
   "bin": {
     "mentra-miniapp": "./src/index.ts"
   },
+  "exports": {
+    "./build-helpers": "./src/build-helpers.ts",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "bun src/index.ts schema regenerate",
     "prepare": "bun src/index.ts schema regenerate"

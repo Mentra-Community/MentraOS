@@ -8,7 +8,7 @@ import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
 import {ManeuverIcon} from "@/ui/components/icons"
-import type {Coords, LatLng, NavStatus} from "@/shared/types"
+import type {Coords, LatLng, NavStatus, UnitSystem} from "@/shared/types"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
@@ -47,12 +47,17 @@ export function OrientationCard({
   const coords = useNavStore((s) => s.coords)
   const routeSteps = useNavStore((s) => s.trip.routeSteps)
   const useRawInstructions = useNavStore((s) => s.devSettings.useRawInstructions)
+  const unitSystem = useNavStore((s) => s.unitSystem)
   const snap = derivePivotView(activePivot, upcomingPivot, coords, maneuver, status)
-  const real = pickDisplay(snap, {
-    useRawInstructions,
-    activeInstruction: useRawInstructions ? lookupInstructionForPivot(activePivot, routeSteps) : null,
-    upcomingInstruction: useRawInstructions ? lookupInstructionForPivot(upcomingPivot, routeSteps) : null,
-  })
+  const real = pickDisplay(
+    snap,
+    {
+      useRawInstructions,
+      activeInstruction: useRawInstructions ? lookupInstructionForPivot(activePivot, routeSteps) : null,
+      upcomingInstruction: useRawInstructions ? lookupInstructionForPivot(upcomingPivot, routeSteps) : null,
+    },
+    unitSystem,
+  )
 
   // Diagnostic: dump every input the card uses to choose its text, so a
   // wrong card (e.g. "Arriving in 112 m" when there are pivots ahead)
@@ -260,6 +265,7 @@ type RawOpts = {
 function pickDisplay(
   snap: PivotView,
   raw: RawOpts = {useRawInstructions: false, activeInstruction: null, upcomingInstruction: null},
+  unit: UnitSystem = "metric",
 ): {label: string; icon: string; road: string | null; nextRoad: string | null} {
   // Mirrors refreshHUD() in NavigationController so the card and the
   // glasses always say the same thing. `nextRoad` is the small grey
@@ -292,7 +298,7 @@ function pickDisplay(
   //   Turn left|right onto <toRoad>     (or Google's raw text)
   if (snap.distanceToNextPivotMeters != null && snap.upcomingDirection) {
     const verb = snap.upcomingDirection === "right" ? "Turn right" : "Turn left"
-    const distStr = formatDistance(snap.distanceToNextPivotMeters)
+    const distStr = formatDistance(snap.distanceToNextPivotMeters, unit)
     const icon = snap.upcomingDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
     const topLine = `In ${distStr}`
     if (raw.useRawInstructions && raw.upcomingInstruction) {
@@ -305,7 +311,7 @@ function pickDisplay(
   // No upcoming pivot — final approach to destination. Single-line:
   //   Arriving in <distance>
   if (snap.distanceToDestinationMeters != null) {
-    const distStr = formatDistance(snap.distanceToDestinationMeters)
+    const distStr = formatDistance(snap.distanceToDestinationMeters, unit)
     return {
       label: `Arriving in ${distStr}`,
       icon: "ARRIVE",

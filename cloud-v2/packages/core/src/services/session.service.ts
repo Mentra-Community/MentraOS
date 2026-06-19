@@ -24,6 +24,7 @@ import * as jose from "jose";
 import { ulid } from "ulid";
 import {
   createLogger,
+  signRuntimeToken,
   verifyAccessTokenSignature,
   AccessTokenError,
   type VerifiedAccessToken,
@@ -46,16 +47,16 @@ const logger = createLogger("core").child({ service: "session.service" });
 // === Token lifetimes ===
 
 const ACCESS_TOKEN_TTL_SEC = 60 * 60; // 1 hour
+const RUNTIME_TOKEN_TTL_SEC = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
 
-const MENTRA_ISSUER = "mentra-cloud";
-const MENTRA_AUDIENCE = "mentra-cloud";
+const CORE_ISSUER = "cloud-core";
+const CORE_AUDIENCE = "cloud-core";
 const MENTRA_ALG = "EdDSA";
 
-// Miniapp-scoped tokens use "mentra" as the issuer (per auth/spec.md "Miniapp-
-// scoped token") rather than "mentra-cloud", because developer backends key
-// their trust policy on this value and the spec pins it.
-const MINIAPP_ISSUER = "mentra";
+// Miniapp-scoped tokens are issued by cloud-core but signed with a separate
+// miniapp-token key. Developer backends verify iss/aud/signature via JWKS.
+const MINIAPP_ISSUER = "cloud-core";
 
 // The built-in "OEM zero". Mentra's own users (a phone logging in with a
 // Supabase session, or a legacy mentra-core token) resolve to this oemId. It
@@ -69,9 +70,12 @@ const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
 
 // JWKS key ids. Each published public key carries a stable `kid` so verifiers
 // (developer backends, internal services) select the right key by header,
-// which is what makes key rotation a no-coordination change. Access tokens and
-// miniapp tokens are signed with separate keys, so they get separate kids.
+// which is what makes key rotation a no-coordination change. Access and
+// Core-brokered runtime tokens share the Core signing key but have distinct kids
+// because they are distinct token kinds/audiences; miniapp tokens use their own
+// signing key.
 const ACCESS_TOKEN_KID = "mentra-access-1";
+const RUNTIME_TOKEN_KID = "cloud-core-runtime-1";
 const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
 
 // === Public API ===
@@ -323,6 +327,28 @@ export async function issueMiniappToken(args: {
 }
 
 /**
+ * Mint a short-lived token for Runtime Services. This is deliberately separate
+ * from the Core access token: Runtime verifies `aud=cloud-runtime` locally and
+ * never accepts Core/product tokens.
+ */
+export async function issueRuntimeToken(args: {
+  mentraUserId: string;
+  oemId: string;
+}): Promise<{ token: string; expiresAt: number }> {
+  const expiresAt = Math.floor(Date.now() / 1000) + RUNTIME_TOKEN_TTL_SEC;
+  const token = await signRuntimeToken({
+    privateKey: requireEnv("MENTRA_JWT_PRIVATE_KEY"),
+    issuer: process.env.CLOUD_CORE_RUNTIME_TOKEN_ISSUER ?? "cloud-core",
+    subject: args.mentraUserId,
+    oemId: args.oemId,
+    jti: ulid(),
+    expiresInSeconds: RUNTIME_TOKEN_TTL_SEC,
+    kid: RUNTIME_TOKEN_KID,
+  });
+  return { token, expiresAt };
+}
+
+/**
  * Resolve the miniapp-token TTL: the env override if a positive integer is
  * set, otherwise the 1h default. Parsed per call (not cached) so tests can
  * flip it between cases.
@@ -508,6 +534,7 @@ async function loadMiniappKeys() {
  * Contains both public keys, each tagged with its `kid` (and `alg`/`use`), so
  * a verifier picks the right key by the JWT header's `kid`:
  *   - the access-token key, used by internal services to verify access tokens
+ *   - the Core-brokered runtime-token key, used by Runtime when it trusts Core
  *   - the miniapp-token key, used by developer backends to verify miniapp tokens
  *
  * Publishing both from day one is what makes key rotation a no-coordination
@@ -522,6 +549,7 @@ export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
   return {
     keys: [
       { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
+      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
       { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
     ],
   };
@@ -557,8 +585,8 @@ async function issueAccessToken(args: {
   })
     // The `kid` points verifiers at the access-token public key in the JWKS.
     .setProtectedHeader({ alg: MENTRA_ALG, kid: ACCESS_TOKEN_KID })
-    .setIssuer(MENTRA_ISSUER)
-    .setAudience(MENTRA_AUDIENCE)
+    .setIssuer(CORE_ISSUER)
+    .setAudience(CORE_AUDIENCE)
     .setSubject(args.mentraUserId)
     .setJti(jti)
     .setIssuedAt()

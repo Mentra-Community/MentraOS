@@ -1,39 +1,22 @@
 /**
- * Background JSContext entry point — Mentra Example miniapp.
+ * Background JSContext entry — Local Captions miniapp.
  *
- * Loaded once by the MentraOS host inside a per-miniapp JSContext.
- * `registerMiniapp(...)` wires the handler to fire after CONNECT lands;
- * controllers constructed here live for the entire session, surviving
- * WebView open/close cycles.
+ * A faithful local (island-runtime) port of the @mentra/captions cloud app.
+ * `registerMiniapp(...)` wires the handler to fire after CONNECT lands; the
+ * controller constructed here lives for the entire session and survives WebView
+ * open/close cycles. It subscribes to transcription, renders captions on the
+ * glasses display via CaptionsFormatter, and talks to the UI WebView over the
+ * typed session.ui channel bus (see shared/channels.ts).
  *
- * Two controllers:
- *   - GlassesController: always-on captions logic + UI message bus
- *   - TesterController:  the SDK Tester surface's background dispatcher
- *
- * Both are idempotent — start() is safe to call again on respawn.
+ * The single-bundle proof this replaced did `transcription.on -> showTextWall`
+ * inline; the real captions logic (history, speaker labels, char-level wrapping,
+ * 40s inactivity clear, settings) now lives in CaptionsController.
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
 
-import {GlassesController} from "./controllers/GlassesController"
-import {TesterController} from "./controllers/TesterController"
+import {CaptionsController} from "./controllers/CaptionsController"
 
 registerMiniapp((session) => {
-  new GlassesController(session).start()
-  new TesterController(session).start()
-
-  // Declared actions (see miniapp.json -> actions). A system miniapp such as
-  // Mentra AI can invoke these with:
-  //   session.actions.invoke("com.mentra.example", "show_text", {text: "hi"})
-  // `handle` is open to all miniapps; only the *caller* side (invoke) is
-  // SYSTEM-gated. `ctx.callerPackageName` is host-stamped (trustworthy).
-  session.actions.handle("echo", (params, ctx) => ({
-    echoed: params.message,
-    caller: ctx.callerPackageName,
-  }))
-  session.actions.handle("show_text", (params) => {
-    const text = typeof params.text === "string" ? params.text : ""
-    session.display.showTextWall(text)
-    return {shown: text}
-  })
+  void new CaptionsController(session).start()
 })

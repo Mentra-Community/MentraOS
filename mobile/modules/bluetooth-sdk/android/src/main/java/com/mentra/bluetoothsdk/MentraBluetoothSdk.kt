@@ -116,6 +116,7 @@ class MentraBluetoothSdk private constructor(
 
     private data class PendingWifiScan(
         val pending: PendingResponse<List<WifiScanResult>>,
+        var latestResults: List<WifiScanResult> = emptyList(),
     )
 
     private data class PendingWifiStatusRequest(
@@ -613,6 +614,7 @@ class MentraBluetoothSdk private constructor(
 
     fun requestWifiScan(): List<WifiScanResult> {
         val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
+        val request = PendingWifiScan(pending)
         synchronized(oneShotLock) {
             if (pendingWifiScan != null) {
                 throw BluetoothException(
@@ -620,11 +622,29 @@ class MentraBluetoothSdk private constructor(
                     "A WiFi scan is already waiting for a glasses response.",
                 )
             }
-            pendingWifiScan = PendingWifiScan(pending)
+            pendingWifiScan = request
         }
         try {
             deviceManager.requestWifiScan()
             return pending.await()
+        } catch (error: BluetoothException) {
+            if (error.code == "request_timeout") {
+                val fallbackResults =
+                    synchronized(oneShotLock) {
+                        if (request.latestResults.isNotEmpty()) {
+                            if (pendingWifiScan === request) {
+                                pendingWifiScan = null
+                            }
+                            request.latestResults
+                        } else {
+                            emptyList()
+                        }
+                    }
+                if (fallbackResults.isNotEmpty()) {
+                    return fallbackResults
+                }
+            }
+            throw error
         } finally {
             synchronized(oneShotLock) {
                 if (pendingWifiScan?.pending === pending) {
@@ -1265,6 +1285,7 @@ class MentraBluetoothSdk private constructor(
                     data.containsKey("scanComplete") || data.containsKey("scan_complete")
                 val scanComplete =
                     (data["scanComplete"] as? Boolean) ?: (data["scan_complete"] as? Boolean) ?: false
+                updateWifiScanLatestResults(networks)
                 if (scanComplete || !hasCompletionFlag) {
                     handleWifiScanResultsForRequests(networks)
                 }
@@ -1612,6 +1633,13 @@ class MentraBluetoothSdk private constructor(
             }
         }
         request.pending.resolve(results)
+    }
+
+    private fun updateWifiScanLatestResults(results: List<WifiScanResult>) {
+        if (results.isEmpty()) return
+        synchronized(oneShotLock) {
+            pendingWifiScan?.latestResults = results
+        }
     }
 
     private fun handleWifiStatusForRequests(event: WifiStatusEvent) {

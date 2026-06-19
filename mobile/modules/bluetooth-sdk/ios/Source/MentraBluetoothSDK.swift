@@ -42,6 +42,7 @@ private final class ActiveScanSession {
 @MainActor
 private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
+    var latestResults: [WifiScanResult] = []
 
     init(pending: PendingResponse<[WifiScanResult]>) {
         self.pending = pending
@@ -655,7 +656,8 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
-        pendingWifiScan = PendingWifiScan(pending: pending)
+        let request = PendingWifiScan(pending: pending)
+        pendingWifiScan = request
         DeviceManager.shared.requestWifiScan()
         do {
             let results = try await pending.wait()
@@ -664,8 +666,17 @@ public final class MentraBluetoothSDK {
             }
             return results
         } catch {
+            let fallbackResults: [WifiScanResult]
+            if (error as? BluetoothError)?.code == "request_timeout" {
+                fallbackResults = request.latestResults
+            } else {
+                fallbackResults = []
+            }
             if pendingWifiScan?.pending === pending {
                 pendingWifiScan = nil
+            }
+            if !fallbackResults.isEmpty {
+                return fallbackResults
             }
             throw error
         }
@@ -1522,6 +1533,11 @@ public final class MentraBluetoothSDK {
         request.pending.resolve(results)
     }
 
+    private func updateWifiScanLatestResults(_ results: [WifiScanResult]) {
+        guard !results.isEmpty else { return }
+        pendingWifiScan?.latestResults = results
+    }
+
     private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
         guard let request = pendingWifiStatus else { return }
         guard wifiStatusMatches(event.status, request: request) else { return }
@@ -1710,6 +1726,7 @@ public final class MentraBluetoothSDK {
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
             let hasCompletionFlag = data.keys.contains("scanComplete") || data.keys.contains("scan_complete")
             let scanComplete = data["scanComplete"] as? Bool ?? data["scan_complete"] as? Bool ?? false
+            updateWifiScanLatestResults(networks)
             if scanComplete || !hasCompletionFlag {
                 handleWifiScanResultsForRequests(networks)
             }

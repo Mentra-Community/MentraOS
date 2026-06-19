@@ -11,7 +11,7 @@ import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
-import {isDev} from "@/ui/lib/env"
+import {appVersion, isDev} from "@/ui/lib/env"
 import {toggleDevOverride, useDevOverride} from "@/ui/lib/devOverride"
 import {SimulationControls} from "@/ui/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/ui/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
@@ -203,11 +203,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
+  // Local refetch trigger — bumped when the preview drawer's star toggles
+  // a save, so `savedPlaces` reflects the change without round-tripping
+  // through App's savedPlacesVersion.
+  const [localSavedVersion, setLocalSavedVersion] = useState(0)
 
   // Hydrate saved places so the map can drop home / work / starred
   // markers behind whatever destination is selected. Refetched on
   // savedPlacesVersion change (AddPlacePage onSave bumps it after a
-  // successful `storage:add-saved`).
+  // successful `storage:add-saved`) or on a local star toggle.
   useEffect(() => {
     let cancelled = false
     mentra
@@ -223,15 +227,33 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     return () => {
       cancelled = true
     }
-  }, [savedPlacesVersion])
+  }, [savedPlacesVersion, localSavedVersion])
+
+  // Star toggle from the preview drawer: persist via storage RPC, then
+  // refetch. Returns the new saved-state so the drawer can update its
+  // icon optimistically.
+  const handleToggleSaved = async (place: PlaceDetails, shouldSave: boolean) => {
+    try {
+      if (shouldSave) {
+        await mentra.request("storage:add-saved", {...place})
+      } else {
+        await mentra.request("storage:remove-saved", {placeId: place.placeId})
+      }
+    } finally {
+      setLocalSavedVersion((v) => v + 1)
+    }
+  }
 
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  // Dynamic bitmap-size test inputs (dev panel).
+  const [bmpWidth, setBmpWidth] = useState("200")
+  const [bmpHeight, setBmpHeight] = useState("88")
   const [rawMapOpen, setRawMapOpen] = useState(false)
   const [showPivots, setShowPivots] = useState(false)
   const [showOffRouteLine, setShowOffRouteLine] = useState(false)
-  const [showMinimap, setShowMinimap] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(true)
   const [devTab, setDevTab] = useState<"nav" | "display">("nav")
 
   // Swallow every long-press-derived `contextmenu` event app-wide
@@ -773,6 +795,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // reason as long-press) and on a live trip (avoid swapping
           // destinations mid-walk).
           onPlaceTap={isSearching || running ? undefined : handleMapPoiTap}
+          onOpenSettings={() => push({name: "settings"})}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -897,6 +920,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   speedMultiplier={speedMultiplier}
                   routeDistanceMeters={previewRouteSummary?.distanceMeters ?? null}
                   routeDurationSeconds={previewRouteSummary?.durationSeconds ?? null}
+                  saved={!!devDestination && savedPlaces.some((p) => p.placeId === devDestination.placeId)}
+                  onToggleSaved={handleToggleSaved}
                   onStart={handleStart}
                   onClose={() => setDestination(null)}
                 />
@@ -907,6 +932,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 me={me}
                 routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
                 routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
+                routePoints={running ? routePoints : null}
                 onStop={handleStop}
                 onClose={() => setDestination(null)}
               />
@@ -921,7 +947,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         />
 
         {devEnabled && !isSearching ? (
-          <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
+          <FloatingDevPanel title="Navigation Dev" version={appVersion} storageKey="NavigationPage:dev">
             <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A]">
               {(
                 [
@@ -966,6 +992,108 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
                     Send
                   </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-neutral-700 shrink-0">Test bitmap (W×H)</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      value={bmpWidth}
+                      onChange={(e) => setBmpWidth(e.target.value)}
+                      placeholder="W"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <span className="text-[11px] text-neutral-400">×</span>
+                    <input
+                      type="number"
+                      value={bmpHeight}
+                      onChange={(e) => setBmpHeight(e.target.value)}
+                      placeholder="H"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const size = parseInt(bmpWidth, 10)
+                        const height = parseInt(bmpHeight, 10)
+                        if (!Number.isFinite(size) || !Number.isFinite(height)) return
+                        mentra.request("test:show-bitmap-size", {size, height})
+                      }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white shrink-0">
+                      Send
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">OSM road map (Hayes Valley)</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      console.log("[OSM-MAP] 🖱️  Draw button clicked")
+                      const res = await mentra.request("test:show-osm-map", undefined)
+                      console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                    }}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Draw
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Explore map (pan)</span>
+                  <div className="flex flex-col items-center gap-1">
+                    {(
+                      [
+                        [null, "up", null],
+                        ["left", null, "right"],
+                        [null, "down", null],
+                      ] as const
+                    ).map((row, ri) => (
+                      <div key={ri} className="flex gap-1">
+                        {row.map((dir, ci) =>
+                          dir ? (
+                            <button
+                              key={ci}
+                              type="button"
+                              onClick={async () => {
+                                console.log(`[OSM-MAP] 🖱️  pan ${dir}`)
+                                const res = await mentra.request("test:pan-osm-map", {dir})
+                                console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                              }}
+                              className="w-7 h-7 rounded-lg font-bold bg-red-600 text-white flex items-center justify-center">
+                              {dir === "up" ? "↑" : dir === "down" ? "↓" : dir === "left" ? "←" : "→"}
+                            </button>
+                          ) : (
+                            <span key={ci} className="w-7 h-7" />
+                          ),
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap 200×100</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:show-bitmap-size", {size: 200, height: 100})}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Send
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Large map (center)</span>
+                  <div className="flex gap-1.5">
+                    {[200, 270].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={async () => {
+                          const res = await mentra.request("test:show-large-map", {size})
+                          console.log(`[LARGE-MAP] ${size}:`, res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                        }}
+                        className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                        {size}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>

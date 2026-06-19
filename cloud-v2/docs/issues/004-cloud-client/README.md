@@ -40,19 +40,21 @@ Docs:
 
 ## The three modules
 
-A single `CloudClient` owns the endpoints, proxy routing, and the shared login
-state, and exposes three areas (full API in [`spec.md`](./spec.md)):
+A single `CloudClient` owns the endpoints, proxy routing, and the auth providers,
+and exposes three areas (full API in [`spec.md`](./spec.md)):
 
-- **`cloud.auth`:** login and tokens. Gets and refreshes the Mentra access token,
-  and mints the per-miniapp tokens. The access token is the Bearer to Mentra's own
-  APIs but is never handed to a miniapp. The client half of
-  [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth).
+- **`cloud.auth`:** token providers. Supplies a `cloud-runtime` token for live
+  Runtime Services, and, when Core is configured, a `cloud-core` token plus
+  per-miniapp tokens. Core/runtime bearer tokens are never handed to a miniapp.
+  The client half of
+  [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth)
+  and [`../007-runtime-auth-independence/README.md`](../007-runtime-auth-independence/README.md).
 - **`cloud.runtime`:** the live audio and event session. Connection handshake,
   status, subscriptions, transcript/translation events, managed photo/stream, UDP
   audio. Implements [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md).
 - **`cloud.core`:** the other v2 REST calls the device makes (miniapp bundles +
   catalog). Calls [`../001-cloud-core/`](../001-cloud-core/) services. Device-facing
-  only, no Dev Console / OEM Portal / store web UI.
+  only, no Dev Console / OEM Portal / store web UI. Optional in runtime-only mode.
 
 ## Consumers
 
