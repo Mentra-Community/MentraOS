@@ -147,12 +147,22 @@ jobs:
             core.info(`${STATUS_CONTEXT} -> ${state}: ${description}`);
             core.info(`gated runs: ${gated.map(r => `${r.name}=${r.status}/${r.conclusion}`).join("; ") || "(none yet)"}`);
 
+            // The commit-status `description` field rejects 4-byte Unicode
+            // (422 "Description doesn't accept 4-byte Unicode"). Some gated
+            // workflow names contain emoji (e.g. "🧪 Test Cloud build"), so strip
+            // any astral-plane code points and clamp to the 140-char limit.
+            const safeDescription = description
+              .replace(/[\u{10000}-\u{10FFFF}]/gu, "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 140);
+
             await github.rest.repos.createCommitStatus({
               owner,
               repo,
               sha,
               state,
               context: STATUS_CONTEXT,
-              description,
+              description: safeDescription,
               target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
             });
