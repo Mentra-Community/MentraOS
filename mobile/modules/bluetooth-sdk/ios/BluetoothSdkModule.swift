@@ -154,7 +154,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
             try await MainActor.run {
                 guard let target = Device(dictionary: device) else {
-                    throw BluetoothError(
+                    throw BluetoothSdkError(
                         code: "invalid_device",
                         message: "connect requires a Device with model and name."
                     )
@@ -303,7 +303,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                   timestampMs >= Double(Int64.min),
                   timestampMs <= maxTimestamp
             else {
-                throw BluetoothError(
+                throw BluetoothSdkError(
                     code: "invalid_timestamp",
                     message: "setSystemTime timestampMs must be a finite Int64 millisecond timestamp."
                 )
@@ -743,7 +743,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothError) {
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
         sendEvent("pair_failure", ["error": error.message])
     }
 }
