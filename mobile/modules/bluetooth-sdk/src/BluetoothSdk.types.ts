@@ -725,15 +725,6 @@ export type MtkUpdateCompleteEvent = {
   timestamp: number
 }
 
-export type OtaUpdateAvailableEvent = {
-  type: "ota_update_available"
-  version_code?: number
-  version_name?: string
-  updates?: string[]
-  total_size?: number
-  cache_ready?: boolean
-}
-
 /** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and status-store mapping. */
 export type OtaProgressEvent = {
   type: "ota_progress"
@@ -764,7 +755,7 @@ export type OtaStatusEvent = {
   error_message?: string
 }
 
-export type OtaQueryResult = OtaUpdateAvailableEvent | OtaStatusEvent
+export type OtaQueryResult = OtaStatusEvent
 
 /** Nex BLE protobuf trace (NexEventUtils); payload matches native Map keys. */
 export type BleCommandTraceEvent = {
@@ -826,7 +817,6 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
-  ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
@@ -1059,7 +1049,6 @@ export interface OtaUpdateInfo {
   versionName: string
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
-  cacheReady?: boolean
 }
 
 export interface OtaProgress {

@@ -124,7 +124,7 @@ button_video_fps, gallery_mode, screen_disabled, sensing_enabled
 - `mic_pcm`, `mic_lc3`, `local_transcription`
 - `wifi_status_change`, `hotspot_status_change`, `gallery_status`
 - `stream_status`, `imu_data_event`, `imu_gesture_event`
-- `ota_update_available`, `ota_progress`
+- `ota_progress`
 
 Battery/status cleanup is still part of Phase 3. There are a few older native helpers that still format MentraOS-specific payloads instead of exposing a clean typed event path.
 
@@ -361,7 +361,6 @@ fun sendHotspotStatusChange(enabled: Boolean, ssid: String, password: String, ga
 fun sendGalleryStatus(...)
 fun sendImuDataEvent(...)
 fun sendImuGestureEvent(...)
-fun sendOtaUpdateAvailable(...)
 fun sendOtaProgress(...)
 fun sendStreamStatus(...)
 fun sendSwipeVolumeStatus(...)
