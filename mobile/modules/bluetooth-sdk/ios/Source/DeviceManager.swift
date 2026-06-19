@@ -1220,7 +1220,7 @@ struct ViewState {
 
     private func liveSgc() throws -> MentraLive {
         guard let live = sgc as? MentraLive else {
-            throw BluetoothError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
         }
         return live
     }
@@ -1250,11 +1250,6 @@ struct ViewState {
 
     func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
-    }
-
-    func retryOtaVersionCheck() {
-        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
-        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /// Request version info from glasses.

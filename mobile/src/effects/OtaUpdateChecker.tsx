@@ -1,9 +1,9 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk-internal"
 
 import {useEffect, useRef} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
+import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
 import {
   getGlassesSystemTimeMs,
   isGlassesConnected,
@@ -11,8 +11,7 @@ import {
   useGlassesStore,
   waitForGlassesState,
 } from "@/stores/glasses"
-import {OTA_VERSION_URL_PROD} from "@/config/ota"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
@@ -52,43 +51,6 @@ interface VersionJson {
   apkSize?: number
   sha256?: string
   releaseNotes?: string
-}
-
-function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
-  const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
-  // Pre-wall-clock ASG builds ignore ota_start.ota_version_url, so compare against the URL they will actually use.
-  return Number.isFinite(buildNumber) && buildNumber < 100000
-}
-
-function getOtaVersionUrlDevOverride(): string | null {
-  // Super mode only: a wrong OTA manifest can brick glasses, so a saved
-  // override is inert unless super mode is currently enabled.
-  if (!useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)) {
-    return null
-  }
-  const value = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
-  const trimmed = typeof value === "string" ? value.trim() : ""
-  return trimmed || null
-}
-
-export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
-  const deviceUrl = glassesUrl?.trim()
-  if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
-    // Legacy glasses ignore ota_start.ota_version_url and install from their compiled
-    // default, so the developer override does not apply to them either.
-    return deviceUrl || OTA_VERSION_URL_PROD
-  }
-
-  const devOverrideUrl = getOtaVersionUrlDevOverride()
-  if (devOverrideUrl) {
-    return devOverrideUrl
-  }
-
-  const envUrl = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim()
-  if (envUrl) {
-    return envUrl
-  }
-  return deviceUrl || OTA_VERSION_URL_PROD
 }
 
 function areGlassesConnectedNow(): boolean {
@@ -251,64 +213,6 @@ export interface OtaCheckResult {
   besVersion: string | null
 }
 
-/**
- * Merge HTTP OTA check with glasses `ota_update_available`. When the phone-side
- * manifest comparison misses work (e.g. stale build number), glasses can still
- * advertise the true update set — union the steps and surface `updateAvailable`.
- */
-export function mergeOtaCheckWithGlasses(phone: OtaCheckResult, glassesHint: OtaUpdateInfo | null): OtaCheckResult {
-  if (glassesHint == null || !glassesHint.available || !glassesHint.updates?.length) {
-    return phone
-  }
-
-  const union = [...new Set([...phone.updates, ...glassesHint.updates])]
-  const latestVersionInfo =
-    phone.latestVersionInfo ??
-    (glassesHint.versionCode
-      ? {
-          versionCode: glassesHint.versionCode,
-          versionName: glassesHint.versionName || "",
-          downloadUrl: "",
-          apkSize: glassesHint.totalSize ?? 0,
-          sha256: "",
-          releaseNotes: "",
-        }
-      : null)
-
-  return {
-    ...phone,
-    updateAvailable: phone.updateAvailable || union.length > 0,
-    updates: union,
-    latestVersionInfo,
-  }
-}
-
-/**
- * Pure predicate for the legacy home-screen "cache-ready update available" install prompt.
- *
- * Mirrors the runtime gate inside {@link OtaUpdateChecker}. The `cacheReady === true`
- * requirement is what distinguishes an older glasses-emitted prefetch signal
- * (via MantleManager's `ota_update_available` listener, see
- * `mobile/src/services/MantleManager.ts`) from the in-flow write produced by
- * `mobile/src/app/ota/check-for-updates.tsx`, which uses the same store slot with
- * `cacheReady: false` to drive its own update screen and must NEVER trip this popup.
- */
-export function shouldShowCacheReadyPrompt(args: {
-  pathname: string | null | undefined
-  glassesConnected: boolean
-  glassesWifiConnected: boolean
-  otaUpdateAvailable: OtaUpdateInfo | null | undefined
-}): boolean {
-  const {pathname, glassesConnected, glassesWifiConnected, otaUpdateAvailable} = args
-  if (pathname !== "/home") return false
-  if (!glassesConnected) return false
-  if (!glassesWifiConnected) return false
-  if (!otaUpdateAvailable?.available) return false
-  if (!otaUpdateAvailable.updates?.length) return false
-  if (otaUpdateAvailable.cacheReady !== true) return false
-  return true
-}
-
 export async function checkForOtaUpdate(
   otaVersionUrl: string,
   currentBuildNumber: string,
@@ -437,7 +341,6 @@ export function OtaUpdateChecker() {
   const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const mtkFirmwareVersion = useGlassesStore((state) => state.mtkFirmwareVersion)
   const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
-  const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
 
   // Keep a ref of the current pathname so async callbacks can check it
   const pathnameRef = useRef(pathname)
@@ -569,45 +472,6 @@ export function OtaUpdateChecker() {
       {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
     ])
   }, [pathname, glassesConnected, glassesWifiConnected, defaultWearable, superMode, push])
-
-  // Legacy compatibility: older glasses can still report a cache-ready update on WiFi.
-  // New phone-driven OTA does not wait for this signal; it prompts from the HTTP
-  // manifest check below and lets ota_start trigger the download/install.
-  // See shouldShowCacheReadyPrompt for the gate's full rationale (esp. why cacheReady
-  // === true is required to keep stale in-flow writes from check-for-updates.tsx out).
-  useEffect(() => {
-    if (!shouldShowCacheReadyPrompt({pathname, glassesConnected, glassesWifiConnected, otaUpdateAvailable})) return
-    if (hasPromptedOta.current) return
-    // Last-moment check: never show Mentra Live update alert when disconnected
-    if (!areGlassesConnectedNow()) return
-
-    const deviceName = defaultWearable || "Glasses"
-    // shouldShowCacheReadyPrompt has already narrowed these — use optional chaining to satisfy TS.
-    const updates = otaUpdateAvailable?.updates || []
-    const updateCount = updates.length
-    const updateMessage = superMode
-      ? `Updates available: ${updates.join(", ").toUpperCase()}`
-      : updateCount === 1
-        ? "1 update available"
-        : `${updateCount} updates available`
-
-    console.log("OTA: Glasses cache-ready update available - showing install prompt")
-
-    pendingUpdate.current = null
-    hasPromptedOta.current = true
-    hasPromptedOtaWifiSetup.current = false
-
-    // Clear store signal before showing alert to prevent immediate re-triggering
-    useGlassesStore.getState().setOtaUpdateAvailable(null)
-
-    showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
-      {
-        text: translate("ota:updateLater"),
-        style: "cancel",
-      },
-      {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-    ])
-  }, [glassesConnected, glassesWifiConnected, pathname, defaultWearable, otaUpdateAvailable, push, superMode])
 
   // Main OTA check effect
   useEffect(() => {

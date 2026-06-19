@@ -21,9 +21,9 @@ export const ota = {
    */
   install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
   /** Re-query the glasses for an available update (e.g. after a clock-fix or failure). */
-  retry: () => BluetoothSdk.retryOtaVersionCheck(),
+  retry: () => BluetoothSdk.checkForOtaUpdate(),
 
-  /** Current available-update info (versionName/updates/totalSize/cacheReady), or null. */
+  /** Current available-update info (versionName/updates/totalSize), or null. */
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
   status: (): OtaStatus | null => useGlassesStore.getState().otaStatus,

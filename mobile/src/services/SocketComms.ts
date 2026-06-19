@@ -20,6 +20,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+import {logE2EMetric} from "@/utils/e2eMetrics"
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -96,10 +97,15 @@ class SocketComms {
     console.log("SOCKET: connectWebsocket()")
     this.setupListeners()
     const url = useSettingsStore.getState().getWsUrl()
+    const backendUrl = useSettingsStore.getState().getRestUrl()
     if (!url) {
       console.error(`SOCKET: Invalid server URL`)
       return
     }
+    logE2EMetric("backend_config", {
+      backend_url: backendUrl,
+      ws_url: url,
+    })
     await ws.connect(url, this.coreToken)
   }
 
@@ -476,7 +482,6 @@ class SocketComms {
     // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
     // per-utterance offline/online STT switching, so we never want to
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
-    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
     // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
@@ -804,8 +809,6 @@ class SocketComms {
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
-
-    // console.log(`SOCKET: msg: ${type}`)
 
     switch (type) {
       case "ping":

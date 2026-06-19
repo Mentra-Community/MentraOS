@@ -86,7 +86,6 @@ ota_start ──────────────────►  processApps
 | `ota_start`               | Phone → Glasses  | BLE with `mId` + ACK tracking             | Yes (phone retries 3x at 5s)                    |
 | `ota_start_ack`           | Glasses → Phone  | Raw BLE `sendData`                        | No                                              |
 | `ota_progress`            | Glasses → Phone  | Raw BLE `sendData`                        | No                                              |
-| `ota_update_available`    | Glasses → Phone  | `ReliableMessageManager`                  | Yes                                             |
 | `mtk_update_complete`     | Glasses → Phone  | `reliableManager.sendMessage`             | Attempted, but type not in `RELIABLE_TYPES` set |
 | `sr_adota` (BES progress) | BES chip → Phone | BLE characteristic (bypasses glasses app) | No                                              |
 

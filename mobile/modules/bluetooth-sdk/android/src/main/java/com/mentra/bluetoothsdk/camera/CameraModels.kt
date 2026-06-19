@@ -138,13 +138,13 @@ data class CameraFovResult(
             fallback: CameraFov,
         ): CameraFovResult {
             if (ack.status == "error") {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     ack.errorCode ?: "camera_fov_failed",
                     ack.errorMessage ?: "Camera FOV request failed.",
                 )
             }
             if (!ack.hardwareApplied) {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     "camera_fov_not_applied",
                     "Camera FOV was saved but not applied to hardware.",
                 )

@@ -14,7 +14,6 @@ import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {OtaStatus} from "../../../bluetooth-sdk/build/_internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
-import {isGlassesConnected} from "./GlassesReadiness"
 import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
 import {
   legacyOtaProgressFromOtaStatusEvent,
@@ -27,26 +26,10 @@ let subs: Array<{remove: () => void}> = []
 export function startOtaService(): void {
   if (subs.length) return
 
-  // An update is available on the glasses (cache-ready or manifest-detected).
-  subs.push(
-    BluetoothSdk.addListener("ota_update_available", (event) => {
-      if (!isGlassesConnected(useGlassesStore.getState().connection)) return
-      useGlassesStore.getState().setOtaUpdateAvailable({
-        available: true,
-        versionCode: event.version_code ?? 0,
-        versionName: event.version_name ?? "",
-        updates: event.updates ?? [],
-        totalSize: event.total_size ?? 0,
-        cacheReady: event.cache_ready === true,
-      })
-      GlobalEventEmitter.emit("ota_update_available", {
-        versionCode: event.version_code,
-        versionName: event.version_name,
-        updates: event.updates,
-        totalSize: event.total_size,
-      })
-    }),
-  )
+  // (The push-based `ota_update_available` BLE event was removed in the OTA-simplify
+  // pass — availability is now resolved by the host OTA check flow via
+  // BluetoothSdk.checkForOtaUpdate(), which calls setOtaUpdateAvailable(...) directly.
+  // OtaService no longer projects an availability event; it owns status/progress below.)
 
   // MTK firmware update finished (self power-cycle path).
   subs.push(

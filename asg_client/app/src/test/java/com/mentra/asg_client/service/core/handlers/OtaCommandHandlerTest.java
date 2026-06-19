@@ -25,10 +25,7 @@ public class OtaCommandHandlerTest {
 
         assertThat(handler.getSupportedCommandTypes())
                 .containsExactlyInAnyOrder(
-                        "ota_start",
-                        "ota_update_response",
-                        "ota_query_status",
-                        "ota_retry_version_check");
+                        "ota_start", "ota_update_response", "ota_query_status");
     }
 
     @Test

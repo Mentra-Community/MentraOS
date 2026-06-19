@@ -1,6 +1,10 @@
 // Exercises the real island OtaService by path (not via "@mentra/island", which jest
 // mocks): emitted OTA BLE events must project into the island glasses store, which is
 // the toolkit.ota read surface.
+//
+// NOTE: the push-based `ota_update_available` BLE event was removed in the OTA-simplify
+// pass — availability is now resolved by the host OTA check flow (checkForOtaUpdate +
+// setOtaUpdateAvailable), so OtaService only projects status/progress here.
 import {startOtaService, stopOtaService} from "../../modules/island/src/services/OtaService"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -17,24 +21,6 @@ describe("OtaService projection", () => {
     stopOtaService()
   })
 
-  it("projects ota_update_available into the store", () => {
-    emitBluetoothSdkEvent("ota_update_available", {
-      version_code: 42,
-      version_name: "1.2.3",
-      updates: ["apk"],
-      total_size: 1000,
-      cache_ready: true,
-    })
-    const info = useGlassesStore.getState().otaUpdateAvailable
-    expect(info).toMatchObject({available: true, versionCode: 42, versionName: "1.2.3", cacheReady: true})
-  })
-
-  it("ignores ota_update_available when glasses are disconnected", () => {
-    useGlassesStore.setState({connection: {state: "disconnected"}} as never)
-    emitBluetoothSdkEvent("ota_update_available", {version_code: 1, version_name: "x", updates: [], total_size: 0})
-    expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
-  })
-
   it("projects ota_status into the store and clears the available flag on completion", () => {
     useGlassesStore.getState().setOtaUpdateAvailable({
       available: true,
@@ -42,7 +28,6 @@ describe("OtaService projection", () => {
       versionName: "x",
       updates: [],
       totalSize: 0,
-      cacheReady: false,
     })
     emitBluetoothSdkEvent("ota_status", {
       session_id: "s1",
@@ -61,7 +46,16 @@ describe("OtaService projection", () => {
 
   it("stops projecting after stopOtaService()", () => {
     stopOtaService()
-    emitBluetoothSdkEvent("ota_update_available", {version_code: 9, version_name: "y", updates: [], total_size: 0})
-    expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
+    emitBluetoothSdkEvent("ota_status", {
+      session_id: "s1",
+      total_steps: 1,
+      current_step: 1,
+      step_type: "apk",
+      phase: "install",
+      step_percent: 50,
+      overall_percent: 50,
+      status: "downloading",
+    })
+    expect(useGlassesStore.getState().otaStatus).toBeNull()
   })
 })

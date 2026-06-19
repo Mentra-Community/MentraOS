@@ -57,6 +57,9 @@ export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 export {phoneLocationService, stopPhoneLocation} from "./services/PhoneLocationService"
 // Clock-skew utils (used by OTA + the host gallery sync) moved into island.
 export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
+// OTA manifest-URL resolution (dev-override/legacy-build/env/prod) moved into island.
+// Re-exported through the host @/services/asg/asgOtaVersionUrl shim.
+export {getAsgOtaVersionUrl} from "./services/asgOtaVersionUrl"
 export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
 // Gallery cluster — the sync orchestrator + glasses-camera HTTP API + media/storage,
 // moved into island. Host Gallery UI + tests import these from @mentra/island.

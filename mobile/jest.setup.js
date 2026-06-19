@@ -265,6 +265,7 @@ jest.mock("@mentra/island", () => {
   // from @mentra/island, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
   const realGallerySyncClock = jest.requireActual("./modules/island/src/services/gallerySyncClock")
+  const realAsgOtaVersionUrl = jest.requireActual("./modules/island/src/services/asgOtaVersionUrl")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
@@ -308,6 +309,9 @@ jest.mock("@mentra/island", () => {
     // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
     fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
     maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
+    // OTA manifest-URL resolution (real, pure) — consumed by the host OTA screens via
+    // the @/services/asg/asgOtaVersionUrl shim.
+    getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
     detectClockSkew: realGallerySyncClock.detectClockSkew,
     isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
     CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,
