@@ -19,7 +19,7 @@ import type {
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../shared/types"
-import {deriveManeuverDisplay} from "../shared/maneuverDisplay"
+import {arrowForKind, deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -219,6 +219,12 @@ export class NavigationController {
         }
         this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
+        // The maneuver card's "In X m" distance is recomputed LIVE from these
+        // coords on BOTH surfaces directly — the glasses HUD in refreshHUD() and
+        // the phone OrientationCard in-component — via the shared
+        // liveDistanceToNextTurn helper. So there's nothing to freshen here:
+        // refreshHUD() (called below) picks up the new coords, and the phone
+        // re-renders off nav:coords. No background→UI re-broadcast needed.
         this.logOffRouteThresholds()
         this.maybeFireEarlyArrival()
         this.refreshHUD()
@@ -1135,7 +1141,23 @@ export class NavigationController {
     // SHARED helper the phone OrientationCard also uses. Computed once here
     // so the glasses HUD and the phone card read the identical instruction /
     // distance / arrow — single source of truth, no PivotEngine re-derivation.
-    const md = deriveManeuverDisplay(maneuver, status)
+    //
+    // We pass a LIVE distance recomputed from this.coords (same shared helper
+    // + same geometry the phone card uses), so the "In X m" line ticks down on
+    // every location tick instead of only when a new native maneuver event
+    // fires. For the ARRIVE leg the relevant distance is to the destination.
+    const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    const liveDist =
+      maneuver?.maneuverType === "ARRIVE"
+        ? remainingRouteMeters(me, this.trip.routePoints)
+        : liveDistanceToNextTurn(
+            me,
+            this.trip.routePoints,
+            this.trip.routeSteps,
+            remainingRouteMeters,
+            haversineMeters,
+          )
+    const md = deriveManeuverDisplay(maneuver, status, liveDist)
 
     // Mirrors the phone-side OrientationCard's pickDisplay() — same
     // layout, same source, same precedence. If you tweak one, tweak the
@@ -1172,29 +1194,35 @@ export class NavigationController {
       const d = this.offRouteAdvisoryDistanceM
       next = d != null ? `Go back\n${formatDistance(d, this.unitSystem)}` : "Go back\nto route"
     } else if (md) {
-      // Next-turn HUD, driven by the SAME shared helper + SAME `maneuver`
-      // event the phone OrientationCard uses — so the glasses first text box
-      // and the phone card agree word-for-word on instruction, distance, and
-      // turn direction. We no longer re-derive turns from the PivotEngine
-      // (which could disagree with Mapbox on direction/road). Layout mirrors
-      // the card but keeps the directional arrow on top for glanceability:
+      // Next-turn HUD. The DISTANCE is driven the SAME way the bottom trip-stats
+      // box is — recomputed live from this.coords against the route polyline
+      // every location tick (the bottom box proved accurate + low-latency +
+      // 1:1 with the phone, while the maneuver event's own distance lagged). So
+      // we compute the top-line distance HERE from the live position, with the
+      // same fallback chain the bottom box uses, instead of trusting md's
+      // (possibly frozen) value. Layout: arrow, distance, instruction.
       //
       //   ←|→|↑                          ← arrow from maneuver.maneuverType
       //   In 198 m  | Now | Arriving in 65 m
       //   Turn left onto Market St       ← Mapbox's verbatim instruction
       if (md.arriving) {
+        // Arrival leg: distance to the DESTINATION, live (same as bottom box).
+        const dDest = remainingRouteMeters(me, this.trip.routePoints) ?? md.distanceMeters
         const distLine =
-          md.distanceMeters != null
-            ? `Arriving in ${formatDistance(md.distanceMeters, this.unitSystem)}`
-            : "Arriving"
+          dDest != null ? `Arriving in ${formatDistance(dDest, this.unitSystem)}` : "Arriving"
         next = `↑\n${distLine}`
       } else {
-        const distLine = md.atTurn
+        // Live distance to the next turn, with fallback to md's value so it's
+        // never blank. atTurn re-evaluated against the live value.
+        const dTurn = liveDist ?? md.distanceMeters
+        const atTurn = dTurn != null ? dTurn <= 10 : md.atTurn
+        const arrow = atTurn ? md.kind && arrowForKind(md.kind) : "↑"
+        const distLine = atTurn
           ? "Now"
-          : md.distanceMeters != null
-            ? `In ${formatDistance(md.distanceMeters, this.unitSystem)}`
+          : dTurn != null
+            ? `In ${formatDistance(dTurn, this.unitSystem)}`
             : null
-        next = [md.arrow, distLine, md.instruction].filter(Boolean).join("\n")
+        next = [arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
       }
     } else if (running) {
       // Running but no maneuver yet — the brief gap right after Start, before
@@ -1220,13 +1248,16 @@ export class NavigationController {
       }
       return
     }
-    // Two stacked text containers: maneuver/directions on top, trip stats below.
-    // The single full-screen text wall only fits ~5 lines on the G2; splitting
-    // into two containers gives each its own region so more text is visible.
+    // SINGLE-CONTAINER HUD: cram everything (maneuver block + trip stats) into
+    // the ONE bottom container — the proven-smooth, low-latency, phone-1:1 path.
+    // The separate top maneuver box lagged/glitched, so we drop it and blank it.
     const stats = running ? this.buildTripStats() : null
+    // Stack the maneuver block over the stats line, blank line between, or just
+    // one if the other is absent.
+    const combined = [next, stats].filter(Boolean).join("\n\n")
 
     // Coalesce on the combined frame so we don't re-push identical content.
-    const key = `${next}${stats ?? ""}${durationMs ?? 0}`
+    const key = `${combined}${durationMs ?? 0}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
@@ -1241,15 +1272,10 @@ export class NavigationController {
     }
     this.lastHudKey = key
 
-    this.display.showManeuver(next)
-    if (stats) {
-      this.display.showTripStats(stats)
-    } else {
-      // No trip stats to show (e.g. arrived / not running) — actively BLANK
-      // the bottom container so it doesn't keep the last "X m · ⊙ Y min"
-      // frame on the glasses after arrival.
-      this.display.showTripStats("")
-    }
+    // Single full-canvas container: push the WHOLE combined frame (maneuver
+    // block + trip stats) through showManeuver, which now spans the full canvas.
+    // No separate stats container is drawn, so nothing can lag behind it.
+    this.display.showManeuver(combined)
   }
 
   /**

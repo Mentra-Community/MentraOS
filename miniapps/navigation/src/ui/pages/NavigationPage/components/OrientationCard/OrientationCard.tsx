@@ -4,9 +4,10 @@ import type {NavManeuver} from "@mentra/miniapp"
 
 import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
+import {haversineMeters, remainingRouteMeters} from "@/ui/lib/geometry"
 import {ManeuverIcon} from "@/ui/components/icons"
-import {deriveManeuverDisplay} from "@/shared/maneuverDisplay"
-import type {LatLng, NavStatus, UnitSystem} from "@/shared/types"
+import {deriveManeuverDisplay, liveDistanceToNextTurn} from "@/shared/maneuverDisplay"
+import type {LatLng, NavRouteStep, NavStatus, UnitSystem} from "@/shared/types"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
@@ -26,13 +27,17 @@ const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
  * instruction text from ever disagreeing.
  */
 export function OrientationCard({
+  me,
   maneuver,
+  routePoints,
+  routeSteps,
   status,
 }: {
   me: LatLng | null
   heading: number | null
   maneuver: NavManeuver | null
   routePoints: LatLng[] | null
+  routeSteps: NavRouteStep[] | null
   status?: NavStatus
   onClose?: () => void
 }) {
@@ -41,6 +46,18 @@ export function OrientationCard({
   // card can say "Arrived at <name>, on your left/right" (or "up ahead").
   const destinationName = useNavStore((s) => s.trip.activeDestinationName)
   const arrivalSide = useNavStore((s) => s.trip.arrivalSide)
+  // LIVE distance to the next turn, recomputed from the user's current position
+  // (`me`, fed by nav:coords) against the route on EVERY coords-driven re-render.
+  // This is what keeps the "In X m" line ticking down smoothly: the maneuver
+  // event's own distance only refreshes when a new native RouteProgress event
+  // fires (slower), so without this the top line lagged while the bottom drawer
+  // — which already recomputes from coords — stayed live. The glasses HUD does
+  // the identical recompute (shared liveDistanceToNextTurn), so phone + glasses
+  // agree. For the ARRIVE leg we pass distance-to-destination instead.
+  const liveDist =
+    maneuver?.maneuverType === "ARRIVE"
+      ? remainingRouteMeters(me, routePoints)
+      : liveDistanceToNextTurn(me, routePoints, routeSteps, remainingRouteMeters, haversineMeters)
   // The card now follows Mapbox's OWN live step tracking (the `maneuver`
   // event, derived natively from RouteProgress) rather than the SDK's
   // re-derived PivotEngine turns. Mapbox already map-matches the user to
@@ -48,16 +65,13 @@ export function OrientationCard({
   // distance to it, and the road being entered — so re-deriving pivots was
   // redundant work that could disagree with Mapbox (the icon/label mismatch
   // seen on pedestrian routes). One source of truth: the maneuver event.
-  const real = pickDisplayFromManeuver(maneuver, status, unitSystem, destinationName, arrivalSide)
-
-  // Diagnostic: dump the Mapbox maneuver inputs the card uses + the
-  // derived display, so a wrong card can be traced to the exact field.
-  console.log(
-    `[ManeuverCard] maneuver=${
-      maneuver
-        ? `${maneuver.maneuverType} dist=${maneuver.distanceMeters}m next=${maneuver.nextStepRoad ?? "—"} toDest=${maneuver.distanceToDestinationMeters ?? "—"}m`
-        : "null"
-    } status=${status ?? "—"} → nextRoad="${real.nextRoad ?? ""}" label="${real.label}" icon=${real.icon}`,
+  const real = pickDisplayFromManeuver(
+    maneuver,
+    status,
+    unitSystem,
+    destinationName,
+    arrivalSide,
+    liveDist,
   )
 
   // HARDCODED PREVIEW STUB — overrides every dynamic field with sample
@@ -107,8 +121,6 @@ export function OrientationCard({
               <AutoFitLabel text={label} />
             </motion.div>
           </AnimatePresence>
-          
-          
         </div>
       </div>
     </div>
@@ -185,6 +197,7 @@ function pickDisplayFromManeuver(
   unit: UnitSystem,
   destinationName?: string | null,
   arrivalSide?: "left" | "right" | null,
+  liveDistanceMeters?: number | null,
 ): {label: string; icon: string; road: string | null; nextRoad: string | null} {
   if (status === "arrived") {
     // "You have arrived at <name>, on your left/right" — or "up ahead" when
@@ -193,7 +206,7 @@ function pickDisplayFromManeuver(
     const side = arrivalSide ? `, on your ${arrivalSide}` : ", up ahead"
     return {label: `You have arrived${at}${side}`, icon: "ARRIVE", road: null, nextRoad: null}
   }
-  const d = deriveManeuverDisplay(maneuver, status)
+  const d = deriveManeuverDisplay(maneuver, status, liveDistanceMeters)
   if (!d) {
     // No maneuver yet — typically the brief gap right after pressing Start,
     // before Mapbox emits the first step. Show a neutral "Starting…" rather

@@ -916,6 +916,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 heading={heading}
                 maneuver={maneuver}
                 routePoints={routePoints}
+                routeSteps={routeSteps}
                 status={status}
               />
             </div>

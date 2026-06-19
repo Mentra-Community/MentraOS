@@ -43,19 +43,34 @@ export type ManeuverDisplay = {
  * own current-step tracking, delivered natively from RouteProgress).
  * Returns null when there's nothing to show (no maneuver / arrived) — the
  * caller decides the empty/arrival framing.
+ *
+ * `liveDistanceMeters` (optional): a freshly-computed distance to the next
+ * maneuver, derived from the user's LIVE position against the route polyline by
+ * the caller (see liveDistanceToNextTurn). When provided it OVERRIDES the
+ * maneuver event's own `distanceMeters`, so the "In X m" / "Arriving in X m"
+ * line ticks down on every location update instead of only when a new native
+ * RouteProgress maneuver event arrives. Both the phone card and the glasses HUD
+ * pass it, so they recompute identically and stay in lockstep — without waiting
+ * on a background→UI re-broadcast. Omit it to use the event's own distance.
  */
 export function deriveManeuverDisplay(
   maneuver: NavManeuver | null,
   status: NavStatus | undefined,
+  liveDistanceMeters?: number | null,
 ): ManeuverDisplay | null {
   if (status === "arrived" || !maneuver) return null
 
   const kind = maneuver.maneuverType
   const instructionRaw = maneuver.instruction?.trim() || null
 
-  const hasDist = maneuver.distanceMeters != null && maneuver.distanceMeters >= 0
-  const distanceMeters = hasDist ? maneuver.distanceMeters : null
-  const atTurn = hasDist && maneuver.distanceMeters <= AT_TURN_M
+  // Prefer the live position-derived distance when the caller supplies one;
+  // fall back to the maneuver event's own (slower-updating) distance.
+  const liveDist =
+    liveDistanceMeters != null && liveDistanceMeters >= 0 ? liveDistanceMeters : null
+  const eventDist =
+    maneuver.distanceMeters != null && maneuver.distanceMeters >= 0 ? maneuver.distanceMeters : null
+  const distanceMeters = liveDist ?? eventDist
+  const atTurn = distanceMeters != null && distanceMeters <= AT_TURN_M
 
   // Arrival leg (the LAST step) — show ONLY the destination countdown
   // ("Arriving in X m") and drop the turn instruction entirely: there are no
@@ -63,7 +78,10 @@ export function deriveManeuverDisplay(
   // even when Mapbox supplies an instruction string ("Your destination is on
   // the right.") — we deliberately replace that with the clean countdown.
   if (kind === "ARRIVE") {
-    const toDest = maneuver.distanceToDestinationMeters
+    // On the arrival leg the relevant distance is to the destination. Prefer
+    // the live distance (caller passes distance-to-destination here), else the
+    // event's own toDest.
+    const toDest = liveDist ?? maneuver.distanceToDestinationMeters
     return {
       instruction: "Arriving",
       kind: "ARRIVE",
@@ -95,6 +113,69 @@ export function deriveManeuverDisplay(
     atTurn,
     arriving: false,
   }
+}
+
+/**
+ * Live distance (m) from the user's current position to the NEXT maneuver,
+ * measured ALONG the route — the value that should drive the "In X m" line so
+ * it ticks down on every location update (not only when a native maneuver event
+ * fires). SHARED by the phone card and the glasses HUD so both recompute the
+ * same number from the same live coords.
+ *
+ * `remaining` is the caller's `remainingRouteMeters(point, route)` implementation
+ * (injected so this shared module stays free of a geometry import / cross-layer
+ * dependency). Returns null when it can't be computed — caller then falls back
+ * to the maneuver event's own distance.
+ *
+ * Algorithm: the next turn is the closest route step still AHEAD of the user.
+ * Each step's remaining-along-route distance is measured the same way as the
+ * user's, so `userRemaining - stepRemaining` is the live gap to that step.
+ *
+ * Robustness: some routes (e.g. a ferry leg) contain a huge coordinate
+ * discontinuity that corrupts the along-route arithmetic, making every gap
+ * negative or null. In that case we fall back to the STRAIGHT-LINE (haversine)
+ * distance to the nearest step ahead, so the line never freezes. `straightLine`
+ * is injected (like `remaining`) to keep this module dependency-free.
+ */
+export function liveDistanceToNextTurn(
+  me: {lat: number; lng: number} | null,
+  route: Array<{lat: number; lng: number}> | null,
+  steps: Array<{lat: number; lng: number}> | null,
+  remaining: (
+    p: {lat: number; lng: number} | null,
+    r: Array<{lat: number; lng: number}> | null,
+  ) => number | null,
+  straightLine?: (a: {lat: number; lng: number}, b: {lat: number; lng: number}) => number,
+): number | null {
+  if (!me || !route || route.length < 2 || !steps || steps.length === 0) return null
+
+  // Primary: along-route gap to the closest step ahead of the user.
+  const meRemaining = remaining(me, route)
+  if (meRemaining != null) {
+    let bestGap: number | null = null
+    for (const s of steps) {
+      const stepRemaining = remaining({lat: s.lat, lng: s.lng}, route)
+      if (stepRemaining == null) continue
+      const gap = meRemaining - stepRemaining
+      if (gap <= 1) continue // behind us or essentially here — skip
+      if (bestGap == null || gap < bestGap) bestGap = gap
+    }
+    if (bestGap != null) return bestGap
+  }
+
+  // Fallback: straight-line distance to the nearest step (when the along-route
+  // math degenerates). Better a slightly-off live number than a frozen one.
+  if (straightLine) {
+    let best: number | null = null
+    for (const s of steps) {
+      const d = straightLine(me, {lat: s.lat, lng: s.lng})
+      if (d <= 1) continue
+      if (best == null || d < best) best = d
+    }
+    if (best != null) return best
+  }
+
+  return null
 }
 
 /** Plain arrow glyph for the glasses HUD (corner-curve variants don't render). */

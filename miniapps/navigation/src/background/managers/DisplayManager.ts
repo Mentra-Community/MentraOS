@@ -100,10 +100,14 @@ export class DisplayManager {
   // The G2's single full-screen (576×288) text wall only fits ~5 lines. To get
   // more usable vertical text we split into two stacked positioned-text
   // containers: maneuver/directions on top, trip stats below.
-  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 190}
-  // Stats pushed down ~30px (y 195 → 225) so the distance/ETA line sits
-  // lower on the canvas; height trimmed to 63 to stay within the 288 bottom.
-  private static readonly STATS_REGION = {x: 0, y: 225, width: 576, height: 63}
+  // SINGLE-CONTAINER HUD: the whole frame (maneuver block + trip stats) is now
+  // crammed into THIS one container, spanning the full canvas so all the lines
+  // fit. There is no longer a separate stats box below it.
+  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 288}
+  // Kept only so showTripStats()/showManeuver() signatures still resolve; the
+  // single-container HUD routes everything through showManeuver now. Same rect
+  // as MANEUVER_REGION so a stray stats push can't land in a different spot.
+  private static readonly STATS_REGION = {x: 0, y: 0, width: 576, height: 288}
 
   /**
    * Maneuver / direction text in the TOP region of the canvas (its own G2 text
