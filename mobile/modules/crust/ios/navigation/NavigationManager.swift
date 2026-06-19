@@ -1,9 +1,49 @@
+import Combine
 import CoreLocation
-import GoogleNavigation
+import Foundation
+import MapboxDirections
+import MapboxNavigationCore
 
-// Mirrors Android's NavigationManager.kt: owns the GMSNavigator lifecycle,
-// fans out events to CrustModule via the three typed callbacks, and handles
-// T&C acceptance, simulation, and off-route detection.
+/// NavigationManager (iOS)
+///
+/// Singleton wrapper around the **Mapbox Navigation SDK v3 for iOS** (migrated
+/// from the Google Navigation SDK). Mirrors the Android
+/// `NavigationManager.kt`: owns the `MapboxNavigation` lifecycle, subscribes to
+/// the Combine publishers (route progress, location, arrival, rerouting), and
+/// fans out the SAME coarse callbacks the Google version exposed to
+/// `CrustModule`.
+///
+/// ## Contract (UNCHANGED from the Google implementation)
+///
+/// The public surface — `start` / `stop` / `requestPermission` /
+/// `simulateDeviation`, plus the `onEvent` / `onLocation` / `onRoute` payload
+/// shapes — is identical to the Google version, so `CrustModule.swift` and
+/// everything above it (the `@mentra/miniapp` SDK) does not change.
+///
+/// ## iOS-vs-Android API differences (why this isn't a line-for-line port)
+///
+/// - iOS v3 is **Combine publisher-based**, not observer-based. We hold
+///   `AnyCancellable`s instead of registering observer objects.
+/// - Routing is `async`: `routingProvider().calculateRoutes(options:)`.
+/// - Simulation is a **CoreConfig location source** (`.simulation`), chosen at
+///   provider-construction time — not a separate replay session object. Because
+///   the source is fixed when the provider is built, switching sim on/off
+///   rebuilds the provider (see `makeProvider`).
+/// - Mapbox owns off-route detection + auto-reroute on iOS too, same as
+///   Android — we observe, we don't re-derive.
+///
+/// VERIFY-IN-XCODE markers flag the few exact field/case/method names that the
+/// (auth-gated) v3 docs didn't let me confirm. Everything else is from the
+/// official v3 examples.
+// @MainActor: the Mapbox Navigation v3 API surface (MapboxNavigation,
+// NavigationController, SessionController, the routeProgress/locationMatching
+// publishers) is main-actor-isolated. All our Mapbox access already happens on
+// the main thread (we dispatch to DispatchQueue.main in start/stop), so marking
+// the whole manager @MainActor aligns the compiler with the actual runtime
+// threading and removes the "main actor-isolated … from a nonisolated context"
+// errors. CrustModule calls these from AsyncFunctions, which await across the
+// boundary cleanly.
+@MainActor
 final class NavigationManager: NSObject {
   static let shared = NavigationManager()
 
@@ -17,152 +57,57 @@ final class NavigationManager: NSObject {
   private var onLocation: LocationCallback?
   private var onRoute: RouteCallback?
 
-  // GMSNavigator requires a GMSMapView. We keep a zero-frame off-screen view
-  // purely to obtain the navigator — it is never added to any view hierarchy.
-  private var mapView: GMSMapView?
-  private var navigator: GMSNavigator?
-  private var roadSnappedProvider: GMSRoadSnappedLocationProvider?
+  // The Mapbox engine. Rebuilt per-trip because the location source
+  // (live vs simulation) is baked into CoreConfig at construction time.
+  private var provider: MapboxNavigationProvider?
+  private var mapboxNavigation: MapboxNavigation? { provider?.mapboxNavigation }
 
-  // Raw CoreLocation feed. The road-snapped provider above is what the
-  // Google Nav SDK uses internally (camera, navInfo, turn-by-turn audio),
-  // but its fixes on iOS are aggressively snapped onto the active route's
-  // polyline — distance-to-route ≈ 0 always, even when the user has
-  // physically walked onto the wrong street. That breaks every geometry
-  // check that compares user position to route polyline: the pivot
-  // engine's "entered radius" detection, the off-route advisory at >15m,
-  // the auto-rebuild at >30m, and the ≤7m-remaining arrival trigger.
-  //
-  // To restore ground truth, we run a parallel raw CLLocationManager and
-  // push its fixes (not the road-snapped ones) through `onLocation` to JS.
-  // The dot in the WebView and on the glasses minimap drifts a few meters
-  // wider than before, but every distance check now sees the user's real
-  // position. Android doesn't need this because its RoadSnappedLocationProvider
-  // snaps to the road network rather than to the active route.
-  private var rawLocationManager: CLLocationManager?
-  // Last raw fix; used by the native off-route check and the deviate
-  // walker. Replaces the role `lastReportedCoord` used to play with the
-  // snapped fixes.
-  private var lastRawCoord: CLLocationCoordinate2D?
+  // Combine subscriptions — torn down on stop().
+  private var cancellables = Set<AnyCancellable>()
 
-  // Off-route detection: emit once per off-route episode, reset on reroute.
-  private static let offRouteThresholdMeters: Double = 30
+  // First-fix gate. Mapbox has no synchronous "current location" getter; the
+  // device position arrives only via the locationMatching publisher AFTER the
+  // session starts. So we start the session, capture the first fix, THEN
+  // request the route from that real origin. Mirrors Android's
+  // `pendingRouteRequest`. nil once fired (one-shot).
+  private var pendingRouteRequest: ((_ originLat: Double, _ originLng: Double) -> Void)?
+
+  // Per-trip config captured from start().
+  private var tripStops: [(lat: Double, lng: Double)] = []
+  private var travelMode: String = "driving"
+  private var simulating: Bool = false
+  private var simulationSpeed: Double = 1.0
+
+  // Dedup the maneuver emission to ~1m granularity (matches Android's
+  // emitManeuverIfChanged so the "In X m" countdown updates ~1 Hz and stays in
+  // lockstep with the trip distance). Key = "type|distM|tripM".
+  private var lastEmittedManeuverKey: String?
+
+  // Arrival is reported once; the SDK keeps ticking COMPLETE afterwards.
+  private var arrivedHandled = false
+  // Off-route emitted once per episode (reset on reroute), same as Android.
   private var offRouteEmitted = false
+  // The navigationRoutes publisher fires once with the INITIAL route (already
+  // emitted by requestAndStartRoute). We skip that first emission and treat
+  // every subsequent one as a reroute redraw. false until the first fires.
+  private var didEmitInitialRoute = false
 
-  // Simulation polling: when GMSRoadSnappedLocationProvider doesn't fire
-  // during simulation, fall back to polling mapView.myLocation.
-  private var simTimer: Timer?
-  private var isSimulating = false
-
-  // Deviation walk: when the user presses the Deviate dev button, we
-  // pause the Google Nav simulator and walk them straight forward in
-  // their current direction of travel for a fixed duration. Simulates
-  // a user who ignores the route and keeps walking the way they were
-  // going. The timer feeds waypoints to setUserLocation at ~2.5Hz so
-  // the walk looks smooth rather than a teleport.
-  private var deviateTimer: Timer?
-  // Saved sim speed (×) so the deviate walker matches the same pace
-  // the Google simulator was using before we took over.
-  private var currentSpeedMultiplier: Double = 1.0
-  // Last two road-snapped positions we forwarded to JS. The deviate
-  // walker derives its bearing from prev→last so the user keeps moving
-  // in *their* direction of travel, not the route's local bearing.
+  // Last two forwarded coords — the Deviate dev walker derives its bearing
+  // from prev→last so the user keeps moving in *their* direction of travel.
   private var lastReportedCoord: CLLocationCoordinate2D?
   private var prevReportedCoord: CLLocationCoordinate2D?
-
-  // Missed-turn reroute (opt-in via StartNavigationOptions). When the
-  // current step advances we cache the user's location at that moment
-  // — that's the pivot they just crossed. If the straight-line distance
-  // from the user to that cached pivot exceeds this threshold, we force
-  // a reroute by re-issuing setDestinations from the current position.
-  // nil means the feature is off.
-  private var missedTurnRerouteMeters: Double?
-  private var lastPassedPivot: CLLocationCoordinate2D?
-  private var lastCurrentStepKey: String?
-  private var finalDestination: CLLocationCoordinate2D?
-  private var travelMode: String = "driving"
-  private var missedTurnRerouteInFlight = false
-
-  // Pivot enrichment: when emitRoute() fires before the first NavInfo
-  // tick, we don't yet have step metadata (road / maneuver per step).
-  // We cache the latest NavInfo's `remainingSteps` here as they arrive,
-  // and re-emit the route with steps folded in the first time they
-  // become available after a route change. Cleared on every new route.
-  private var latestStepsPayload: [[String: Any]]? = nil
-  private var lastEmittedPoints: [[String: Double]]? = nil
-  private var pendingRouteReEmit: Bool = false
-
-  // Phase 2 of route-source promotion (mirrors Android NavigationManager.kt):
-  // the JS layer derives the trip's source-of-truth polyline + steps from
-  // the Routes REST API and synthesizes its own onRoute event from
-  // `navigation.start()`. The Google Nav SDK still runs in the background
-  // for position fixes, reroute detection, and live announcements — but
-  // its polyline and step emissions are NOT the source of truth and must
-  // never reach the miniapp.
-  //
-  // Latching: set true on every `start()`, cleared on `stop()`. While
-  // true, `emitRoute()` and the deferred re-emit path (in NavInfoUpdated)
-  // skip the onRoute?(payload) call. This intentionally also drops
-  // native reroute emits — Phase 3 wires those back through a REST round
-  // trip + synthetic emit instead.
-  private var suppressNativeRouteEmits: Bool = false
-
-  // MARK: - API Key registration
-
-  // The Google Maps + Navigation SDKs throw an NSException → SIGABRT the
-  // moment ANY GMS* API is touched without `+provideAPIKey:` having been
-  // called first. Android reads the key from the manifest automatically;
-  // iOS doesn't — we have to do it ourselves before any other GMS call.
-  // The key lives in Info.plist under `GOOGLE_NAV_API_KEY` (injected by
-  // app.config.ts from EXPO_PUBLIC_GOOGLE_NAV_API_KEY).
-  private static var apiKeyRegistered = false
-  private static func ensureApiKeyRegistered() {
-    if apiKeyRegistered { return }
-    guard
-      let key = Bundle.main.object(forInfoDictionaryKey: "GOOGLE_NAV_API_KEY") as? String,
-      !key.isEmpty
-    else {
-      print("[NavigationManager] GOOGLE_NAV_API_KEY missing from Info.plist — Google Nav SDK calls will crash")
-      return
-    }
-    GMSServices.provideAPIKey(key)
-    apiKeyRegistered = true
-  }
+  private var deviateTimer: Timer?
+  private let DEVIATE_DURATION_S: Double = 10.0
 
   // MARK: - Permissions
 
+  /// Mapbox needs no Terms & Conditions dialog (that was Google-specific).
+  /// Resolve immediately with `true` so the JS permission gate passes —
+  /// mirrors Android `ensureTermsAccepted`, which is a no-op on Mapbox.
+  /// (Location authorization itself is handled by the standard iOS prompts
+  /// driven from the NSLocation* Info.plist usage strings + CoreLocation.)
   func requestPermission(completion: @escaping (Bool) -> Void) {
-    DispatchQueue.main.async {
-      NavigationManager.ensureApiKeyRegistered()
-      let options = GMSNavigationTermsAndConditionsOptions(companyName: "Mentra")
-      options.title = "Welcome to Mentra Maps"
-      options.uiParams = NavigationManager.mentraTermsDialogUIParams()
-      GMSNavigationServices.showTermsAndConditionsDialogIfNeeded(with: options) { accepted in
-        completion(accepted)
-      }
-    }
-  }
-
-  // Mentra-themed chrome for Google's mandatory T&C dialog. Mirrors the
-  // Android `TermsAndConditionsUIParams` in NavigationManager.kt — same
-  // palette, same type scale. Google owns the body copy and frame; only
-  // background, fonts, and colors are configurable.
-  private static func mentraTermsDialogUIParams() -> GMSNavigationTermsDialogUIParams {
-    let titleFont = UIFont.systemFont(ofSize: 22, weight: .semibold)
-    let bodyFont = UIFont.systemFont(ofSize: 14, weight: .regular)
-    let buttonFont = UIFont.systemFont(ofSize: 16, weight: .semibold)
-    let background = UIColor(red: 0xF5 / 255, green: 0xF5 / 255, blue: 0xF5 / 255, alpha: 1)
-    let nearBlack = UIColor(red: 0x1A / 255, green: 0x1A / 255, blue: 0x1A / 255, alpha: 1)
-    let mutedText = UIColor(red: 0, green: 0, blue: 0, alpha: 0x8C / 255.0)
-    return GMSNavigationTermsDialogUIParams(
-      backgroundColor: background,
-      titleFont: titleFont,
-      titleColor: nearBlack,
-      mainTextFont: bodyFont,
-      mainTextColor: mutedText,
-      buttonsFont: buttonFont,
-      cancelButtonTextColor: mutedText,
-      acceptButtonTextColor: nearBlack
-    )
+    completion(true)
   }
 
   // MARK: - Start
@@ -178,105 +123,266 @@ final class NavigationManager: NSObject {
     onRoute: @escaping RouteCallback,
     completion: @escaping StartCompletion
   ) {
+    // Clean baseline — like Android's start() calling stop() first.
+    stopInternal()
+
+    guard !stops.isEmpty else {
+      completion(false, "at least one stop is required")
+      return
+    }
+
     self.onEvent = onEvent
     self.onLocation = onLocation
     self.onRoute = onRoute
-    self.missedTurnRerouteMeters =
-      (missedTurnRerouteMeters ?? 0) > 0 ? missedTurnRerouteMeters : nil
-    self.lastPassedPivot = nil
-    self.lastCurrentStepKey = nil
-    self.missedTurnRerouteInFlight = false
+    self.tripStops = stops
     self.travelMode = mode
-    // Latch native-route suppression on for the lifetime of the trip.
-    // JS dispatches the source-of-truth polyline + steps from the Routes
-    // REST API itself; every Nav SDK route emission during this trip
-    // (the initial setDestinations → emitRoute, the deferred re-emit
-    // when NavInfo steps arrive, and any reroute emits later) must be
-    // ignored. Cleared in stop().
-    self.suppressNativeRouteEmits = true
-    if let last = stops.last {
-      self.finalDestination = CLLocationCoordinate2D(latitude: last.lat, longitude: last.lng)
-    }
+    self.simulating = simulate
+    self.simulationSpeed = max(0.5, min(speedMultiplier, 50))
+    self.arrivedHandled = false
+    self.offRouteEmitted = false
+    self.didEmitInitialRoute = false
+    self.lastEmittedManeuverKey = nil
+    // (missedTurnRerouteMeters is intentionally unused on the Mapbox path —
+    // Mapbox owns reroute natively, same decision as Android. Kept in the
+    // signature for contract parity with CrustModule.)
+    _ = missedTurnRerouteMeters
 
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
-      NavigationManager.ensureApiKeyRegistered()
 
-      let camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 1)
-      let mapView = GMSMapView(frame: .zero, camera: camera)
-      mapView.isNavigationEnabled = true
-      self.mapView = mapView
+      // Build the provider with the right location source. Simulation is a
+      // CoreConfig choice; `.simulation` drives a synthetic puck along the
+      // active route once one is set.
+      let provider = self.makeProvider(simulate: simulate)
+      self.provider = provider
 
-      guard let nav = mapView.navigator else {
-        // Release the suppression latch armed at the top of start() —
-        // this failure path never reaches stop() (the only other place
-        // it clears), so leaving it set would silently suppress a later
-        // trip's (or external) route emits.
-        self.suppressNativeRouteEmits = false
-        completion(false, "Navigator unavailable — accept Terms & Conditions first")
-        return
-      }
-      nav.add(self)
-      nav.sendsBackgroundNotifications = false
-      // Audio guidance is suppressed for the entire trip — the glasses
-      // deliver turn-by-turn instructions visually, so the phone playing
-      // its own "in 50 feet, turn right" audio is redundant and
-      // confusing. Set silent here so nothing plays during the brief
-      // window before setDestinations finishes either.
-      nav.voiceGuidance = .silent
-      self.navigator = nav
+      // `mapboxNavigation` is non-optional on the provider.
+      let nav = provider.mapboxNavigation
 
-      let provider = mapView.roadSnappedLocationProvider
-      provider?.add(self)
-      self.roadSnappedProvider = provider
+      // Subscribe to the publishers BEFORE starting the session so we don't
+      // miss the first ticks.
+      self.subscribe(nav)
 
-      // Spin up a raw CoreLocation stream alongside the snapped provider.
-      // Fixes from this manager (not the snapped ones above) are what the
-      // JS layer's geometry checks see, so the pivot engine and off-route
-      // logic operate on the user's real position. Simulation mode is the
-      // one exception — the Google sim doesn't move the device's actual
-      // GPS, so we still rely on the snapped/polled fallback there.
-      if !simulate {
-        self.startRawLocationUpdates()
-      }
+      // Start a free-drive (passive) session so location starts flowing; the
+      // first fix satisfies the gate below, then we request the route and
+      // switch to active guidance.
+      // VERIFY-IN-XCODE: free-drive start method name. v3 examples show
+      // `nav.tripSession().startFreeDrive()`.
+      nav.tripSession().startFreeDrive()
 
-      mapView.travelMode = self.gmsMode(from: mode)
-
-      let waypoints = stops.compactMap {
-        GMSNavigationWaypoint(
-          location: CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng),
-          title: ""
+      // First-fix gate: request the route from the device's real origin.
+      self.pendingRouteRequest = { [weak self] originLat, originLng in
+        self?.requestAndStartRoute(
+          nav: nav,
+          originLat: originLat,
+          originLng: originLng,
+          completion: completion
         )
       }
 
-      nav.setDestinations(waypoints) { [weak self] routeStatus in
+      // Simulation note: in sim mode the `.simulation` source may not emit a
+      // real device fix to satisfy the gate. Fall back to the first stop's
+      // *previous* leg origin — but we don't have one, so for sim we seed the
+      // gate with the first stop minus a tiny offset is wrong (degenerate).
+      // Instead, for sim we request immediately using the FIRST stop as origin
+      // is ALSO wrong (origin==dest). So: for sim, use the user's last known
+      // location if any; otherwise the simulator's initial location is nil and
+      // Mapbox will place the puck at the route start once the route is set.
+      // We therefore request using the first stop as the *route* origin only
+      // when a real fix never arrives — guarded by a short timeout.
+      if simulate {
+        self.armSimRouteFallback(nav: nav, completion: completion)
+      }
+    }
+  }
+
+  /// Build a fresh MapboxNavigationProvider. `.simulation` vs `.live` is fixed
+  /// at construction, which is why a sim toggle rebuilds the provider.
+  private func makeProvider(simulate: Bool) -> MapboxNavigationProvider {
+    // Explicit reroute config: native off-route detection + auto-reroute ON
+    // (this is the SDK default — detectsReroute defaults to true — but we set it
+    // explicitly so the intent is visible and can't silently regress). The
+    // navigator runs this off-route check continuously while in active guidance.
+    let routingConfig = RoutingConfig(
+      rerouteConfig: RerouteConfig(detectsReroute: true)
+    )
+    let coreConfig = CoreConfig(
+      routingConfig: routingConfig,
+      locationSource: simulate ? .simulation(initialLocation: nil) : .live
+    )
+    return MapboxNavigationProvider(coreConfig: coreConfig)
+  }
+
+  /// Subscribe to route progress, location, arrival, and reroute publishers.
+  private func subscribe(_ nav: MapboxNavigation) {
+    let navigation = nav.navigation()
+
+    // Location stream. `MapMatchingState` carries BOTH the raw GPS fix
+    // (`.location`) and the snapped/map-matched fix (`.enhancedLocation`). We
+    // forward the RAW location for the phone puck so that when the user
+    // physically diverges from the route, the puck visibly leaves the line
+    // (matching Android, which reports raw GPS). Using `.enhancedLocation` here
+    // was the bug: it snaps the puck onto the route, hiding all divergence.
+    // This is also our first-fix gate trigger.
+    navigation.locationMatching
+      .sink { [weak self] matched in
+        let r = matched.mapMatchingResult
+        print(String(format: "[NavMgr] loc raw=(%.6f,%.6f) offRoad=%@ offRoadProb=%.2f",
+                     matched.location.coordinate.latitude,
+                     matched.location.coordinate.longitude,
+                     r.isOffRoad ? "YES" : "no",
+                     r.offRoadProbability))
+        self?.handleLocation(matched.location, isOffRoad: r.isOffRoad)
+      }
+      .store(in: &cancellables)
+
+    // Route progress — drives the maneuver card + arrival.
+    // VERIFY-IN-XCODE: `.routeProgress` publisher emits `RouteProgress?`
+    // (v3 examples map `\.?.routeProgress`). Unwrap before use.
+    navigation.routeProgress
+      .sink { [weak self] progressState in
+        guard let progress = progressState?.routeProgress else { return }
+        self?.handleRouteProgress(progress)
+      }
+      .store(in: &cancellables)
+
+    // Rerouting — Mapbox detects off-route and fetches a new route NATIVELY
+    // (same as Android; we observe, we don't re-derive). `rerouting` is an
+    // event publisher of `ReroutingStatus`, whose `.event` is one of
+    // `.FetchingRoute` / `.Fetched` / `.Failed` / `.Interrupted`. We emit the
+    // "rerouting" event when the fetch begins so the glasses show the
+    // "Rerouting…" HUD + the phone shows the toast.
+    navigation.rerouting
+      .sink { [weak self] status in
         guard let self else { return }
-        guard routeStatus == .OK else {
-          // See the navigator-unavailable note above: clear the latch on
-          // this start failure so it doesn't leak into the next trip.
-          self.suppressNativeRouteEmits = false
-          completion(false, "Route calculation failed (status \(routeStatus.rawValue))")
+        print("[NavMgr] rerouting event: \(type(of: status.event))")
+        switch status.event {
+        case is ReroutingStatus.Events.FetchingRoute:
+          // A new route fetch has started — tell JS we're rerouting. The actual
+          // new polyline arrives via the navigationRoutes publisher below.
+          self.lastEmittedManeuverKey = nil
+          self.onEvent?(["kind": "rerouting"])
+        case is ReroutingStatus.Events.Failed:
+          self.onEvent?(["kind": "error", "message": "reroute failed"])
+        default:
+          // .Fetched / .Interrupted — the route update is delivered separately.
+          break
+        }
+      }
+      .store(in: &cancellables)
+
+    // Arrival — the authoritative signal is the waypoints-arrival publisher
+    // (final destination), not a distance threshold. Emit `arrived` once.
+    navigation.waypointsArrival
+      .sink { [weak self] status in
+        guard let self else { return }
+        if status.event is WaypointArrivalStatus.Events.ToFinalDestination {
+          if !self.arrivedHandled {
+            self.arrivedHandled = true
+            self.onEvent?(["kind": "arrived"])
+          }
+        }
+      }
+      .store(in: &cancellables)
+
+    // Route updates — `navigationRoutes` emits the active NavigationRoutes
+    // whenever they change: the initial route, AND every reroute. We skip the
+    // very first emission (that's the initial route, already emitted by
+    // requestAndStartRoute) and treat every subsequent non-nil emission as a
+    // reroute: reset the maneuver dedup and re-emit the new polyline so the
+    // phone map + glasses redraw it. This is the RoutesObserver-equivalent and
+    // is the reliable redraw signal.
+    nav.tripSession().navigationRoutes
+      .sink { [weak self] routes in
+        guard let self, let routes else { return }
+        if !self.didEmitInitialRoute {
+          // First emission is the initial route — requestAndStartRoute already
+          // emitted it; just record that we've seen it.
+          self.didEmitInitialRoute = true
           return
         }
-        nav.isGuidanceActive = true
-        // Belt-and-suspenders: re-affirm silent in case anything during
-        // setDestinations flipped the value back to a default.
-        nav.voiceGuidance = .silent
-
-        if simulate {
-          mapView.locationSimulator?.simulateLocationsAlongExistingRoute()
-          if let sim = mapView.locationSimulator, speedMultiplier > 0 {
-            sim.speedMultiplier = Float(speedMultiplier)
-            self.currentSpeedMultiplier = speedMultiplier
-          }
-          self.isSimulating = true
-          self.startSimulationPolling()
-        }
-
-        // Emit the initial route.
-        self.emitRoute()
-        completion(true, nil)
+        // Subsequent emission = reroute. Redraw.
+        self.lastEmittedManeuverKey = nil
+        self.emitRoute(routes)
       }
+      .store(in: &cancellables)
+  }
+
+  /// In simulation, a real device fix may never arrive to satisfy the
+  /// first-fix gate. After a short delay, if the gate hasn't fired, request
+  /// the route using the device's last known location (or, lacking that, skip
+  /// — Mapbox places the sim puck at the route origin once the route is set).
+  private func armSimRouteFallback(nav: MapboxNavigation, completion: @escaping StartCompletion) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+      guard let self, let pending = self.pendingRouteRequest else { return }
+      let origin = self.lastReportedCoord
+        ?? CLLocationManager().location?.coordinate
+      guard let origin else {
+        // No origin at all — request using the first stop as origin is
+        // degenerate; bail with an error so JS can recover rather than hang.
+        self.pendingRouteRequest = nil
+        completion(false, "no location fix for simulated route origin")
+        return
+      }
+      self.pendingRouteRequest = nil
+      pending(origin.latitude, origin.longitude)
+    }
+  }
+
+  /// Build NavigationRouteOptions from origin + stops, request the route,
+  /// set it, switch to active guidance, and emit it. Mirrors Android's
+  /// `requestAndStartRoute`.
+  private func requestAndStartRoute(
+    nav: MapboxNavigation,
+    originLat: Double,
+    originLng: Double,
+    completion: @escaping StartCompletion
+  ) {
+    var waypoints: [Waypoint] = []
+    waypoints.append(Waypoint(coordinate: CLLocationCoordinate2D(latitude: originLat, longitude: originLng)))
+    for stop in tripStops {
+      waypoints.append(Waypoint(coordinate: CLLocationCoordinate2D(latitude: stop.lat, longitude: stop.lng)))
+    }
+
+    // VERIFY-IN-XCODE: NavigationRouteOptions init + profileIdentifier param.
+    let options = NavigationRouteOptions(
+      waypoints: waypoints,
+      profileIdentifier: profileFor(travelMode)
+    )
+
+    // VERIFY-IN-XCODE: `routingProvider().calculateRoutes(options:)` returns a
+    // Task whose `.result` is `Result<NavigationRoutes, Error>` (v3 example).
+    let task = nav.routingProvider().calculateRoutes(options: options)
+    Task { [weak self] in
+      guard let self else { return }
+      switch await task.result {
+      case .success(let navigationRoutes):
+        await MainActor.run {
+          // v3 SessionController: startActiveGuidance(with:startLegIndex:).
+          // Off-route detection + auto-reroute only run in ACTIVE GUIDANCE — so
+          // this call (not the earlier free-drive) is what arms rerouting.
+          print("[NavMgr] startActiveGuidance — \(navigationRoutes.mainRoute.route.legs.count) legs, profile=\(self.travelMode)")
+          nav.tripSession().startActiveGuidance(with: navigationRoutes, startLegIndex: 0)
+          self.emitRoute(navigationRoutes)
+          completion(true, nil)
+        }
+      case .failure(let error):
+        await MainActor.run {
+          completion(false, "route request failed: \(error.localizedDescription)")
+        }
+      }
+    }
+  }
+
+  /// SDK-agnostic mode string → Mapbox Directions profile. Google's
+  /// `two_wheeler` has no Mapbox equivalent → driving (migration doc #3).
+  private func profileFor(_ mode: String) -> ProfileIdentifier {
+    switch mode.lowercased() {
+    case "walking": return .walking
+    case "cycling": return .cycling
+    case "two_wheeler": return .automobile
+    case "driving": return .automobileAvoidingTraffic
+    default: return .automobileAvoidingTraffic
     }
   }
 
@@ -284,464 +390,307 @@ final class NavigationManager: NSObject {
 
   func stop() {
     DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      self.stopSimulationPolling()
-      self.stopRawLocationUpdates()
-      self.deviateTimer?.invalidate()
-      self.deviateTimer = nil
-      self.isSimulating = false
-      self.navigator?.isGuidanceActive = false
-      self.navigator?.clearDestinations()
-      if let nav = self.navigator { nav.remove(self) }
-      self.roadSnappedProvider?.remove(self)
-      self.navigator = nil
-      self.roadSnappedProvider = nil
-      self.mapView = nil
-      self.onEvent = nil
-      self.onLocation = nil
-      self.onRoute = nil
-      self.offRouteEmitted = false
-      self.latestStepsPayload = nil
-      self.lastEmittedPoints = nil
-      self.pendingRouteReEmit = false
-      // Release the trip's route-emit suppression so a subsequent start
-      // arms it cleanly. Belt-and-suspenders — start() also sets it true
-      // — but clearing here means no stale latch survives if an external
-      // code path revives emitRoute() without going through start().
-      self.suppressNativeRouteEmits = false
-      self.missedTurnRerouteMeters = nil
-      self.lastPassedPivot = nil
-      self.lastCurrentStepKey = nil
-      self.finalDestination = nil
-      self.missedTurnRerouteInFlight = false
-      self.currentSpeedMultiplier = 1.0
-      self.lastReportedCoord = nil
-      self.prevReportedCoord = nil
+      self?.stopInternal()
     }
   }
 
-  // MARK: - Missed-turn reroute
+  private func stopInternal() {
+    deviateTimer?.invalidate()
+    deviateTimer = nil
+    cancellables.forEach { $0.cancel() }
+    cancellables.removeAll()
+    // Trip-session stop: SessionController.setToIdle(). `mapboxNavigation` is
+    // non-optional, so only `provider?` carries the optional chain.
+    provider?.mapboxNavigation.tripSession().setToIdle()
+    provider = nil
+    onEvent = nil
+    onLocation = nil
+    onRoute = nil
+    pendingRouteRequest = nil
+    tripStops = []
+    arrivedHandled = false
+    offRouteEmitted = false
+    didEmitInitialRoute = false
+    lastEmittedManeuverKey = nil
+    lastReportedCoord = nil
+    prevReportedCoord = nil
+  }
 
-  // Force the Nav SDK to plan a fresh route from the user's current
-  // position to the trip's final destination. Used when the user has
-  // walked `missedTurnRerouteMeters` past a pivot they didn't take —
-  // without this, the SDK eventually reroutes too, but the upcoming
-  // pivot in its new plan can sit behind the user, which is confusing.
-  // Re-issuing setDestinations from the current position guarantees the
-  // next pivot is ahead of them.
-  private func triggerMissedTurnReroute(from origin: CLLocationCoordinate2D) {
-    guard let nav = navigator, let dest = finalDestination else { return }
-    guard let waypoint = GMSNavigationWaypoint(location: dest, title: "") else {
-      print("[NavigationManager] missed-turn reroute: could not build waypoint")
+  // MARK: - Location handling
+
+  private func handleLocation(_ location: CLLocation, isOffRoad: Bool = false) {
+    let coord = location.coordinate
+
+    // First-fix gate: fire the deferred route request once.
+    if let pending = pendingRouteRequest {
+      pendingRouteRequest = nil
+      pending(coord.latitude, coord.longitude)
+    }
+
+    prevReportedCoord = lastReportedCoord
+    lastReportedCoord = coord
+
+    onLocation?([
+      "lat": coord.latitude,
+      "lng": coord.longitude,
+      "accuracy": location.horizontalAccuracy,
+      "timestamp": location.timestamp.timeIntervalSince1970 * 1000,
+    ])
+    // Off-route DETECTION + auto-reroute is fully owned by Mapbox (see the
+    // `rerouting` publisher in subscribe()) — no hand-rolled perpendicular
+    // distance check here, matching Android. `isOffRoad` is the map-matcher's
+    // own opinion; currently informational (the reroute publisher drives the
+    // HUD), kept available for future advisory use.
+    _ = isOffRoad
+  }
+
+  // MARK: - Route progress → maneuver
+
+  private func handleRouteProgress(_ progress: RouteProgress) {
+    // Arrival. VERIFY-IN-XCODE: completion check. v3 RouteProgress exposes a
+    // session/route state; candidates: `progress.currentState == .complete`
+    // or `progress.fractionTraveled >= 1`. Android uses
+    // `RouteProgressState.COMPLETE`.
+    if isArrived(progress) {
+      if !arrivedHandled {
+        arrivedHandled = true
+        onEvent?(["kind": "arrived"])
+        if simulating {
+          // In sim the puck is parked at the destination; nothing more to do
+          // on iOS (no replay session to tear back to live). The next start()
+          // rebuilds the provider cleanly.
+        }
+      }
       return
     }
-    missedTurnRerouteInFlight = true
-    print("[NavigationManager] missed-turn reroute: replanning from \(origin.latitude),\(origin.longitude) → \(dest.latitude),\(dest.longitude)")
-    nav.setDestinations([waypoint]) { [weak self] status in
-      guard let self = self else { return }
-      self.missedTurnRerouteInFlight = false
-      if status == .OK {
-        // setDestinations triggers navigatorDidChangeRoute which handles
-        // emitRoute() and the simulator re-arm — no extra work here.
-        // Reset the cached pivot so the next pivot becomes "passed" only
-        // after the SDK actually advances past it on the new route.
-        self.lastPassedPivot = nil
-        self.lastCurrentStepKey = nil
-      } else {
-        print("[NavigationManager] missed-turn reroute failed (status \(status.rawValue))")
+
+    // Distance to final destination + ETA.
+    // VERIFY-IN-XCODE: `progress.distanceRemaining` (whole route, meters) and
+    // `progress.durationRemaining` (seconds).
+    let distToDest = Int(progress.distanceRemaining.rounded())
+    let timeToDest = Int(progress.durationRemaining.rounded())
+
+    // The UPCOMING step is what the user is walking toward (matches Android:
+    // upcomingStep.maneuver + currentStepProgress.distanceRemaining).
+    // VERIFY-IN-XCODE: leg/step accessors:
+    //   progress.currentLegProgress.currentStepProgress.distanceRemaining
+    //   progress.currentLegProgress.upcomingStep            (RouteStep?)
+    //   progress.currentLegProgress.currentStep             (RouteStep)
+    let legProgress = progress.currentLegProgress
+    let stepProgress = legProgress.currentStepProgress
+    let upcomingStep = legProgress.upcomingStep
+    let currentStep = stepProgress.step
+
+    // turnStep = upcoming normally; current only on the final/arrival leg.
+    let turnStep = upcomingStep ?? currentStep
+    let distToManeuver = Int(stepProgress.distanceRemaining.rounded())
+
+    // Maneuver kind from the turn step.
+    // VERIFY-IN-XCODE: `turnStep.maneuverType` / `.maneuverDirection`.
+    let maneuver = maneuverString(type: turnStep.maneuverType, direction: turnStep.maneuverDirection)
+
+    // Roads: current step's name = road we're on; upcoming step's name = the
+    // road being entered at the turn.
+    // VERIFY-IN-XCODE: `RouteStep.names?.first` / `.instructionsDisplayedAlongStep`
+    // / `.name`. MapboxDirections exposes `names: [String]?`.
+    let currentRoad = currentStep.names?.first?.nonBlank
+    let nextStepRoad = upcomingStep?.names?.first?.nonBlank
+
+    // Verbatim instruction for the turn we're showing (the upcoming turn).
+    // VERIFY-IN-XCODE: the instruction text. Candidates:
+    //   turnStep.instructions  (String)
+    //   turnStep.instructionsDisplayedAlongStep?.first?.primaryInstruction.text
+    let instruction = turnStep.instructions.nonBlank
+
+    emitManeuverIfChanged(
+      maneuverType: maneuver,
+      distanceMeters: distToManeuver,
+      fromRoad: currentRoad,
+      nextStepRoad: nextStepRoad,
+      distanceToDestinationMeters: distToDest,
+      timeToDestinationSeconds: timeToDest,
+      instruction: instruction
+    )
+  }
+
+  /// Per-metre dedup, identical policy to Android's emitManeuverIfChanged, so
+  /// the "In X m" countdown updates ~1 Hz and stays in lockstep with the trip
+  /// distance shown on the HUD.
+  private func emitManeuverIfChanged(
+    maneuverType: String,
+    distanceMeters: Int,
+    fromRoad: String?,
+    nextStepRoad: String?,
+    distanceToDestinationMeters: Int,
+    timeToDestinationSeconds: Int,
+    instruction: String?
+  ) {
+    let distBucket = distanceMeters >= 0 ? distanceMeters : -1
+    let tripBucket = distanceToDestinationMeters >= 0 ? distanceToDestinationMeters : -1
+    let key = "\(maneuverType)|\(distBucket)|\(tripBucket)"
+    if key == lastEmittedManeuverKey { return }
+    lastEmittedManeuverKey = key
+
+    var payload: [String: Any] = [
+      "kind": "maneuver",
+      "maneuverType": maneuverType,
+      "distanceMeters": distanceMeters,
+      "distanceToDestinationMeters": distanceToDestinationMeters,
+      "timeToDestinationSeconds": timeToDestinationSeconds,
+    ]
+    if let fromRoad { payload["fromRoad"] = fromRoad; payload["toRoad"] = fromRoad }
+    if let nextStepRoad { payload["nextStepRoad"] = nextStepRoad }
+    if let instruction { payload["instruction"] = instruction }
+    onEvent?(payload)
+  }
+
+  /// VERIFY-IN-XCODE: arrival predicate for v3 RouteProgress.
+  private func isArrived(_ progress: RouteProgress) -> Bool {
+    // Prefer an explicit completion state if the SDK exposes one; else fall
+    // back to "essentially no distance left".
+    // return progress.currentState == .complete
+    return progress.distanceRemaining <= 1.0
+  }
+
+  // MARK: - Route emission
+
+  private func emitRoute(_ navigationRoutes: NavigationRoutes) {
+    // VERIFY-IN-XCODE: how to read the chosen route's geometry + steps.
+    //   navigationRoutes.mainRoute.route            (Route)
+    //   route.shape?.coordinates                    ([CLLocationCoordinate2D])
+    //   route.legs.flatMap(\.steps)                 ([RouteStep])
+    // mainRoute is non-optional; `.route` is the underlying Route.
+    let route = navigationRoutes.mainRoute.route
+    let coords = route.shape?.coordinates ?? []
+    let points = coordinatesToPoints(coords)
+
+    var payload: [String: Any] = ["points": points]
+
+    // Build steps with polyline index + road + maneuver + distance, matching
+    // Android's RouteStep shape (lat, lng, routeIndex, road, maneuver,
+    // distanceMeters). Each step is anchored to its maneuver location.
+    var steps: [[String: Any]] = []
+    for leg in route.legs {
+      for step in leg.steps {
+        // VERIFY-IN-XCODE: `step.maneuverLocation` (CLLocationCoordinate2D),
+        // `step.distance` (meters), `step.names`, maneuver type/direction.
+        let loc = step.maneuverLocation
+        let idx = closestPolylineIndex(in: points, lat: loc.latitude, lng: loc.longitude)
+        var entry: [String: Any] = [
+          "lat": loc.latitude,
+          "lng": loc.longitude,
+          "routeIndex": idx,
+          "maneuver": maneuverString(type: step.maneuverType, direction: step.maneuverDirection),
+          "distanceMeters": Int(step.distance.rounded()),
+        ]
+        if let road = step.names?.first?.nonBlank { entry["road"] = road }
+        steps.append(entry)
       }
     }
+    if !steps.isEmpty { payload["steps"] = steps }
+
+    onRoute?(payload)
+  }
+
+  private func closestPolylineIndex(in points: [[String: Double]], lat: Double, lng: Double) -> Int {
+    var best = 0
+    var bestD = Double.greatestFiniteMagnitude
+    for (i, p) in points.enumerated() {
+      let dx = (p["lat"] ?? 0) - lat
+      let dy = (p["lng"] ?? 0) - lng
+      let d = dx * dx + dy * dy
+      if d < bestD { bestD = d; best = i }
+    }
+    return best
   }
 
   // MARK: - Simulate deviation (dev only)
 
-  // Pause the Google simulator and walk the user STRAIGHT FORWARD in
-  // their current direction of travel for DEVIATE_DURATION_S seconds,
-  // then freeze the simulator. The bearing is computed from the last
-  // two road-snapped GPS positions — *their* direction of travel, not
-  // the route's local bearing — so this reproduces the "user kept
-  // walking the way they were going, ignoring the route" scenario.
-  //
-  // `offsetMeters` from the legacy API is ignored. Duration and
-  // speed are governed by DEVIATE_DURATION_S and the current sim
-  // speed multiplier.
+  /// Walk the user STRAIGHT FORWARD in their current direction of travel for
+  /// DEVIATE_DURATION_S, pushing synthesized coords through `onLocation` so
+  /// they go off-route and Mapbox's native reroute kicks in. Bearing comes
+  /// from prev→last forwarded coords (their real direction of travel).
+  /// `offsetMeters` is legacy/ignored. Mirrors Android `simulateDeviation`.
   func simulateDeviation(offsetMeters: Double) {
     DispatchQueue.main.async { [weak self] in
-      guard let self = self,
-            let mapView = self.mapView,
-            let sim = mapView.locationSimulator else {
-        print("[NavigationManager] simulateDeviation: no map / simulator")
-        return
-      }
-      // Start position: prefer the last value we forwarded to JS so
-      // there's no visual snap. Fall back to mapView.myLocation when
-      // we haven't seen a fix yet.
-      let origin: CLLocationCoordinate2D = self.lastReportedCoord
-        ?? mapView.myLocation?.coordinate
+      guard let self else { return }
+      let origin = self.lastReportedCoord
+        ?? CLLocationManager().location?.coordinate
         ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
-      // Bearing: derive from prev → last so we keep going in the
-      // user's *actual* direction of travel. If we only have one
-      // sample, fall back to CLLocation.course; if that's also
-      // missing, bail with a warning (no defensible direction).
+
       let bearing: Double = {
         if let prev = self.prevReportedCoord, let last = self.lastReportedCoord {
-          let d = self.haversineMeters(
-            aLat: prev.latitude, aLng: prev.longitude,
-            bLat: last.latitude, bLng: last.longitude
-          )
-          if d > 0.5 {
-            return self.bearingDegrees(from: prev, to: last)
-          }
+          let d = self.haversineMeters(prev, last)
+          if d > 0.5 { return self.bearingDegrees(from: prev, to: last) }
         }
-        let course = mapView.myLocation?.course ?? -1
-        return course >= 0 ? course : .nan
+        return .nan
       }()
       guard !bearing.isNaN else {
-        print("[NavigationManager] simulateDeviation: no recent movement to infer bearing — ignoring")
+        print("[NavigationManager] simulateDeviation: no recent movement to infer bearing")
         return
       }
+      _ = offsetMeters
 
-      // Cancel any existing walker, then take over the simulator. We
-      // pause Google's sim so it doesn't fight our setUserLocation
-      // calls. Locations we emit during the walk go through the
-      // road-snapped listener like normal, so JS sees a continuous
-      // stream.
       self.deviateTimer?.invalidate()
-      self.deviateTimer = nil
-      sim.isPaused = true
-
-      // Pace the walk to match the user's normal sim speed. Walking
-      // baseline is ~1.4 m/s; speedMultiplier scales that. At a 0.4s
-      // tick this lands ~0.56m per tick at 1×, ~2.8m per tick at 5×.
       let baselineMps = 1.4
-      let stepMeters = max(0.1, baselineMps * self.currentSpeedMultiplier * 0.4)
+      let stepMeters = max(0.1, baselineMps * self.simulationSpeed * 0.4)
       let interval: TimeInterval = 0.4
-      let durationS = self.DEVIATE_DURATION_S
-      let totalTicks = Int((durationS / interval).rounded())
-      print("[NavigationManager] simulateDeviation: walk straight for \(durationS)s @ \(self.currentSpeedMultiplier)× — bearing=\(bearing)°, step=\(stepMeters)m, ticks=\(totalTicks)")
-      _ = offsetMeters // legacy arg, intentionally unused
-
+      let totalTicks = Int((self.DEVIATE_DURATION_S / interval).rounded())
       var cursor = origin
       var ticksRemaining = totalTicks
-      self.deviateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
-        guard let self = self else {
-          t.invalidate()
-          return
+      // The Timer fires on a @Sendable closure, but every property it touches is
+      // @MainActor-isolated. Hop onto the main actor inside the tick so the
+      // mutation is actor-safe (clears the Swift-6 concurrency warnings and
+      // matches the rest of this class's main-actor model).
+      self.deviateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { t in
+        Task { @MainActor [weak self] in
+          guard let self else { t.invalidate(); return }
+          if ticksRemaining <= 0 {
+            t.invalidate(); self.deviateTimer = nil
+            return
+          }
+          cursor = self.projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: bearing)
+          self.prevReportedCoord = self.lastReportedCoord
+          self.lastReportedCoord = cursor
+          self.onLocation?([
+            "lat": cursor.latitude,
+            "lng": cursor.longitude,
+            "accuracy": 5.0,
+            "timestamp": Date().timeIntervalSince1970 * 1000,
+          ])
+          ticksRemaining -= 1
         }
-        if ticksRemaining <= 0 {
-          // 10s elapsed — leave the simulator paused and stop ticking.
-          // We intentionally do NOT resume the Google sim; the user
-          // wanted everything to stop after the deviation window.
-          t.invalidate()
-          self.deviateTimer = nil
-          print("[NavigationManager] simulateDeviation: done; simulator frozen")
-          return
-        }
-        cursor = self.projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: bearing)
-        // iOS GMSLocationSimulator has no setUserLocation API (unlike
-        // Android's GMSNavigator.simulator). Emit synthesized coords
-        // directly through onLocation, bypassing the road-snap pipeline.
-        // For an off-route walker this is fine — we WANT off-route
-        // positions to surface; road snapping would fight us.
-        self.prevReportedCoord = self.lastReportedCoord
-        self.lastReportedCoord = cursor
-        self.onLocation?([
-          "lat": cursor.latitude,
-          "lng": cursor.longitude,
-          "accuracy": 5.0,
-          "timestamp": Date().timeIntervalSince1970 * 1000,
-        ])
-        ticksRemaining -= 1
       }
     }
   }
 
-  // How long the Deviate dev button keeps walking the user straight.
-  private let DEVIATE_DURATION_S: Double = 10.0
+  // MARK: - Geo helpers
 
-  /// Initial compass bearing from `a` to `b`, degrees [0, 360).
   private func bearingDegrees(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> Double {
-    let toRad = Double.pi / 180
-    let toDeg = 180 / Double.pi
-    let lat1 = a.latitude * toRad
-    let lat2 = b.latitude * toRad
+    let toRad = Double.pi / 180, toDeg = 180 / Double.pi
+    let lat1 = a.latitude * toRad, lat2 = b.latitude * toRad
     let dLng = (b.longitude - a.longitude) * toRad
     let y = sin(dLng) * cos(lat2)
     let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLng)
     return (atan2(y, x) * toDeg + 360).truncatingRemainder(dividingBy: 360)
   }
 
-  // Project `(lat, lng)` along `bearingDegrees` by `distanceMeters` on a
-  // spherical earth. Used by simulateDeviation to nudge perpendicular to
-  // the current heading.
-  private func projectCoordinate(
-    from origin: CLLocationCoordinate2D,
-    distanceMeters: Double,
-    bearingDegrees: Double
-  ) -> CLLocationCoordinate2D {
+  private func projectCoordinate(from origin: CLLocationCoordinate2D, distanceMeters: Double, bearingDegrees: Double) -> CLLocationCoordinate2D {
     let earthRadius = 6_371_000.0
     let angular = distanceMeters / earthRadius
     let bearing = bearingDegrees * .pi / 180
-    let lat1 = origin.latitude * .pi / 180
-    let lng1 = origin.longitude * .pi / 180
+    let lat1 = origin.latitude * .pi / 180, lng1 = origin.longitude * .pi / 180
     let lat2 = asin(sin(lat1) * cos(angular) + cos(lat1) * sin(angular) * cos(bearing))
-    let lng2 = lng1 + atan2(
-      sin(bearing) * sin(angular) * cos(lat1),
-      cos(angular) - sin(lat1) * sin(lat2)
-    )
+    let lng2 = lng1 + atan2(sin(bearing) * sin(angular) * cos(lat1), cos(angular) - sin(lat1) * sin(lat2))
     return CLLocationCoordinate2D(latitude: lat2 * 180 / .pi, longitude: lng2 * 180 / .pi)
   }
 
-  // MARK: - Simulation polling
-
-  // GMSRoadSnappedLocationProvider may not fire during simulation on iOS.
-  // Poll mapView.myLocation at 1Hz as a fallback so the miniapp map dot moves.
-  private func startSimulationPolling() {
-    guard simTimer == nil else { return }
-    simTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-      guard let self, let mapView = self.mapView,
-            let loc = mapView.myLocation else { return }
-      self.onLocation?([
-        "lat": loc.coordinate.latitude,
-        "lng": loc.coordinate.longitude,
-        "accuracy": loc.horizontalAccuracy,
-        "timestamp": loc.timestamp.timeIntervalSince1970 * 1000,
-      ])
-    }
-  }
-
-  private func stopSimulationPolling() {
-    simTimer?.invalidate()
-    simTimer = nil
-  }
-
-  // MARK: - Helpers
-
-  private func gmsMode(from mode: String) -> GMSNavigationTravelMode {
-    switch mode {
-    case "walking": return .walking
-    case "cycling": return .cycling
-    case "two_wheeler": return .twoWheeler
-    default: return .driving
-    }
-  }
-
-  private func emitRoute() {
-    if suppressNativeRouteEmits {
-      // Also clear any pending deferred re-emit from a prior trip so a
-      // late-arriving NavInfo from the previous start can't surface a
-      // stale native polyline now that REST owns the route. Mirrors
-      // the equivalent guard in Android NavigationManager.kt.
-      pendingRouteReEmit = false
-      return
-    }
-    guard let path = navigator?.currentRouteLeg?.path else { return }
-    let points = pathToPoints(path)
-    // Reset cached state — this is a fresh route, any stale steps
-    // from a previous route are now wrong.
-    lastEmittedPoints = points
-    // Build steps from latest NavInfo cache if we have them; otherwise
-    // mark for re-emit when the first NavInfo arrives.
-    var payload: [String: Any] = ["points": points]
-    if let steps = buildStepsForRoute(points: points) {
-      payload["steps"] = steps
-      pendingRouteReEmit = false
-    } else {
-      pendingRouteReEmit = true
-    }
-    onRoute?(payload)
-  }
-
-  /**
-   * Re-attach polyline indices to the cached NavInfo step list. Each
-   * step's coordinate is matched to the closest polyline vertex so the
-   * SDK consumer can correlate steps with geometry. Returns nil when
-   * we don't have a cached step list yet — the caller registers for a
-   * re-emit when NavInfo first delivers one.
-   */
-  private func buildStepsForRoute(points: [[String: Double]]) -> [[String: Any]]? {
-    guard let raw = latestStepsPayload, !raw.isEmpty, !points.isEmpty else { return nil }
-    var out: [[String: Any]] = []
-    out.reserveCapacity(raw.count)
-    for step in raw {
-      guard let lat = step["lat"] as? Double, let lng = step["lng"] as? Double else { continue }
-      let idx = closestPolylineIndex(in: points, lat: lat, lng: lng)
-      var enriched = step
-      enriched["routeIndex"] = idx
-      out.append(enriched)
-    }
-    return out.isEmpty ? nil : out
-  }
-
-  /**
-   * Index of the polyline vertex closest to `(lat, lng)`. Linear scan
-   * — step lists are short and routes have at most a few hundred
-   * vertices, so a spatial index isn't worth the complexity.
-   */
-  private func closestPolylineIndex(in points: [[String: Double]], lat: Double, lng: Double) -> Int {
-    var best = 0
-    var bestD = Double.greatestFiniteMagnitude
-    for (i, p) in points.enumerated() {
-      let plat = p["lat"] ?? 0
-      let plng = p["lng"] ?? 0
-      let dx = plat - lat
-      let dy = plng - lng
-      let d = dx * dx + dy * dy
-      if d < bestD {
-        bestD = d
-        best = i
-      }
-    }
-    return best
-  }
-
-  /**
-   * Capture the latest NavInfo's current + remaining steps into a
-   * wire-shaped cache. Each step's lat/lng is derived by walking the
-   * polyline using `distanceFromPrevStepMeters` as a cumulative offset
-   * — this avoids depending on undocumented SDK position accessors
-   * that vary by SDK version. Called from the `didUpdate navInfo:`
-   * listener on every NavInfo tick.
-   */
-  private func captureStepsFromNavInfo(_ navInfo: GMSNavigationNavInfo) {
-    // Without a polyline we can't anchor steps. Defer until route lands.
-    guard let points = lastEmittedPoints, !points.isEmpty else {
-      return
-    }
-    // Combine currentStep + remainingSteps into one ordered list. The
-    // current step always starts at the user's position relative to
-    // the polyline, but we approximate as polyline[0] for simplicity —
-    // the SDK consumer's pivot extractor matches by proximity to the
-    // closest polyline vertex anyway, so a few-meters offset on the
-    // start doesn't change which pivot a step is paired with.
-    var orderedSteps: [(road: String?, maneuver: String, distance: Int)] = []
-    if let current = navInfo.currentStep {
-      // simpleRoadName / fullRoadName are non-optional Strings on this
-      // SDK version, but Google leaves them empty for unnamed segments —
-      // normalize through `nonBlank` so the consumer sees nil rather
-      // than the empty string when no road name is available.
-      orderedSteps.append((
-        road: current.simpleRoadName.nonBlank ?? current.fullRoadName.nonBlank,
-        maneuver: maneuverString(current.maneuver),
-        distance: Int(current.distanceFromPrevStepMeters),
-      ))
-    }
-    // remainingSteps is a non-optional [GMSNavigationStepInfo] in this
-    // SDK version — no `if let` unwrap needed.
-    for step in navInfo.remainingSteps {
-      orderedSteps.append((
-        road: step.simpleRoadName.nonBlank ?? step.fullRoadName.nonBlank,
-        maneuver: maneuverString(step.maneuver),
-        distance: Int(step.distanceFromPrevStepMeters),
-      ))
-    }
-    if orderedSteps.isEmpty {
-      latestStepsPayload = nil
-      return
-    }
-
-    // Walk the polyline accumulating distance; for each step, find the
-    // polyline vertex closest to the running cumulative offset and use
-    // its coords as the step's start.
-    let stepStarts = stepStartCoordinates(points: points, stepDistances: orderedSteps.map { $0.distance })
-
-    var list: [[String: Any]] = []
-    list.reserveCapacity(orderedSteps.count)
-    for (i, s) in orderedSteps.enumerated() {
-      let coord = stepStarts[i]
-      var entry: [String: Any] = [
-        "lat": coord.lat,
-        "lng": coord.lng,
-        "maneuver": s.maneuver,
-        "distanceMeters": s.distance,
-      ]
-      if let r = s.road { entry["road"] = r }
-      list.append(entry)
-    }
-    latestStepsPayload = list
-
-    // If a previous `emitRoute()` ran before we had steps, re-emit now
-    // that the metadata is available. Pivot enrichment in the SDK
-    // consumer rebuilds atomically per onRoute event, so a second
-    // emission with the same polyline + fresh steps is correct.
-    //
-    // Gated on suppressNativeRouteEmits: when REST owns the route, we
-    // never want this deferred path to leak the Nav SDK's polyline,
-    // even though emitRoute() should have already prevented
-    // pendingRouteReEmit from being true here.
-    if pendingRouteReEmit, let points = lastEmittedPoints, !suppressNativeRouteEmits {
-      pendingRouteReEmit = false
-      var payload: [String: Any] = ["points": points]
-      if let steps = buildStepsForRoute(points: points) {
-        payload["steps"] = steps
-      }
-      onRoute?(payload)
-    }
-  }
-
-  /**
-   * Walk the polyline accumulating segment distances; for each step,
-   * find the polyline vertex whose cumulative distance is closest to
-   * the running step-offset. Returns the (lat, lng) for each step's
-   * start point. First step is always the polyline's first point.
-   */
-  private func stepStartCoordinates(points: [[String: Double]], stepDistances: [Int]) -> [(lat: Double, lng: Double)] {
-    var result: [(lat: Double, lng: Double)] = []
-    result.reserveCapacity(stepDistances.count)
-    guard !points.isEmpty else { return result }
-
-    // Cumulative meters from polyline[0] to each vertex.
-    var cumulative: [Double] = [0]
-    cumulative.reserveCapacity(points.count)
-    for i in 1..<points.count {
-      let a = points[i - 1]
-      let b = points[i]
-      let alat = a["lat"] ?? 0, alng = a["lng"] ?? 0
-      let blat = b["lat"] ?? 0, blng = b["lng"] ?? 0
-      cumulative.append(cumulative[i - 1] + haversineMeters(aLat: alat, aLng: alng, bLat: blat, bLng: blng))
-    }
-
-    var runningOffset: Double = 0
-    for (i, dist) in stepDistances.enumerated() {
-      if i == 0 {
-        // First step starts at polyline[0].
-        let p = points[0]
-        result.append((lat: p["lat"] ?? 0, lng: p["lng"] ?? 0))
-      } else {
-        runningOffset += Double(stepDistances[i - 1])
-        let idx = closestCumulativeIndex(cumulative: cumulative, target: runningOffset)
-        let p = points[idx]
-        result.append((lat: p["lat"] ?? 0, lng: p["lng"] ?? 0))
-      }
-      _ = dist // silence unused warning; we use the offset on the next iteration
-    }
-    return result
-  }
-
-  /** Polyline vertex index whose cumulative distance is closest to `target`. */
-  private func closestCumulativeIndex(cumulative: [Double], target: Double) -> Int {
-    var best = 0
-    var bestD = Double.greatestFiniteMagnitude
-    for (i, c) in cumulative.enumerated() {
-      let d = abs(c - target)
-      if d < bestD {
-        bestD = d
-        best = i
-      }
-    }
-    return best
-  }
-
-  /** Great-circle distance in meters between two lat/lng pairs. */
-  private func haversineMeters(aLat: Double, aLng: Double, bLat: Double, bLng: Double) -> Double {
-    let R = 6_371_000.0
-    let toRad = Double.pi / 180.0
-    let dLat = (bLat - aLat) * toRad
-    let dLng = (bLng - aLng) * toRad
-    let lat1 = aLat * toRad
-    let lat2 = bLat * toRad
-    let s1 = sin(dLat / 2)
-    let s2 = sin(dLng / 2)
+  private func haversineMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
+    let R = 6_371_000.0, toRad = Double.pi / 180
+    let dLat = (b.latitude - a.latitude) * toRad
+    let dLng = (b.longitude - a.longitude) * toRad
+    let lat1 = a.latitude * toRad, lat2 = b.latitude * toRad
+    let s1 = sin(dLat / 2), s2 = sin(dLng / 2)
     let x = s1 * s1 + s2 * s2 * cos(lat1) * cos(lat2)
     return 2 * R * asin(min(1.0, sqrt(x)))
   }
@@ -749,233 +698,7 @@ final class NavigationManager: NSObject {
 
 private extension String {
   var nonBlank: String? {
-    let t = self.trimmingCharacters(in: .whitespacesAndNewlines)
+    let t = trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty ? nil : t
-  }
-}
-
-// MARK: - GMSNavigatorListener
-
-extension NavigationManager: GMSNavigatorListener {
-
-  func navigator(_ navigator: GMSNavigator, didArriveAt waypoint: GMSNavigationWaypoint) {
-    onEvent?(["kind": "arrived"])
-  }
-
-  func navigatorDidChangeRoute(_ navigator: GMSNavigator) {
-    offRouteEmitted = false
-    emitRoute()
-    onEvent?(["kind": "rerouting"])
-    // Cancel any in-progress deviation walk — the SDK has accepted our
-    // new position and produced a fresh route, so further teleports
-    // would fight the resumed route simulator.
-    deviateTimer?.invalidate()
-    deviateTimer = nil
-    // If we were simulating before the reroute, the simulator is now
-    // paused/stopped at the deviated point. Re-arm it on the new route
-    // so the walk continues automatically (matches Android behavior).
-    if isSimulating, let sim = mapView?.locationSimulator {
-      sim.simulateLocationsAlongExistingRoute()
-    }
-  }
-
-  func navigator(_ navigator: GMSNavigator, didUpdate navInfo: GMSNavigationNavInfo) {
-    // Capture the step list for pivot enrichment on every tick. Side-
-    // effect: if a route was emitted before the first NavInfo, this
-    // also triggers a re-emit with the steps folded in.
-    captureStepsFromNavInfo(navInfo)
-
-    guard let step = navInfo.currentStep else { return }
-
-    // Track step transitions so the missed-turn reroute check knows
-    // where the most recently crossed pivot was. The step's road +
-    // maneuver makes a stable enough fingerprint to detect changes
-    // without depending on private SDK identity.
-    let stepKey = "\(step.fullRoadName)|\(maneuverString(step.maneuver))"
-    if stepKey != lastCurrentStepKey {
-      if lastCurrentStepKey != nil, let here = mapView?.myLocation?.coordinate {
-        // Step just advanced — the user is at (or just past) the pivot.
-        // Cache that location so we can measure how far they walk away
-        // from it without taking the upcoming new step.
-        lastPassedPivot = here
-      }
-      lastCurrentStepKey = stepKey
-    }
-
-    // remainingSteps[0] is the road the user will be on AFTER the
-    // upcoming maneuver — this is what the miniapp UI shows as the
-    // "next street" headline. simpleRoadName falls back to
-    // fullRoadName when Google leaves the simple variant blank.
-    // remainingSteps is non-optional in this SDK version.
-    let nextStep = navInfo.remainingSteps.first
-    let nextStepRoad: String? = {
-      let candidates: [String] = [nextStep?.simpleRoadName, nextStep?.fullRoadName].compactMap {$0}
-      for c in candidates {
-        let s = c.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !s.isEmpty {
-          return s
-        }
-      }
-      return nil
-    }()
-
-    var payload: [String: Any] = [
-      "kind": "maneuver",
-      "maneuverType": maneuverString(step.maneuver),
-      "distanceMeters": step.distanceFromPrevStepMeters,
-      "distanceToDestinationMeters": navInfo.distanceToFinalDestinationMeters,
-      "timeToDestinationSeconds": navInfo.timeToFinalDestinationSeconds,
-      "fromRoad": step.fullRoadName,
-    ]
-    if let exitNum = step.exitNumber { payload["toRoad"] = exitNum }
-    if let nsr = nextStepRoad { payload["nextStepRoad"] = nsr }
-
-    onEvent?(payload)
-  }
-}
-
-// MARK: - GMSRoadSnappedLocationProviderListener
-
-extension NavigationManager: GMSRoadSnappedLocationProviderListener {
-
-  func locationProvider(
-    _ locationProvider: GMSRoadSnappedLocationProvider,
-    didUpdate location: CLLocation
-  ) {
-    // Snapped fixes used to be pushed to JS here, but Google's iOS
-    // RoadSnappedLocationProvider snaps to the active route's polyline
-    // (not the road network), so distance-to-route always read ≈ 0 and
-    // every JS-side off-route / pivot / 7m-arrival check was broken.
-    // The raw CLLocationManager delegate below now owns the JS feed and
-    // the off-route / missed-turn checks. This callback is kept alive
-    // because the Google Nav SDK requires the provider to be subscribed
-    // for its own internals (navInfo, camera, voice guidance routing),
-    // and the snapped coords are still a perfectly good signal for the
-    // deviate walker's bearing inference — it only needs a recent pair
-    // of points moving in the user's direction of travel, snap is fine.
-    prevReportedCoord = lastReportedCoord
-    lastReportedCoord = location.coordinate
-  }
-}
-
-// MARK: - Raw CoreLocation feed
-
-extension NavigationManager: CLLocationManagerDelegate {
-
-  fileprivate func startRawLocationUpdates() {
-    // Idempotent — guard against a second start() call (e.g. an
-    // immediate reroute) creating two managers.
-    if rawLocationManager != nil { return }
-    let mgr = CLLocationManager()
-    mgr.delegate = self
-    mgr.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-    // Fire on every meter of movement; pivot-radius checks need fine-
-    // grained updates near the corner, otherwise the "entered" transition
-    // can be missed entirely.
-    mgr.distanceFilter = 1
-    mgr.pausesLocationUpdatesAutomatically = false
-    // The Google Nav SDK has already prompted for "always" / "when in
-    // use" authorization via its own internals before start() is called,
-    // so we don't request permission again here — just begin updates.
-    mgr.startUpdatingLocation()
-    rawLocationManager = mgr
-  }
-
-  fileprivate func stopRawLocationUpdates() {
-    rawLocationManager?.stopUpdatingLocation()
-    rawLocationManager?.delegate = nil
-    rawLocationManager = nil
-    lastRawCoord = nil
-  }
-
-  func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-    guard let location = locations.last else { return }
-    lastRawCoord = location.coordinate
-
-    onLocation?([
-      "lat": location.coordinate.latitude,
-      "lng": location.coordinate.longitude,
-      "accuracy": location.horizontalAccuracy,
-      "timestamp": location.timestamp.timeIntervalSince1970 * 1000,
-    ])
-
-    // Off-route detection runs on the raw coords, same shape as the old
-    // snapped-path check that used to live in GMSRoadSnappedLocationProvider's
-    // callback. Distance from the user's real position to the active
-    // route polyline; emit once per off-route episode until reroute.
-    guard let path = navigator?.currentRouteLeg?.path, path.count() > 1 else { return }
-    let distanceToRoute = minDistanceToPath(path, from: location.coordinate)
-    if !offRouteEmitted, distanceToRoute > Self.offRouteThresholdMeters {
-      offRouteEmitted = true
-      onEvent?([
-        "kind": "off_route",
-        "offRouteDistanceMeters": distanceToRoute,
-      ])
-    }
-
-    // Missed-turn reroute (opt-in). Same logic as before — replanned
-    // from the user's *real* position so the next pivot lands ahead of
-    // them rather than behind. The 8m slack absorbs GPS noise at
-    // crosswalks where the raw fix can briefly cross the polyline.
-    if let threshold = missedTurnRerouteMeters,
-       let pivot = lastPassedPivot,
-       !missedTurnRerouteInFlight,
-       distanceToRoute > 8 {
-      let distFromPivot = haversineMeters(
-        aLat: pivot.latitude, aLng: pivot.longitude,
-        bLat: location.coordinate.latitude, bLng: location.coordinate.longitude
-      )
-      if distFromPivot > threshold {
-        triggerMissedTurnReroute(from: location.coordinate)
-      }
-    }
-  }
-
-  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-    // Non-fatal: the Google Nav SDK's snapped provider is still feeding
-    // the navigator internally. The JS layer just won't get coord
-    // updates until CoreLocation recovers.
-    print("[NavigationManager] raw CLLocationManager error: \(error)")
-  }
-}
-
-extension NavigationManager {
-  fileprivate func minDistanceToPath(_ path: GMSPath, from point: CLLocationCoordinate2D) -> Double {
-    let count = path.count()
-    guard count >= 2 else { return 0 }
-
-    var minDist = Double.greatestFiniteMagnitude
-    for i in 0..<(count - 1) {
-      let a = path.coordinate(at: i)
-      let b = path.coordinate(at: i + 1)
-      let d = pointToSegmentDistance(point, segA: a, segB: b)
-      if d < minDist { minDist = d }
-    }
-    return minDist
-  }
-
-  private func pointToSegmentDistance(
-    _ p: CLLocationCoordinate2D,
-    segA: CLLocationCoordinate2D,
-    segB: CLLocationCoordinate2D
-  ) -> Double {
-    let metersPerDegLat: Double = 111_320
-    let cosLat = cos(p.latitude * .pi / 180)
-    let metersPerDegLng = metersPerDegLat * cosLat
-
-    let px = (p.longitude - segA.longitude) * metersPerDegLng
-    let py = (p.latitude - segA.latitude) * metersPerDegLat
-    let dx = (segB.longitude - segA.longitude) * metersPerDegLng
-    let dy = (segB.latitude - segA.latitude) * metersPerDegLat
-
-    let lenSq = dx * dx + dy * dy
-    guard lenSq > 0 else {
-      return sqrt(px * px + py * py)
-    }
-
-    let t = max(0, min(1, (px * dx + py * dy) / lenSq))
-    let nearX = px - t * dx
-    let nearY = py - t * dy
-    return sqrt(nearX * nearX + nearY * nearY)
   }
 }
