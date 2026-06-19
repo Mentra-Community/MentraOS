@@ -25,7 +25,7 @@ import type {MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/min
 
 import {ScriptEngine, normalizeWords} from "../core/ScriptEngine"
 import type {DisplayProfile} from "../core/ScriptEngine"
-import {getModelName, getProfileForModel, hasDisplayCapability} from "../core/DisplayProfiles"
+import {getModelName, getProfileForModel, hasDisplayCapability, hasMicrophoneCapability} from "../core/DisplayProfiles"
 import type {Channels} from "../../shared/channels"
 import type {LineWidth, PlaybackState, PlaybackStatus, TeleprompterSettings} from "../../shared/types"
 
@@ -80,6 +80,7 @@ export class TeleprompterController {
   private engine!: ScriptEngine
   private profile!: DisplayProfile
   private hasDisplay = false
+  private hasMic = true
 
   // ── Playback state ─────────────────────────────────────────────────────
   private state: PlaybackState = "idle"
@@ -116,6 +117,7 @@ export class TeleprompterController {
 
     this.profile = getProfileForModel(getModelName(this.session))
     this.hasDisplay = hasDisplayCapability(this.session)
+    this.hasMic = hasMicrophoneCapability(this.session)
 
     await this.loadSettings()
 
@@ -147,7 +149,25 @@ export class TeleprompterController {
     if (this.session.ready) {
       this.profile = getProfileForModel(getModelName(this.session))
       this.hasDisplay = hasDisplayCapability(this.session)
+      this.hasMic = hasMicrophoneCapability(this.session)
       this.engine.setLayout({profile: this.profile, numberOfLines: this.settings.numberOfLines})
+    }
+
+    // When the miniapp returns to the foreground it must reclaim the main view —
+    // another app or a system screen may have overwritten it while we were
+    // backgrounded. Force the next render to push by clearing the dedupe cache.
+    try {
+      this.unsubs.push(
+        this.session.onVisibilityChange((v) => {
+          if (v === "foreground") {
+            this.lastRenderedText = ""
+            this.render()
+            this.broadcastStatus()
+          }
+        }),
+      )
+    } catch {
+      /* visibility events not available in this runtime — ignore */
     }
 
     this.registerUiHandlers()
@@ -254,21 +274,26 @@ export class TeleprompterController {
   }
 
   seek(percent: number): void {
-    this.cursor = this.engine.wordForPercent(percent)
-    this.recentSpoken = []
-    if (this.state === "finished" && this.cursor < this.engine.totalWords) this.state = "paused"
-    if (this.state === "playing" && !this.voiceActive) {
-      this.timerStartWord = this.cursor
-      this.timerStartMs = this.now()
-    }
-    this.render()
-    this.broadcastStatus()
+    this.moveCursorTo(this.engine.wordForPercent(percent))
   }
 
   nudge(lines: number): void {
     const newTop = Math.max(0, Math.min(this.currentTopLine + lines, this.engine.maxTopLine))
-    this.cursor = Math.min(this.engine.firstWordOfLine(newTop), this.engine.totalWords)
+    this.moveCursorTo(this.engine.firstWordOfLine(newTop))
+  }
+
+  /**
+   * Jump the reading cursor to a position (scrub / nudge). If this lands at the
+   * end while playing, run the end-of-script handler so auto-restart and the
+   * finished state fire — the timer/voice drivers aren't ticking here.
+   */
+  private moveCursorTo(word: number): void {
+    this.cursor = Math.max(0, Math.min(word, this.engine.totalWords))
     this.recentSpoken = []
+    if (this.state === "playing" && this.cursor >= this.engine.totalWords) {
+      this.handleEnd()
+      return
+    }
     if (this.state === "finished" && this.cursor < this.engine.totalWords) this.state = "paused"
     if (this.state === "playing" && !this.voiceActive) {
       this.timerStartWord = this.cursor
@@ -319,12 +344,21 @@ export class TeleprompterController {
 
   private startVoiceFollow(): void {
     this.unsubscribeTranscription()
+    // `transcription.on` only registers a handler + sends a fire-and-forget
+    // subscription — it never throws when the device has no mic. So gate on the
+    // device's microphone capability instead and fall back to the timed driver
+    // when there's nothing to listen with, rather than silently stalling.
+    if (!this.hasMic) {
+      console.log("Teleprompter: no microphone on device, using timed scroll")
+      this.voiceActive = false
+      this.startTimer()
+      return
+    }
     try {
       this.transcriptionCleanup = this.session.transcription.on((data) => this.handleTranscription(data))
       this.voiceActive = true
     } catch (err) {
-      // Mic unavailable — fall back to the timed driver so play still works.
-      console.log("Teleprompter: voice-follow unavailable, using timed scroll", err)
+      console.log("Teleprompter: voice-follow subscribe failed, using timed scroll", err)
       this.voiceActive = false
       this.startTimer()
     }
@@ -514,10 +548,15 @@ export class TeleprompterController {
   private onCapabilitiesChanged(): void {
     const newProfile = getProfileForModel(getModelName(this.session))
     this.hasDisplay = hasDisplayCapability(this.session)
+    this.hasMic = hasMicrophoneCapability(this.session)
     if (newProfile.id !== this.profile.id) {
       this.profile = newProfile
       this.engine.setLayout({profile: newProfile, numberOfLines: this.settings.numberOfLines})
     }
+    // Glasses (re)connected or the device changed — the lenses no longer hold
+    // our last frame. Clear the dedupe cache so render() force-pushes instead of
+    // assuming the current window is still on screen.
+    this.lastRenderedText = ""
     this.render()
     this.broadcastStatus()
   }
@@ -570,7 +609,10 @@ export class TeleprompterController {
     const remainingWords = Math.max(0, total - this.cursor)
     return {
       state: this.state,
-      voiceMode: this.settings.voiceFollow,
+      // Reflect the ACTIVE driver: while playing this is whether the voice
+      // subscription actually attached (false after a no-mic fallback); when
+      // idle/paused it's whether this device could voice-follow at all.
+      voiceMode: this.state === "playing" ? this.voiceActive : this.settings.voiceFollow && this.hasMic,
       wordIndex: this.cursor,
       totalWords: total,
       topLine: this.currentTopLine,
