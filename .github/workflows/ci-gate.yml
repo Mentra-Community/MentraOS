@@ -37,7 +37,15 @@ on:
   pull_request:
     branches: [dev]
     types: [opened, reopened, synchronize]
-  # Re-evaluate every time a gated builder workflow starts or completes.
+  # Manual retrigger. Needed for PRs whose head commit predates ci-gate.yml
+  # landing on dev (no pull_request event ever fired for them) — re-run this
+  # workflow against the PR branch to evaluate and post the status.
+  workflow_dispatch:
+  # Re-evaluate when a gated builder workflow COMPLETES. We intentionally do NOT
+  # listen on `requested` (builder start): combined with cancel-in-progress it
+  # made every builder start cancel the in-flight poll, so the gate could never
+  # post a status. The poll loop already covers "still running", so a single
+  # completion event is enough to drive evaluation.
   workflow_run:
     workflows:
       - "Mobile App iOS Build"
@@ -49,7 +57,7 @@ on:
       - "🧪 Test Console build"
       - "🧪 Test Store build"
       - "Run Cloud Tests ☁️"
-    types: [completed, requested]
+    types: [completed]
 
 concurrency:
   # One evaluation per head SHA at a time; newer evaluations supersede older.
