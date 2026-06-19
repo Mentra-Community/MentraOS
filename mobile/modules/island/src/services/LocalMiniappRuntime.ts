@@ -18,6 +18,7 @@ import * as Location from "expo-location"
 import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
+  CanvasOperation,
   MiniappErrorCode,
   MiniappRequestType,
   MiniappResponseType,
@@ -830,6 +831,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.DISPLAY:
         this.handleDisplay(packageName, payload, requestId)
         break
+      case MiniappRequestType.CANVAS:
+        this.handleCanvas(packageName, payload, requestId)
+        break
       case MiniappRequestType.PLAY_AUDIO:
         this.handlePlayAudio(packageName, payload, requestId)
         break
@@ -1327,6 +1331,74 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Display error",
+      })
+    }
+  }
+
+  /**
+   * Canvas commands (session.canvas.*). A distinct command vocabulary from
+   * DISPLAY — `{operation, options}` rather than `{view, layout}`. The glasses
+   * have no native canvas surface yet, so each operation is translated into the
+   * equivalent display event and routed through LocalDisplayManager, reusing its
+   * boot/throttle/arbitration/expiry + native BluetoothSdk.displayEvent path.
+   *
+   * `show_page` is the one operation with no native target today (there's no
+   * host-side page concept); it's a recognized no-op so callers don't error.
+   */
+  private handleCanvas(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    try {
+      const operation = payload.operation as CanvasOperation | undefined
+      const options = (payload.options as Record<string, unknown> | undefined) ?? {}
+
+      let layout: DisplayPayload["layout"] | null = null
+      switch (operation) {
+        case CanvasOperation.SHOW_TEXT:
+          layout = {
+            layoutType: "positioned_text",
+            text: options.text,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+            borderWidth: options.borderWidth,
+            borderRadius: options.borderRadius,
+          }
+          break
+        case CanvasOperation.SHOW_BITMAP:
+          layout = {
+            layoutType: "bitmap_view",
+            data: options.data,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+          }
+          break
+        case CanvasOperation.CLEAR:
+          layout = {layoutType: "clear_view"}
+          break
+        case CanvasOperation.SHOW_PAGE:
+          // No native page surface yet — recognize the command and ack so the
+          // miniapp's showPage() resolves. Render wiring is future work.
+          console.log(`${LOG_TAG}: canvas show_page (no native target yet):`, options.id)
+          this.sendResult(packageName, requestId, true)
+          return
+        default:
+          this.sendResult(packageName, requestId, false, undefined, {
+            code: MiniappErrorCode.INTERNAL,
+            message: `unknown canvas operation "${String(operation)}"`,
+          })
+          return
+      }
+
+      localDisplayManager.request(packageName, {view: "main", layout})
+
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: canvas error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Canvas error",
       })
     }
   }
