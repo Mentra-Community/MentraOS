@@ -12,7 +12,12 @@
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
-import {createCloudUdpSocket, type CloudClientStatusSnapshot, type CloudRuntimeAdapter} from "@mentra/island"
+import {
+  createCloudUdpSocket,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
+  type MiniappAuthToken,
+} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
 import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
@@ -24,15 +29,15 @@ const LOG_TAG = "cloudClient"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Neutral last-ditch fallbacks (reachable under `adb reverse`). Deliberately
-// NOT a personal LAN IP: those go stale the moment the laptop changes networks
-// and must never live in code or .env. The dev-laptop case is covered by the
-// METRO_AUTO sentinel / Metro-derived default below.
-const FALLBACK_CORE_URL = "http://localhost:3000"
-const FALLBACK_RUNTIME_URL = "http://localhost:3001"
+// Team-friendly defaults for dev builds. Local Cloud V2 is still one tap away
+// via the METRO_AUTO dev-settings preset; it should not be the invisible
+// default because it depends on a local stack plus adb reverse/LAN reachability.
+const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
+const LOCAL_AUTH_PORT = 3002
 
 function metroUrl(port: number): string | undefined {
   const host = devServerHost()
@@ -46,12 +51,11 @@ function metroUrl(port: number): string | undefined {
  *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
  *      changing networks;
  *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
- *   3. in dev, the Metro host (the machine serving this bundle);
- *   4. a neutral localhost fallback.
+ *   3. Cloud Dev — the default shared backend for team testing.
  * Read via the settings store's `getState()` accessor (not a hook) so this
  * service stays React-free.
  */
-function resolveUrl(settingKey: string, envValue: string | undefined, port: number, fallback: string): string {
+function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
   const override = useSettingsStore.getState().getSetting(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
     const trimmed = override.trim()
@@ -65,7 +69,7 @@ function resolveUrl(settingKey: string, envValue: string | undefined, port: numb
   const envUrl = envValue?.trim()
   if (envUrl) return envUrl
 
-  return (__DEV__ ? metroUrl(port) : undefined) ?? fallback
+  return defaultUrl
 }
 
 function coreUrl(): string {
@@ -73,7 +77,7 @@ function coreUrl(): string {
     SETTINGS.cloud_core_url.key,
     process.env.EXPO_PUBLIC_CLOUD_CORE_URL as string | undefined,
     CORE_PORT,
-    FALLBACK_CORE_URL,
+    DEFAULT_CORE_URL,
   )
 }
 
@@ -82,7 +86,7 @@ function runtimeUrl(): string {
     SETTINGS.cloud_runtime_url.key,
     process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL as string | undefined,
     RUNTIME_PORT,
-    FALLBACK_RUNTIME_URL,
+    DEFAULT_RUNTIME_URL,
   )
 }
 
@@ -102,6 +106,44 @@ async function getSupabaseSubjectToken(): Promise<{token: string; type: "supabas
     throw new Error("cloudClient: no Supabase session token available")
   }
   return {token: res.value.token, type: "supabase"}
+}
+
+let localDevRuntimeToken: {token: string; expiresAtMs: number} | null = null
+
+function shouldUseLocalDevRuntimeToken(endpoints: {runtime: string}): boolean {
+  if (!__DEV__) return false
+  try {
+    const host = new URL(endpoints.runtime).hostname
+    return host === "localhost" || host === "127.0.0.1" || host === "10.0.2.2"
+  } catch {
+    return false
+  }
+}
+
+async function getLocalDevRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string> {
+  const now = Date.now()
+  if (!opts?.forceRefresh && localDevRuntimeToken && localDevRuntimeToken.expiresAtMs - now > 60_000) {
+    return localDevRuntimeToken.token
+  }
+
+  const base = new URL(runtimeUrl())
+  base.port = String(LOCAL_AUTH_PORT)
+  base.pathname = "/api/dev/runtime-token"
+  base.search = new URLSearchParams({userId: "local-phone-user", oemId: "mentra"}).toString()
+  const url = base.toString()
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`cloudClient: local dev runtime token failed (${res.status})`)
+  }
+  const body = (await res.json()) as {access_token?: string; expires_in?: number}
+  if (!body.access_token) {
+    throw new Error("cloudClient: local dev runtime token response missing access_token")
+  }
+  localDevRuntimeToken = {
+    token: body.access_token,
+    expiresAtMs: now + (body.expires_in ?? 300) * 1000,
+  }
+  return body.access_token
 }
 
 /**
@@ -147,6 +189,12 @@ function resetRuntimeStatus(): void {
   emitStatus(currentRuntimeStatus())
 }
 
+function normalizeExpiresAt(expiresAt: number): number {
+  // Core/cloud-client may speak Unix seconds while the miniapp SDK uses
+  // JavaScript milliseconds for easy TTL checks.
+  return expiresAt < 10_000_000_000 ? expiresAt * 1000 : expiresAt
+}
+
 function stringifyMeta(meta: unknown): string {
   if (!meta || typeof meta !== "object") return ""
   try {
@@ -165,9 +213,8 @@ const cloudLogger = {
 
 /**
  * Listeners that want to know when the live session connects/disconnects. The
- * host wires the LocalSttFallbackCoordinator's `cloudConnection` adapter to
- * these so the local-miniapp on-device-STT fallback tracks cloud liveness (not
- * the v1 WebSocket). Notified on every transition out of `onConnected`/
+ * Local-miniapp on-device-STT fallback tracks cloud-client liveness (not the
+ * v1 WebSocket). Notified on every transition out of `onConnected`/
  * `onDisconnected`.
  */
 const connectionListeners = new Set<(connected: boolean) => void>()
@@ -287,6 +334,23 @@ function buildAdapter(): CloudRuntimeAdapter {
  * in.
  */
 export const cloudClient = {
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
+    if (!client) {
+      this.init()
+    }
+    const c = client
+    if (!c) throw new Error("cloud client not initialized")
+
+    const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
+    const identity = c.auth.identity
+    return {
+      mentraUserId: identity.mentraUserId,
+      oemId: identity.oemId,
+      token,
+      expiresAt: normalizeExpiresAt(expiresAt),
+    }
+  },
+
   /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
   startManagedPhoto(opts: Record<string, unknown> = {}) {
     if (!client) throw new Error("cloud client not connected")
@@ -328,12 +392,17 @@ export const cloudClient = {
     const endpoints = {core: coreUrl(), runtime: runtimeUrl()}
     console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
+    const coreAuth = {getSubjectToken: getSupabaseSubjectToken}
+    const auth = shouldUseLocalDevRuntimeToken(endpoints)
+      ? {core: coreAuth, runtime: {getToken: getLocalDevRuntimeToken}}
+      : {core: coreAuth, runtime: {source: "core" as const}}
+
     client = new CloudClient({
       endpoints,
       // The phone LC3-encodes mic audio (even in phone/simulated mode), so we
       // announce LC3 at 16 kHz with the same frame size the encoder emits.
       audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: lc3FrameSizeBytes()},
-      auth: {getSubjectToken: getSupabaseSubjectToken},
+      auth,
       logger: cloudLogger,
     })
 
@@ -406,6 +475,7 @@ export const cloudClient = {
 
     const wasConnected = connected
     client = null
+    localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     // Notify so the local-miniapp STT fallback engages while the client is torn

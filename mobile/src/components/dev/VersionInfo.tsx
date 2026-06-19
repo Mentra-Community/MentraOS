@@ -48,7 +48,6 @@ export const VersionInfo = () => {
     const timeDiff = currentTime - lastPressTime.current
     const maxTimeDiff = 2000
     const maxPressCount = 10
-    const showAlertAtPressCount = 5
 
     // Reset counter if too much time has passed
     if (timeDiff > maxTimeDiff) {
@@ -66,23 +65,13 @@ export const VersionInfo = () => {
       clearTimeout(pressTimeout.current)
     }
 
-    // Handle different press counts
+    // Enable debug mode once the version number has been tapped enough times.
     if (pressCount.current === maxPressCount) {
       showAlert(translate("debug:debugModeEnabled"), translate("debug:debugModeEnabled"), [
         {text: translate("common:ok")},
       ])
       setDebugMode(true)
       pressCount.current = 0
-    } else if (pressCount.current >= showAlertAtPressCount) {
-      const remaining = maxPressCount - pressCount.current
-      Toast.show({
-        type: "info",
-        text1: translate("debug:debugMode"),
-        text2: translate("debug:debugModeMoreTaps", {number: remaining}),
-        position: "bottom",
-        topOffset: 80,
-        visibilityTime: 1000,
-      })
     }
 
     // Reset counter after 2 seconds of no activity

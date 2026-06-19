@@ -7,13 +7,12 @@ each method (connecting, refreshing tokens, reconnecting, sending audio). The pu
 API is in [`spec.md`](./spec.md); the system picture and the decisions are in
 [`architecture.md`](./architecture.md). This doc is the build plan.
 
-**TL;DR:** One `CloudClient` object owns the server addresses, the login state, and a
-small HTTP helper, and builds three modules on top. `cloud.auth` gets and refreshes
-the access token and mints per-miniapp tokens. `cloud.runtime` keeps the live
-WebSocket open, sends subscriptions over REST, and turns every incoming message into
-a typed event. `cloud.core` makes the remaining one-off REST calls. The phone-only
-pieces (the WebSocket, the UDP socket, secure storage) are passed in, so the same
-core code runs on the phone and on a server.
+**TL;DR:** One `CloudClient` object owns the server addresses, the auth providers, and
+a small HTTP helper, and builds modules on top. `cloud.runtime` asks for a
+`cloud-runtime` token and keeps the live WebSocket open. `cloud.core` is present only
+when Core is configured and uses `cloud-core` credentials for product APIs and
+miniapp-token minting. The phone-only pieces (the WebSocket, the UDP socket, secure
+storage) are passed in, so the same core code runs on the phone and on a server.
 
 ## Package layout
 
@@ -86,7 +85,7 @@ order.
 export class CloudClient {
   readonly auth: AuthModule
   readonly runtime: RuntimeModule
-  readonly core: CoreModule
+  readonly core?: CoreModule
   constructor(config: CloudClientConfig)
 }
 ```
@@ -95,17 +94,24 @@ export class CloudClient {
 
 ```ts
 export interface CloudClientConfig {
-  endpoints: { core: string; runtime: string; proxy?: string }   // proxy rewrites both
+  endpoints:
+    | { core: string; runtime: string; proxy?: string }   // Core + Runtime
+    | { runtime: string; proxy?: string }                 // Runtime-only
   auth: AuthConfig
   transports: CloudClientTransports
   logger?: Logger
   reconnect?: { baseMs: number; maxMs: number; jitter: boolean }
 }
-export type SubjectTokenType = "oem-jwt" | "mentra-core" | "supabase"
-export type AuthConfig =
-  | { subjectToken: string; subjectTokenType: SubjectTokenType }   // exchanged once
+export type CoreBackedAuthConfig =
+  | { subjectToken: string; subjectTokenType: SubjectTokenType }
   | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }
-  | { accessToken: string; refreshToken: string }                  // already exchanged
+  | { accessToken: string; refreshToken: string }
+export type RuntimeAuthConfig = { getToken: () => Promise<string> }
+export type AuthConfig = {
+  runtime: RuntimeAuthConfig
+  core?: CoreBackedAuthConfig
+}
+export type SubjectTokenType = "oem-jwt" | "mentra-core" | "supabase"
 ```
 
 **`src/transports.ts`**: the three things each platform supplies. The core only ever
@@ -159,12 +165,18 @@ export function createHttpClient(deps: {
 ```ts
 export class Auth implements AuthModule {
   constructor(deps: { http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger })
-  getAccessToken(): Promise<string>                                   // refreshes when near expiry
+  getRuntimeToken(): Promise<string>                                  // cloud-runtime audience
+  getCoreToken(): Promise<string>                                     // cloud-core audience
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
   get identity(): { mentraUserId: string; oemId: string }
   onExpired(handler: () => void): () => void
 }
 ```
+
+Core-backed deployments can implement `getRuntimeToken()` by exchanging an OEM
+subject token through Core/Auth and receiving a normalized runtime token. Runtime-only
+deployments can implement it with an OEM backend, local/dev issuer, or already-issued
+token. The runtime module does not know which path supplied the token.
 
 **`src/modules/auth/token-store.ts`**: the token state and the single-flight lock.
 
@@ -350,35 +362,39 @@ both a phone and a modern server. The core calls `fetch` directly.
 
 `new CloudClient(config)` does the wiring and nothing else clever:
 
-- Holds the server addresses (`endpoints.core`, `endpoints.runtime`, and an optional
-  `endpoints.proxy`). If a proxy is set, both the core and runtime addresses are
+- Holds the server addresses (`endpoints.runtime`, optional `endpoints.core`, and
+  optional `endpoints.proxy`). If a proxy is set, configured service addresses are
   rewritten to go through it.
 - Builds a small **HTTP helper** (next-to-last section) that every module uses for
   REST: it adds the `Authorization: Bearer` header, parses JSON, and maps errors.
-- Builds `cloud.auth` first (the other two depend on it for the token), then
-  `cloud.runtime` and `cloud.core`.
+- Builds `cloud.auth` first, then `cloud.runtime` and optional `cloud.core`.
 - Owns logging and the reconnect/backoff settings, so there's one place to tune them.
 
 ## `cloud.auth`
 
-The one owner of credentials. It holds the access token in memory, persists the
-refresh token through the `storage` input, and never hands the access token to a
-miniapp (see [`architecture.md`](./architecture.md) section 6).
+The one owner of credentials. It supplies a runtime token for `cloud.runtime`, and
+when Core is configured it owns the Core token/refresh-token lifecycle. It never
+hands Core or Runtime bearer tokens to a miniapp (see
+[`architecture.md`](./architecture.md) section 6).
 
-**Getting the first token.** It's constructed with a **subject token** (the OEM's
-signed JWT, or a Mentra core token / Supabase session, or a `getSubjectToken()`
-callback that fetches one). On first use it calls `POST /api/client/auth/exchange`
-with that subject token and gets back an access token (good for ~1h) and a refresh
-token, which it saves.
+**Getting the first Core token.** In Core-backed mode, it's constructed with a
+**subject token** (the OEM's signed JWT, or a Mentra core token / Supabase session,
+or a `getSubjectToken()` callback that fetches one). On first use it calls
+`POST /api/client/auth/exchange` with that subject token and gets back a Core token
+(good for ~1h) and a refresh token, which it saves.
 
-**`getAccessToken()`** (used internally by `cloud.runtime` and `cloud.core` before
-every call):
+**Getting the Runtime token.** `cloud.runtime` asks `cloud.auth.getRuntimeToken()`.
+Hosted deployments can implement that by calling Core/Auth as a broker. Runtime-only
+deployments can fetch from an OEM backend, local/dev issuer, or already-issued token
+without configuring Core at all.
 
-1. If the cached access token is still valid (with a small safety margin, say 60s),
+**`getCoreToken()`** (used internally by `cloud.core` before every Core call):
+
+1. If the cached Core token is still valid (with a small safety margin, say 60s),
    return it.
 2. Otherwise refresh: call `POST /api/client/auth/refresh` with the stored refresh
-   token, save the new access token and the new (rotated) refresh token, return the
-   new access token.
+   token, save the new Core token and the new (rotated) refresh token, return the
+   new Core token.
 3. If two callers ask at once, only **one** refresh request goes out and both get its
    result (a single-flight lock). Without this, a reconnect storm would fire many
    refreshes at once.
@@ -386,18 +402,18 @@ every call):
    handler so the host can send the user back through login. Don't retry forever.
 
 **`getMiniappToken(packageName)`:** calls `POST /api/client/auth/miniapp-token` with
-the access token as the Bearer, and caches the result per packageName with its
+the Core token as the Bearer, and caches the result per packageName with its
 expiry. A second call for the same packageName returns the cached token until it's
 near expiry, then re-mints (single-flight, same as above). This is what the on-device
 runtime calls at miniapp launch and on refresh.
 
-**`identity`:** the access token is a JWT, so its claims (`sub = mentraUserId`,
-`oemId`) are just base64 JSON inside it. `identity` reads them straight off the token
-it already holds. It does **not** verify the signature: the client isn't a security
-boundary for its own token, the cloud verifies on every call.
+**`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `oemId` are
+base64 JSON inside them. `identity` reads them straight off the active token path.
+It does **not** verify the signature: the client isn't a security boundary for its
+own token, the cloud verifies on every call.
 
 **What's persisted:** the refresh token (so a relaunch doesn't force a new login).
-The access token can stay in memory and be re-minted from the refresh token on
+The Core token can stay in memory and be re-minted from the refresh token on
 startup.
 
 ## `cloud.runtime`
@@ -408,8 +424,8 @@ implements the locked protocol in
 
 **Connecting (`connect()`):**
 
-1. Open the WebSocket to `endpoints.runtime`, with the access token in the first
-   frame (the `?token=` URL fallback is there for the Chrome debugger).
+1. Open the WebSocket to `endpoints.runtime`, with the `cloud-runtime` token in the
+   first frame (the `?token=` URL fallback is there for the Chrome debugger).
 2. Send a `connection.init` message: the protocol version, the platform, and the
    audio config (codec, sample rate, and any initial subscriptions so audio that
    starts immediately isn't transcribed against an empty set).
@@ -417,7 +433,8 @@ implements the locked protocol in
    calls) and, when UDP audio is available, the `sessionTag`, the UDP host/port, and
    the per-session encryption key. Save all of it. Now the session is ready.
 4. If the cloud replies with a fatal `error` instead (bad or expired token), surface
-   it; for `AUTH_EXPIRED`, refresh through `cloud.auth` and reopen.
+   it; for `AUTH_EXPIRED`, obtain a fresh runtime token through `cloud.auth` and
+   reopen.
 
 **Staying connected:**
 
@@ -483,10 +500,11 @@ same audio frames over the live WebSocket as the last-resort cloud path.
 
 ## `cloud.core`
 
-The simplest module: stateless REST calls, each with the access token from
-`cloud.auth.getAccessToken()`. No connection, no session state, so any pod serves it.
+The simplest module: stateless REST calls, each with the Core token from
+`cloud.auth.getCoreToken()`. No connection, no session state, so any pod serves it.
 `miniapps.list()` and `miniapps.getBundle()` are `GET`s that return typed results. It
-grows as miniapp-service is specced.
+grows as miniapp-service is specced. In runtime-only mode this module is absent or
+throws `CoreNotConfiguredError`, depending on the final API decision in issue 007.
 
 ## The shared HTTP helper
 
@@ -494,8 +512,9 @@ All three modules make REST calls through one small helper so the behavior is
 consistent:
 
 - Resolves the base address (proxy-aware) and builds the URL.
-- Adds `Authorization: Bearer <access token>` from `cloud.auth` (except the
-  `/exchange` call, which presents the subject token instead).
+- Adds `Authorization: Bearer <module token>` from `cloud.auth` (except the
+  `/exchange` call, which presents the subject token instead). Runtime REST uses
+  `cloud-runtime`; Core REST uses `cloud-core`.
 - Sends and parses JSON, and maps a non-2xx response to a typed error the caller can
   branch on (for example, a 401 from a resource call triggers one refresh-and-retry
   through `cloud.auth`).
@@ -504,16 +523,17 @@ consistent:
 
 ## How auth and the live connection interact
 
-The access token expires (~1h) while a session can last much longer, so the two
-modules cooperate:
+Runtime tokens expire while a session can last much longer, so the two modules
+cooperate:
 
-- `cloud.runtime` and `cloud.core` always get the token through
-  `cloud.auth.getAccessToken()`, which refreshes transparently when it's near expiry.
+- `cloud.runtime` always gets a runtime token through `cloud.auth.getRuntimeToken()`;
+  `cloud.core` gets a Core token through `cloud.auth.getCoreToken()` when Core is
+  configured.
 - If the cloud rejects the live socket with `AUTH_EXPIRED` anyway (clock skew, a
-  revoke mid-session), `cloud.runtime` asks `cloud.auth` to refresh, then reopens with
-  the new token.
-- If the refresh itself fails, `cloud.auth.onExpired` fires once and the host decides
-  what to do (usually: send the user back through login).
+  revoke mid-session), `cloud.runtime` asks `cloud.auth` for a fresh runtime token,
+  then reopens with the new token.
+- If token refresh itself fails, `cloud.auth.onExpired` fires once and the host
+  decides what to do (usually: send the user back through login).
 
 ## Errors and logging
 

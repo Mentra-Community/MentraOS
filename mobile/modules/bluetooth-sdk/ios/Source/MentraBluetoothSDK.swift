@@ -42,6 +42,7 @@ private final class ActiveScanSession {
 @MainActor
 private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
+    var latestResults: [WifiScanResult] = []
 
     init(pending: PendingResponse<[WifiScanResult]>) {
         self.pending = pending
@@ -150,6 +151,7 @@ public final class MentraBluetoothSDK {
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
+    private static let defaultStreamKeepAliveIntervalSeconds = 5
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
@@ -482,11 +484,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
-    public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent {
-        try await setButtonPhotoSettings(ButtonPhotoSettings(size: size))
-    }
-
-    public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent {
+    public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
             updateStore: { _ in
@@ -545,38 +543,26 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent {
+    public func setVideoRecordingDefaults(_ defaults: VideoRecordingDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_video_recording",
             updateStore: { _ in
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", width)
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", height)
-                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", fps)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", defaults.width)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", defaults.height)
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", defaults.fps)
             },
             send: { requestId in
                 try DeviceManager.shared.sendButtonVideoRecordingSettings(
                     requestId: requestId,
-                    width: width,
-                    height: height,
-                    fps: fps
+                    width: defaults.width,
+                    height: defaults.height,
+                    fps: defaults.fps
                 )
             }
         )
     }
 
-    public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent {
-        try await setButtonVideoRecordingSettings(width: settings.width, height: settings.height, fps: settings.fps)
-    }
-
-    public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent {
-        try await performSettingsCommand(
-            setting: "button_camera_led",
-            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_camera_led", enabled) },
-            send: { requestId in try DeviceManager.shared.sendButtonCameraLedSetting(requestId: requestId, enabled: enabled) }
-        )
-    }
-
-    public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent {
+    public func setMaxVideoRecordingDuration(minutes: Int) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_max_recording_time",
             updateStore: { _ in
@@ -670,7 +656,8 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
-        pendingWifiScan = PendingWifiScan(pending: pending)
+        let request = PendingWifiScan(pending: pending)
+        pendingWifiScan = request
         DeviceManager.shared.requestWifiScan()
         do {
             let results = try await pending.wait()
@@ -679,8 +666,17 @@ public final class MentraBluetoothSDK {
             }
             return results
         } catch {
+            let fallbackResults: [WifiScanResult]
+            if (error as? BluetoothError)?.code == "request_timeout" {
+                fallbackResults = request.latestResults
+            } else {
+                fallbackResults = []
+            }
             if pendingWifiScan?.pending === pending {
                 pendingWifiScan = nil
+            }
+            if !fallbackResults.isEmpty {
+                return fallbackResults
             }
             throw error
         }
@@ -806,6 +802,14 @@ public final class MentraBluetoothSDK {
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
+        try await startStream(request, startSdkKeepAlive: true)
+    }
+
+    func startExternallyManagedStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
+        try await startStream(request, startSdkKeepAlive: false)
+    }
+
+    private func startStream(_ request: StreamRequest, startSdkKeepAlive: Bool) async throws -> StreamStatusEvent {
         var values = request.values
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
@@ -816,8 +820,11 @@ public final class MentraBluetoothSDK {
         do {
             let event = try await pending.wait(timeoutMs: 30_000)
             pendingStreamStarts.removeValue(forKey: streamId)
-            if request.keepAlive, !request.isExternallyManagedKeepAlive {
-                startStreamKeepAliveMonitor(streamId: streamId, intervalSeconds: request.keepAliveIntervalSeconds)
+            if startSdkKeepAlive {
+                startStreamKeepAliveMonitor(
+                    streamId: streamId,
+                    intervalSeconds: Self.defaultStreamKeepAliveIntervalSeconds
+                )
             }
             return event
         } catch {
@@ -1274,7 +1281,7 @@ public final class MentraBluetoothSDK {
     }
 
     private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
-        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : 5
+        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : Self.defaultStreamKeepAliveIntervalSeconds
         let tracker = ActiveStreamKeepAlive(streamId: streamId, intervalSeconds: intervalSeconds)
         activeStreamKeepAlive = tracker
         sendNextStreamKeepAlive(for: tracker)
@@ -1533,6 +1540,11 @@ public final class MentraBluetoothSDK {
         request.pending.resolve(results)
     }
 
+    private func updateWifiScanLatestResults(_ results: [WifiScanResult]) {
+        guard !results.isEmpty else { return }
+        pendingWifiScan?.latestResults = results
+    }
+
     private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
         guard let request = pendingWifiStatus else { return }
         guard wifiStatusMatches(event.status, request: request) else { return }
@@ -1721,6 +1733,7 @@ public final class MentraBluetoothSDK {
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
             let hasCompletionFlag = data.keys.contains("scanComplete") || data.keys.contains("scan_complete")
             let scanComplete = data["scanComplete"] as? Bool ?? data["scan_complete"] as? Bool ?? false
+            updateWifiScanLatestResults(networks)
             if scanComplete || !hasCompletionFlag {
                 handleWifiScanResultsForRequests(networks)
             }

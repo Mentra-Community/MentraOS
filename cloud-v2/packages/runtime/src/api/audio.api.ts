@@ -27,7 +27,7 @@ import { z } from "zod";
 import {
   AccessTokenError,
   createLogger,
-  verifyAccessTokenSignature,
+  verifyRuntimeToken,
 } from "@mentra/cloud-shared";
 import { audioSubscriptionSchema } from "../protocol/audio";
 import {
@@ -62,9 +62,9 @@ audioApi.put("/subscriptions", async (c) => {
     return c.json({ error: "missing or malformed Authorization" }, 401);
   }
 
-  let verified: Awaited<ReturnType<typeof verifyAccessTokenSignature>>;
+  let verified: Awaited<ReturnType<typeof verifyRuntimeToken>>;
   try {
-    verified = await verifyAccessTokenSignature(token);
+    verified = await verifyRuntimeToken(token);
   } catch (err) {
     if (err instanceof AccessTokenError) {
       return c.json({ error: err.message }, 401);

@@ -75,8 +75,6 @@
 
 //     func sendButtonMaxRecordingTime(_: Int) {}
 
-//     func sendButtonCameraLedSetting() {}
-
 func exit() {}
 
 func sendRgbLedControl(requestId: String, packageName _: String?, action _: String, color _: String?, onDurationMs _: Int, offDurationMs _: Int, count _: Int) {

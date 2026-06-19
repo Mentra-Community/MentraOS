@@ -27,6 +27,6 @@ folder is the audio service in depth.
 
 - [`../protocol.md`](../protocol.md): the runtime transport contract the audio service
   sits on.
-- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md): a
-  connecting user already holds a Mentra access token from the OEM auth flow; the
-  audio path verifies it and reads `mentraUserId` from its claims.
+- [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md):
+  a connecting user presents a `cloud-runtime` token; the audio path verifies it
+  and reads the configured user id plus `oemId` from its claims.

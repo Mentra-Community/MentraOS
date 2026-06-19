@@ -27,6 +27,13 @@
         "typescript-eslint": "^8.44.1",
       },
     },
+    "cloud-v2/packages/auth": {
+      "name": "@mentra/auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "jose": "^5.9.6",
+      },
+    },
     "cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
       "version": "0.0.0",
@@ -172,6 +179,24 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
+    "miniapps/merge": {
+      "name": "local-merge",
+      "dependencies": {
+        "@mentra/auth": "workspace:*",
+        "@mentra/miniapp": "workspace:*",
+        "hono": "^4.11.1",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
+        "bun-types": "^1.3.14",
+      },
+    },
     "miniapps/navigation": {
       "name": "navigation-miniapp",
       "version": "1.0.6",
@@ -310,6 +335,8 @@
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, ""],
 
     "@ioredis/commands": ["@ioredis/commands@1.10.0", "", {}, "sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q=="],
+
+    "@mentra/auth": ["@mentra/auth@workspace:cloud-v2/packages/auth"],
 
     "@mentra/cloud-client": ["@mentra/cloud-client@workspace:cloud-v2/packages/cloud-client"],
 

@@ -17,12 +17,15 @@ installDevReloadListenerIfDevMode()
 
 export {MiniappSession, NotConnectedError} from "./session"
 export type {
+  AuthUpdatePayload,
   ConnectAckPayload,
   GlassesCapabilities,
+  MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
+export type {AuthFetchOptions, AuthModule} from "./modules/auth"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"
@@ -64,6 +67,14 @@ export type {
   TextWall,
   ViewType,
 } from "./modules/display"
+export {CanvasOperation} from "./modules/canvas"
+export type {
+  BaseOptions as CanvasBaseOptions,
+  Box as CanvasBox,
+  BitmapOptions as CanvasBitmapOptions,
+  ClearOptions as CanvasClearOptions,
+  TextOptions as CanvasTextOptions,
+} from "./modules/canvas"
 export type {
   AccelData,
   AudioChunkData,
@@ -114,6 +125,7 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
+export type {CanvasManager} from "./modules/canvas"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"

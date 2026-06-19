@@ -43,6 +43,9 @@ lands.
 | [local-sdk](./006-dev-toolkit/local-sdk/) | Spiked | findings + open questions, not yet a proposal. Left: spec + design |
 | [cli](./006-dev-toolkit/cli/) | Stub | needs spec |
 | **[007-runtime-auth-independence](./007-runtime-auth-independence/)** | Draft | runtime auth split issue: make Runtime Services able to accept trusted runtime tokens without live Core dependency; define optional Core endpoint/client behavior |
+| **[008-subscription-seed-overlap](./008-subscription-seed-overlap/)** | Draft | subscription replay/seed overlap issue: prevent duplicated seed and live transcript events when a miniapp subscribes during an active stream |
+| **[009-miniapp-auto-auth](./009-miniapp-auto-auth/)** | Draft | miniapp backend auth: host-minted audience-scoped miniapp tokens exposed through `session.auth`, without leaking Core/runtime credentials |
+| **[010-dev-miniapp-auth-audience](./010-dev-miniapp-auth-audience/)** | Draft | dev-slot versus real-package auth audience issue: keep `com.dev` routing while minting backend tokens only for trusted dev registration package names |
 
 ## Open decisions
 

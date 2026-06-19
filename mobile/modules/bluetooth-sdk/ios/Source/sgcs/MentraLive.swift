@@ -1616,7 +1616,7 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) flash=\(request.flash) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -1656,7 +1656,6 @@ class MentraLive: NSObject, SGCManager {
         json["size"] = allowedSizes.contains(size) ? size : "medium"
 
         json["compress"] = request.compress?.rawValue ?? "none"
-        json["flash"] = request.flash
         json["save"] = request.save
         json["sound"] = request.sound
 
@@ -5085,9 +5084,6 @@ extension MentraLive {
         // Send button photo settings
         sendButtonPhotoSettings()
 
-        // Send button camera LED setting
-        sendButtonCameraLedSetting()
-
         // Send camera FOV setting (K900 / Mentra Live)
         sendCameraFovSetting()
 
@@ -5197,7 +5193,9 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
-        let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as? String
+        let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
+            rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
+        }
         let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
         let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
@@ -5209,8 +5207,8 @@ extension MentraLive {
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
         let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
 
-        let settings = ButtonPhotoSettings(
-            size: ButtonPhotoSize(normalizedRawValue: size ?? "medium"),
+        let settings = PhotoCaptureDefaults(
+            size: size,
             mfnr: mfnr,
             zsl: zsl,
             noiseReduction: noiseReduction,
@@ -5228,10 +5226,10 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings(requestId: String?, size: String) {
-        sendButtonPhotoSettings(requestId: requestId, settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size)))
+        sendButtonPhotoSettings(requestId: requestId, settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size)))
     }
 
-    func sendButtonPhotoSettings(requestId: String?, settings: ButtonPhotoSettings) {
+    func sendButtonPhotoSettings(requestId: String?, settings: PhotoCaptureDefaults) {
         var details = settings.size.map { "size=\($0.rawValue)" } ?? "size=unchanged"
         if let mfnr = settings.mfnr {
             details += ", mfnr=\(mfnr)"
@@ -5315,29 +5313,6 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    func sendButtonCameraLedSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "button_camera_led") as! Bool
-        sendButtonCameraLedSetting(requestId: nil, enabled: enabled)
-    }
-
-    func sendButtonCameraLedSetting(requestId: String?, enabled: Bool) {
-        Bridge.log("Sending button camera LED setting: \(enabled)")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot send button camera LED setting - not connected")
-            return
-        }
-
-        var json: [String: Any] = [
-            "type": "button_camera_led",
-            "enabled": enabled,
-        ]
-        if let requestId, !requestId.isEmpty {
-            json["request_id"] = requestId
-        }
-        sendJson(json, wakeUp: true)
-    }
-
     func sendCameraFovSetting() {
         let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
         let fov = settings["fov"] as? Int ?? 118
@@ -5366,9 +5341,9 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool) {
         startVideoRecording(
-            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0,
+            requestId: requestId, save: save, sound: sound, width: 0, height: 0, fps: 0,
             maxRecordingTimeMinutes: 0
         )
     }
@@ -5380,11 +5355,11 @@ extension MentraLive {
     }
 
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        requestId: String, save: Bool, sound: Bool, width: Int, height: Int, fps: Int,
         maxRecordingTimeMinutes: Int
     ) {
         Bridge.log(
-            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
+            "Starting video recording on glasses: requestId=\(requestId), save=\(save), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5396,10 +5371,8 @@ extension MentraLive {
             "type": "start_video_recording",
             "requestId": requestId,
             "save": save,
-            "flash": flash,
             "sound": sound,
         ]
-
         // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.
         if maxRecordingTimeMinutes > 0 {
             json["maxRecordingTimeMinutes"] = maxRecordingTimeMinutes

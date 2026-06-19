@@ -3,7 +3,7 @@ import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
-  ButtonPhotoSettings,
+  VideoRecordingDefaults,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
@@ -58,74 +58,82 @@ const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
   return PrivateBluetoothSdkModule.startOtaUpdate()
 }
 
+const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): BluetoothSdkPublicModule[K] => {
+  const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>)[name]
+  if (typeof method === "function") {
+    return method.bind(PrivateBluetoothSdkModule) as BluetoothSdkPublicModule[K]
+  }
+
+  return (async () => {
+    throw new Error(`BluetoothSdk.${String(name)} is not available in this native build. Rebuild the app.`)
+  }) as unknown as BluetoothSdkPublicModule[K]
+}
+
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   addListener,
-  getDefaultDevice: PrivateBluetoothSdkModule.getDefaultDevice.bind(PrivateBluetoothSdkModule),
-  setDefaultDevice: PrivateBluetoothSdkModule.setDefaultDevice.bind(PrivateBluetoothSdkModule),
-  clearDefaultDevice: PrivateBluetoothSdkModule.clearDefaultDevice.bind(PrivateBluetoothSdkModule),
-  startScan: PrivateBluetoothSdkModule.startScan.bind(PrivateBluetoothSdkModule),
-  stopScan: PrivateBluetoothSdkModule.stopScan.bind(PrivateBluetoothSdkModule),
-  scan: PrivateBluetoothSdkModule.scan.bind(PrivateBluetoothSdkModule) as BluetoothSdkPublicModule["scan"],
-  connect: PrivateBluetoothSdkModule.connect.bind(PrivateBluetoothSdkModule),
-  connectDefault: PrivateBluetoothSdkModule.connectDefault.bind(PrivateBluetoothSdkModule),
-  cancelConnectionAttempt: PrivateBluetoothSdkModule.cancelConnectionAttempt.bind(PrivateBluetoothSdkModule),
-  disconnect: PrivateBluetoothSdkModule.disconnect.bind(PrivateBluetoothSdkModule),
-  forget: PrivateBluetoothSdkModule.forget.bind(PrivateBluetoothSdkModule),
-  displayText: PrivateBluetoothSdkModule.displayText.bind(PrivateBluetoothSdkModule),
-  clearDisplay: PrivateBluetoothSdkModule.clearDisplay.bind(PrivateBluetoothSdkModule),
-  showDashboard: PrivateBluetoothSdkModule.showDashboard.bind(PrivateBluetoothSdkModule),
-  setDashboardPosition: PrivateBluetoothSdkModule.setDashboardPosition.bind(PrivateBluetoothSdkModule),
-  setHeadUpAngle: PrivateBluetoothSdkModule.setHeadUpAngle.bind(PrivateBluetoothSdkModule),
-  setImuEnabled: PrivateBluetoothSdkModule.setImuEnabled.bind(PrivateBluetoothSdkModule),
-  setScreenDisabled: PrivateBluetoothSdkModule.setScreenDisabled.bind(PrivateBluetoothSdkModule),
-  requestWifiScan: PrivateBluetoothSdkModule.requestWifiScan.bind(PrivateBluetoothSdkModule),
-  sendWifiCredentials: PrivateBluetoothSdkModule.sendWifiCredentials.bind(PrivateBluetoothSdkModule),
-  forgetWifiNetwork: PrivateBluetoothSdkModule.forgetWifiNetwork.bind(PrivateBluetoothSdkModule),
-  setHotspotState: PrivateBluetoothSdkModule.setHotspotState.bind(PrivateBluetoothSdkModule),
-  setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
-  setVoiceActivityDetectionEnabled:
-    PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: (settings: ButtonPhotoSettings) => {
-    // setButtonPhotoCaptureSettings is available in SDK 0.1.13+. Guard for OTA version-skew
-    // where a new JS bundle runs against an older native module that only has the string form.
-    if (typeof PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings === "function") {
-      return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings)
+  getDefaultDevice: bindPublicMethod("getDefaultDevice"),
+  setDefaultDevice: bindPublicMethod("setDefaultDevice"),
+  clearDefaultDevice: bindPublicMethod("clearDefaultDevice"),
+  startScan: bindPublicMethod("startScan"),
+  stopScan: bindPublicMethod("stopScan"),
+  scan: bindPublicMethod("scan") as BluetoothSdkPublicModule["scan"],
+  connect: bindPublicMethod("connect"),
+  connectDefault: bindPublicMethod("connectDefault"),
+  cancelConnectionAttempt: bindPublicMethod("cancelConnectionAttempt"),
+  disconnect: bindPublicMethod("disconnect"),
+  forget: bindPublicMethod("forget"),
+  displayText: bindPublicMethod("displayText"),
+  clearDisplay: bindPublicMethod("clearDisplay"),
+  showDashboard: bindPublicMethod("showDashboard"),
+  setDashboardPosition: bindPublicMethod("setDashboardPosition"),
+  setHeadUpAngle: bindPublicMethod("setHeadUpAngle"),
+  setImuEnabled: bindPublicMethod("setImuEnabled"),
+  setScreenDisabled: bindPublicMethod("setScreenDisabled"),
+  requestWifiScan: bindPublicMethod("requestWifiScan"),
+  sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
+  forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
+  setHotspotState: bindPublicMethod("setHotspotState"),
+  setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
+  setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
+  setPhotoCaptureDefaults: bindPublicMethod("setPhotoCaptureDefaults"),
+  setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) => {
+    const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>).setVideoRecordingDefaults
+    if (typeof method !== "function") {
+      return Promise.reject(
+        new Error("BluetoothSdk.setVideoRecordingDefaults is not available in this native build. Rebuild the app."),
+      )
     }
-    // Legacy fallback: old native bridge only accepts a size string
-    return PrivateBluetoothSdkModule.setButtonPhotoSettings({size: settings.size ?? "max"} as any)
+    return PrivateBluetoothSdkModule.setVideoRecordingDefaults(width, height, fps)
   },
-  setButtonVideoRecordingSettings:
-    PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
-  setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
-  setButtonMaxRecordingTime: PrivateBluetoothSdkModule.setButtonMaxRecordingTime.bind(PrivateBluetoothSdkModule),
-  setCameraFov: PrivateBluetoothSdkModule.setCameraFov.bind(PrivateBluetoothSdkModule),
-  queryGalleryStatus: PrivateBluetoothSdkModule.queryGalleryStatus.bind(PrivateBluetoothSdkModule),
-  requestPhoto: PrivateBluetoothSdkModule.requestPhoto.bind(PrivateBluetoothSdkModule),
-  startVideoRecording: PrivateBluetoothSdkModule.startVideoRecording.bind(PrivateBluetoothSdkModule),
-  stopVideoRecording: PrivateBluetoothSdkModule.stopVideoRecording.bind(PrivateBluetoothSdkModule),
-  startStream: PrivateBluetoothSdkModule.startStream.bind(PrivateBluetoothSdkModule),
-  stopStream: PrivateBluetoothSdkModule.stopStream.bind(PrivateBluetoothSdkModule),
-  setMicState: PrivateBluetoothSdkModule.setMicState.bind(PrivateBluetoothSdkModule),
-  setPreferredMic: PrivateBluetoothSdkModule.setPreferredMic.bind(PrivateBluetoothSdkModule),
-  setOwnAppAudioPlaying: PrivateBluetoothSdkModule.setOwnAppAudioPlaying.bind(PrivateBluetoothSdkModule),
-  getGlassesMediaVolume: PrivateBluetoothSdkModule.getGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
-  setGlassesMediaVolume: PrivateBluetoothSdkModule.setGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
-  rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
-  requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
-  checkForOtaUpdate: PrivateBluetoothSdkModule.checkForOtaUpdate.bind(PrivateBluetoothSdkModule),
+  setMaxVideoRecordingDuration: bindPublicMethod("setMaxVideoRecordingDuration"),
+  setCameraFov: bindPublicMethod("setCameraFov"),
+  queryGalleryStatus: bindPublicMethod("queryGalleryStatus"),
+  requestPhoto: bindPublicMethod("requestPhoto"),
+  startVideoRecording: bindPublicMethod("startVideoRecording"),
+  stopVideoRecording: bindPublicMethod("stopVideoRecording"),
+  startStream: bindPublicMethod("startStream"),
+  stopStream: bindPublicMethod("stopStream"),
+  setMicState: bindPublicMethod("setMicState"),
+  setPreferredMic: bindPublicMethod("setPreferredMic"),
+  setOwnAppAudioPlaying: bindPublicMethod("setOwnAppAudioPlaying"),
+  getGlassesMediaVolume: bindPublicMethod("getGlassesMediaVolume"),
+  setGlassesMediaVolume: bindPublicMethod("setGlassesMediaVolume"),
+  rgbLedControl: bindPublicMethod("rgbLedControl"),
+  requestVersionInfo: bindPublicMethod("requestVersionInfo"),
+  checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
   startOtaUpdate,
-  setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
-  getSttModelPath: PrivateBluetoothSdkModule.getSttModelPath.bind(PrivateBluetoothSdkModule),
-  checkSttModelAvailable: PrivateBluetoothSdkModule.checkSttModelAvailable.bind(PrivateBluetoothSdkModule),
-  validateSttModel: PrivateBluetoothSdkModule.validateSttModel.bind(PrivateBluetoothSdkModule),
-  extractTarBz2: PrivateBluetoothSdkModule.extractTarBz2.bind(PrivateBluetoothSdkModule),
-  restartTranscriber: PrivateBluetoothSdkModule.restartTranscriber.bind(PrivateBluetoothSdkModule),
-  setTtsModelDetails: PrivateBluetoothSdkModule.setTtsModelDetails.bind(PrivateBluetoothSdkModule),
-  getTtsModelPath: PrivateBluetoothSdkModule.getTtsModelPath.bind(PrivateBluetoothSdkModule),
-  getTtsModelLanguage: PrivateBluetoothSdkModule.getTtsModelLanguage.bind(PrivateBluetoothSdkModule),
-  checkTtsModelAvailable: PrivateBluetoothSdkModule.checkTtsModelAvailable.bind(PrivateBluetoothSdkModule),
-  validateTtsModel: PrivateBluetoothSdkModule.validateTtsModel.bind(PrivateBluetoothSdkModule),
-  generateTtsAudio: PrivateBluetoothSdkModule.generateTtsAudio.bind(PrivateBluetoothSdkModule),
+  setSttModelDetails: bindPublicMethod("setSttModelDetails"),
+  getSttModelPath: bindPublicMethod("getSttModelPath"),
+  checkSttModelAvailable: bindPublicMethod("checkSttModelAvailable"),
+  validateSttModel: bindPublicMethod("validateSttModel"),
+  extractTarBz2: bindPublicMethod("extractTarBz2"),
+  restartTranscriber: bindPublicMethod("restartTranscriber"),
+  setTtsModelDetails: bindPublicMethod("setTtsModelDetails"),
+  getTtsModelPath: bindPublicMethod("getTtsModelPath"),
+  getTtsModelLanguage: bindPublicMethod("getTtsModelLanguage"),
+  checkTtsModelAvailable: bindPublicMethod("checkTtsModelAvailable"),
+  validateTtsModel: bindPublicMethod("validateTtsModel"),
+  generateTtsAudio: bindPublicMethod("generateTtsAudio"),
 })
 
 export default BluetoothSdk
@@ -155,7 +163,7 @@ export type {
   BluetoothSdkPublicModule as BluetoothSdkModule,
   BluetoothSdkSubscription,
   ButtonPhotoSize,
-  ButtonPhotoSettings,
+  PhotoCaptureDefaults,
   ButtonPressEvent,
   CameraFovPreset,
   CameraFovRequest,
@@ -226,6 +234,7 @@ export type {
   SwipeVolumeStatusEvent,
   SwitchStatusEvent,
   TouchEvent,
+  VideoRecordingDefaults,
   VideoRecordingStartedStatusEvent,
   VideoRecordingStatusEvent,
   VideoRecordingStatusState,

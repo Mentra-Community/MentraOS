@@ -40,6 +40,18 @@ export interface CloudRuntimeTtsAdapter {
   speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
 }
 
+export interface MiniappAuthToken {
+  mentraUserId: string
+  oemId?: string
+  token: string
+  expiresAt: number
+}
+
+export interface MiniappAuthAdapter {
+  /** Mint or return a cached token scoped to one miniapp packageName. */
+  getToken: (packageName: string, opts?: {minTtlMs?: number}) => Promise<MiniappAuthToken>
+}
+
 import type {ClientApp} from "../types/applet"
 
 /**
@@ -99,16 +111,6 @@ export interface CloudRuntimeAdapter {
   hasAudioSubscriptions: () => boolean
   /** Whether the v2 live session is connected (handshake completed). */
   isConnected: () => boolean
-}
-
-/**
- * Cloud connection state surface used by LocalSttFallbackCoordinator to
- * decide when on-device STT should take over from cloud transcription.
- * Hosts wrap their own WebSocket-status store.
- */
-export interface CloudConnectionAdapter {
-  isConnected: () => boolean
-  addListener: (l: (connected: boolean) => void) => () => void
 }
 
 export interface AudioPlayRequest {
@@ -310,14 +312,28 @@ export interface LocationTierAdapter {
  * miniapps. The runtime calls these from its stream request handlers; the
  * host's PhoneStreamCoordinator implements them.
  */
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
 export interface StreamingAdapter {
   /** Glasses-confirmed publisher start result. */
   startUnmanaged: (
     packageName: string,
     opts: {
       streamUrl: string
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
     },
   ) => Promise<StreamPublisherStartResult>
@@ -325,8 +341,8 @@ export interface StreamingAdapter {
     packageName: string,
     opts: {
       restreamDestinations?: Array<string | {url: string; name?: string}>
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
       /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
       ingest?: "srt" | "whip"
@@ -440,6 +456,11 @@ export interface RuntimeHooks {
    * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
    */
   cloud?: CloudRuntimeAdapter
+  /**
+   * Package-scoped backend auth for local miniapps. The host owns the real
+   * Core/runtime credentials; this adapter returns only miniapp tokens.
+   */
+  miniappAuth?: MiniappAuthAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
@@ -450,8 +471,6 @@ export interface RuntimeHooks {
   heading?: HeadingAdapter
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
   locationTier?: LocationTierAdapter
-  /** Cloud WebSocket connection state surface. */
-  cloudConnection?: CloudConnectionAdapter
   /**
    * The dev machine's live LAN host (no port), derived by the host from
    * Metro's `hostUri` — the address this dev bundle was actually served from,

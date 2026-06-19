@@ -11,7 +11,7 @@ This folder holds the durable documentation for the **MentraOS mobile app** — 
 It is **not** for:
 - Ephemeral planning notes — those live in [mobile/agents/](../agents/).
 - Feature/system writeups that span the whole mobile app — those live as `SHOUTY_CASE.md` files at the [mobile/](../) root (e.g. `CAMERA_APP_BUTTON_CAPTURE.md`, `STT_MODEL_DOWNLOAD.md`).
-- Cloud, SDK, or repo-wide architecture — see [docs/](../../docs/) at the repo root.
+- Cloud, SDK, or repo-wide architecture — see [mintlify-docs/](../../mintlify-docs/) for public docs and [notes/](../../notes/) for working notes at the repo root.
 
 ## Layout
 

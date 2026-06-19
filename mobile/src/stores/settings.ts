@@ -217,26 +217,31 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: false,
   },
+  // Device/pairing identity is per-phone state, not an account setting: a user with
+  // two phones may have each paired to different glasses. These are never synced to the
+  // server (saveOnServer: false) so a stale server copy can't clobber the locally paired
+  // device on relaunch. MantleManager also strips them from any server payload as a guard
+  // against legacy values uploaded before this flag was flipped.
   default_wearable: {
     key: "default_wearable",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
+  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   pending_controller: {
@@ -250,14 +255,14 @@ export const SETTINGS: Record<string, Setting> = {
     key: "controller_device_name",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   controller_address: {
     key: "controller_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   // ui state:
@@ -491,13 +496,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  button_camera_led: {
-    key: "button_camera_led",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   button_max_recording_time: {
     key: "button_max_recording_time",
     defaultValue: () => 10,
@@ -683,7 +681,6 @@ const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.
   SETTINGS.button_video_settings.key,
-  SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
   SETTINGS.camera_fov.key,
   // device / pairing:

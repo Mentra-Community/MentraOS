@@ -1372,6 +1372,45 @@ private final class ImgAckBox {
     }
 }
 
+/// A minimal FIFO async lock that serializes display mutations.
+///
+/// `G2` is `@MainActor`, which only guarantees mutual exclusion *between*
+/// suspension points — not across an `await`. Two display operations can
+/// therefore interleave while one is suspended in `awaitImageAck`, and the
+/// second would overwrite the single-slot [ImgAckBox], stranding the first
+/// continuation (its image-send `Task` then hangs forever). Serializing every
+/// display mutation through this lock keeps exactly one image transfer in
+/// flight at a time, matching the Android client's `displayMutex` invariant.
+///
+/// State is only touched inside `acquire`/`release`, which run synchronously on
+/// the main actor (no `await` between the read and the write), so the state
+/// itself needs no extra locking.
+@MainActor
+private final class DisplayMutex {
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Suspend until the lock is free, then take it.
+    func acquire() async {
+        if !locked {
+            locked = true
+            return
+        }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            waiters.append(cont)
+        }
+    }
+
+    /// Hand the lock to the next waiter (preserving ownership), or free it.
+    func release() {
+        if waiters.isEmpty {
+            locked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 // MARK: - G2 Class (SGCManager implementation)
 
 /// Actor for reconnection logic (matches G1 pattern)
@@ -1516,6 +1555,9 @@ class G2: NSObject, SGCManager {
     /// Lock-protected, non-isolated holder for the in-flight image ACK so the BLE-queue notify
     /// callback can resolve it without bouncing through the main actor (see [ImgAckBox]).
     private let imgAckBox = ImgAckBox()
+    /// Serializes display mutations so only one image transfer is ever in flight; without it a
+    /// second display op can clobber `imgAckBox` while the first is suspended (see [DisplayMutex]).
+    private let displayMutex = DisplayMutex()
     private let IMG_ACK_TIMEOUT_NS: UInt64 = 2_000_000_000  // 1000ms timeout (matches Dart host)
     private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
@@ -2124,7 +2166,10 @@ class G2: NSObject, SGCManager {
             imageContainers[i].bmpData = Data()
         }
         // shutdown the page and then recreate the containers without the content:
+        // Serialize the teardown so it can't tear the page down mid image-send (see DisplayMutex).
         Task {
+            await displayMutex.acquire()
+            defer { displayMutex.release() }
             await rebuildPage()
             // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
             // createPageWithContainers()
@@ -2249,6 +2294,11 @@ class G2: NSObject, SGCManager {
         base64ImageData: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil,
         height: Int32? = nil
     ) async -> Bool {
+        // Serialize against other display mutations so two image sends can't overlap and
+        // clobber the single-slot imgAckBox (see DisplayMutex).
+        await displayMutex.acquire()
+        defer { displayMutex.release() }
+
         let rx = x ?? G2.defaultImgContainer.x
         let ry = y ?? G2.defaultImgContainer.y
         let rw = width ?? G2.defaultImgContainer.width
@@ -2351,6 +2401,11 @@ class G2: NSObject, SGCManager {
 
     // re-creates the containers and sends all images and text again to the glasses:
     private func rebuildState() async {
+        // Hold the display lock for the whole rebuild so its per-container sendImageData calls
+        // can't interleave with a concurrent displayBitmap (see DisplayMutex).
+        await displayMutex.acquire()
+        defer { displayMutex.release() }
+
         Bridge.log("G2: rebuildState()")
         // recreate the containers:
         createPageWithContainers()
@@ -3325,7 +3380,7 @@ class G2: NSObject, SGCManager {
     // MARK: - SGCManager: Camera & Media (not supported on G2)
 
     func requestPhoto(_: PhotoRequest) {}
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}
     func sendStreamKeepAlive(_: [String: Any]) {}
