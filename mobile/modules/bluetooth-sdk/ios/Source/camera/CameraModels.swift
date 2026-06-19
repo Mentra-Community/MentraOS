@@ -200,13 +200,13 @@ public struct CameraFovResult: CustomStringConvertible {
 
     static func from(ack: SettingsAckEvent, fallback: CameraFov) throws -> CameraFovResult {
         if ack.status == "error" {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: ack.errorCode ?? "camera_fov_failed",
                 message: ack.errorMessage ?? "Camera FOV request failed."
             )
         }
         if !ack.hardwareApplied {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "camera_fov_not_applied",
                 message: "Camera FOV was saved but not applied to hardware."
             )

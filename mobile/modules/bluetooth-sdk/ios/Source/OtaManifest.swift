@@ -10,7 +10,7 @@ enum OtaManifestDefaults {
         guard let sdkVersion = BluetoothSdkDefaults.sdkVersion,
               !sdkVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "missing_sdk_version",
                 message: "Cannot determine Bluetooth SDK version for the default OTA manifest URL."
             )
@@ -55,28 +55,28 @@ enum OtaManifestChecker {
     static func normalizeHttpUrl(_ value: String) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw BluetoothError(code: "invalid_ota_url", message: "OTA version URL must be a non-empty http(s) URL.")
+            throw BluetoothSdkError(code: "invalid_ota_url", message: "OTA version URL must be a non-empty http(s) URL.")
         }
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
               (scheme == "http" || scheme == "https"),
               url.host?.isEmpty == false
         else {
-            throw BluetoothError(code: "invalid_ota_url", message: "OTA version URL must be a valid http(s) URL.")
+            throw BluetoothSdkError(code: "invalid_ota_url", message: "OTA version URL must be a valid http(s) URL.")
         }
         return url.absoluteString
     }
 
     static func fetch(_ otaVersionUrl: String) async throws -> OtaManifest {
         guard let url = URL(string: otaVersionUrl) else {
-            throw BluetoothError(code: "invalid_ota_url", message: "OTA version URL must be a valid http(s) URL.")
+            throw BluetoothSdkError(code: "invalid_ota_url", message: "OTA version URL must be a valid http(s) URL.")
         }
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw BluetoothError(code: "ota_manifest_request_failed", message: "OTA manifest request failed.")
+            throw BluetoothSdkError(code: "ota_manifest_request_failed", message: "OTA manifest request failed.")
         }
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "ota_manifest_request_failed",
                 message: "OTA manifest request failed with HTTP \(httpResponse.statusCode)."
             )
@@ -110,18 +110,18 @@ enum OtaManifestChecker {
         if let versionCode = manifest.versionCode {
             return OtaManifestApp(versionCode: versionCode)
         }
-        throw BluetoothError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
+        throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
     }
 
     private static func hasApkUpdate(currentBuildNumber: String, manifest: OtaManifest) throws -> Bool {
         guard let currentVersion = Int(currentBuildNumber) else {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "invalid_glasses_version",
                 message: "Cannot check OTA update because glasses build number is invalid."
             )
         }
         guard let serverVersion = try latestAppInfo(manifest).versionCode else {
-            throw BluetoothError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
+            throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
         }
         return serverVersion > currentVersion
     }
@@ -144,7 +144,7 @@ enum OtaManifestChecker {
     private static func hasBesUpdate(besFirmware: BesFirmware?, currentVersion: String) throws -> Bool {
         guard let besFirmware else { return false }
         guard let serverVersion = besFirmware.version, !serverVersion.isEmpty else {
-            throw BluetoothError(code: "invalid_ota_manifest", message: "OTA manifest bes_firmware.version is missing.")
+            throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest bes_firmware.version is missing.")
         }
         if currentVersion.isEmpty {
             return true
