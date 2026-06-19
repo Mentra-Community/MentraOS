@@ -180,19 +180,15 @@ final class NavigationManager: NSObject {
         )
       }
 
-      // Simulation note: in sim mode the `.simulation` source may not emit a
-      // real device fix to satisfy the gate. Fall back to the first stop's
-      // *previous* leg origin — but we don't have one, so for sim we seed the
-      // gate with the first stop minus a tiny offset is wrong (degenerate).
-      // Instead, for sim we request immediately using the FIRST stop as origin
-      // is ALSO wrong (origin==dest). So: for sim, use the user's last known
-      // location if any; otherwise the simulator's initial location is nil and
-      // Mapbox will place the puck at the route start once the route is set.
-      // We therefore request using the first stop as the *route* origin only
-      // when a real fix never arrives — guarded by a short timeout.
-      if simulate {
-        self.armSimRouteFallback(nav: nav, completion: completion)
-      }
+      // First-fix TIMEOUT (live AND sim). The gate above waits for Mapbox's
+      // locationMatching publisher to emit the first fix before requesting the
+      // route. On a COLD APP LAUNCH that first fix can be slow or never arrive
+      // until the CLLocationManager fully spins up — which is exactly the
+      // "first nav after launch hangs at Starting…, works on the 2nd try" bug
+      // (the 2nd try has a warm location manager). So we ALWAYS arm a timeout:
+      // if no fix satisfies the gate in time, request the route from a one-shot
+      // CoreLocation fix / last known location so we never hang.
+      self.armFirstFixTimeout(nav: nav, completion: completion)
     }
   }
 
@@ -308,24 +304,45 @@ final class NavigationManager: NSObject {
       .store(in: &cancellables)
   }
 
-  /// In simulation, a real device fix may never arrive to satisfy the
-  /// first-fix gate. After a short delay, if the gate hasn't fired, request
-  /// the route using the device's last known location (or, lacking that, skip
-  /// — Mapbox places the sim puck at the route origin once the route is set).
-  private func armSimRouteFallback(nav: MapboxNavigation, completion: @escaping StartCompletion) {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-      guard let self, let pending = self.pendingRouteRequest else { return }
+  /// Safety net for the first-fix gate. The gate fires when Mapbox's
+  /// locationMatching emits the first fix; this fallback fires if that's slow
+  /// (cold-launch) or never comes. It retries a few times — on a cold start the
+  /// CLLocationManager populates `.location` within a second or two of starting
+  /// updates — and once it has any origin (Mapbox fix, our keep-alive manager,
+  /// or a fresh CLLocationManager) it requests the route from it. Only bails
+  /// with an error after exhausting all retries with no location at all.
+  private func armFirstFixTimeout(
+    nav: MapboxNavigation,
+    completion: @escaping StartCompletion,
+    attempt: Int = 0
+  ) {
+    let maxAttempts = 8        // ~8 × 0.75s ≈ 6s total before giving up
+    let interval: TimeInterval = 0.75
+    DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
+      guard let self else { return }
+      // Gate already fired (a real fix arrived) — nothing to do.
+      guard let pending = self.pendingRouteRequest else { return }
+
+      // Try every origin source we have, freshest first.
       let origin = self.lastReportedCoord
+        ?? self.keepAliveLocation?.location?.coordinate
         ?? CLLocationManager().location?.coordinate
-      guard let origin else {
-        // No origin at all — request using the first stop as origin is
-        // degenerate; bail with an error so JS can recover rather than hang.
+
+      if let origin {
+        print("[NavMgr] first-fix timeout fallback fired (attempt \(attempt)) — requesting route from last-known origin")
         self.pendingRouteRequest = nil
-        completion(false, "no location fix for simulated route origin")
+        pending(origin.latitude, origin.longitude)
         return
       }
-      self.pendingRouteRequest = nil
-      pending(origin.latitude, origin.longitude)
+
+      // No location yet — keep retrying until we run out of attempts.
+      if attempt + 1 < maxAttempts {
+        self.armFirstFixTimeout(nav: nav, completion: completion, attempt: attempt + 1)
+      } else {
+        print("[NavMgr] first-fix timeout — no location after \(maxAttempts) attempts, giving up")
+        self.pendingRouteRequest = nil
+        completion(false, "no location fix to start navigation")
+      }
     }
   }
 

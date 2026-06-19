@@ -1217,13 +1217,18 @@ export class NavigationController {
       // Mapbox detected the user off-route and is fetching a new route.
       next = "Rerouting…"
     } else if (this.offRouteAdvisory && running) {
-      // 15–30m advisory band. Replace the (now stale) maneuver text
-      // with a return-to-route prompt + live distance back to the
-      // path until the user either gets back on (cleared in
-      // logOffRouteThresholds) or crosses 30m and the auto-rebuild
-      // flow takes over.
+      // OFF ROUTE (≥ ADVISORY_M, before Mapbox reroutes). Replace the normal
+      // instruction + stats entirely (GLASSES ONLY) with "Go back in X m", where
+      // X is the live perpendicular distance to the route and GROWS the further
+      // the user strays. This persists until either:
+      //   • Mapbox reroutes (status → "rerouting" above takes over the HUD, then
+      //     the new route's instruction/stats), or
+      //   • the user returns within ADVISORY_M (bucket 0 → md branch restores the
+      //     original instruction + stats).
+      // We set `next` to ONLY the go-back line; `stats` is suppressed below so
+      // the bottom box doesn't show the (now irrelevant) trip distance/ETA.
       const d = this.offRouteAdvisoryDistanceM
-      next = d != null ? `Go back\n${formatDistance(d, this.unitSystem)}` : "Go back\nto route"
+      next = d != null ? `Go back\nin ${formatDistance(d, this.unitSystem)}` : "Go back\nto route"
     } else if (md) {
       // Next-turn HUD. The DISTANCE is driven the SAME way the bottom trip-stats
       // box is — recomputed live from this.coords against the route polyline
@@ -1285,7 +1290,12 @@ export class NavigationController {
     // SINGLE-CONTAINER HUD: cram everything (maneuver block + trip stats) into
     // the ONE bottom container — the proven-smooth, low-latency, phone-1:1 path.
     // The separate top maneuver box lagged/glitched, so we drop it and blank it.
-    const stats = running ? this.buildTripStats() : null
+    // Suppress the trip stats while the off-route "Go back in X m" advisory is
+    // showing — the user isn't on the route, so destination distance/ETA are
+    // irrelevant; the go-back line owns the whole frame until they return or
+    // Mapbox reroutes.
+    const showStats = running && !(this.offRouteAdvisory && status !== "rerouting" && status !== "arrived")
+    const stats = showStats ? this.buildTripStats() : null
     // Stack the maneuver block over the stats line, blank line between, or just
     // one if the other is absent.
     const combined = [next, stats].filter(Boolean).join("\n\n")
@@ -1342,6 +1352,12 @@ export class NavigationController {
   // active route drawn on top. Roads are cached and only re-fetched from Overpass
   // when the user moves past a threshold (PoC: fetch-on-move, ~1s lag accepted).
   private readonly OSM_MINIMAP_SIZE = 100 // matches the top-right container
+  // Geographic radius shown in the minimap. CALIBRATED to the pixel size so the
+  // map scale (meters-per-pixel) stays constant — that's what keeps traveled
+  // distance reading correctly. The renderer fits 2×radius into the pixel size:
+  //   pxPerMeter = SIZE / (2 × RADIUS) = 100 / 266 ≈ 0.376 px/m
+  // If you change SIZE, scale RADIUS proportionally or the map zooms and the
+  // traveled distance looks wrong.
   private readonly OSM_MINIMAP_RADIUS_M = 133
   // Large map shown on swipe-up. Capped at 200px: a single G2 image container
   // maxes out ~200px wide before it needs (unimplemented) quad-mode tiling.
@@ -1546,10 +1562,16 @@ export class NavigationController {
     const here = {lat: this.coords.lat, lng: this.coords.lng}
     const dist = distanceToPolylineMeters(here, route)
     if (dist == null) return
-    const bucket = dist >= OFF_ROUTE_TRIGGER_M ? 2 : dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
-    // Keep the advisory distance live so the HUD's "Go back 10m" line
-    // ticks down as the user moves. Done every coord update — only
-    // the bucket-transition log + rebuild trigger below run on edges.
+    // Two states now: 0 = on route (< ADVISORY_M), 1 = OFF route (≥ ADVISORY_M).
+    // The "Go back in X m" advisory shows for ANY distance ≥ ADVISORY_M and the
+    // X GROWS the further the user strays — it persists past the old TRIGGER_M
+    // band until either Mapbox reroutes (status → "rerouting", which takes over
+    // the HUD) or the user returns to within ADVISORY_M (back to the original
+    // instruction). TRIGGER_M is kept only for the diagnostic log threshold.
+    const bucket = dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
+    // Keep the advisory distance live so the glasses "Go back in X m" line
+    // tracks the user every fix — growing as they move away, shrinking as they
+    // return. Null when on route.
     const prevDistance = this.offRouteAdvisoryDistanceM
     this.offRouteAdvisoryDistanceM = bucket === 1 ? dist : null
     if (
@@ -1558,36 +1580,30 @@ export class NavigationController {
       prevDistance != null &&
       Math.round(prevDistance) !== Math.round(dist)
     ) {
-      // Same bucket, distance label would change — refresh so the HUD
-      // text follows the user. Coalescing in refreshHUD swallows
-      // identical frames so this is cheap.
+      // Same state, distance label changed — refresh so the "Go back in X m"
+      // number follows the user. Coalescing in refreshHUD swallows identical
+      // frames so this is cheap.
       this.refreshHUD()
     }
     if (bucket === this.lastOffRouteBucket) return
     this.lastOffRouteBucket = bucket
-    // Track the advisory band so refreshHUD() can show "Go back to
-    // route" while we wait for either a return-to-path (bucket 0) or
-    // a rebuild trigger (bucket 2).
+    // Advisory is active whenever we're off route. refreshHUD() shows the
+    // "Go back in X m" frame (glasses only) and the off-route toast on the phone
+    // while we wait for either a return-to-path or Mapbox's reroute.
     this.offRouteAdvisory = bucket === 1
     if (bucket === 0) {
-      // Returned within the route — back to maneuver text on the HUD.
-      this.refreshHUD()
-    } else if (bucket === 1) {
-      const msg = `> ${OFF_ROUTE_ADVISORY_M}m off route (${dist.toFixed(1)}m) — return to route`
+      // Returned within the route — back to the original maneuver text.
+      const msg = `back on route (${dist.toFixed(1)}m) — restoring directions`
       console.log(`[NavOffRoute] ${msg}`)
       this.appendLog(`[NavOffRoute] ${msg}`)
       this.refreshHUD()
-    } else if (bucket === 2) {
-      // > TRIGGER_M off route. We NO LONGER auto-rebuild here — the host
-      // Mapbox Navigation SDK owns off-route detection + rerouting natively
-      // and pushes the new route through `onRoute` (the `rerouting` status
-      // arrives via the native maneuver/update stream). Re-firing nav:start
-      // from JS would double the reroute and fight the native engine (the
-      // bug where the puck froze + reroutes felt doubled). This branch is
-      // now log-only; the advisory HUD band (bucket 1) is unaffected.
-      const msg = `> ${OFF_ROUTE_TRIGGER_M}m off route (${dist.toFixed(1)}m) — native SDK will reroute`
+    } else {
+      // Off route. Mapbox owns the actual reroute (native); this is just the
+      // advisory HUD. It persists + the distance grows until reroute or return.
+      const msg = `> ${OFF_ROUTE_ADVISORY_M}m off route (${dist.toFixed(1)}m) — go back / awaiting native reroute`
       console.log(`[NavOffRoute] ${msg}`)
       this.appendLog(`[NavOffRoute] ${msg}`)
+      this.refreshHUD()
     }
   }
 
@@ -1882,14 +1898,15 @@ function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachT
   }
 }
 
-// Off-route distance thresholds (meters). Widened from 15/30 to 20/35
-// so opposite-sidewalk crossings at typical urban 4-way intersections
-// don't read as deviations. Walking the far curb across a 4-lane road
-// (~15m wide including parking) lands you ~12-18m from Google's
-// route polyline — narrow enough to fall under the advisory band
-// instead of triggering a spurious rebuild.
+// Off-route advisory threshold (meters): how far off the route polyline the
+// user must be before the glasses show "Go back in X m". Set to 20m so
+// opposite-sidewalk crossings at typical urban 4-way intersections don't read
+// as deviations — walking the far curb across a 4-lane road (~15m wide incl.
+// parking) lands ~12-18m from the route polyline, just under this band. Above
+// 20m the advisory shows and its distance GROWS until Mapbox reroutes or the
+// user returns. (The old separate TRIGGER_M rebuild threshold was removed when
+// reroute became native-owned — there's only on/off now.)
 const OFF_ROUTE_ADVISORY_M = 20
-const OFF_ROUTE_TRIGGER_M = 35
 
 /**
  * Strip the trailing arrival-side hint Google's Routes API appends to
