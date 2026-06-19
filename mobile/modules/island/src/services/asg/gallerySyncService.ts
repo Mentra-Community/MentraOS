@@ -583,14 +583,20 @@ class GallerySyncService {
         if (!wifiEnabled) {
           console.error("[GallerySyncService]   ❌ WiFi is disabled - cannot sync")
 
-          // Mark that we're waiting for WiFi so we can auto-retry when user returns
-          this.waitingForWifiRetry = true
-
-          // Emit a notice; the host shows the "enable WiFi → open settings" alert. Set the
-          // cooldown timestamp optimistically so the next sync shows "WiFi initializing"
-          // (the host opens settings in response to this notice).
-          this.wifiSettingsOpenedAt = Date.now()
-          emitGalleryNotice({code: "wifi_off"})
+          // Don't arm the auto-retry / "WiFi initializing" cooldown yet — whether to arm
+          // them depends on the user's choice in the host's prompt, which only the host
+          // learns. The host renders an "enable WiFi → open settings" alert from this
+          // notice and calls ack() ONLY when the user opts to open settings; on Cancel it
+          // does nothing, so a declined prompt leaves no pending retry or phantom cooldown.
+          // The island still owns what arming MEANS (this closure) — the host only reports
+          // that the user took the affirmative action.
+          emitGalleryNotice({
+            code: "wifi_off",
+            ack: () => {
+              this.waitingForWifiRetry = true
+              this.wifiSettingsOpenedAt = Date.now()
+            },
+          })
           store.setSyncError("WiFi disabled - enable WiFi and try again")
 
           // Return early - do NOT proceed with sync
