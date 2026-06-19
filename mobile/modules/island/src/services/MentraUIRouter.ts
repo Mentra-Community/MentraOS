@@ -52,10 +52,12 @@ interface BoundWebView {
 /**
  * NOTE: the WebView ↔ host heartbeat was removed when the lifecycle
  * inversion landed. The current model is **at most one WebView at a
- * time, always foreground, spawn-cold-per-open** (same shape as the
- * cloud-WebView miniapps). User navigation closes it explicitly;
- * `onContentProcessDidTerminate` catches OS-level crashes; there's no
- * scenario where we'd silently leak a wedged WebView.
+ * time, foreground UI with an always-on background JSContext** (same
+ * shape as the cloud-WebView miniapps). User navigation closes it
+ * explicitly and `onContentProcessDidTerminate` catches OS-level
+ * crashes, but the host may still re-announce UI_OPEN for an already
+ * mounted WebView after app resume/dev respawn so the background can
+ * push a fresh authoritative snapshot.
  */
 
 export class MentraUIRouter {
@@ -96,6 +98,20 @@ export class MentraUIRouter {
   /** True iff a WebView is currently bound to the named package. */
   isBound(packageName: string): boolean {
     return this.bindings.has(packageName)
+  }
+
+  /**
+   * Re-announce the already-mounted WebView to the background JSContext.
+   * This covers dev background hot-reload, app resume, and thawed WebViews
+   * whose injected UI_SEND frames may have been missed while the host was
+   * suspended. Re-emitting UI_OPEN flips `ui.bound` back to true if needed
+   * and lets background code push a fresh snapshot via session.ui.onOpen.
+   *
+   * No-op if no WebView is currently bound for the package.
+   */
+  notifyReopen(packageName: string): void {
+    if (!this.bindings.has(packageName)) return
+    this.deliverToBackground(packageName, {type: "UI_OPEN"})
   }
 
   /**

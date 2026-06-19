@@ -24,13 +24,13 @@ export default function MiniappDevMain() {
 
       <Group>
         <RouteButton
-          label={translate("devSettings:miniappDevLoadUrlLabel")}
-          subtitle={translate("devSettings:miniappDevLoadUrlSubtitle")}
+          label={translate("debugSettings:miniappDevLoadUrlLabel")}
+          subtitle={translate("debugSettings:miniappDevLoadUrlSubtitle")}
           onPress={() => push("/miniapps/miniappdev/developer-url")}
         />
         <RouteButton
-          label={translate("devSettings:miniappDevScanLabel")}
-          subtitle={translate("devSettings:miniappDevScanSubtitle")}
+          label={translate("debugSettings:miniappDevScanLabel")}
+          subtitle={translate("debugSettings:miniappDevScanSubtitle")}
           onPress={() => push("/miniapps/miniappdev/scanner")}
         />
       </Group>

@@ -294,6 +294,20 @@ const en = {
     failedDescription: "Make sure the password was entered correctly",
     connectingDescription: "This may take up to 20 seconds",
     connectingToNetwork: "Connecting to {{network}}...",
+    errors: {
+      bluetoothPoweredOffTitle: "Bluetooth is turned off.",
+      bluetoothPoweredOffDescription: "Turn on phone Bluetooth, then try again.",
+      bluetoothPermissionTitle: "Bluetooth permission is needed.",
+      bluetoothPermissionDescription: "Allow Bluetooth permission, then try again.",
+      bluetoothUnsupportedTitle: "Bluetooth is not supported.",
+      bluetoothUnsupportedDescription: "This phone does not support Bluetooth.",
+      connectionInProgressTitle: "Connection already in progress.",
+      connectionInProgressDescription: "Wait for the current Wi-Fi connection attempt to finish.",
+      glassesNoResponseTitle: "The glasses did not respond.",
+      glassesNoResponseDescription: "Make sure they are nearby, then try again.",
+      connectionFailedTitle: "Failed to connect to the network.",
+      connectionFailedDescription: "Please check your password and try again.",
+    },
   },
   ota: {
     checkingForUpdates: "Checking for updates",
@@ -520,7 +534,9 @@ const en = {
     glassesWifiSettings: "Wi-Fi Networks",
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
     wifiUnavailable: "Connect a pair of glasses that support WiFi to access WiFi settings.",
+    debugSettings: "Debug settings",
     developerSettings: "Developer settings",
+    miniappDeveloperSettings: "Miniapp Developer Settings",
     disconnectGlasses: "Disconnect Glasses",
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
@@ -576,7 +592,7 @@ const en = {
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
   },
-  devSettings: {
+  debugSettings: {
     debugConsole: "Debug Console",
     debugConsoleSubtitle: "Enable the debug console.",
     miniappScanTitle: "Scan Mini App QR",
@@ -592,8 +608,9 @@ const en = {
     miniappScanPermissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
     miniappScanCheckingPermission: "Checking camera permission\u2026",
     miniappScanInvalidQrTitle: "Invalid QR",
-    miniappScanInvalidQrBody: "Expected a mentra-miniapp:// or http:// URL",
+    miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
+    miniappScanLoading: "Loading mini app…",
     miniappUrlTitle: "Load Mini App from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",
@@ -613,6 +630,11 @@ const en = {
     miniappDevLoadUrlSubtitle: "Enter a dev server URL to load a mini app",
     miniappDevScanLabel: "Scan Mini App QR Code",
     miniappDevScanSubtitle: "Scan a QR code from your dev server",
+  },
+  miniappDevSettings: {
+    title: "Miniapp Dev",
+    miniappDevMode: "Miniapp Dev Mode",
+    miniappDevModeSubtitle: "Enable miniapp dev mode",
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",
@@ -818,7 +840,7 @@ const en = {
     screenshotFeedbackMessage:
       "Our in-app feedback captures device logs, glasses state, and more. This is more useful for fixing issues than sending a screenshot through TestFlight. Please use the in-app feedback instead!",
     warning: "Warning",
-    developerSettingsWarning: "These settings may break the app. Use at your own risk.",
+    debugSettingsWarning: "These settings may break the app. Use at your own risk.",
     optOutOfBeta: "Opt Out of Beta",
   },
   errors: {
@@ -998,7 +1020,7 @@ const en = {
     store: "MiniApp Store",
     notify: "Notifications",
     feedback: "Give Feedback",
-    lmaInstaller: "Local Store",
+    lmaInstaller: "Dev Tools",
     lmaLoader: "Side Loader",
   },
   appInfo: {
@@ -1027,10 +1049,10 @@ const en = {
     miniAppLoader: "Miniapp loader",
     loadMiniApp: "Load miniapp",
   },
-  dev: {
-    developerMode: "Developer mode",
-    developerModeEnabled: "Developer mode enabled!",
-    developerModeMoreTaps: "{{number}} more taps to enable developer mode",
+  debug: {
+    debugMode: "Debug mode",
+    debugModeEnabled: "Debug mode enabled!",
+    debugModeMoreTaps: "{{number}} more taps to enable debug mode",
     superMode: "Super mode",
     superModeActivated: "Super mode activated! 🚀",
     superModeDeactivated: "Super mode deactivated",

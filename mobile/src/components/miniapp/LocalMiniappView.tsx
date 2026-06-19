@@ -1,27 +1,26 @@
-import {File} from "expo-file-system"
-import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, View} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {useCallback, useEffect, useRef, useState} from "react"
+import {AppState, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
-import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {
-  appRegistry,
   BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
+  DEV_APP_PACKAGE_NAME,
   devServerBridge,
+  miniappLauncher,
   useAppStatusStore,
 } from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
-import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
+import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import {SETTINGS, useSetting} from "@/stores/settings"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -35,17 +34,15 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
  * This was previously the body of the `/applet/local` route; it's now a
  * component so the <Compositor /> overlay can mount/unmount it as a miniapp is
  * foregrounded/backgrounded. The Compositor owns the opening animation,
- * back-swipe gesture, and capsule button — this component just exposes a
- * `goBack()` handle so the gesture can pop in-WebView history before
- * backgrounding.
+ * back-swipe gesture, and capsule button. This component drives the navigation
+ * store's `forceGestureEnabled` flag from the WebView's history state so the
+ * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
-export interface LocalMiniappViewHandle {
-  /** Pop the WebView's in-app history. Returns true if it had history to pop. */
-  goBack: () => boolean
-  /** Whether the WebView currently has back history. */
-  canGoBack: boolean
-}
+// Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
+const READY_TIMEOUT_MS = 5000
+const MAX_LOAD_ATTEMPTS = 10
+const UI_RESYNC_INTERVAL_MS = 10_000
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -56,12 +53,11 @@ interface LocalMiniappViewProps {
   devPort?: string
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
-  /** Notified whenever the WebView's in-app back history availability changes. */
-  onCanGoBackChange?: (canGoBack: boolean) => void
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
-const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProps>(({
+function LocalMiniappView({
   packageName,
   appName,
   version,
@@ -69,9 +65,9 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   iconUrl,
   devPort,
   onExit,
-  onCanGoBackChange,
   onShouldCapture = () => undefined,
-}, ref) => {
+  showCapsule = false,
+}: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
   const colorScheme = theme.isDark ? "dark" : "light"
@@ -81,41 +77,125 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
 
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [isLoaded, setIsLoaded] = useState(false)
-  const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [loadGatePassed, setLoadGatePassed] = useState(false)
+  const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
-  // Phase machine for the pre-WebView affordance. "ready" means we have a
-  // uiUri and the WebView is mounted; the loading card is rendered for
-  // every phase prior so the user always sees something happening.
-  const [phase, setPhase] = useState<"installing" | "spawning" | "opening" | "ready" | "error">(
-    devUrl || version ? "installing" : "error",
-  )
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // ----- Load-state tracking -------------------------------------------------
+  //
+  // The `ready` handshake has exactly one source of truth: `connected`.
+  // onLoadEnd only means the WebView painted — not that the miniapp UI JS
+  // mounted and called mentra.ready(). After each load we arm a timer; if no
+  // `ready` envelope arrives within READY_TIMEOUT_MS we reload, up to
+  // MAX_LOAD_ATTEMPTS total, then give up with an error.
+  //
+  //   connected     — state; drives the splash (isLoaded) and re-renders.
+  //   connectedRef  — ref mirror read inside handleLoadEnd and the ready
+  //                   timer. WebView events (onMessage `ready`, a trailing
+  //                   onLoadEnd) can land in the same bridge flush, before a
+  //                   re-render refreshes closures — a captured stale
+  //                   `connected=false` there would arm a timer that later
+  //                   reloads an already-live miniapp.
+  //   loadAttempts  — state (not a ref) so the dev "Loading… (attempt N of
+  //                   M)" splash label re-renders as attempts increment.
+  //                   attemptsRef is the counter the timer reads/bumps (the
+  //                   reload side effect can't live inside a setLoadAttempts
+  //                   updater — updaters must stay pure).
+  //   readyTimerRef — the pending ready-timeout timer, if any.
+  const [connected, setConnected] = useState(false)
+  const connectedRef = useRef(false)
+  const [loadAttempts, setLoadAttempts] = useState(0)
+  const attemptsRef = useRef(0)
+  const readyTimerRef = useRef<number | null>(null)
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      goBack: () => {
-        if (!webViewCanGoBack || !webViewRef.current) return false
-        webViewRef.current.goBack()
-        return true
-      },
-      canGoBack: webViewCanGoBack,
-    }),
-    [webViewCanGoBack],
+  const clearReadyTimer = useCallback(() => {
+    if (readyTimerRef.current) {
+      BgTimer.clearTimeout(readyTimerRef.current)
+      readyTimerRef.current = null
+    }
+  }, [])
+
+  // The miniapp sent `ready` — handshake complete, stop any pending retry.
+  const markConnected = useCallback(() => {
+    connectedRef.current = true
+    setConnected(true)
+    clearReadyTimer()
+  }, [clearReadyTimer])
+
+  const refreshUiBinding = useCallback(
+    (reason: string, log = true, probeBackground = false) => {
+      if (!packageName) return
+      const mj = getMentraJS()
+      if (!mj?.uiRouter.isBound(packageName)) return
+      if (log) {
+        console.log(`LocalMiniappView: refreshing UI bridge for ${packageName} (${reason})`)
+      }
+      mj.uiRouter.notifyReopen(packageName)
+      if (probeBackground) {
+        mj.router.probeForegroundLiveness(packageName, reason)
+      }
+    },
+    [packageName],
   )
+
+  // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
+  const resetLoadState = useCallback(() => {
+    connectedRef.current = false
+    setConnected(false)
+    attemptsRef.current = 0
+    setLoadAttempts(0)
+    clearReadyTimer()
+  }, [clearReadyTimer])
+
+  const fail = useCallback(
+    (msg: string) => {
+      console.warn(`LocalMiniappView: ${packageName} ${msg}`)
+      setLabel(undefined)
+      setErrorMessage(msg)
+      clearReadyTimer()
+    },
+    [packageName, clearReadyTimer],
+  )
+
+  // Splash copy: `label` is transient progress text, `errorMessage` is the
+  // terminal failure line (set by fail() or by the retry loop giving up).
+  const [label, setLabel] = useState<string | undefined>(undefined)
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (Platform.OS !== "android") return
-    // android is slow to start (and doesn't handle opacity properly) so we need to wait for the animation to complete
-    // before attempting to load the webview or we'll get visual jank
+    // if (Platform.OS !== "android") return
+    // delay loading the webview until the animation is complete
     BgTimer.setTimeout(() => {
-      setAndroidGatePassed(true)
+      setLoadGatePassed(true)
     }, 1000)
   }, [])
+
+  // WebView injections can be missed while Android/iOS is resuming or when the
+  // host process thaws after a sleep/network interruption. The background
+  // runtime owns canonical state, so periodically re-announce the mounted UI
+  // while foregrounded; miniapps hydrate from their session.ui.onOpen snapshot.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      const prevState = appStateRef.current
+      appStateRef.current = nextState
+      if (prevState !== "active" && nextState === "active") {
+        refreshUiBinding("app-active", true, true)
+      }
+    })
+
+    const intervalId = BgTimer.setInterval(() => {
+      if (!connectedRef.current || AppState.currentState !== "active") return
+      refreshUiBinding("foreground-resync", false)
+    }, UI_RESYNC_INTERVAL_MS)
+
+    return () => {
+      sub.remove()
+      BgTimer.clearInterval(intervalId)
+    }
+  }, [refreshUiBinding])
 
   const {setForceGestureEnabled} = useNavigationStore.getState()
 
@@ -146,21 +226,14 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   // Block native back gesture/button — route through handleWebViewBack for Android.
   // focusEffectPreventBack(handleWebViewBack, false)
 
-  // Dynamically toggle gesture handling based on webview navigation state:
-  // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
-  //   native swipe-back so user can exit miniapp with the real iOS animation.
-  // - Has history: enable WebView's gesture for in-webview navigation,
-  //   React Navigation's gesture stays blocked by focusEffectPreventBack.
+  // Dynamically toggle the Compositor's left-edge swipe-to-back gesture based on
+  // the WebView's navigation state (via the shared `forceGestureEnabled` flag):
+  // - Page 0 (no history): enable the Compositor swipe so a back-swipe
+  //   backgrounds the miniapp with the real iOS animation.
+  // - Has history: disable the Compositor swipe so the WebView's own
+  //   allowsBackForwardNavigationGestures handles in-webview back navigation.
   useEffect(() => {
-    if (!webViewCanGoBack) {
-      // Page 0: force React Navigation gesture on, WebView gesture off
-      setForceGestureEnabled(true)
-    } else {
-      // Has history: let focusEffectPreventBack handle it (gesture disabled),
-      // WebView's allowsBackForwardNavigationGestures handles in-webview swipe
-      setForceGestureEnabled(false)
-    }
-
+    setForceGestureEnabled(!webViewCanGoBack)
     return () => setForceGestureEnabled(false)
   }, [webViewCanGoBack, setForceGestureEnabled])
 
@@ -173,113 +246,60 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
 
   useEffect(() => {
     if (!packageName) return
-    let cancelled = false
 
-    const fail = (msg: string) => {
-      if (cancelled) return
-      console.warn(`LocalMiniappView: ${packageName} ${msg}`)
-      setErrorMessage(msg)
-      setPhase("error")
+    // Fresh attempt budget per (re)launch — a re-foreground / new package
+    // restarts the ready handshake and reload-retry loop from scratch.
+    resetLoadState()
+
+    const ac = new AbortController()
+    const {signal} = ac
+    // RN's AbortSignal doesn't reliably ship throwIfAborted(), so roll our own.
+    const checkpoint = () => {
+      if (signal.aborted) throw Object.assign(new Error("launch superseded"), {name: "AbortError"})
     }
 
-    const launch = async () => {
-      let resolvedVersion: string | null = null
+    const launch = async (): Promise<void> => {
+      // Background spawn now lives in the runtime's MiniappLauncher (resolve the
+      // bundle → read the manifest → spawn the JSContext, handling dev HTTP vs
+      // released file:// snapshot). This component is render-only: it asks the
+      // launcher to ensure the background context is running (idempotent — a
+      // re-foreground of a live miniapp just rebuilds this WebView half) and
+      // mounts the resolved UI entry it hands back. Errors throw and are caught
+      // by launch().catch below.
+      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort})
 
-      if (devUrl) {
-        setPhase("installing")
-        const portNum = resolveDevPort(devPort, packageName)
-        if (portNum === null) {
-          fail("no dev port configured")
-          return
-        }
-        const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-        if (!sidecarBase) {
-          fail(`bad dev URL "${devUrl}"`)
-          return
-        }
-        const versionOverride = `dev-${Date.now()}`
-        const installRes = await appRegistry.installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-        if (installRes.is_error()) {
-          fail(`dev snapshot failed: ${installRes.error?.message ?? installRes.error}`)
-          return
-        }
-        appRegistry.gcDevVersions(packageName, 2)
-        devServerBridge.connect(packageName, devUrl, portNum)
-        storage.save(`${packageName}_dev_last_reachable`, Date.now())
-        resolvedVersion = await appRegistry.getActiveVersion(packageName)
-      } else if (version) {
-        resolvedVersion = version
-      } else {
-        fail("no devUrl or version — cannot launch")
-        return
-      }
-
-      if (!resolvedVersion || cancelled) return
-
-      const entryPaths = appRegistry.getMiniappEntryPaths(packageName, resolvedVersion)
-      if (!entryPaths?.background) {
-        fail(`${resolvedVersion} missing entry.background`)
-        return
-      }
-      const manifest = appRegistry.getMiniappManifest(packageName, resolvedVersion) as {
-        permissions?: Array<{type: string; required?: boolean; description?: string}>
-        hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-      } | null
-      const declaredPermissions = (manifest?.permissions ?? [])
-        .map((p) => p.type)
-        .filter((t): t is string => typeof t === "string")
-      const installedManifest = manifest
-        ? {
-            permissions: manifest.permissions,
-            hardwareRequirements: manifest.hardwareRequirements,
-          }
-        : undefined
-
-      const mj = getMentraJS()
-      if (!mj) {
-        fail("MentraJS runtime not bootstrapped")
-        return
-      }
-
-      if (cancelled) return
-      setPhase("spawning")
-
-      // Spawn the JSContext if it isn't already alive. Re-foregrounding a
-      // running miniapp just rebuilds the WebView half.
-      if (!mj.router.registeredPackages().includes(packageName)) {
-        const bgSource = new File(entryPaths.background).textSync()
-        const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
-          permissions: declaredPermissions,
-          installedManifest,
-        })
-        if (!ok) {
-          fail("spawn failed — see logs")
-          return
-        }
-      }
-
-      // If the user backgrounded the app while we were spawning, leave the
-      // JSContext alive — background miniapps keep running across UI close.
-      // The only cleanup this component owes is unbinding the WebView
+      // Deliberately AFTER the spawn, not before: if we were superseded while
+      // spawning, leave the JSContext alive (background miniapps keep running
+      // across UI close) but don't touch UI state for a view we no longer
+      // show. The only cleanup this component owes is unbinding the WebView
       // (handled by the effect's return).
-      if (cancelled) return
+      checkpoint()
 
-      setPhase("opening")
-      if (entryPaths.ui) {
-        setUiUri(entryPaths.ui)
-        setUiBaseDir(entryPaths.ui.replace(/\/[^/]+$/, "/"))
-      }
-      if (!cancelled) setPhase("ready")
+      setLabel(undefined)
+      // Set unconditionally: when the launcher resolves no UI entry (e.g. the
+      // dev server dropped, or a re-foreground couldn't re-resolve), clearing
+      // prevents the WebView from continuing to show a stale / previous URL.
+      setUiUri(result.uiUri)
+      setUiBaseDir(result.uiBaseDir)
     }
 
-    launch()
+    launch().catch((e: Error) => {
+      if (e.name === "AbortError") return // stale run — ignore entirely
+      // if (devUrl) {
+      //   // failed to load the dev url (we probably are connected to a different wifi network)
+      //   useAppStatusStore.getState().clearForeground()
+      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
+      //   return
+      // }
+      fail(e.message)
+    })
 
     return () => {
-      cancelled = true
-      const mj = getMentraJS()
-      mj?.uiRouter.unbindWebView(packageName)
+      ac.abort()
+      clearReadyTimer()
+      getMentraJS()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort])
+  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
   // ----- WebView bindings ----------------------------------------------------
 
@@ -300,30 +320,80 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
           console.warn(`LocalMiniappView: inject failed for ${packageName}:`, e)
         }
       })
+      BgTimer.setTimeout(() => {
+        if (webViewRef.current === instance) {
+          refreshUiBinding("bind", false, true)
+        }
+      }, 250)
     },
-    [packageName],
+    [packageName, refreshUiBinding],
   )
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      // Observe the miniapp's `ready` envelope (posted by mentra.ready() in
+      // the WebView shim). This is the real "UI mounted and bridge wired up"
+      // signal — gate the splash on it instead of onLoadEnd. We only observe;
+      // the envelope still flows on to routeFromWebView below (which fires
+      // UI_OPEN to the background), so we must NOT early-return here.
+      if (!connectedRef.current && isReadyEnvelope(event.nativeEvent.data)) {
+        markConnected()
+      }
+      // Intercept `dev_log` envelopes from the WebView's console-tap shim
+      // (miniappGlobals.ts wraps console.log/warn/error to post these).
+      // MentraUIRouter does NOT handle dev_log — it drops unknown
+      // envelopes silently — so without this interception WebView console
+      // output never reaches the dev sidecar or the RN console. Affects
+      // both iOS and Android: the legacy single-bundle webview.tsx had
+      // its own forwardWebViewDevLog helper that did this, but
+      // LocalMiniappView (the two-layer path) lacked the equivalent
+      // until now.
+      if (forwardWebViewDevLog(packageName, event.nativeEvent.data)) return
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
-    [packageName],
+    [packageName, markConnected],
   )
 
-  const handleNavStateChange = useCallback(
-    ({canGoBack}: {canGoBack: boolean}) => {
-      setWebViewCanGoBack(canGoBack)
-      onCanGoBackChange?.(canGoBack)
-    },
-    [onCanGoBackChange],
-  )
-
-  const handleLoadEnd = useCallback(() => {
-    setIsLoaded(true)
+  const handleNavStateChange = useCallback(({canGoBack}: {canGoBack: boolean}) => {
+    setWebViewCanGoBack(canGoBack)
   }, [])
+
+  // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
+  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we count
+  // it as a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
+  //
+  // The attempt counter is bumped only when a timer actually fires without
+  // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
+  // several times (redirects, SPA history changes, sub-frame loads); each of
+  // those just re-arms the timer. Counting per-onLoadEnd would inflate the
+  // number (you'd see ~4 attempts on a normal load before `ready` lands).
+  const handleLoadEnd = useCallback(() => {
+    console.log("LocalMiniappView: handleLoadEnd, connected:", connectedRef.current)
+    if (connectedRef.current) return
+    clearReadyTimer()
+    readyTimerRef.current = BgTimer.setTimeout(() => {
+      readyTimerRef.current = null
+      if (connectedRef.current) return
+      // A real "ready never arrived" timeout — this counts as one attempt.
+      const attempt = attemptsRef.current + 1
+      attemptsRef.current = attempt
+      setLoadAttempts(attempt)
+      if (attempt >= MAX_LOAD_ATTEMPTS) {
+        console.warn(`LocalMiniappView: ${packageName} never sent ready after ${MAX_LOAD_ATTEMPTS} attempts`)
+        setErrorMessage("miniapp failed to load")
+        setLabel(undefined)
+      } else {
+        console.log(`LocalMiniappView: reloading, attempt ${attempt} of ${MAX_LOAD_ATTEMPTS}`)
+        try {
+          webViewRef.current?.reload()
+        } catch (e) {
+          console.warn(`LocalMiniappView: reload(${packageName}) failed:`, e)
+        }
+      }
+    }, READY_TIMEOUT_MS)
+  }, [packageName, clearReadyTimer])
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
@@ -345,87 +415,56 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   }, [packageName])
 
   // Dev hot-reload: when the dev server signals a reload for THIS miniapp
-  // (e.g. a file under src/ui/ changed), refresh the WebView. The JSContext
-  // respawn for src/background/ changes is handled by mentraJsBootstrap via
+  // (e.g. a file under src/ui/ changed), refresh the WebView. Because the dev
+  // UI is loaded straight off the dev server over HTTP (with cache-control:
+  // no-store), a plain reload re-fetches the freshly built index.html + its
+  // content-hashed chunks — no re-install needed. The JSContext respawn for
+  // src/background/ changes is handled by mentraJsBootstrap via
   // devServerBridge.onRespawnBackground.
   useEffect(() => {
     if (!packageName || !devUrl) return
     devServerBridge.onReload((pkg) => {
       if (pkg !== packageName) return
+      // Fresh content → fresh ready handshake + reload-retry budget.
+      resetLoadState()
       try {
         webViewRef.current?.reload()
       } catch (e) {
         console.warn(`LocalMiniappView: reload(${packageName}) failed:`, e)
       }
     })
-  }, [packageName, devUrl])
+  }, [packageName, devUrl, resetLoadState])
 
   if (!packageName) {
     return <Text text="Missing required parameters" />
   }
 
-  // if (Platform.OS === "android" && !androidGatePassed) {
-  //   return (
-  //     <View className="flex-1">
-  //       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-  //     </View>
-  //   )
-  // }
-
-  // Loading affordance: the WebView only mounts once entry resolution +
-  // JSContext spawn complete. The splash covers the early frames where the
-  // WebView is mounted but hasn't painted yet.
-  let androidGateNotPassed = Platform.OS === "android" && !androidGatePassed
-
-  if (phase !== "ready" || !uiUri) {
-    // return (
-    //   <View className="flex-1">
-    //     <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-    //   </View>
-    // )
-    let label
-    switch (phase) {
-      case "installing":
-        label = "Downloading..."
-        break
-      case "spawning":
-        label = "Starting…"
-        break
-      case "opening":
-        label = "Opening…"
-        break
-      default:
-        label = "Couldn't open"
-        break
-    }
+  if (!loadGatePassed) {
     return (
-      <View className="flex-1 items-center justify-center px-8 bg-background">
-        <View className="items-center gap-4">
-          {iconUrl ? (
-            <Image source={{uri: iconUrl}} style={{width: 72, height: 72, borderRadius: 16}} resizeMode="cover" />
-          ) : (
-            <View
-              style={{
-                width: 72,
-                height: 72,
-                borderRadius: 16,
-                backgroundColor: "rgba(120,120,120,0.2)",
-              }}
-            />
-          )}
-          {appName ? <Text className="text-base font-semibold text-center" text={appName} /> : null}
-          {phase === "error" ? (
-            <Text
-              className="text-[13px] text-center text-red-500 max-w-[280px]"
-              text={errorMessage ?? "Couldn't open"}
-            />
-          ) : (
-            <View className="flex-row items-center gap-2">
-              <ActivityIndicator />
-              <Text className="text-[13px] text-muted-foreground" text={label} />
-            </View>
-          )}
-        </View>
+      <View className="flex-1">
+        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
+      </View>
+    )
+  }
+
+  let isDevApp = packageName == DEV_APP_PACKAGE_NAME
+  if (isDevApp) {
+    appName = undefined
+  }
+
+  if (!uiUri) {
+    return (
+      <View className="flex-1">
+        <MiniappSplash
+          name={appName}
+          iconUrl={iconUrl}
+          bgColor={theme.colors.background}
+          isLoaded={false}
+          error={errorMessage}
+          label={label}
+          devApp={isDevApp}
+        />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -446,41 +485,12 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   const uiShim = buildMentraUiShim({packageName})
   const injectedJS = `${globalsScript}\n${uiShim}`
 
-  if (androidGateNotPassed) {
-    return (
-      <View className="flex-1 bg-transparent" style={{borderRadius: theme.spacing.s12}}>
-        <View className="w-1 h-1">
-          <WebView
-            ref={handleRef}
-            source={{uri: uiUri}}
-            originWhitelist={["*"]}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowingReadAccessToURL={uiBaseDir ?? undefined}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            injectedJavaScriptBeforeContentLoaded={injectedJS}
-            onMessage={handleMessage}
-            onLoadEnd={handleLoadEnd}
-            onContentProcessDidTerminate={handleTerminate}
-            onError={handleError}
-            onNavigationStateChange={handleNavStateChange}
-            allowsBackForwardNavigationGestures={true}
-            bounces={false}
-            overScrollMode="never"
-            automaticallyAdjustContentInsets={false}
-            contentInsetAdjustmentBehavior="never"
-            scalesPageToFit={false}
-            setBuiltInZoomControls={false}
-            setDisplayZoomControls={false}
-            webviewDebuggingEnabled={__DEV__}
-            style={{flex: 1, borderRadius: theme.spacing.s12}}
-          />
-        </View>
-        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-        <CapsuleMenu forceShow={true} />
-      </View>
-    )
+  // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
+  // show retry progress on the splash. Once connected, the splash hides;
+  // once the retry budget is spent, errorMessage replaces the label.
+  let connectingLabel = undefined
+  if (loadAttempts > 0 && devMode && !errorMessage) {
+    connectingLabel = `Loading… (attempt ${loadAttempts + 1} of ${MAX_LOAD_ATTEMPTS})`
   }
 
   return (
@@ -513,33 +523,88 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
         scalesPageToFit={false}
         setBuiltInZoomControls={false}
         setDisplayZoomControls={false}
+        // Android: forces requestDisallowInterceptTouchEvent(true) on every
+        // touch so the RN parent ViewGroup can't steal multi-touch events
+        // mid-pinch. Fixes pinch-zoom freeze on JS-driven maps (Google
+        // Maps) where the second finger's touchend gets eaten and the
+        // recognizer stays stuck in zoom mode. See flutter#182828,
+        // react-native-webview#1649, manuelstofer/pinchzoom#115.
+        nestedScrollEnabled={true}
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
-      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
+      <MiniappSplash
+        name={appName}
+        iconUrl={iconUrl}
+        bgColor={theme.colors.background}
+        isLoaded={connected}
+        error={errorMessage}
+        label={connectingLabel}
+        devApp={isDevApp}
+        disableFadeIn={true}
+      />
       {/* <View className="flex-1 bg-red-500"/> */}
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
-})
+}
 
 export default LocalMiniappView
 
-function resolveDevPort(searchParam: string | undefined, packageName: string): number | null {
-  if (searchParam) {
-    const n = parseInt(searchParam, 10)
-    if (Number.isFinite(n)) return n
+/**
+ * True iff `raw` is the WebView shim's `{type:"ready"}` envelope, posted by
+ * `mentra.ready()` (mentraUiShim.ts) once the miniapp UI has mounted and
+ * wired up its `window.mentra` bridge. LocalMiniappView uses this as the
+ * real "loaded" signal — onLoadEnd only means the WebView painted.
+ */
+function isReadyEnvelope(raw: string): boolean {
+  try {
+    return (JSON.parse(raw) as {type?: string}).type === "ready"
+  } catch {
+    return false
   }
-  const stored = storage.load<number>(`${packageName}_dev_port`)
-  if (stored.is_ok()) return stored.value
-  return null
 }
 
-function buildSidecarBaseUrl(devUrl: string, sidecarPort: number): string | null {
+/**
+ * Intercept the WebView's console-tap `dev_log` envelope. The shim in
+ * miniappGlobals.ts wraps `console.log/warn/error/info/debug` to post
+ * `{payload:{type:"dev_log", level, args, ...}}` via
+ * `window.ReactNativeWebView.postMessage`. Without this interception
+ * `MentraUIRouter` would drop the envelope silently (it only knows
+ * `msg` / `cancel` shapes) and the dev sidecar would never receive UI
+ * logs — that's the root cause of "WebView console output never reaches
+ * the terminal on iOS" we hit while debugging long-press.
+ *
+ * Forwards to:
+ *   1. `devServerBridge.forwardLog(packageName, level, args, ts, "ui")` —
+ *      ships to the laptop's `mentra-miniapp dev` terminal. No-op when no
+ *      sidecar is connected.
+ *   2. The React Native console — surfaces the log in Metro / Xcode /
+ *      adb logcat so installed-miniapp errors are still inspectable when
+ *      there's no laptop attached.
+ *
+ * Returns true when the frame was a dev_log envelope and was handled
+ * (caller should stop routing); false otherwise.
+ */
+function forwardWebViewDevLog(packageName: string, raw: string): boolean {
+  let env: {payload?: {type?: string; level?: string; args?: unknown; timestamp?: number}}
   try {
-    const url = new URL(devUrl)
-    return `${url.protocol}//${url.hostname}:${sidecarPort}`
+    env = JSON.parse(raw)
   } catch {
-    return null
+    return false
   }
+  const payload = env.payload
+  if (!payload || payload.type !== "dev_log") return false
+  const level = typeof payload.level === "string" ? payload.level : "log"
+  const args = Array.isArray(payload.args) ? (payload.args as unknown[]) : []
+  const timestamp = typeof payload.timestamp === "number" ? payload.timestamp : Date.now()
+  devServerBridge.forwardLog(packageName, level, args, timestamp, "ui")
+  const tag = `[MINIAPP ${packageName}]`
+  const fn = (console as unknown as Record<string, (...a: unknown[]) => void>)[level] ?? console.log
+  try {
+    fn(tag, ...args)
+  } catch {
+    console.log(tag, ...args)
+  }
+  return true
 }

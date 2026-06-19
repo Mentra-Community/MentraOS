@@ -1,0 +1,86 @@
+---
+title: "Playing Audio Files"
+description: "Play audio files from URLs through the glasses speakers"
+---
+
+Use `session.speaker.play()` to play audio files from a URL. The audio is streamed to the user's phone and played through the glasses speakers (or phone speakers if the glasses don't have speakers).
+
+## Basic Usage
+
+```typescript
+session.speaker.play({ url: "https://example.com/sound.mp3" });
+```
+
+## Supported Formats
+
+- **MP3** - most common, recommended
+- **WAV** - uncompressed, larger files
+- **OGG** - open format, good compression
+
+The URL must be publicly accessible. The MentraOS Cloud fetches the audio and streams it to the user's device.
+
+## Common Patterns
+
+### Sound effects for actions
+
+```typescript
+session.transcription.on((data) => {
+  if (!data.isFinal) return;
+
+  const text = data.text.toLowerCase();
+
+  if (text.includes("start timer")) {
+    session.speaker.play({ url: "https://example.com/timer-start.mp3" });
+  }
+});
+```
+
+### Alert sounds
+
+```typescript
+session.phone.notifications.on((notification) => {
+  session.speaker.play({ url: "https://example.com/notification.mp3" });
+  session.display.showText(`${notification.app}: ${notification.title}`);
+});
+```
+
+### Background music or ambient audio
+
+```typescript
+session.speaker.play({ url: "https://example.com/ambient.mp3" });
+```
+
+## Audio Streaming
+
+For real-time audio (like AI voice responses or live audio processing), use `session.speaker.createStream()` instead of `play()`:
+
+```typescript
+const stream = session.speaker.createStream();
+
+// Write audio chunks to the stream
+stream.write(audioChunk);
+
+// Close when done
+stream.close();
+```
+
+This is used for conversational AI integrations (Gemini Live, OpenAI Realtime) where audio is generated in real time rather than served from a static file.
+
+## Tips
+
+- Keep audio files short. Long audio files block the speaker for the entire duration.
+- Use MP3 for the best balance of quality and file size.
+- Host audio files on a CDN for fast delivery.
+- Pair audio with a display update so the user gets both visual and audio feedback.
+
+## Migrating from v2
+
+```typescript
+// v2
+session.audio.playAudio({ audioUrl: "https://example.com/sound.mp3" });
+
+// v3
+session.speaker.play({ url: "https://example.com/sound.mp3" });
+```
+
+Same method, just on `session.speaker` instead of `session.audio`. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

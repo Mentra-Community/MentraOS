@@ -23,7 +23,7 @@ You're right - duplicating the update check logic would be inefficient and error
       "apkUrl": "...",
       "sha256": "..."
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.recovery": {
       "versionCode": 2,
       "apkUrl": "...",
       "sha256": "..."

@@ -49,7 +49,8 @@ public struct VoiceActivityDetectionStatusEvent: CustomStringConvertible {
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?? true
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled") ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         self.values = values
     }
 
@@ -72,6 +73,166 @@ public struct SpeakingStatusEvent: CustomStringConvertible {
     }
 }
 
+public struct OtaUpdateAvailableEvent: CustomStringConvertible {
+    public let versionCode: Int?
+    public let versionName: String?
+    public let updates: [String]
+    public let totalSize: Int?
+    public let cacheReady: Bool?
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        versionCode = intValue(values["version_code"])
+        versionName = stringValue(values, "version_name")
+        updates = values["updates"] as? [String] ?? []
+        totalSize = intValue(values["total_size"])
+        cacheReady = boolValue(values, "cache_ready")
+        self.values = values
+    }
+
+    public var description: String {
+        "OtaUpdateAvailableEvent(versionName: \(versionName ?? "unknown"), updates: \(updates.joined(separator: ",")))"
+    }
+}
+
+public struct OtaStartAckEvent: CustomStringConvertible {
+    public let timestamp: Int?
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        timestamp = intValue(values["timestamp"])
+        self.values = values
+    }
+
+    public var description: String {
+        "OtaStartAckEvent(timestamp: \(timestamp.map(String.init) ?? "unknown"))"
+    }
+}
+
+public struct OtaStatusEvent: CustomStringConvertible {
+    public let sessionId: String
+    public let totalSteps: Int
+    public let currentStep: Int
+    public let stepType: String
+    public let phase: String
+    public let stepPercent: Int
+    public let overallPercent: Int
+    public let status: String
+    public let errorMessage: String?
+    public let glassesTimeMs: Int?
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        sessionId = stringValue(values, "session_id") ?? ""
+        totalSteps = intValue(values["total_steps"]) ?? 0
+        currentStep = intValue(values["current_step"]) ?? 0
+        stepType = stringValue(values, "step_type") ?? ""
+        phase = stringValue(values, "phase") ?? ""
+        stepPercent = intValue(values["step_percent"]) ?? 0
+        overallPercent = intValue(values["overall_percent"]) ?? 0
+        status = stringValue(values, "status") ?? ""
+        errorMessage = stringValue(values, "error_message")
+        glassesTimeMs = intValue(values["glasses_time_ms"])
+        self.values = values
+    }
+
+    public var description: String {
+        "OtaStatusEvent(status: \(status), overallPercent: \(overallPercent))"
+    }
+}
+
+public struct OtaQueryResult: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var type: String {
+        stringValue(values, "type") ?? ""
+    }
+
+    public var status: String? {
+        stringValue(values, "status")
+    }
+
+    public var description: String {
+        "OtaQueryResult(type: \(type), status: \(status ?? "unknown"))"
+    }
+}
+
+public struct SettingsAckEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var setting: String {
+        stringValue(values, "setting") ?? ""
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? "applied"
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var fov: Int? {
+        intValue(values["fov"])
+    }
+
+    public var roiPosition: Int? {
+        intValue(values["roiPosition"]) ?? intValue(values["roi_position"])
+    }
+
+    public var hardwareApplied: Bool {
+        boolValue(values, "hardwareApplied") ?? boolValue(values, "hardware_applied") ?? false
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "SettingsAckEvent(setting: \(setting), status: \(status))"
+    }
+}
+
+public struct RgbLedControlResponseEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var state: String {
+        stringValue(values, "state") ?? "error"
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var description: String {
+        "RgbLedControlResponseEvent(requestId: \(requestId), state: \(state))"
+    }
+}
+
 public enum BluetoothEvent: CustomStringConvertible {
     case buttonPress(ButtonPressEvent)
     case touch(TouchEvent)
@@ -81,8 +242,17 @@ public enum BluetoothEvent: CustomStringConvertible {
     case hotspotStatus(HotspotStatusEvent)
     case hotspotError(HotspotErrorEvent)
     case photoResponse(PhotoResponseEvent)
+    case photoStatus(PhotoStatusEvent)
+    case videoRecordingStatus(VideoRecordingStatusEvent)
+    case mediaUpload(MediaUploadEvent)
+    case rgbLedControlResponse(RgbLedControlResponseEvent)
     case streamStatus(StreamStatusEvent)
     case keepAliveAck(KeepAliveAckEvent)
+    case otaUpdateAvailable(OtaUpdateAvailableEvent)
+    case otaStartAck(OtaStartAckEvent)
+    case otaStatus(OtaStatusEvent)
+    case settingsAck(SettingsAckEvent)
+    case versionInfo(VersionInfoResult)
     case localTranscription(LocalTranscriptionEvent)
     case raw(name: String, values: [String: Any])
 
@@ -104,9 +274,27 @@ public enum BluetoothEvent: CustomStringConvertible {
             event.description
         case let .photoResponse(event):
             event.description
+        case let .photoStatus(event):
+            event.description
+        case let .videoRecordingStatus(event):
+            event.description
+        case let .mediaUpload(event):
+            event.description
+        case let .rgbLedControlResponse(event):
+            event.description
         case let .streamStatus(event):
             event.description
         case let .keepAliveAck(event):
+            event.description
+        case let .otaUpdateAvailable(event):
+            event.description
+        case let .otaStartAck(event):
+            event.description
+        case let .otaStatus(event):
+            event.description
+        case let .settingsAck(event):
+            event.description
+        case let .versionInfo(event):
             event.description
         case let .localTranscription(event):
             event.description

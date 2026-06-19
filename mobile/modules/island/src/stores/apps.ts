@@ -26,7 +26,9 @@ import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // ---------------------------------------------------------------------------
 // Configuration / hooks
@@ -63,8 +65,17 @@ export function configureIsland(hooks: IslandHostHooks): void {
 
 interface AppStatusState {
   apps: ClientApp[]
+  /**
+   * Source of truth for which app is foregrounded in the Compositor overlay.
+   * The per-app `foregrounded` boolean is derived from this in `projectApps`
+   * so a refresh can never drop the flag when an app is transiently missing
+   * from one of the two refresh passes (local-only then merged). See
+   * `projectApps` / `setForeground` / `clearForeground`.
+   */
+  foregroundedPackage: string | null
   refresh: () => Promise<void>
-  start: (app: ClientApp, opts?: StartOptions) => Promise<void>
+  /** Resolves true if the app actually started; false if a host gate aborted it or its JS context failed to spawn. */
+  start: (app: ClientApp, opts?: StartOptions) => Promise<boolean>
   stop: (packageName: string) => Promise<void>
   setForeground: (packageName: string) => Promise<void>
   clearForeground: () => void
@@ -166,11 +177,7 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
  * to emit twice (local-only, then merged) without duplicating the
  * dedupe/carry-over/compat/hidden/postProcess pipeline.
  */
-function projectApps(
-  previousState: AppStatusState,
-  localApps: ClientApp[],
-  extraApps: ClientApp[],
-): ClientApp[] {
+function projectApps(previousState: AppStatusState, localApps: ClientApp[], extraApps: ClientApp[]): ClientApp[] {
   // Dedupe by packageName, keep first occurrence (extra/cloud wins).
   const byPackage = new Map<string, ClientApp>()
   for (const app of [...extraApps, ...localApps]) {
@@ -198,15 +205,20 @@ function projectApps(
     screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
     compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
     hidden: previousState.getHiddenStatus(app.packageName),
-    // Carry over the foreground flag across refreshes (same reasoning as
-    // screenshot): a cloud/local refresh shouldn't drop the WebView the
-    // Compositor is currently rendering. Normalized to a concrete boolean.
-    foregrounded: previousByPackage.get(app.packageName)?.foregrounded ?? false,
+    // Derive the foreground flag from the store's single source of truth
+    // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
+    // per-app meant a refresh that momentarily omitted an app (e.g. the
+    // two-pass local-only → merged emit) would reset its flag to false — which
+    // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
+    // through to the root router (restart). Deriving here keeps the flag stable
+    // across both passes.
+    foregrounded: app.packageName === previousState.foregroundedPackage,
   }))
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+  foregroundedPackage: null,
 
   refresh: async () => {
     // Two-pass: local apps first (fast, no network), then merge cloud
@@ -263,19 +275,19 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
-      return
+      return false
     }
 
     // Skip if any app is currently loading.
     if (state.apps.some((a) => a.loading)) {
       console.log(`ISLAND: skipping start ${packageName} — another app is loading`)
-      return
+      return false
     }
 
     // Host gate (incompatible alerts, offline-mode rejection, etc.).
     if (hostHooks.beforeStart) {
       const proceed = await hostHooks.beforeStart(app, opts)
-      if (!proceed) return
+      if (!proceed) return false
     }
 
     // Foreground-only-one rule: stop other running standard apps.
@@ -290,13 +302,38 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
     const shouldLoad = !app.offline && !app.local
     set((s) => ({
-      apps: s.apps.map((a) =>
-        a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a,
-      ),
+      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
     }))
 
     saveLastOpenTime(packageName)
     await startStopApp(app, true)
+
+    // Spawn the background JS context for local miniapps. This used to be a
+    // side effect of LocalMiniappView mounting on foreground; pulling it here
+    // lets start() actually run the app even when nothing foregrounds it (e.g.
+    // a system app launching another miniapp via session.miniapps). Idempotent
+    // with the view's own ensureRunning; a no-op for native offline built-ins
+    // and cloud apps (no JS bundle).
+    if (app.local) {
+      try {
+        await miniappLauncher.ensureRunning(packageName)
+      } catch (e) {
+        // Spawn / bundle-resolve failed — revert the optimistic running flag so
+        // the home list and miniapps.list() don't show a "running" app with no
+        // JS context, and report failure to the caller (session.miniapps.start).
+        console.warn(`ISLAND: launcher.ensureRunning failed for ${packageName}`, e)
+        set((s) => ({
+          apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
+        }))
+        // onStart already persisted running:true to disk (saveLocalAppRunningState)
+        // before the spawn; run onStop to undo it so a refresh/reboot doesn't
+        // resurrect a "running" app with no JS context.
+        await startStopApp(app, false)
+        return false
+      }
+    }
+
+    return true
   },
 
   stop: async (packageName: string) => {
@@ -318,7 +355,25 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       ),
     }))
 
+    // if there are no apps running, call clearDisplay():
+    // read fresh state via get() — `state` was captured before the set() above, so it still shows
+    // this app as running and would never reach 0 when stopping the last app.
+    if (get().apps.filter((a) => a.running).length === 0) {
+      BluetoothSdk.clearDisplay()
+    }
     await startStopApp(app, false)
+
+    // Tear down the background JS context for local miniapps. Previously the
+    // host's beforeStop hook (MiniappCatalog) called router.unregister; that
+    // now flows through the launcher so lifecycle lives in one place. No-op for
+    // native offline built-ins / cloud apps (no JS context).
+    if (app.local) {
+      try {
+        await miniappLauncher.stop(packageName)
+      } catch (e) {
+        console.warn(`ISLAND: launcher.stop failed for ${packageName}`, e)
+      }
+    }
   },
 
   setForeground: async (packageName: string) => {
@@ -336,6 +391,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // (the phase machine), so foregrounding needn't wait for it.
     saveLastOpenTime(packageName)
     set((s) => ({
+      foregroundedPackage: packageName,
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
 
@@ -350,6 +406,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   clearForeground: () => {
     set((s) => ({
+      foregroundedPackage: null,
       apps: s.apps.some((a) => a.foregrounded)
         ? s.apps.map((a) => (a.foregrounded ? {...a, foregrounded: false} : a))
         : s.apps,
@@ -498,4 +555,3 @@ export const useLocalMiniApps = () => {
   const apps = useApps()
   return useMemo(() => apps.filter((app) => app.local), [apps])
 }
-

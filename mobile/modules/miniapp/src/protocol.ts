@@ -18,11 +18,17 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /** Request a fresh miniapp-scoped backend auth token. */
+  AUTH_REFRESH = "miniapp_auth_refresh",
+
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 
   /** Push a layout to the glasses display. */
   DISPLAY = "miniapp_display",
+
+  /** Push a canvas command to the glasses canvas. */
+  CANVAS = "miniapp_canvas",
 
   /** Play an arbitrary audio URL through the phone's audio playback service. */
   PLAY_AUDIO = "miniapp_play_audio",
@@ -53,6 +59,10 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
+  /** Reverse-geocode a coordinate to a road name. Backs the engine's
+   *  fallback for pivots whose Routes-API instruction didn't include a
+   *  parseable road. Host calls Google's Geocoding REST API. */
+  NAVIGATION_REVERSE_GEOCODE = "miniapp_navigation_reverse_geocode",
   /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
   NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 
@@ -69,6 +79,13 @@ export enum MiniappRequestType {
 
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
+
+  /**
+   * Enable/disable raw accelerometer (IMU) streaming on the glasses. The
+   * accel stream also auto-enables on subscribe; this is an explicit override
+   * for callers who want to control the sensor directly. G2 only today.
+   */
+  IMU_SET_ENABLED = "miniapp_imu_set_enabled",
 
   /** Share content via the OS share sheet. */
   SHARE = "miniapp_share",
@@ -96,10 +113,24 @@ export enum MiniappRequestType {
 
   // ----- Photos, streaming -----
   PHOTO = "miniapp_photo",
+  VIDEO_RECORDING_START = "miniapp_video_recording_start",
+  VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",
   STREAM_STOP = "miniapp_stream_stop",
   MANAGED_STREAM_START = "miniapp_managed_stream_start",
   MANAGED_STREAM_STOP = "miniapp_managed_stream_stop",
+
+  // ----- Inter-miniapp interop (SYSTEM apps only) -----
+  /** List installed miniapps (compatibility-filtered, with declared actions). */
+  MINIAPPS_LIST = "miniapp_apps_list",
+  /** Start another miniapp (user-tap semantics). */
+  MINIAPPS_START = "miniapp_apps_start",
+  /** Stop another miniapp. */
+  MINIAPPS_STOP = "miniapp_apps_stop",
+  /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
+  ACTION_INVOKE = "miniapp_action_invoke",
+  /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
+  ACTION_RESULT = "miniapp_action_result",
 }
 
 // ============================================================================
@@ -139,8 +170,22 @@ export enum MiniappResponseType {
    */
   PERMISSIONS_UPDATE = "miniapp_permissions_update",
 
+  /**
+   * Push: miniapp-scoped backend auth token changed. Carries a token minted for
+   * this packageName only; it is never a Core or runtime access token.
+   */
+  AUTH_UPDATE = "miniapp_auth_update",
+
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
+
+  /**
+   * Host → target: deliver an action call (from another miniapp's
+   * session.actions.invoke) to this miniapp's session.actions.handle handler.
+   * Carries {callId, actionId, params, callerPackageName}. The SDK runs the
+   * handler and replies with an ACTION_RESULT request keyed by callId.
+   */
+  ACTION_CALL = "miniapp_action_call",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
@@ -163,6 +208,12 @@ export enum MiniappStreamType {
   BUTTON_PRESS = "button_press",
   TOUCH_EVENT = "touch_event",
   HEAD_POSITION = "head_position",
+  /**
+   * Raw accelerometer reading from the glasses IMU — `{x, y, z}` in g, plus a
+   * timestamp. G2 only today. A richer combined IMU stream (accel + gyro +
+   * magnetometer) is future work; this is the single-sensor precursor.
+   */
+  ACCEL_DATA = "accel_data",
 
   // Status
   GLASSES_BATTERY = "glasses_battery",
@@ -223,4 +274,22 @@ export enum MiniappErrorCode {
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",
+
+  // ----- Inter-miniapp interop -----
+  /** Caller is not a system app — interop APIs (list/start/stop/invoke) are SYSTEM-only. */
+  NOT_PERMITTED = "NOT_PERMITTED",
+  /** Target miniapp is not installed. */
+  APP_NOT_FOUND = "APP_NOT_FOUND",
+  /** Target miniapp is incompatible with the connected glasses. */
+  APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
+  /** Target miniapp does not declare the requested action. */
+  ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
+  /** Target connected but never registered a handler for the action (within the buffer window). */
+  NO_ACTION_HANDLER = "NO_ACTION_HANDLER",
+  /** Target failed to wake / complete its CONNECT handshake for an invoke. */
+  WAKE_FAILED = "WAKE_FAILED",
+  /** Action handler did not return within the caller's timeout. */
+  ACTION_TIMEOUT = "ACTION_TIMEOUT",
+  /** Action params or result exceeded the 256 KB size cap. */
+  PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE",
 }

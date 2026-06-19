@@ -212,6 +212,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   // a WebView reload. Touches anywhere else default to reload.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
   let pendingType: "reload" | "respawn-bg" | null = null
+  let suppressEventsUntil = 0
   // True when a path either equals `name` or sits under `name/`. macOS
   // FSEvents under `recursive: true` emits the bare directory name when
   // the directory itself is rm-rf'd or renamed; matching only `name/`
@@ -221,12 +222,18 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
 
   const watcher = watch(options.watchDir, {recursive: true}, (_event, filename) => {
     if (!filename) return
+    if (Date.now() < suppressEventsUntil) return
+    // macOS recursive FSEvents can report "." when the build removes and
+    // recreates dist/. Treat that as build-output churn; otherwise the dev
+    // server rebuilds in a tight loop.
+    if (filename === ".") return
     // Skip noisy directories — most projects don't want to reload on
     // node_modules or dist churn (the rebuild itself rewrites dist/,
     // which would otherwise loop).
     if (isUnder(filename, "node_modules")) return
     if (isUnder(filename, ".git")) return
     if (isUnder(filename, "dist")) return
+    if (isUnder(filename, "build")) return // pack/release zip output
     if (isUnder(filename, ".next")) return
 
     // Decide which layer the change touched. Order matters: a single batch
@@ -252,8 +259,11 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
       // whatever the previous successful build left behind.
       if (options.onBeforeBroadcast) {
         try {
+          suppressEventsUntil = Date.now() + 1_500
           await options.onBeforeBroadcast(type)
+          suppressEventsUntil = Date.now() + 1_500
         } catch (err) {
+          suppressEventsUntil = Date.now() + 1_500
           log(`${COLOR.red}[__mentra_dev] onBeforeBroadcast failed:${COLOR.reset} ${(err as Error).message}`)
         }
       }

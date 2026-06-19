@@ -11,13 +11,22 @@ on:
       - dev
   workflow_dispatch:
 
+# Cancel a branch's in-flight build when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; frees the shared Mac
+# runners from superseded builds.
+concurrency:
+  group: asg-client-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
   build:
-    runs-on: self-hosted
+    # Pinned to the mac runners: they have the ASG signing keystore provisioned
+    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
+    runs-on: [self-hosted, macOS, ARM64]
 
     steps:
       - name: Update PR comment - Build started
@@ -108,6 +117,13 @@ jobs:
             asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
             asg-gradle-${{ runner.os }}-
 
+      - name: Build recovery worker asset
+        working-directory: ./asg_client/recovery_worker
+        run: |
+          chmod +x ./build_and_deploy.sh
+          ./build_and_deploy.sh
+          test -f ../app/src/main/assets/recovery_worker.apk
+
       - name: Build Release APK
         id: gradle-build
         working-directory: ./asg_client
@@ -132,6 +148,15 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Run unit tests
+        working-directory: ./asg_client
+        run: ./gradlew testDebugUnitTest
+
+     # Temporarily disabled while ASG Java files are reformatted in a follow-up.
+      # - name: Spotless check
+      #   working-directory: ./asg_client
+      #   run: ./gradlew spotlessCheck
 
       - name: Mark build succeeded
         id: build-ok
@@ -255,10 +280,6 @@ jobs:
               comment_id: comment.id,
               body: newBody
             });
-
-      - name: Spotless check
-        working-directory: ./asg_client
-        run: ./gradlew spotlessCheck
 
       - name: Update PR comment - Build failed
         if: failure() && steps.build-ok.outcome != 'success' && github.event_name == 'pull_request'

@@ -50,6 +50,8 @@ export function isMockExplicitlyRequested(): boolean {
 export interface MockTransportOptions {
   /** Override the synthetic userId. Default "mock-user". */
   userId?: string
+  /** Override the synthetic miniapp auth token. Default "mock-miniapp-token". */
+  authToken?: string
   /** Override the synthetic packageName when window.MentraOS isn't set. */
   packageName?: string
   /** Suppress the [mock-transport] console logs. Default false. */
@@ -61,11 +63,13 @@ export class MockTransport implements Transport {
   private disconnectHandler: TransportDisconnectHandler | null = null
   private open_ = false
   private readonly userId: string
+  private readonly authToken: string
   private readonly packageName: string | null
   private readonly silent: boolean
 
   constructor(options: MockTransportOptions = {}) {
     this.userId = options.userId ?? "mock-user"
+    this.authToken = options.authToken ?? "mock-miniapp-token"
     this.packageName = options.packageName ?? null
     this.silent = options.silent === true
   }
@@ -109,7 +113,7 @@ export class MockTransport implements Transport {
         // Anything that has a requestId expects a REQUEST_RESULT. Reply with a
         // synthetic empty success so app code that awaits the promise resolves.
         if (envelope.requestId) {
-          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>")
+          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>", payload)
         }
         return
     }
@@ -144,6 +148,12 @@ export class MockTransport implements Transport {
       capabilities: null,
       visibility: "foreground",
       colorScheme: "light",
+      auth: {
+        mentraUserId: this.userId,
+        oemId: "mock",
+        token: this.authToken,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      },
     }
     const envelope: MiniappEnvelope = {payload: ackPayload}
     this.log(`-> CONNECT_ACK userId=${this.userId} pkg=${incomingPackage}`)
@@ -151,8 +161,12 @@ export class MockTransport implements Transport {
     queueMicrotask(() => this.messageHandler?.(serializeEnvelope(envelope)))
   }
 
-  private deliverSyntheticResult(requestId: string, requestType: string): void {
-    const data = syntheticDataFor(requestType)
+  private deliverSyntheticResult(
+    requestId: string,
+    requestType: string,
+    requestPayload: Record<string, unknown>,
+  ): void {
+    const data = syntheticDataFor(requestId, requestType, requestPayload)
     const responsePayload = {
       type: MiniappResponseType.REQUEST_RESULT,
       ok: true,
@@ -174,8 +188,28 @@ export class MockTransport implements Transport {
  * Synthetic payload for an unrecognized request that nonetheless awaits a
  * REQUEST_RESULT. Returns enough shape to satisfy callers without crashing.
  */
-function syntheticDataFor(requestType: string): unknown {
+function syntheticDataFor(requestId: string, requestType: string, requestPayload: Record<string, unknown>): unknown {
   switch (requestType) {
+    case MiniappRequestType.CAMERA_FOV: {
+      const presetFov =
+        requestPayload.preset === "narrow"
+          ? 82
+          : requestPayload.preset === "wide"
+          ? 118
+          : requestPayload.preset === "standard"
+          ? 102
+          : undefined
+      const fov = typeof requestPayload.fov === "number" ? requestPayload.fov : presetFov ?? 102
+      const roi = requestPayload.roiPosition
+      const roiPosition = roi === "bottom" ? "bottom" : roi === "top" ? "top" : "center"
+      return {
+        requestId,
+        fov,
+        roiPosition,
+        timestamp: Date.now(),
+      }
+    }
+
     case MiniappRequestType.PHOTO:
       // 1×1 transparent PNG so consumers that try to render don't 404.
       return {
@@ -183,6 +217,9 @@ function syntheticDataFor(requestType: string): unknown {
           "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
         requestId: "mock-photo",
       }
+
+    case MiniappRequestType.RGB_LED:
+      return {type: "rgb_led_control_response", state: "success", requestId}
 
     case MiniappRequestType.LOCATION_POLL:
       // San Francisco fallback — using 0,0 puts dev sessions in the

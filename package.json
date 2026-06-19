@@ -1,4 +1,13 @@
 {
+  "workspaces": [
+    "cloud-v2/packages/*",
+    "miniapps/*",
+    "sdk/miniapp-cli",
+    "mobile/modules/miniapp"
+  ],
+  "trustedDependencies": [
+    "bun"
+  ],
   "devDependencies": {
     "@eslint/css": "^0.10.0",
     "@eslint/js": "^9.36.0",
@@ -24,6 +33,8 @@
   },
   "scripts": {
     "prepare": "husky",
-    "generate-licenses": "bun docs/generate-licenses.ts"
+    "generate-licenses": "bun mintlify-docs/generate-licenses.ts",
+    "build:miniapp": "cd mobile/modules/miniapp && bun run build",
+    "postinstall": "bun run build:miniapp || echo '\\n[postinstall] WARNING: failed to build @mentra/miniapp. Miniapps will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'"
   }
 }

@@ -18,33 +18,50 @@ protocol SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(
-        _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?
-    )
+    func requestPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool)
+    /// Start video recording with optional per-recording resolution/fps. A width,
+    /// height, or fps of 0 means "use the device's saved button-video default".
+    /// Defaulted in an extension to delegate to the basic recording path; devices
+    /// that support custom settings (e.g. Mentra Live) override this.
+    func startVideoRecording(
+        requestId: String, save: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        maxRecordingTimeMinutes: Int
+    )
     func stopVideoRecording(requestId: String)
+    /// Stop recording and upload the result to `webhookUrl` (multipart) using
+    /// `authToken`. Supplied at stop time so the token is fresh when the upload
+    /// runs. Defaulted in an extension to ignore the upload target and just stop;
+    /// devices that support webhook upload (e.g. Mentra Live) override this. An
+    /// empty/nil `webhookUrl` means "keep the video on device".
+    func stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?)
 
     // MARK: - Button Settings
 
     func sendButtonPhotoSettings()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
-    func sendButtonCameraLedSetting()
     func sendCameraFovSetting()
 
     // MARK: - Display Control
 
     func setBrightness(_ level: Int, autoMode: Bool)
     func clearDisplay()
-    func sendTextWall(_ text: String)
-    func sendDoubleTextWall(_ top: String, _ bottom: String)
+    func sendText(_ text: String) async
+    func sendTextWall(_ text: String) async
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async
     /// Display a bitmap. Optional `x`/`y`/`width`/`height` position and size the target
     /// container (used by G2; other SGCs ignore positioning and render the bitmap as before).
     func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
+    /// Show text in a positioned container with an optional rounded border.
+    /// G2-only capability; default no-op (see protocol extension) so other glasses ignore it.
+    func sendPositionedText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32
+    ) async
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
     /// Default implementation sends both via [setDashboardPosition]; Nex overrides to one protobuf.
@@ -57,7 +74,7 @@ protocol SGCManager {
 
     // MARK: - Notification Panel
 
-    func showNotificationsPanel()
+    func showNotificationsPanel() async
 
     // MARK: - Calendar Events
 
@@ -70,6 +87,9 @@ protocol SGCManager {
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
+    /// Enable/disable raw accelerometer (IMU) reporting from the glasses.
+    /// Default no-op; only G2 streams IMU data today.
+    func setImuEnabled(_ enabled: Bool) async
     func getBatteryStatus()
     func setSilentMode(_ enabled: Bool)
     func exit()
@@ -101,7 +121,7 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
-    func sendOtaStart()
+    func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
     func sendOtaRetryVersionCheck()
@@ -131,6 +151,25 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    /// Default: no-op. Only G2 renders positioned text containers; other glasses ignore it.
+    func sendPositionedText(
+        _: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
+        borderWidth _: Int32, borderRadius _: Int32
+    ) async {}
+
+    // MARK: - Video recording (default: ignore custom settings, use saved defaults)
+
+    func startVideoRecording(
+        requestId: String, save: Bool, sound: Bool, width _: Int, height _: Int,
+        fps _: Int, maxRecordingTimeMinutes _: Int
+    ) {
+        startVideoRecording(requestId: requestId, save: save, sound: sound)
+    }
+
+    func stopVideoRecording(requestId: String, webhookUrl _: String?, authToken _: String?) {
+        stopVideoRecording(requestId: requestId)
+    }
+
     // MARK: - Dashboard (default: combined wire format; Nex implements single-field)
 
     func setDashboardHeightOnly(_ height: Int) {
@@ -149,7 +188,13 @@ extension SGCManager {
 
     // MARK: - Notification Panel (default no-op — only G2 supports this)
 
-    func showNotificationsPanel() {}
+    func showNotificationsPanel() async {}
+
+    // MARK: - IMU (default no-op — only G2 streams accelerometer data)
+
+    func setImuEnabled(_: Bool) async {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
 
     // MARK: - Calendar Events (default no-op — only G2 supports this)
 
@@ -227,7 +272,8 @@ extension SGCManager {
     }
 
     var voiceActivityDetectionEnabled: Bool {
-        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
     }
 
     var batteryLevel: Int {

@@ -11,18 +11,18 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
@@ -209,6 +209,62 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
+  it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const startPromise = gallerySyncService.startSync()
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    expect(gallerySyncService.isSyncing()).toBe(false)
+
+    // Disconnect while connectivity check is in flight — shouldAbortPreFlight catches it after the await
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+
+    resolveConnectivity()
+    await startPromise
+
+    expect(useGallerySyncStore.getState().syncState).toBe("idle")
+    expect(useGallerySyncStore.getState().lastError).toBeNull()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(gallerySyncNotifications.requestPermissions).not.toHaveBeenCalled()
+  })
+
+  it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const first = gallerySyncService.startSync()
+    const second = gallerySyncService.startSync()
+
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
+
+    resolveConnectivity()
+    await Promise.all([first, second])
+
+    expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
   })
 
   it("keeps sync watermark before zero-byte video captures", async () => {

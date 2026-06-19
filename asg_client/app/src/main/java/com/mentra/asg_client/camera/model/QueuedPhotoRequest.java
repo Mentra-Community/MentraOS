@@ -27,8 +27,11 @@ public final class QueuedPhotoRequest {
     /** Absolute path for the JPEG output file. */
     public final String filePath;
 
-    /** Resolution preset ({@code "small"}, {@code "medium"}, {@code "large"}, etc.). */
+    /** Resolution preset ({@code "low"}, {@code "medium"}, {@code "high"}, {@code "max"}). */
     public final String size;
+
+    /** Optional per-request tuning (scan mode, edge/MFNR overrides, etc.). */
+    public final PhotoCaptureSettings captureSettings;
 
     /** Whether to pulse the privacy LED during capture. */
     public final boolean enableLed;
@@ -44,6 +47,12 @@ public final class QueuedPhotoRequest {
      * {@code null} means auto exposure.
      */
     public final Long exposureTimeNs;
+
+    /**
+     * Optional ISO / Camera2 {@code SENSOR_SENSITIVITY} for manual exposure captures only.
+     * {@code null} means derive ISO from preview metering.
+     */
+    public final Integer iso;
 
     /** Wall-clock time when this entry was enqueued; copied to {@link ActivePhotoCapture#startTimeMs}. */
     public final long enqueuedAtMs;
@@ -61,12 +70,38 @@ public final class QueuedPhotoRequest {
             boolean isFromSdk,
             Long exposureTimeNs,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(filePath, size, enableLed, isFromSdk, exposureTimeNs, null, PhotoCaptureSettings.EMPTY, callback);
+    }
+
+    public QueuedPhotoRequest(
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            CameraNeoService.PhotoCaptureCallback callback) {
+        this(filePath, size, enableLed, isFromSdk, exposureTimeNs, iso, PhotoCaptureSettings.EMPTY, callback);
+    }
+
+    public QueuedPhotoRequest(
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
         this.filePath = filePath;
         this.size = size;
         this.enableLed = enableLed;
         this.isFromSdk = isFromSdk;
         this.exposureTimeNs = exposureTimeNs;
+        this.iso = iso;
+        this.captureSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         this.callback = callback;
         this.enqueuedAtMs = System.currentTimeMillis();
     }

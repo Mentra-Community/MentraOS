@@ -86,10 +86,19 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`. |
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
-| `size`           | string  | `"medium"`          | `small`, `medium`, or `large`                               |
-| `compress`       | string  | `"none"`            | Compression preset passed to capture pipeline               |
-| `flash`          | boolean | `true`              | Fire the privacy LED during capture                         |
-| `sound`          | boolean | `true`              | Play shutter sound                                          |
+| `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
+| `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
+| `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
+| `sound`              | boolean | `true`              | Play shutter sound                                          |
+| `exposureTimeNs`     | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
+| `iso`                | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
+| `aeExposureDivisor`  | number  | absent              | After AE convergence, divide metered exposure by this factor (scan tuning) |
+| `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
+| `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
+| `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
+| `mfnr`               | boolean | absent              | `false` disables MFNR for this capture                      |
+| `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
+| `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
@@ -100,14 +109,18 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 
 **Responses:** the handler can produce three different response types depending on the path taken.
 
-`photo_response` — direct/auto upload finished:
+`photo_response` — terminal success or failure for the full photo action. Camera-busy, low-battery, storage, FOV-restart, capture, direct-upload, and Bluetooth-fallback failures emit `state: "error"`. A success response means capture completed and the photo reached the configured upload target, either directly from the glasses or through the phone fallback relay. Capture, upload, and Bluetooth fallback progress continue through `photo_status` until this terminal response:
 
 ```json
 {
   "type": "photo_response",
   "requestId": "photo_001",
+  "state": "success",
   "success": true,
-  "mediaUrl": "/storage/.../IMG_001.jpg"
+  "uploadUrl": "https://api.example.com/mentra/photo",
+  "photoUrl": "https://cdn.example.com/photos/photo_001.jpg",
+  "contentType": "image/jpeg",
+  "fileSizeBytes": 58489
 }
 ```
 
@@ -117,7 +130,59 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 {"type": "ble_photo_ready", "bleImgId": "img_001", "requestId": "photo_001"}
 ```
 
-`ble_photo_error` / `photo_error_response` — capture or transfer failed:
+`photo_status` — capture and transfer progress:
+
+```json
+{
+  "type": "photo_status",
+  "requestId": "photo_001",
+  "status": "capturing",
+  "timestamp": 1708963201234,
+  "requestedCaptureConfig": {
+    "manual": false,
+    "aeMode": 1,
+    "aeTargetFpsRange": {"min": 5, "max": 30}
+  },
+  "meteredPreview": {
+    "exposureTimeNs": 8333333,
+    "iso": 200,
+    "totalLightProxy": 1666.6666
+  }
+}
+```
+
+Status metadata is stage-specific:
+
+| Status | Optional fields | Description |
+| ------ | --------------- | ----------- |
+| `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture |
+| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available |
+| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
+| `failed` | `errorCode`, `errorMessage` | Capture or transfer failure details |
+
+`captureMetadata` on `captured` is the right place to read the actual still capture values:
+
+```json
+{
+  "type": "photo_status",
+  "requestId": "photo_001",
+  "status": "captured",
+  "timestamp": 1708963202345,
+  "captureMetadata": {
+    "manual": false,
+    "exposureTimeNs": 8333333,
+    "iso": 200,
+    "frameDurationNs": 33333333,
+    "aeState": 2,
+    "aeStateName": "CONVERGED"
+  }
+}
+```
+
+Action-button photos emitted by the glasses use the same `photo_status` shape while the phone SDK is connected. These local captures use a `local_<timestamp>` request ID and report `resolvedConfig.source: "button"` with `resolvedConfig.transferMethod: "local"`.
+
+`ble_photo_error` / `photo_error_response` — legacy BLE/photo failure notifications. The current request/response contract uses `photo_response` with `state: "error"` as the terminal failure for SDK callers; these legacy notifications may still appear in older diagnostic flows and should be treated as error progress, not as a second success/error contract:
 
 ```json
 {
@@ -129,6 +194,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 ```
 
 Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`, `CAMERA_BUSY`, `INSUFFICIENT_STORAGE`, `UPLOAD_SYSTEM_BUSY`, `CAPTURE_TIMEOUT`, `CAMERA_CAPTURE_FAILED`, `BLE_TRANSFER_BUSY`, `BLE_TRANSFER_FAILED`, `BLE_TRANSFER_FAILED_TO_START`.
+
+Photo captures embed IMU payload directly into JPEG EXIF metadata when available.
 
 ---
 
@@ -159,7 +226,7 @@ Wire response type for all video commands: `video_recording_status`.
 | `flash`           | boolean | `true`         | Privacy LED during recording |
 | `sound`           | boolean | `true`         | Start/stop tones             |
 
-Same battery constraint as photo. Status values emitted: `recording_started`, `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, `error`.
+Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
@@ -292,12 +359,21 @@ Response:
 {"type": "request_wifi_scan"}
 ```
 
-Streams results back over BLE as they're discovered:
+Streams results back over BLE as they're discovered. Intermediate payloads use `scan_complete: false`; a final payload with `scan_complete: true` is sent when the scan finishes, including an empty list when no networks are found.
 
 ```json
 {
   "type": "wifi_scan_result",
+  "scan_complete": false,
   "networks_neo": [{"ssid": "MyNetwork", "signal_strength": -45, "security": "WPA2"}]
+}
+```
+
+```json
+{
+  "type": "wifi_scan_result",
+  "scan_complete": true,
+  "networks_neo": []
 }
 ```
 
@@ -377,7 +453,11 @@ The glasses also emit `battery_status` outbound:
 {"type": "request_version"}
 ```
 
-Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU. Each chunk carries APK build, OS version, MCU/BES firmware version, and serial.
+Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU:
+
+- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`
+- `version_info_2`: `ota_version_url` (the ASG client's compiled default OTA manifest URL)
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`
 
 ---
 
@@ -541,7 +621,7 @@ Returns counts via `FileManager`. If the camera is busy (recording or streaming)
 }
 ```
 
-When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`).
+When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`). The phone SDK exposes this as `cameraBusy: true` and `cameraBusyReason`.
 
 ---
 
@@ -576,8 +656,10 @@ Persists the resolution/fps used when the hardware camera button starts a video.
 #### `button_photo_setting`
 
 ```json
-{"type": "button_photo_setting", "size": "large"}
+{"type": "button_photo_setting", "size": "high"}
 ```
+
+`size` is one of `low`, `medium`, `high`, or `max`. Legacy values `small`, `large`, and `full` are normalized on ingest.
 
 `size` is one of `small`, `medium`, `large`.
 
@@ -597,7 +679,7 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 {"type": "camera_fov_setting", "params": {"fov": 118, "roi_position": 0}}
 ```
 
-Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. A short cooldown (`CameraRestartCooldown`) blocks immediately-following capture commands. Falls back to persist-only on non-K900 hardware (no `libxydev`).
+Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
 
 ---
 
@@ -738,19 +820,85 @@ User accepted an OTA update.
 {"type": "ota_start"}
 ```
 
+Optionally, the phone can supply a custom manifest URL for this install attempt:
+
+```json
+{"type": "ota_start", "ota_version_url": "https://staging.ota.mentraglass.com/staging_live_version.json"}
+```
+
+When `ota_version_url` is omitted, ASG uses the compiled production default. When provided, it must be a non-empty `http` or `https` URL.
+
+On receipt, ASG sends `ota_start_ack` before version checks or downloads:
+
+```json
+{"type": "ota_start_ack", "timestamp": 1708963201234}
+```
+
+Progress, completion, and failure are reported with `ota_status`:
+
+```json
+{
+  "type": "ota_status",
+  "sid": "ota-1708963201234",
+  "ts": 3,
+  "cs": 1,
+  "st": "apk",
+  "sq": ["apk", "mtk", "bes"],
+  "phase": "download",
+  "sp": 42,
+  "op": 14,
+  "status": "in_progress"
+}
+```
+
+Compact keys keep BLE payloads small: `sid` = `session_id`, `ts` = `total_steps`, `cs` = `current_step`, `st` = `step_type`, `sq` = `step_sequence`, `sp` = `step_percent`, `op` = `overall_percent`, `err` = `error_message`. Current ASG uses `ota_status`; `ota_progress` is legacy.
+
 If `OtaHelper` isn't initialized yet (can happen right after APK install), the handler retries up to 4 times with 2 s backoff. After exhausting retries it sends:
 
 ```json
 {
-  "type": "ota_progress",
-  "stage": "download",
-  "status": "FAILED",
-  "progress": 0,
-  "bytes_downloaded": 0,
-  "total_bytes": 0,
-  "current_update": "apk",
+  "type": "ota_status",
+  "session_id": "",
+  "total_steps": 0,
+  "current_step": 0,
+  "step_type": "apk",
+  "phase": "download",
+  "step_percent": 0,
+  "overall_percent": 0,
+  "status": "failed",
   "error_message": "OTA service failed to initialize. Please restart glasses and try again."
 }
+```
+
+#### `ota_query_status`
+
+Requests the current OTA session state. ASG replies with `ota_status`; if no session is active, the status is `idle`.
+
+```json
+{"type": "ota_query_status"}
+```
+
+Idle response:
+
+```json
+{
+  "type": "ota_status",
+  "status": "idle",
+  "total_steps": 0,
+  "current_step": 0,
+  "step_type": "apk",
+  "phase": "download",
+  "step_percent": 0,
+  "overall_percent": 0
+}
+```
+
+#### `ota_retry_version_check`
+
+Asks ASG to retry the last phone-started OTA after the phone completes recovery work (for example syncing the glasses clock). The retry re-uses the manifest URL from the last `ota_start`. ASG ignores the command — replying only with its current `ota_status` — unless a phone-started OTA previously failed with `clock_skew` or `ssl_error`.
+
+```json
+{"type": "ota_retry_version_check"}
 ```
 
 #### `ota_update_response` (deprecated)

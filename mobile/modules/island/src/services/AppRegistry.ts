@@ -22,8 +22,9 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
+import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
+import {getRuntimeHooks} from "../runtime/config"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -63,6 +64,33 @@ export function normalizeManifestPermissions(
           ...(typeof p.description === "string" ? {description: p.description} : {}),
         })
       }
+    }
+  }
+  return out
+}
+
+function normalizeManifestType(raw: unknown): AppletType {
+  return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
+}
+
+/**
+ * Normalize a manifest's `actions` into DeclaredAction[]. Defensive — keeps only
+ * well-formed `{id, description}` entries (installed/dev bundles may be
+ * malformed). Shared by installed (disk) and dev-sideload projection so both
+ * surface declared actions to session.miniapps.list + the invoke gate.
+ */
+export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
+  if (!Array.isArray(raw)) return []
+  const out: DeclaredAction[] = []
+  for (const a of raw as Array<{id?: unknown; description?: unknown; parameters?: unknown}>) {
+    if (a && typeof a.id === "string" && typeof a.description === "string") {
+      out.push({
+        id: a.id,
+        description: a.description,
+        ...(a.parameters && typeof a.parameters === "object"
+          ? {parameters: a.parameters as Record<string, unknown>}
+          : {}),
+      })
     }
   }
   return out
@@ -469,10 +497,10 @@ class AppRegistry {
     this.notify()
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
+  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
     return Res.try_async(async () => {
       const trimmed = baseUrl.replace(/\/$/, "")
-  
+
       const manifestRes = await fetch(`${trimmed}/miniapp.json`)
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
@@ -483,18 +511,19 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
-  
+
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error
-  
+
       return {packageName, version, name}
     })
   }
 
   /**
-   * Drop every dev-* version directory for a package plus the dev MMKV keys.
-   * Called on a release install so the package transitions cleanly from
-   * "dev mode" to "released mode."
+   * Drop every dev-* version directory for a package plus ALL dev MMKV keys
+   * (URL/port/reachability + the home-tile metadata record). Called on a
+   * release install (dev → released transition) and on uninstall, so a dev
+   * package leaves nothing behind that `projectDevApps` could re-surface.
    */
   private clearDevArtifacts(packageName: string): void {
     try {
@@ -516,6 +545,16 @@ class AppRegistry {
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_last_reachable`)
+    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all stored under
+    // DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load over HTTP and aren't on disk,
+    // so without this the projected tile would reappear on the next getInstalledMiniapps() refresh.
+    //
+    // Only do this when we're actually touching the dev slot: either the dev package itself, or the
+    // real manifest package currently occupying the slot. Otherwise a release install/uninstall of
+    // an UNRELATED package would wipe the active dev tile.
+    if (packageName === DEV_APP_PACKAGE_NAME || packageName === getDevAppSourcePackage()) {
+      unregisterDevApp()
+    }
   }
 
   /**
@@ -550,7 +589,9 @@ class AppRegistry {
     return Res.try_async(async () => {
       if (version) {
         const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
-        lmaDir.delete()
+        // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
+        // so an unconditional delete() would throw and abort the cleanup below.
+        if (lmaDir.exists) lmaDir.delete()
         console.log("APP_REGISTRY: Uninstalled mini app version", version)
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists && packageDir.list().length === 0) {
@@ -563,6 +604,10 @@ class AppRegistry {
         }
         console.log("APP_REGISTRY: Uninstalled all versions of mini app", packageName)
       }
+      // Always clear dev artifacts: for HTTP-direct dev miniapps the tile is
+      // backed by storage records (_dev_meta + dev_apps_index), not the disk
+      // dir, so without this the projected tile reappears on the next refresh.
+      this.clearDevArtifacts(packageName)
       this.refreshNeeded = true
       this.notify()
     })
@@ -653,17 +698,30 @@ class AppRegistry {
    *
    * `running` reflects MiniappHost mount state via miniappRunningRegistry.
    */
+  /**
+   * Merge disk-derived apps with the projected dev + offline layers,
+   * de-duping by packageName. A real on-disk install (or offline app) wins
+   * over a dev tile of the same package — a dev record is just a launcher
+   * stub that an actual install supersedes.
+   */
+  private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
+    const seen = new Set(diskApps.map((a) => a.packageName))
+    const offline = this.projectOfflineApps()
+    for (const a of offline) seen.add(a.packageName)
+    const dev = this.projectDevApps().filter((a) => !seen.has(a.packageName))
+    return [...diskApps, ...dev, ...offline]
+  }
+
   public async getInstalledMiniapps(): Promise<ClientApp[]> {
     if (!this.refreshNeeded && this.cachedApps.length > 0) {
       // Cache hit: re-project running from the registry. The cached array
       // IS the disk-derived truth; running comes from the mount registry.
-      return [
-        ...this.cachedApps.map((a) => ({
+      return this.mergeProjectedApps(
+        this.cachedApps.map((a) => ({
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
-        ...this.projectOfflineApps(),
-      ]
+      )
     }
 
     try {
@@ -676,10 +734,16 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          type?: string
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+        const appType = normalizeManifestType(manifest?.type)
+
+        // Declared actions (for session.miniapps.list + invoke gating).
+        const actions = normalizeManifestActions(manifest?.actions)
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -703,9 +767,13 @@ class AppRegistry {
           name: versionInfo.name,
           webviewUrl: "",
           logoUrl: versionInfo.logoUrl,
-          type: "standard",
+          type: appType,
           permissions,
           hardwareRequirements,
+          // Always project actions (even []) so the invoke gate can enforce
+          // declared-action membership unconditionally — an app with no declared
+          // actions must reject every invoke, not bypass the check.
+          actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
@@ -715,17 +783,58 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
-      return [...this.cachedApps, ...this.projectOfflineApps()]
+      return this.mergeProjectedApps(this.cachedApps)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
-      return [
-        ...this.cachedApps.map((a) => ({
+      return this.mergeProjectedApps(
+        this.cachedApps.map((a) => ({
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
-        ...this.projectOfflineApps(),
-      ]
+      )
     }
+  }
+
+  /** Force the next getInstalledMiniapps() to re-derive from disk + records. */
+  public markRefreshNeeded(): void {
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  /**
+   * Project persisted dev-app metadata records into ClientApp tiles. Dev
+   * miniapps aren't installed to disk (they load over HTTP), so they don't
+   * appear in the `lmas/` scan — this surfaces them on the home screen so
+   * they're re-launchable without re-scanning the QR.
+   */
+  private projectDevApps(): ClientApp[] {
+    return getDevAppRecords().map((rec) => {
+      const permissions = normalizeManifestPermissions(rec.permissions)
+      const hardwareRequirements = buildHardwareRequirements(rec.hardwareRequirements, rec.packageName)
+      return {
+        packageName: rec.packageName,
+        version: undefined,
+        running: miniappRunningRegistry.has(rec.packageName),
+        local: true,
+        healthy: true,
+        loading: false,
+        offline: false,
+        hidden: false,
+        offlineRoute: "",
+        name: rec.name,
+        webviewUrl: "",
+        logoUrl: rec.iconUrl,
+        type: normalizeManifestType(rec.type),
+        permissions,
+        hardwareRequirements,
+        actions: normalizeManifestActions(rec.actions),
+        isMiniappDev: true,
+        devUrl: rec.devUrl,
+        devPort: rec.devPort,
+        onStart: () => saveLocalAppRunningState(rec.packageName, true),
+        onStop: () => saveLocalAppRunningState(rec.packageName, false),
+      }
+    })
   }
 
   private projectOfflineApps(): ClientApp[] {
@@ -736,7 +845,7 @@ class AppRegistry {
     return this.offlineApps.map((a) => {
       const running = getLocalAppRunningState(a.packageName)
       const screenshot = getLocalAppScreenshot(a.packageName)
-      
+
       return {...a, running, screenshot}
     })
   }
@@ -780,6 +889,196 @@ export function getLocalAppScreenshot(packageName: string): string | undefined {
   const res = storage.load<string>(`${packageName}_screenshot`)
   if (res.is_ok()) return res.value
   return undefined
+}
+
+/**
+ * Persisted metadata for a dev miniapp's home tile.
+ *
+ * Dev miniapps load directly off the dev server over HTTP and are NOT
+ * installed into `lmas/`, so the disk scan in `getInstalledMiniapps` can't
+ * see them. We persist a tiny record at scan / dev-URL-entry time so the
+ * tile survives across app launches and is re-launchable without re-scanning.
+ * `permissions` / `hardwareRequirements` are snapshotted from the manifest so
+ * the home-screen permission gate has data without a disk bundle.
+ */
+export interface DevAppRecord {
+  packageName: string
+  name: string
+  iconUrl: string
+  devUrl: string
+  devPort?: number
+  type?: AppletType
+  permissions?: Array<string | {type: string; required?: boolean; description?: string}>
+  hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
+  /**
+   * The dev miniapp's real manifest package name. `packageName` is overwritten to
+   * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
+   * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
+   */
+  sourcePackageName?: string
+}
+
+const DEV_APPS_INDEX_KEY = "dev_apps_index"
+
+function configuredDevHost(): string | undefined {
+  // Explicit escape hatch first; otherwise the host-injected Metro host (the
+  // address this dev bundle was served from — always current for the network
+  // the phone is on). Deliberately NOT the EXPO_PUBLIC_CLOUD_* URLs: those are
+  // cloud endpoints, a different machine entirely from the laptop running the
+  // miniapp dev server, and rewriting a dev URL to a cloud host would break it.
+  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
+  if (explicit) {
+    try {
+      return new URL(explicit).hostname
+    } catch {
+      if (/^[\w.-]+$/.test(explicit)) return explicit
+    }
+  }
+  return getRuntimeHooks().devServerHost?.()
+}
+
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  )
+}
+
+function rewriteStaleDevUrl(value: string): string {
+  if (!__DEV__) return value
+  const host = configuredDevHost()
+  if (!host) return value
+
+  try {
+    const url = new URL(value)
+    if (url.hostname === host || !isPrivateLanHost(url.hostname)) return value
+    url.hostname = host
+    return url.toString().replace(/\/$/, "")
+  } catch {
+    return value
+  }
+}
+
+function normalizeDevAppRecord(record: DevAppRecord): DevAppRecord {
+  const devUrl = rewriteStaleDevUrl(record.devUrl)
+  const iconUrl = rewriteStaleDevUrl(record.iconUrl)
+  return devUrl === record.devUrl && iconUrl === record.iconUrl ? record : {...record, devUrl, iconUrl}
+}
+
+/**
+ * The one and only package name a dev miniapp is registered under.
+ *
+ * There is a SINGLE dev slot: scanning a new QR (or entering a new dev URL)
+ * replaces the previous dev app rather than adding a second tile. Because the
+ * whole launch chain — JSContext registration, UI-router binding,
+ * setForeground, dev_url/dev_port storage keys, respawn-bg lookup — keys on
+ * this package name, every consumer MUST use `DEV_APP_PACKAGE_NAME` (not the
+ * manifest's real packageName) so messages route consistently. Mixing the two
+ * was the cause of the "CONNECT_ACK timeout" — the tile said `com.dev` while
+ * the dev URL/port and foreground target used the manifest name.
+ */
+export const DEV_APP_PACKAGE_NAME = "com.dev"
+export const DEV_APP_NAME = "Dev"
+
+/**
+ * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
+ * the dev_url/dev_port keyed on {@link DEV_APP_PACKAGE_NAME}, so this function
+ * is the single source of truth for the dev slot — callers must not write the
+ * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
+ *
+ * Callers pass the manifest's REAL packageName/name; this function overwrites
+ * both (packageName → {@link DEV_APP_PACKAGE_NAME}, name → {@link DEV_APP_NAME})
+ * so the home tile and launch chain key on the single dev slot, while the real
+ * package survives in `sourcePackageName` for clearDevArtifacts.
+ */
+export function registerDevApp(record: DevAppRecord): void {
+  const devRecord: DevAppRecord = {
+    ...record,
+    // Preserve the real manifest package before overwriting packageName with the
+    // single dev-slot name, so clearDevArtifacts can tell whether an install/uninstall
+    // actually targets the dev slot.
+    sourcePackageName: record.sourcePackageName ?? record.packageName,
+    packageName: DEV_APP_PACKAGE_NAME,
+    name: DEV_APP_NAME,
+    iconUrl: record.iconUrl,
+  }
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
+  // The launch chain (LocalMiniappView.resolveDevPort, mentraJsBootstrap
+  // respawn-bg) reads these keys under DEV_APP_PACKAGE_NAME — persist them
+  // here so callers can't key them on the wrong (real) package name.
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_url`, record.devUrl)
+  if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
+    storage.save(`${DEV_APP_PACKAGE_NAME}_dev_port`, record.devPort)
+  } else {
+    storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  }
+  const idx = getDevAppIndex()
+  if (!idx.includes(DEV_APP_PACKAGE_NAME)) {
+    idx.push(DEV_APP_PACKAGE_NAME)
+    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
+  }
+  appRegistry.markRefreshNeeded()
+}
+
+/** Drop the dev miniapp's home-tile metadata + dev URL/port keys. */
+export function unregisterDevApp(): void {
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
+  const idx = getDevAppIndex().filter((p) => p !== DEV_APP_PACKAGE_NAME)
+  storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
+  appRegistry.markRefreshNeeded()
+}
+
+function getDevAppIndex(): string[] {
+  const res = storage.load<string>(DEV_APPS_INDEX_KEY)
+  if (!res.is_ok()) return []
+  try {
+    const parsed = JSON.parse(res.value)
+    return Array.isArray(parsed) ? (parsed as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The real manifest package name currently occupying the dev slot, or null if no dev app is
+ * registered. Used to decide whether clearing a package's artifacts should also drop the dev slot.
+ */
+export function getDevAppSourcePackage(): string | null {
+  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    const rec = JSON.parse(res.value) as DevAppRecord
+    return rec.sourcePackageName ?? null
+  } catch {
+    return null
+  }
+}
+
+export function getDevAppRecords(): DevAppRecord[] {
+  const out: DevAppRecord[] = []
+  for (const pkg of getDevAppIndex()) {
+    const res = storage.load<string>(`${pkg}_dev_meta`)
+    if (!res.is_ok()) continue
+    try {
+      const record = JSON.parse(res.value) as DevAppRecord
+      const normalized = normalizeDevAppRecord(record)
+      if (normalized !== record) {
+        storage.save(`${pkg}_dev_meta`, JSON.stringify(normalized))
+        storage.save(`${pkg}_dev_url`, normalized.devUrl)
+      }
+      out.push(normalized)
+    } catch {
+      /* corrupt record — skip */
+    }
+  }
+  return out
 }
 
 const appRegistry = AppRegistry.getInstance()

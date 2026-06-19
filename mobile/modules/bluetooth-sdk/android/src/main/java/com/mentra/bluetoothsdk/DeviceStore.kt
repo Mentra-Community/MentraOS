@@ -66,7 +66,7 @@ object DeviceStore {
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
         store.set("glasses", "micEnabled", false)
-        store.set("glasses", "voiceActivityDetectionEnabled", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("glasses", "bluetoothClassicConnected", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
@@ -121,12 +121,12 @@ object DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
-        store.set("bluetooth", "voice_activity_detection_enabled", true)
+        store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
         store.set("bluetooth", "button_video_width", 1280)
@@ -140,6 +140,9 @@ object DeviceStore {
         store.set("bluetooth", "should_send_lc3", false)
         store.set("bluetooth", "should_send_transcript", false)
         store.set("bluetooth", "use_native_dashboard", false)
+        // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
+        store.set("bluetooth", "nex_audio_playback", false)
     }
 
     fun get(category: String, key: String): Any? {
@@ -235,6 +238,13 @@ object DeviceStore {
                     DeviceManager.getInstance().sgc?.setHeadUpAngle(angle)
                 }
             }
+            "bluetooth" to "imu_enabled" -> {
+                (value as? Boolean)?.let { enabled ->
+                    CoroutineScope(Dispatchers.Main).launch {
+                        DeviceManager.getInstance().sgc?.setImuEnabled(enabled)
+                    }
+                }
+            }
             "bluetooth" to "menu_apps" -> {
                 @Suppress("UNCHECKED_CAST")
                 (value as? List<Map<String, Any>>)?.let { items ->
@@ -258,6 +268,12 @@ object DeviceStore {
             "bluetooth" to "voice_activity_detection_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendVoiceActivityDetectionSetting()
             }
+            "bluetooth" to "nex_audio_playback" -> {
+                (value as? Boolean)?.let { enabled ->
+                    Bridge.log("DeviceStore: nex_audio_playback changed to $enabled")
+                    DeviceManager.getInstance().sgc?.applyNexAudioPlaybackSetting()
+                }
+            }
             "bluetooth" to "screen_disabled" -> {
                 (value as? Boolean)?.let { disabled ->
                     if (disabled) {
@@ -269,9 +285,6 @@ object DeviceStore {
             }
             "bluetooth" to "button_photo_size" -> {
                 DeviceManager.getInstance().sgc?.sendButtonPhotoSettings()
-            }
-            "bluetooth" to "button_camera_led" -> {
-                DeviceManager.getInstance().sgc?.sendButtonCameraLedSetting()
             }
             "bluetooth" to "button_max_recording_time" -> {
                 DeviceManager.getInstance().sgc?.sendButtonMaxRecordingTime()

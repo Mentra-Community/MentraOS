@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.PhotoRequest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -27,6 +28,15 @@ import java.io.ByteArrayOutputStream
 import java.util.TimeZone
 import java.util.UUID
 import java.util.regex.Pattern
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 // ---------- G2 Protocol Constants ----------
 
@@ -49,6 +59,7 @@ private enum class ServiceID(val value: Byte) {
     DASHBOARD(0x01), // UI_BACKGROUND_DASHBOARD_APP_ID
     MENU(0x03), // UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
     EVEN_AI(0x07), // UI_FOREGROUND_EVEN_AI_ID
+    NAVIGATION(0x08), // UI_BACKGROUND_NAVIGATION_ID (compass/heading lives here)
     G2_SETTING(0x09), // UI_SETTING_APP_ID
     GESTURE_CTRL(0x0D), // gesture_ctrl lifecycle signals
     ONBOARDING(0x10), // UI_ONBOARDING_APP_ID
@@ -69,7 +80,21 @@ private enum class EvenHubCmd(val value: Int) {
     REBUILD_PAGE(7),
     SHUTDOWN_PAGE(9),
     HEARTBEAT(12),
-    AUDIO_CONTROL(15)
+    AUDIO_CONTROL(15),
+    IMU_CONTROL(19) // APP_REQUEST_IMU_CTR_PACKET (confirmed via on-device brute-force)
+}
+
+// Navigation_Cmd_list from navigation.proto (service 0x08)
+private enum class NavigationCmd(val value: Int) {
+    APP_SEND_HEARTBEAT(0), // APP_SEND_HEARTBEAT_CMD
+    APP_REQUEST_START_UP(5), // APP_REQUEST_START_UP — begin navigation/compass session
+    APP_SEND_BASIC_INFO(7), // APP_SEND_BASIC_INFO
+    APP_REQUEST_EXIT(12), // APP_REQUEST_EXIT
+    OS_NOTIFY_EXIT(13), // OS_NOTIFY_EXIT
+    OS_NOTIFY_REVIEW_CHANGED(14), // OS_NOTIFY_REVIEW_CHANGED
+    OS_NOTIFY_COMPASS_CHANGED(15), // OS_NOTIFY_COMPASS_CHANGED — heading update
+    OS_NOTIFY_COMPASS_CALIBRATE_START(16), // OS_NOTIFY_COMPASS_CALIBRATE_STRAT (sic)
+    OS_NOTIFY_COMPASS_CALIBRATE_COMPLETE(17) // OS_NOTIFY_COMPASS_CALIBRATE_COMPLETE
 }
 
 // EvenHub response command IDs (glasses → phone)
@@ -86,7 +111,8 @@ private enum class OsEventType(val value: Int) {
     FOREGROUND_ENTER(4),
     FOREGROUND_EXIT(5),
     ABNORMAL_EXIT(6),
-    SYSTEM_EXIT(7);
+    SYSTEM_EXIT(7),
+    IMU_DATA_REPORT(8); // IMU_DATA_REPORT — Sys_ItemEvent carries imuData
 
     companion object {
         fun fromInt(v: Int): OsEventType? = entries.find { it.value == v }
@@ -465,6 +491,52 @@ private object EvenHubProto {
         val msg = audioCtrCmd(enable)
         return evenHubMessage(EvenHubCmd.AUDIO_CONTROL, 18, msg, magicRandom = magicRandom)
     }
+
+    // ---------- IMU control ----------
+    //
+    // Wire format recovered by on-device brute-force (sample magnitude ≈ 1.0 g confirms
+    // the decode). Shapes from even_hub_sdk@0.0.10; numeric proto tags confirmed live:
+    //   EvenHub_Cmd_List IMU command = 19
+    //   evenhub_main_msg_ctx ImuCtrlCmd slot = field 20
+    //   ImuCtrlCmd { field 1 = IMU_ReportEn (bool), field 2 = reportFrq (pacing 100…1000) }
+    //   Report path: cmd=2 (osNotifyEventToApp) → SendDeviceEvent.field13 →
+    //                Sys_ItemEvent { field 1 = eventType = 8 (IMU_DATA_REPORT),
+    //                                field 3 = imuData = IMU_Report_Data }
+    //   IMU_Report_Data { field 1 = x, 2 = y, 3 = z } — each a 32-bit float (NOT double),
+    //                     gravity-normalized (|v| ≈ 1 at rest).
+    const val IMU_CTRL_SUB_FIELD = 20
+
+    /** ImuReportPace pacing codes (protocol values, NOT literal Hz). Step 100, 100…1000. */
+    const val IMU_PACE_P100 = 100
+    const val IMU_PACE_P500 = 500
+    const val IMU_PACE_P1000 = 1000
+
+    /** Build an ImuCtrlCmd sub-message. */
+    fun imuCtrlCmd(enable: Boolean, reportFrq: Int): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, if (enable) 1 else 0) // IMU_ReportEn
+        if (enable) {
+            w.writeInt32Field(2, reportFrq) // reportFrq (pacing code 100…1000)
+        }
+        return w.toByteArray()
+    }
+
+    /**
+     * Build a full evenhub_main_msg_ctx that enables/disables IMU reporting. `reportFrq` is an
+     * ImuReportPace pacing code; ignored when disabling.
+     */
+    fun imuControlMessage(
+            enable: Boolean,
+            reportFrq: Int = IMU_PACE_P100,
+            magicRandom: Int = 0
+    ): ByteArray {
+        val imuMsg = imuCtrlCmd(enable, reportFrq)
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, EvenHubCmd.IMU_CONTROL.value) // Cmd
+        w.writeInt32Field(2, magicRandom) // MagicRandom
+        w.writeMessageField(IMU_CTRL_SUB_FIELD, imuMsg) // ImuCtrlCmd slot (field 20)
+        return w.toByteArray()
+    }
 }
 
 // ---------- DevSettings Auth Protobuf Builders ----------
@@ -667,11 +739,23 @@ private object OnboardingProto {
 // ---------- EvenAI Protobuf Builders (even_ai.proto, service ID 7) ----------
 
 private object EvenAIProto {
+    /**
+     * EvenAIDataPackage with CONFIG command to toggle Hey Even wakeword.
+     * voiceSwitch: 0 = OFF, 1 = ON.
+     *
+     * Wire format confirmed by sniffing the official app toggling the setting:
+     *   EvenAIConfig (field 13) = { f1=voiceSwitch, f2=32 }
+     * The app OMITS f1 when disabling (proto3 zero) and sends f2=32 (0x20), NOT 80.
+     * Observed echoes: ON  → 6A04 08 01 10 20  ({f1:1, f2:32})
+     *                  OFF → 6A02 10 20         ({f2:32})
+     */
     fun setHeyEven(magicRandom: Int, enabled: Boolean): ByteArray {
         // EvenAIConfig
         val configW = ProtobufWriter()
-        configW.writeInt32Field(1, if (enabled) 1 else 0) // voiceSwitch
-        configW.writeInt32Field(2, 80) // streamSpeed (always sent)
+        if (enabled) {
+            configW.writeInt32Field(1, 1) // voiceSwitch (omitted when off, matching the app)
+        }
+        configW.writeInt32Field(2, 32) // streamSpeed (always sent, app uses 32)
 
         // EvenAIDataPackage
         val w = ProtobufWriter()
@@ -1226,11 +1310,27 @@ class G2 : SGCManager() {
     private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
-    private var pageHasTextContainer: Boolean = false
     private var currentTextContent: String = ""
     private var textContainerID: Int = 1
     private var imageSessionCounter: Int = 0
     private var heartbeatCounter: Int = 0
+
+    // Image-send ACK/retry: the glasses ACK EACH fragment with an ImgResCmd carrying MapSessionId
+    // (field 3), MapFragmentIndex (field 6) and ErrorCode (field 8; 4=success, 5=failed). One
+    // MapSessionId identifies the WHOLE image transfer (constant across its fragments) — the
+    // glasses key their reassembly buffer on it — so each fragment reuses the same session id with
+    // an incrementing MapFragmentIndex. We correlate a fragment's ACK by the (session,
+    // fragmentIndex) pair; sendImageData() awaits it before sending the next fragment. Only one
+    // transfer is ever outstanding (sendImageData runs under displayMutex), so a single slot
+    // suffices.
+    // @Volatile: written on the main thread (in sendImageData) but read/completed on the BLE
+    // callback thread (in correlateImageAck) so the ACK is never delayed behind a backed-up main
+    // queue. CompletableDeferred.complete() is itself thread-safe.
+    @Volatile private var pendingImgAckSession: Int? = null
+    @Volatile private var pendingImgAckFragment: Int? = null
+    @Volatile private var pendingImgAck: CompletableDeferred<Boolean>? = null
+    private val IMG_ACK_TIMEOUT_MS = 2000L // matches Dart host
+    private val IMG_MAX_ATTEMPTS = 3
     private var authStarted: Boolean = false
     private var leftAuthenticated: Boolean = false
     private var rightAuthenticated: Boolean = false
@@ -1242,8 +1342,17 @@ class G2 : SGCManager() {
     private var dashboardMenuItems: MutableList<MenuProto.MenuItem> = mutableListOf()
     private var activeMenuAppId: Int? = null
     private var lastClickTimestamp: Long? = null
+    private var lastEvenHubResponseTimestamp: Long? = null
     private var lastMenuSelectTimestamp: Long? = null
     private var lastGestureCtrlTimestamp: Long? = null
+
+    /**
+     * Serializes all display mutations (text/bitmap/clear/rebuild). Each public display entry point
+     * launches on [displayScope] and runs its body under [displayMutex] so page shutdown/create and
+     * fragment sends can never interleave with another update on the glasses.
+     */
+    private val displayScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val displayMutex = Mutex()
 
     /** A tracked image container on the current page. Keyed by its rect for reuse. */
     private data class ImgContainer(
@@ -1251,7 +1360,11 @@ class G2 : SGCManager() {
             val x: Int,
             val y: Int,
             val width: Int,
-            val height: Int
+            val height: Int,
+            // The converted BMP cached so the container can be re-sent on a page rebuild.
+            // NOTE: this ByteArray makes the auto-generated equals/hashCode unreliable, but the
+            // class is only ever compared via matches()/id, so that is never relied upon.
+            var bmpData: ByteArray
     ) {
         val name: String
             get() = "img-$id"
@@ -1260,18 +1373,65 @@ class G2 : SGCManager() {
                 this.x == x && this.y == y && this.width == width && this.height == height
     }
 
+    /** A tracked text container on the current page. Keyed by its rect for reuse. */
+    private data class TextContainer(
+            val id: Int,
+            val x: Int,
+            val y: Int,
+            val width: Int,
+            val height: Int,
+            var content: String,
+            val borderWidth: Int,
+            val borderColor: Int,
+            val borderRadius: Int,
+            val paddingLength: Int
+    ) {
+        val name: String
+            get() = "text-$id"
+
+        fun matches(
+                x: Int,
+                y: Int,
+                width: Int,
+                height: Int,
+                borderWidth: Int,
+                borderColor: Int,
+                borderRadius: Int,
+                paddingLength: Int
+        ): Boolean =
+                this.x == x &&
+                        this.y == y &&
+                        this.width == width &&
+                        this.height == height &&
+                        this.borderWidth == borderWidth &&
+                        this.borderColor == borderColor &&
+                        this.borderRadius == borderRadius &&
+                        this.paddingLength == paddingLength
+    }
+
     /**
      * Live list of image containers on the page, ordered oldest→newest (for LRU eviction). The page
      * may hold at most 4 image containers (IDs from the pool below).
      */
     private val imageContainers: MutableList<ImgContainer> = mutableListOf()
+    private val textContainers: MutableList<TextContainer> = mutableListOf()
     /** Fixed pool of container IDs the page protocol expects. */
     private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
-    /** Default container seeded into every fresh page: 100x100 in the top-left. */
-    private val defaultImgX = 0
-    private val defaultImgY = 0
-    private val defaultImgWidth = 100
+    private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
+    /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
+    private val defaultImgX = 188
+    private val defaultImgY = 44
+    private val defaultImgWidth = 200
     private val defaultImgHeight = 100
+    /** Default text container: full-screen 576x288 with a 4px padding. */
+    private val defaultTextX = 0
+    private val defaultTextY = 0
+    private val defaultTextWidth = 576
+    private val defaultTextHeight = 288
+    private val defaultTextBorderWidth = 0
+    private val defaultTextBorderColor = 0
+    private val defaultTextBorderRadius = 0
+    private val defaultTextPaddingLength = 4
 
     // Battery state
     private var _batteryLevel: Int = -1
@@ -1302,6 +1462,16 @@ class G2 : SGCManager() {
     // Matches the 8 ms G1.java uses for its bitmap chunk loop (ANDROID_CHUNK_DELAY_MS).
     private val BLE_PACKET_GAP_MS = 8L
 
+    // Dedicated single-thread executor for pacing BLE packet bursts. We must NOT spread the burst
+    // across [mainHandler]: the incoming image ACK is also delivered on the main thread, and a long
+    // run of postDelayed writes (plus heartbeats and the text-queue tick) can push ACK processing
+    // past IMG_ACK_TIMEOUT_MS — the glasses appear to "stop responding" even though the ACK arrived.
+    // Pacing here keeps the main looper free so ACKs are processed promptly.
+    private val bleWriteExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "G2-ble-write").apply { isDaemon = true }
+            }
+
     @Suppress("deprecation")
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
         if (right) {
@@ -1329,19 +1499,29 @@ class G2 : SGCManager() {
             left: Boolean = false,
             right: Boolean = true
     ) {
+        // Bridge.log("G2: sendToGlasses() - sending ${packets.size} packets first byte: ${packets[0][0]}")
         if (packets.isEmpty()) return
         // Single-packet sends (the common case for text/settings) go straight through.
         if (packets.size == 1) {
             writeOnePacket(packets[0], left, right)
             return
         }
-        // Multi-packet bursts (bitmaps, large protobufs): write the first packet immediately,
-        // then schedule the rest with BLE_PACKET_GAP_MS spacing so the Android BLE stack can
-        // actually drain each write before the next one is queued.
-        writeOnePacket(packets[0], left, right)
-        for (i in 1 until packets.size) {
-            val packet = packets[i]
-            mainHandler.postDelayed({ writeOnePacket(packet, left, right) }, BLE_PACKET_GAP_MS * i)
+        // Multi-packet bursts (bitmaps, large protobufs): pace the whole burst on a dedicated
+        // write thread with a blocking gap between packets, so the Android BLE stack can drain each
+        // write before the next is queued WITHOUT occupying the main looper (which also carries the
+        // image ACK and would otherwise starve it under load — see [bleWriteExecutor]).
+        bleWriteExecutor.execute {
+            for (i in packets.indices) {
+                writeOnePacket(packets[i], left, right)
+                if (i < packets.size - 1) {
+                    try {
+                        Thread.sleep(BLE_PACKET_GAP_MS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return@execute
+                    }
+                }
+            }
         }
     }
 
@@ -1352,7 +1532,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets, left = true, right = true)
+        sendToGlasses(packets)
     }
 
     private fun sendDevSettingsCommand(
@@ -1366,6 +1546,16 @@ class G2 : SGCManager() {
                         payload = payload
                 )
         sendToGlasses(packets, left = left, right = right)
+    }
+
+    private fun sendNavigationCommand(payload: ByteArray) {
+        val packets =
+                sendManager.buildPackets(
+                        serviceId = ServiceID.NAVIGATION.value,
+                        payload = payload,
+                        reserveFlag = true
+                )
+        sendToGlasses(packets)
     }
 
     private fun sendG2SettingCommand(payload: ByteArray) {
@@ -1440,7 +1630,7 @@ class G2 : SGCManager() {
 
     // ---------- Authentication Sequence ----------
 
-    private fun runAuthSequence() {
+    private suspend fun runAuthSequence() {
         Bridge.log("G2: Running auth sequence")
 
         // Auth to left side
@@ -1450,443 +1640,113 @@ class G2 : SGCManager() {
         }
 
         // Small delay then auth right + pipe role change + time sync
-        mainHandler.postDelayed(
-                {
-                    val authR = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
-                    sendDevSettingsCommand(authR, left = false, right = true)
+        delay(200)
+        val authR = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(authR, left = false, right = true)
 
-                    mainHandler.postDelayed(
-                            {
-                                val roleChange =
-                                        DevSettingsProto.pipeRoleChange(
-                                                sendManager.nextMagicRandom()
-                                        )
-                                sendDevSettingsCommand(roleChange, left = false, right = true)
+        delay(200)
+        val roleChange = DevSettingsProto.pipeRoleChange(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(roleChange, left = false, right = true)
 
-                                mainHandler.postDelayed(
-                                        {
-                                            val timeSync =
-                                                    DevSettingsProto.timeSync(
-                                                            sendManager.nextMagicRandom()
-                                                    )
-                                            sendDevSettingsCommand(timeSync)
+        delay(200)
+        val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(timeSync)
 
-                                            // Skip onboarding on connect
-                                            mainHandler.postDelayed(
-                                                    {
-                                                        val onboarding =
-                                                                OnboardingProto.skipOnboarding(
-                                                                        sendManager
-                                                                                .nextMagicRandom()
-                                                                )
-                                                        sendOnboardingCommand(onboarding)
-                                                        Bridge.log(
-                                                                "G2: Sent onboarding skip (FINISH)"
-                                                        )
+        // Skip onboarding on connect
+        delay(200)
+        val onboarding = OnboardingProto.skipOnboarding(sendManager.nextMagicRandom())
+        sendOnboardingCommand(onboarding)
+        Bridge.log("G2: Sent onboarding skip (FINISH)")
 
-                                                        // Disable "Hey Even" wakeword on connect
-                                                        val heyEvenOff =
-                                                                EvenAIProto.setHeyEven(
-                                                                        sendManager
-                                                                                .nextMagicRandom(),
-                                                                        false
-                                                                )
-                                                        sendEvenAICommand(heyEvenOff)
-                                                        Bridge.log("G2: Disabled Hey Even wakeword")
+        // 1. gesture_ctrl init (field1=0, field2=magicRandom)
+        val gestureInitW = ProtobufWriter()
+        gestureInitW.writeInt32Field(1, 0)
+        gestureInitW.writeInt32Field(2, sendManager.nextMagicRandom())
+        sendGestureCtrlCommand(gestureInitW.toByteArray())
 
-                                                        // Replicate Even app's full init sequence
-                                                        // for menu selection support:
-
-                                                        // 0. Universe settings (g2_setting cmd=1
-                                                        // field3 with field9=universe settings)
-                                                        val univW = ProtobufWriter()
-                                                        univW.writeInt32Field(
-                                                                1,
-                                                                1
-                                                        ) // DeviceReceiveInfo
-                                                        univW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        univW.writeMessageField(
-                                                                3,
-                                                                byteArrayOf(
-                                                                        0x4A,
-                                                                        0x0A, // field 9, length 10
-                                                                        0x08,
-                                                                        0x00, // unitFormat=0
-                                                                        0x10,
-                                                                        0x00, // distanceUnit=0
-                                                                        0x18,
-                                                                        dashboardHalfDayFormat().toByte(),
-                                                                        // timeFormat / halfDayFormat
-                                                                        0x20,
-                                                                        0x00, // dateFormat=0
-                                                                        0x28,
-                                                                        dashboardTemperatureUnit().toByte(),
-                                                                        // temperatureUnit
-                                                                )
-                                                        )
-                                                        sendG2SettingCommand(univW.toByteArray())
-
-                                                        // 1. gesture_ctrl init (field1=0,
-                                                        // field2=magicRandom)
-                                                        val gestureInitW = ProtobufWriter()
-                                                        gestureInitW.writeInt32Field(1, 0)
-                                                        gestureInitW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        sendGestureCtrlCommand(
-                                                                gestureInitW.toByteArray()
-                                                        )
-
-                                                        // 2. ui_setting_app (0x0C) — query
-                                                        val uiSettW = ProtobufWriter()
-                                                        uiSettW.writeInt32Field(
-                                                                1,
-                                                                2
-                                                        ) // cmd = DeviceReceiveRequest
-                                                        uiSettW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        uiSettW.writeMessageField(
-                                                                4,
-                                                                byteArrayOf(0x08, 0x01, 0x10, 0x00)
-                                                        ) // {1:1, 2:0}
-                                                        sendToGlasses(
-                                                                sendManager.buildPackets(
-                                                                        serviceId = 0x0C,
-                                                                        payload =
-                                                                                uiSettW.toByteArray(),
-                                                                        reserveFlag = true
-                                                                )
-                                                        )
-
-                                                        // 3. teleprompter (0x10) — config (cmd=1,
-                                                        // field3={1:4})
-                                                        val teleW = ProtobufWriter()
-                                                        teleW.writeInt32Field(1, 1)
-                                                        teleW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        teleW.writeMessageField(
-                                                                3,
-                                                                byteArrayOf(0x08, 0x04)
-                                                        ) // {1:4}
-                                                        sendToGlasses(
-                                                                sendManager.buildPackets(
-                                                                        serviceId = 0x10,
-                                                                        payload =
-                                                                                teleW.toByteArray(),
-                                                                        reserveFlag = true
-                                                                )
-                                                        )
-
-                                                        // 4. EvenHub CTRL on service 0x81 (cmd=1,
-                                                        // empty field3)
-                                                        val ehCtrlW = ProtobufWriter()
-                                                        ehCtrlW.writeInt32Field(1, 1)
-                                                        ehCtrlW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        ehCtrlW.writeMessageField(3, ByteArray(0))
-                                                        sendEvenHubCtrlCommand(
-                                                                ehCtrlW.toByteArray()
-                                                        )
-
-                                                        // 5. calendar (0x04) — config
-                                                        val calW = ProtobufWriter()
-                                                        calW.writeInt32Field(1, 1)
-                                                        calW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        calW.writeMessageField(
-                                                                3,
-                                                                byteArrayOf(
-                                                                        0x08,
-                                                                        0x01,
-                                                                        0x10,
-                                                                        0x01,
-                                                                        0x18,
-                                                                        0x05,
-                                                                        0x28,
-                                                                        0x01
-                                                                )
-                                                        )
-                                                        sendToGlasses(
-                                                                sendManager.buildPackets(
-                                                                        serviceId = 0x04,
-                                                                        payload =
-                                                                                calW.toByteArray(),
-                                                                        reserveFlag = true
-                                                                )
-                                                        )
-
-                                                        // 6. Dashboard init (0x01) — display
-                                                        // settings
-                                                        val dashDisplayW = ProtobufWriter()
-                                                        dashDisplayW.writeInt32Field(
-                                                                1,
-                                                                4
-                                                        ) // displayMode
-                                                        dashDisplayW.writeInt32Field(
-                                                                2,
-                                                                3
-                                                        ) // statusDisplayCount
-                                                        dashDisplayW.writeMessageField(
-                                                                3,
-                                                                byteArrayOf(1, 2, 3)
-                                                        ) // statusDisplayOrder
-                                                        dashDisplayW.writeInt32Field(
-                                                                4,
-                                                                4
-                                                        ) // widgetDisplayCount
-                                                        dashDisplayW.writeMessageField(
-                                                                5,
-                                                                byteArrayOf(1, 3, 2, 2)
-                                                        ) // widgetDisplayOrder
-                                                        dashDisplayW.writeInt32Field(
-                                                                6,
-                                                                dashboardHalfDayFormat()
-                                                        ) // halfDayFormat
-                                                        dashDisplayW.writeInt32Field(
-                                                                7,
-                                                                dashboardTemperatureUnit()
-                                                        ) // temperatureUnit
-
-                                                        val dashRecvW = ProtobufWriter()
-                                                        dashRecvW.writeMessageField(
-                                                                2,
-                                                                dashDisplayW.toByteArray()
-                                                        )
-
-                                                        val dashPkgW = ProtobufWriter()
-                                                        dashPkgW.writeInt32Field(
-                                                                1,
-                                                                2
-                                                        ) // Dashboard_Receive
-                                                        dashPkgW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        dashPkgW.writeMessageField(
-                                                                4,
-                                                                dashRecvW.toByteArray()
-                                                        )
-                                                        sendDashboardCommand(dashPkgW.toByteArray())
-
-                                                        // 7. Dashboard REQUEST_NEWS_INFO (cmd=5,
-                                                        // field7={1:1})
-                                                        val dashNewsReqW = ProtobufWriter()
-                                                        dashNewsReqW.writeInt32Field(
-                                                                1,
-                                                                5
-                                                        ) // REQUEST_NEWS_INFO
-                                                        dashNewsReqW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        dashNewsReqW.writeMessageField(
-                                                                7,
-                                                                byteArrayOf(0x08, 0x01)
-                                                        ) // {1:1}
-                                                        sendDashboardCommand(
-                                                                dashNewsReqW.toByteArray()
-                                                        )
-
-                                                        // 8. Gesture control list via g2_setting
-                                                        val gestListW = ProtobufWriter()
-                                                        gestListW.writeInt32Field(
-                                                                1,
-                                                                1
-                                                        ) // DeviceReceiveInfo
-                                                        gestListW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        // field 3 with field 10
-                                                        // (gestureControlList): 3 items, all
-                                                        // app_unable
-                                                        val gestureCtrlPayload =
-                                                                byteArrayOf(
-                                                                        0x52,
-                                                                        0x18, // field 10, length 24
-                                                                        0x0A,
-                                                                        0x06,
-                                                                        0x08,
-                                                                        0x00,
-                                                                        0x10,
-                                                                        0x00,
-                                                                        0x18,
-                                                                        0x00, // item 1
-                                                                        0x0A,
-                                                                        0x06,
-                                                                        0x08,
-                                                                        0x00,
-                                                                        0x10,
-                                                                        0x01,
-                                                                        0x18,
-                                                                        0x00, // item 2
-                                                                        0x0A,
-                                                                        0x06,
-                                                                        0x08,
-                                                                        0x00,
-                                                                        0x10,
-                                                                        0x02,
-                                                                        0x18,
-                                                                        0x00 // item 3
-                                                                )
-                                                        gestListW.writeMessageField(
-                                                                3,
-                                                                gestureCtrlPayload
-                                                        )
-                                                        sendG2SettingCommand(
-                                                                gestListW.toByteArray()
-                                                        )
-
-                                                        // 9. Dashboard APP_REQUEST_NEWS_INFO
-                                                        // (cmd=7, field9={1:1})
-                                                        val dashAppNewsW = ProtobufWriter()
-                                                        dashAppNewsW.writeInt32Field(
-                                                                1,
-                                                                7
-                                                        ) // APP_REQUEST_NEWS_INFO
-                                                        dashAppNewsW.writeInt32Field(
-                                                                2,
-                                                                sendManager.nextMagicRandom()
-                                                        )
-                                                        dashAppNewsW.writeMessageField(
-                                                                9,
-                                                                byteArrayOf(0x08, 0x01)
-                                                        ) // {1:1}
-                                                        sendDashboardCommand(
-                                                                dashAppNewsW.toByteArray()
-                                                        )
-
-                                                        Bridge.log(
-                                                                "G2: Sent full Even-compatible init sequence"
-                                                        )
-                                                    },
-                                                    200
-                                            )
-
-                                            // Start heartbeats after auth
-                                            startHeartbeats()
-
-                                            // Mark as ready and request device info
-                                            mainHandler.postDelayed(
-                                                    {
-                                                        reconnectionManager.stop()
-                                                        Bridge.log(
-                                                                "G2: Auth sequence complete, glasses ready"
-                                                        )
-
-                                                        // Set device_name so DeviceManager can save
-                                                        // it for reconnection
-                                                        val peripheralName =
-                                                                rightGatt?.device?.name
-                                                                        ?: leftGatt?.device?.name
-                                                        val serialNumber =
-                                                                peripheralName?.let {
-                                                                    deviceNameToSerialNumber[it]
-                                                                }
-                                                        if (serialNumber != null) {
-                                                            DeviceStore.apply(
-                                                                    "bluetooth",
-                                                                    "device_name",
-                                                                    serialNumber
-                                                            )
-                                                            Bridge.log(
-                                                                    "G2: Set device_name to $serialNumber"
-                                                            )
-                                                        }
-
-                                                        // Set bluetooth name and device model for
-                                                        // Device Info page
-                                                        val btName =
-                                                                rightGatt?.device?.name
-                                                                        ?: leftGatt?.device?.name
-                                                                                ?: ""
-                                                        DeviceStore.apply(
-                                                                "glasses",
-                                                                "bluetoothName",
-                                                                btName
-                                                        )
-                                                        DeviceStore.apply(
-                                                                "glasses",
-                                                                "deviceModel",
-                                                                DeviceTypes.G2
-                                                        )
-
-                                                        setFullyConnected()
-
-                                                        // Connect a controller if we have one
-                                                        connectController()
-
-                                                        // Query version + battery info from glasses
-                                                        requestDeviceInfo()
-
-                                                        sendMenuApps()
-                                                        sendStoredCalendarEvents()
-                                                    },
-                                                    500
-                                            )
-                                        },
-                                        200
-                                )
-                            },
-                            200
-                    )
-                },
-                200
+        // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
+        val uiSettW = ProtobufWriter()
+        uiSettW.writeInt32Field(1, 2) // cmd = DeviceReceiveRequest
+        uiSettW.writeInt32Field(2, sendManager.nextMagicRandom())
+        uiSettW.writeMessageField(4, byteArrayOf(0x08, 0x01, 0x10, 0x00)) // {1:1, 2:0}
+        sendToGlasses(
+                sendManager.buildPackets(
+                        serviceId = 0x0C,
+                        payload = uiSettW.toByteArray(),
+                        reserveFlag = true
+                )
         )
-    }
 
-    private fun runDashboardSequence() {
-        Bridge.log("G2: Running dashboard sequence")
+        // 6. Dashboard init (0x01) — display settings
+        // halfDayFormat: 1 = 12h, 0 = 24h
+        // temperatureUnit: 1 = Celsius (metric), 2 = Fahrenheit (imperial)
+        val dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
+        // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
+        dashDisplayW.writeMessageField(
+                5,
+                byteArrayOf(3, 1, 2, 4, 5)
+        ) // widgetDisplayOrder: Schedule, News, Stock, Quicklist
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
 
-        // Send the shutdown command to the glasses
-        val msg = EvenHubProto.shutdownMessage()
-        sendEvenHubCommand(msg)
-        pageCreated = false
-        currentTextContent = ""
+        val dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
 
-        mainHandler.postDelayed(
-                {
-                    // 1. gesture_ctrl init (field1=0, field2=magicRandom)
-                    val gestureInitW = ProtobufWriter()
-                    gestureInitW.writeInt32Field(1, 0)
-                    gestureInitW.writeInt32Field(2, sendManager.nextMagicRandom())
-                    sendGestureCtrlCommand(gestureInitW.toByteArray())
+        val dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
+        sendDashboardCommand(dashPkgW.toByteArray())
 
-                    // 6. Dashboard init (0x01) — display settings
-                    val dashDisplayW = ProtobufWriter()
-                    dashDisplayW.writeInt32Field(1, 4) // displayMode
-                    dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
-                    dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
-                    dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
-                    dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
-                    dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
-                    dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+        // Disable "Hey Even" wakeword on connect
+        val heyEvenOff = EvenAIProto.setHeyEven(sendManager.nextMagicRandom(), false)
+        sendEvenAICommand(heyEvenOff)
+        Bridge.log("G2: Disabled Hey Even wakeword")
 
-                    val dashRecvW = ProtobufWriter()
-                    dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
+        Bridge.log("G2: Sent full Even-compatible init sequence")
 
-                    val dashPkgW = ProtobufWriter()
-                    dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
-                    dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
-                    dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
-                    sendDashboardCommand(dashPkgW.toByteArray())
+        // Start heartbeats after auth
+        startHeartbeats()
 
-                    Bridge.log("G2: Sent full Even-compatible init sequence")
-                },
-                1000
-        )
+        reconnectionManager.stop()
+        Bridge.log("G2: Auth sequence complete, glasses ready")
+
+        // Set device_name so DeviceManager can save it for reconnection
+        val peripheralName = rightGatt?.device?.name ?: leftGatt?.device?.name
+        val serialNumber = peripheralName?.let { deviceNameToSerialNumber[it] }
+        if (serialNumber != null) {
+            DeviceStore.apply("bluetooth", "device_name", serialNumber)
+            Bridge.log("G2: Set device_name to $serialNumber")
+        }
+
+        // Set bluetooth name and device model for Device Info page
+        val btName = rightGatt?.device?.name ?: leftGatt?.device?.name ?: ""
+        DeviceStore.apply("glasses", "bluetoothName", btName)
+        DeviceStore.apply("glasses", "deviceModel", DeviceTypes.G2)
+
+        setFullyConnected()
+
+        // Connect a controller if we have one
+        connectController()
+
+        // Query version + battery info from glasses
+        requestDeviceInfo()
+
+        sendMenuApps()
+        sendStoredCalendarEvents()
+
+        // Re-apply the IMU preference: the store only pushes imu_enabled to the glasses when
+        // the value changes, so after a reconnect an already-on IMU would otherwise stay off
+        // (accel_event stops) until the user toggles the setting again.
+        val imuEnabled = DeviceStore.get("bluetooth", "imu_enabled") as? Boolean ?: false
+        if (imuEnabled) {
+            Bridge.log("G2: re-applying imu_enabled=true after connect")
+            setImuEnabled(true)
+        }
     }
 
     private fun dashboardHalfDayFormat(): Int {
@@ -1922,18 +1782,18 @@ class G2 : SGCManager() {
     // ---------- Heartbeats ----------
 
     private fun startHeartbeats() {
-        // EvenHub heartbeat every 5 seconds
+        // EvenHub heartbeat every 10 seconds
         stopHeartbeats()
 
         val hbRunnable =
                 object : Runnable {
                     override fun run() {
                         sendEvenHubHeartbeat()
-                        mainHandler.postDelayed(this, 5000)
+                        mainHandler.postDelayed(this, 10000)
                     }
                 }
         heartbeatRunnable = hbRunnable
-        mainHandler.postDelayed(hbRunnable, 5000)
+        mainHandler.postDelayed(hbRunnable, 10000)
 
         // DevSettings heartbeat every 5 seconds
         val dsRunnable =
@@ -2017,36 +1877,159 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Display Control ----------
 
+    override fun sendText(text: String) {
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText2(text)
+            }
+        }
+    }
+
     override fun sendTextWall(text: String) {
-        // Bridge.log("G2: sendTextWall(${text.take(10)}...)")
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText2(
+                        text,
+                        x = defaultTextX,
+                        y = defaultTextY,
+                        width = defaultTextWidth,
+                        height = defaultTextHeight,
+                        borderWidth = defaultTextBorderWidth,
+                        borderColor = defaultTextBorderColor,
+                        borderRadius = defaultTextBorderRadius,
+                        paddingLength = defaultTextPaddingLength
+                )
+            }
+        }
+    }
+
+    override fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int
+    ) {
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText2(
+                        text,
+                        x = x,
+                        y = y,
+                        width = width,
+                        height = height,
+                        borderWidth = borderWidth,
+                        borderColor = defaultTextBorderColor,
+                        borderRadius = borderRadius,
+                        paddingLength = defaultTextPaddingLength
+                )
+            }
+        }
+    }
+
+    private suspend fun sendText2(
+            text: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null,
+            borderWidth: Int? = null,
+            borderColor: Int? = null,
+            borderRadius: Int? = null,
+            paddingLength: Int? = null
+    ) {
+        // Bridge.log("G2: sendTextWall(${text.take(50)}...)")
 
         // ignore events while the ER dashboard is open:
-        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        val useNativeDashboard =
+                DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
         if (useNativeDashboard && dashboardShowing > 0) {
             return
         }
 
-        if (text.isEmpty()) {
-            clearDisplay()
+        val rx = x ?: defaultTextX
+        val ry = y ?: defaultTextY
+        val rw = width ?: defaultTextWidth
+        val rh = height ?: defaultTextHeight
+        val rBorderWidth = defaultTextBorderWidth
+        val rBorderColor = defaultTextBorderColor
+        val rBorderRadius = defaultTextBorderRadius
+        val rPaddingLength = defaultTextPaddingLength
+        val content = if (text.isEmpty()) " " else text
+
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        val container: TextContainer
+        val existingIndex =
+                textContainers.indexOfFirst {
+                    it.matches(
+                            rx,
+                            ry,
+                            rw,
+                            rh,
+                            rBorderWidth,
+                            rBorderColor,
+                            rBorderRadius,
+                            rPaddingLength
+                    )
+                }
+        if (existingIndex >= 0) {
+            textContainers[existingIndex].content = content
+            container = textContainers[existingIndex]
+            Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
+            if (!pageCreated) {
+                rebuildPage()
+                return
+            }
+            // update the text container:
+            val msg =
+            EvenHubProto.updateTextMessage(
+                    containerID = container.id,
+                    contentOffset = 0,
+                    contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+                    content = container.content
+            )
+            queueEvenHubCommand(msg)
             return
         }
-
-        if (!pageCreated || !pageHasTextContainer) {
-            createPageWithText(text)
-        } else {
-            updateText(text)
-        }
+        container =
+                addTextContainer(
+                        rx,
+                        ry,
+                        rw,
+                        rh,
+                        content,
+                        rBorderWidth,
+                        rBorderColor,
+                        rBorderRadius,
+                        rPaddingLength
+                )
+        Bridge.log("G2: sendText() - added text container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+        rebuildPage()
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
-        val combined = "$top\n$bottom"
+        Bridge.log("G2: sendDoubleTextWall() - top: $top, bottom: $bottom")
+        // G2 doesn't have native double text wall, combine them
+        val combined = "$top\n\n$bottom"
         sendTextWall(combined)
     }
 
     override fun clearDisplay() {
         Bridge.log("G2: clearDisplay()")
-        if (pageCreated) {
-            sendTextWall(" ")
+        displayScope.launch {
+            displayMutex.withLock {
+                // reset the content of all text containers to empty:
+                for (i in textContainers.indices) {
+                    textContainers[i].content = " "
+                }
+                for (i in imageContainers.indices) {
+                    imageContainers[i].bmpData = ByteArray(0)
+                }
+                // shutdown the page and then recreate the containers without the content.
+                rebuildPage()
+            }
         }
     }
 
@@ -2068,13 +2051,16 @@ class G2 : SGCManager() {
             width: Int?,
             height: Int?
     ): Boolean {
-        currentBitmapBase64 = base64ImageData
-        currentTextContent = ""
-
         val rx = x ?: defaultImgX
         val ry = y ?: defaultImgY
         val rw = width ?: defaultImgWidth
         val rh = height ?: defaultImgHeight
+        
+        // ignore events while the ER dashboard is open:
+        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard && dashboardShowing > 0) {
+            return false
+        }
 
         val rawData =
                 Base64.decode(base64ImageData, Base64.DEFAULT)
@@ -2083,54 +2069,38 @@ class G2 : SGCManager() {
                             return false
                         }
 
-        // Create the startup page lazily, seeded with the default top-left container.
-        val freshPage = !startupPageCreated
-        if (freshPage) {
-            imageContainers.clear()
-            imageContainers.add(
-                    ImgContainer(
-                            id = imageContainerIDPool[0],
-                            x = defaultImgX,
-                            y = defaultImgY,
-                            width = defaultImgWidth,
-                            height = defaultImgHeight
-                    )
-            )
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - startup page created")
-        }
-
-        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
-        val existing = imageContainers.firstOrNull { it.matches(rx, ry, rw, rh) }
-        val container: ImgContainer
-        val needsRebuild: Boolean
-        if (existing != null) {
-            container = existing
-            needsRebuild = false
-            Bridge.log("G2: displayBitmap() - reusing container ${existing.id} for rect $rx,$ry ${rw}x$rh")
-        } else {
-            container = addImageContainer(rx, ry, rw, rh)
-            needsRebuild = true
-            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
-            rebuildPage()
-        }
-
         val bmpData =
-                convertToG2Bmp(rawData, containerWidth = container.width, containerHeight = container.height)
+                convertToG2Bmp(rawData, containerWidth = rw, containerHeight = rh)
                         ?: run {
                             Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
                             return false
                         }
 
-        // Fire-and-forget. If the page was just created/rebuilt, defer the BMP send 1s to let the
-        // glasses process the page (matches iOS's await). Reuse path sends immediately.
-        if (freshPage || needsRebuild) {
-            mainHandler.postDelayed(
-                    { sendImageData(container.id, container.name, bmpData) },
-                    1000
-            )
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        val container: ImgContainer
+        val existingIndex = imageContainers.indexOfFirst { it.matches(rx, ry, rw, rh) }
+        if (existingIndex >= 0) {
+            imageContainers[existingIndex].bmpData = bmpData
+            container = imageContainers[existingIndex]
+            Bridge.log("G2: displayBitmap() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
+            displayScope.launch {
+                displayMutex.withLock {
+                    if (!pageCreated) {
+                        rebuildPage()
+                    } else {
+                        sendImageData(container.id, container.name, container.bmpData)
+                    }
+                }
+            }
+            return true
         } else {
-            sendImageData(container.id, container.name, bmpData)
+            container = addImageContainer(rx, ry, rw, rh, bmpData)
+            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+            displayScope.launch {
+                displayMutex.withLock {
+                    rebuildPage()
+                }
+            }
         }
 
         return true
@@ -2140,7 +2110,13 @@ class G2 : SGCManager() {
      * Add a new image container for the rect, evicting the oldest when the list is full (max 4).
      * Returns the newly tracked container (with an assigned ID from the pool).
      */
-    private fun addImageContainer(x: Int, y: Int, width: Int, height: Int): ImgContainer {
+    private fun addImageContainer(
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            bmpData: ByteArray
+    ): ImgContainer {
         // Evict the oldest container when at capacity, freeing its ID for reuse.
         if (imageContainers.size >= imageContainerIDPool.size) {
             val evicted = imageContainers.removeAt(0)
@@ -2149,71 +2125,192 @@ class G2 : SGCManager() {
         // Pick the lowest free ID from the pool.
         val usedIDs = imageContainers.map { it.id }.toSet()
         val id = imageContainerIDPool.firstOrNull { it !in usedIDs } ?: imageContainerIDPool[0]
-        val container = ImgContainer(id = id, x = x, y = y, width = width, height = height)
+        val container =
+                ImgContainer(id = id, x = x, y = y, width = width, height = height, bmpData = bmpData)
         imageContainers.add(container)
         return container
     }
 
-    /** Rebuild the page from the current text + image container list. */
-    private fun rebuildPage() {
-        createPageWithText(currentTextContent)
+    private fun addTextContainer(
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            content: String,
+            borderWidth: Int,
+            borderColor: Int,
+            borderRadius: Int,
+            paddingLength: Int
+    ): TextContainer {
+        // Evict the oldest container when at capacity, freeing its ID for reuse.
+        if (textContainers.size >= textContainerIDPool.size) {
+            val evicted = textContainers.removeAt(0)
+            Bridge.log("G2: evicting oldest text container ${evicted.id}")
+        }
+        // Pick the lowest free ID from the pool.
+        val usedIDs = textContainers.map { it.id }.toSet()
+        val id = textContainerIDPool.firstOrNull { it !in usedIDs } ?: textContainerIDPool[0]
+        val container =
+                TextContainer(
+                        id = id,
+                        x = x,
+                        y = y,
+                        width = width,
+                        height = height,
+                        content = content,
+                        borderWidth = borderWidth,
+                        borderColor = borderColor,
+                        borderRadius = borderRadius,
+                        paddingLength = paddingLength
+                )
+        textContainers.add(container)
+        return container
     }
 
-    private fun sendImageData(
+    /**
+     * Shutdown and rebuild everything, re-sending all data to the glasses.
+     *
+     * Suspends until the rebuild (shutdown → create → image/text re-send) has been issued, so
+     * callers no longer race a detached coroutine. Always invoke from within [displayMutex].
+     */
+    private suspend fun rebuildPage() {
+        val msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // delay(300) // 300ms to settle
+        // rebuildState()
+    }
+
+    /**
+     * Re-creates the containers and sends all images and text again to the glasses.
+     *
+     * Runs inline (suspending) rather than launching a detached coroutine, so the page is fully
+     * rebuilt before the caller continues. Always invoke from within [displayMutex].
+     */
+    private suspend fun rebuildState() {
+        Bridge.log("G2: rebuildState()")
+        // recreate the containers:
+        createPageWithContainers()
+        delay(300) // 300ms to settle
+
+        // go through each image container and send the data:
+        for (container in imageContainers) {
+            sendImageData(container.id, container.name, container.bmpData)
+            delay(300) // 300ms between containers
+        }
+
+        // go through each text container and re-send its content, otherwise text stays blank after a
+        // disabled because text containers are initialized with their content:
+        // for (container in textContainers) {
+        //     val textMsg =
+        //             EvenHubProto.updateTextMessage(
+        //                     containerID = container.id,
+        //                     contentOffset = 0,
+        //                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+        //                     content = container.content
+        //             )
+        //     sendEvenHubCommand(textMsg)
+        //     delay(100)
+        // }
+
+        delay(300) // 300ms to settle
+        restartMicIfAlreadyEnabled()
+    }
+
+    /**
+     * Send a bitmap to an image container as fragmented updateImageRawData packets.
+     *
+     * One MapSessionId identifies the whole image transfer (constant across its fragments); the
+     * glasses ACK EACH fragment with an ImgResCmd ErrorCode (4=success, 5=failed). Each fragment is
+     * gated on its own ACK — correlated by (session, fragmentIndex) — before the next is sent, so
+     * the ACK itself paces the transfer (no fixed inter-fragment delay). A `failed` ACK OR no ACK
+     * within [IMG_ACK_TIMEOUT_MS] abandons the attempt and re-sends the entire image (fresh session
+     * id) up to [IMG_MAX_ATTEMPTS] times. On exhausting all attempts it logs a warning and returns
+     * (best-effort — callers are unaffected).
+     *
+     * Suspends until the image is acknowledged (or all attempts fail), so the 300ms settle in
+     * [rebuildState] only runs once the transfer has fully resolved.
+     */
+    private suspend fun sendImageData(
             containerID: Int,
             containerName: String,
-            bmpData: ByteArray,
-            onComplete: (() -> Unit)? = null
+            bmpData: ByteArray
     ) {
         val fragmentSize = 4096
-        imageSessionCounter++
-        val sessionId = imageSessionCounter
         val totalSize = bmpData.size
-        var fragmentIndex = 0
-        var offset = 0
+        val fragmentCount = (bmpData.size + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if (bmpData.size == 0) {
+            return
+        }
 
-        fun sendNextFragment() {
-            if (offset >= bmpData.size) {
-                Bridge.log(
-                        "G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes"
-                )
-                onComplete?.invoke()
-                return
+        // Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
+
+        for (attempt in 1..IMG_MAX_ATTEMPTS) {
+            // One session id per WHOLE image transfer (per attempt). The glasses key their
+            // reassembly buffer on MapSessionId, so every fragment reuses it with an incrementing
+            // MapFragmentIndex. A retry uses a fresh session so a stale ACK from a prior attempt
+            // can't match.
+            imageSessionCounter = (imageSessionCounter + 1) % 256
+            val sessionId = imageSessionCounter
+
+            var fragmentIndex = 0
+            var offset = 0
+            var transferOk = true
+            // if (attempt > 1) {
+            //     Bridge.log("G2: sendImageData($containerName) - attempt $attempt starting")
+            // }
+            while (offset < bmpData.size) {
+                val end = minOf(offset + fragmentSize, bmpData.size)
+                val fragment = bmpData.copyOfRange(offset, end)
+
+                val ack = CompletableDeferred<Boolean>()
+                pendingImgAckSession = sessionId
+                pendingImgAckFragment = fragmentIndex
+                pendingImgAck = ack
+
+                Bridge.log("G2: img_sen: session=$sessionId fragment=$fragmentIndex")
+
+                val msg =
+                        EvenHubProto.updateImageRawDataMessage(
+                                containerID = containerID,
+                                containerName = containerName,
+                                mapSessionId = sessionId,
+                                mapTotalSize = totalSize,
+                                compressMode = 0,
+                                mapFragmentIndex = fragmentIndex,
+                                mapFragmentPacketSize = fragment.size,
+                                mapRawData = fragment
+                        )
+                sendEvenHubCommand(msg)
+
+                // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
+                // null=timeout, false=img_failed → abandon the attempt and retry the whole image.
+                val ok = withTimeoutOrNull(IMG_ACK_TIMEOUT_MS) { ack.await() }
+                if (pendingImgAck === ack) {
+                    pendingImgAck = null
+                    pendingImgAckSession = null
+                    pendingImgAckFragment = null
+                }
+                if (ok != true) {
+                    val reason = if (ok == null) "timeout" else "img_failed"
+                    // Bridge.log("G2: sendImageData($containerName) - attempt $attempt fragment $fragmentIndex failed ($reason)")
+                    transferOk = false
+                    break
+                }
+                fragmentIndex++
+                offset = end
             }
 
-            val end = minOf(offset + fragmentSize, bmpData.size)
-            val fragment = bmpData.copyOfRange(offset, end)
-
-            val msg =
-                    EvenHubProto.updateImageRawDataMessage(
-                            containerID = containerID,
-                            containerName = containerName,
-                            mapSessionId = sessionId,
-                            mapTotalSize = totalSize,
-                            compressMode = 0,
-                            mapFragmentIndex = fragmentIndex,
-                            mapFragmentPacketSize = fragment.size,
-                            mapRawData = fragment
-                    )
-            sendEvenHubCommand(msg)
-            Bridge.log("G2: sendImageData($containerName) - sent fragment $fragmentIndex")
-
-            fragmentIndex++
-            offset = end
-
-            // 200ms between fragments — and also before onComplete (matches iOS, which awaits
-            // 200ms after every fragment including the last).
-            if (offset < bmpData.size) {
-                mainHandler.postDelayed({ sendNextFragment() }, 200)
-            } else {
-                Bridge.log(
-                        "G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes"
-                )
-                mainHandler.postDelayed({ onComplete?.invoke() }, 200)
+            if (transferOk) {
+                // Bridge.log("G2: img_sen: container=$containerName - success=true")
+                return
             }
         }
 
-        sendNextFragment()
+        Bridge.log("G2: img_sen: sendImageData($containerName) - failed after $IMG_MAX_ATTEMPTS attempts")
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -2225,8 +2322,6 @@ class G2 : SGCManager() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        pageHasTextContainer = false
-        currentTextContent = ""
         currentBitmapBase64 = ""
         mainHandler.postDelayed({
             // activate the dashboard by setting depth to the current setting:
@@ -2332,7 +2427,7 @@ class G2 : SGCManager() {
      * The SKILL step alone is ignored by firmware; the preceding ENTER+ASK
      * supply the session context that lets the glasses act on the SKILL.
      */
-    override fun showNotificationsPanel() {
+    override suspend fun showNotificationsPanel() {
         Bridge.log("G2: showNotificationsPanel()")
         val enterPayload = EvenAIProto.aiCtrl(
                 magicRandom = sendManager.nextMagicRandom(),
@@ -2340,26 +2435,24 @@ class G2 : SGCManager() {
         )
         sendEvenAICommand(enterPayload)
 
-        mainHandler.postDelayed({
-            val askPayload = EvenAIProto.aiAsk(
-                    magicRandom = sendManager.nextMagicRandom(),
-                    text = " ",
-                    streamEnable = 0
-            )
-            sendEvenAICommand(askPayload)
+        delay(400)
+        val askPayload = EvenAIProto.aiAsk(
+                magicRandom = sendManager.nextMagicRandom(),
+                text = " ",
+                streamEnable = 0
+        )
+        sendEvenAICommand(askPayload)
 
-            mainHandler.postDelayed({
-                val skillPayload = EvenAIProto.triggerSkill(
-                        magicRandom = sendManager.nextMagicRandom(),
-                        skillId = 3, // NOTIFICATION
-                        skillParam = 1, // show
-                        text = " ",
-                        streamEnable = 1,
-                        fTextEnd = 1
-                )
-                sendEvenAICommand(skillPayload)
-            }, 400)
-        }, 400)
+        delay(400)
+        val skillPayload = EvenAIProto.triggerSkill(
+                magicRandom = sendManager.nextMagicRandom(),
+                skillId = 3, // NOTIFICATION
+                skillParam = 1, // show
+                text = " ",
+                streamEnable = 1,
+                fTextEnd = 1
+        )
+        sendEvenAICommand(skillPayload)
     }
 
     override fun setBrightness(level: Int, autoMode: Boolean) {
@@ -2375,22 +2468,45 @@ class G2 : SGCManager() {
 
     // ---------- Private Display Helpers ----------
 
-    private fun createPageWithText(text: String) {
-        val tc =
-                EvenHubProto.textContainerProperty(
-                        x = 0,
-                        y = 0,
-                        width = 576,
-                        height = 288,
-                        borderWidth = 0,
-                        borderColor = 0,
-                        borderRadius = 0,
-                        paddingLength = 4,
-                        containerID = textContainerID,
-                        containerName = "text-main",
-                        isEventCapture = true,
-                        content = text
+    private fun createPageWithContainers() {
+        // build the page's text containers from the live tracked list.
+        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size).apply {
+            for (i in textContainers.indices) {
+                val c = textContainers[i]
+                add(
+                    EvenHubProto.textContainerProperty(
+                        x = c.x,
+                        y = c.y,
+                        width = c.width,
+                        height = c.height,
+                        borderWidth = c.borderWidth,
+                        borderColor = c.borderColor,
+                        borderRadius = c.borderRadius,
+                        paddingLength = c.paddingLength,
+                        containerID = c.id,
+                        containerName = c.name,
+                        isEventCapture = i == 0,// the first container is the event capture container
+                        content = c.content
+                    )
                 )
+            }
+        }
+           
+
+        // iterate all image containers, remove any entries with duplicate ids or empty data,
+        // and ensure the ids are still in the imageContainerIDPool:
+        val seenIDs = mutableSetOf<Int>()
+        imageContainers.retainAll { c ->
+            if (c.bmpData.isEmpty()) {
+                Bridge.log("G2: removing empty image container ${c.id}")
+                return@retainAll false
+            }
+            if (!seenIDs.add(c.id)) {
+                Bridge.log("G2: removing duplicate image container ${c.id}")
+                return@retainAll false
+            }
+            imageContainerIDPool.contains(c.id)
+        }
 
         // Build the page's image containers from the live tracked list.
         val imageContainerProps: List<ByteArray> =
@@ -2406,21 +2522,20 @@ class G2 : SGCManager() {
                 }
 
         val msg: ByteArray
-        if (!startupPageCreated) {
-            Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
+        if (!pageCreated) {
+            Bridge.log("G2: using createPageMessage (first time)")
             msg =
                     EvenHubProto.createPageMessage(
-                            textContainers = listOf(tc),
+                            textContainers = textContainerProps,
                             imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
-            startupPageCreated = true
         } else {
-            Bridge.log("G2: createPageWithText - using rebuildPageMessage")
+            Bridge.log("G2: using rebuildPageMessage")
             msg =
                     EvenHubProto.rebuildPageMessage(
-                            textContainers = listOf(tc),
+                            textContainers = textContainerProps,
                             imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
@@ -2428,22 +2543,6 @@ class G2 : SGCManager() {
         }
         sendEvenHubCommand(msg)
         pageCreated = true
-        pageHasTextContainer = true
-        currentTextContent = text
-        currentBitmapBase64 = ""
-    }
-
-    private fun updateText(text: String) {
-        val msg =
-                EvenHubProto.updateTextMessage(
-                        containerID = textContainerID,
-                        contentOffset = 0,
-                        contentLength = text.toByteArray(Charsets.UTF_8).size,
-                        content = text
-                )
-        queueEvenHubCommand(msg)
-        currentTextContent = text
-        currentBitmapBase64 = ""
     }
 
     @Synchronized
@@ -2493,9 +2592,9 @@ class G2 : SGCManager() {
         val offsetX = (containerWidth - scaledW) / 2
         val offsetY = (containerHeight - scaledH) / 2
 
-        Bridge.log(
-                "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
-        )
+        // Bridge.log(
+        //         "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
+        // )
 
         // Render to container-sized bitmap with black background
         val destBitmap =
@@ -2593,9 +2692,9 @@ class G2 : SGCManager() {
             bmp.write(rowBuf)
         }
 
-        Bridge.log(
-                "G2: build4BitBmp - ${bmp.size()} bytes (header=$headerSize, pixels=$pixelDataSize, rows=${paddedRowSize}x$height)"
-        )
+        // Bridge.log(
+        //         "G2: build4BitBmp - ${bmp.size()} bytes (header=$headerSize, pixels=$pixelDataSize, rows=${paddedRowSize}x$height)"
+        // )
         return bmp.toByteArray()
     }
 
@@ -2613,6 +2712,13 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Audio Control ----------
 
+    private fun restartMicIfAlreadyEnabled() {
+        val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+        if (currentEnabled) {
+            restartMic()
+        }
+    }
+
     fun restartMic() {
         // if already enabled, set to disabled, then send enabled after 500ms:
         DeviceStore.apply("glasses", "micEnabled", true)
@@ -2620,11 +2726,11 @@ class G2 : SGCManager() {
         sendEvenHubCommand(msg)
         mainHandler.postDelayed({
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
-            Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
+            // Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
             if (useNativeDashboard && dashboardShowing > 0) {
                 return@postDelayed
             }
-            if (!pageCreated || !pageHasTextContainer) {
+            if (!pageCreated) {
                 DeviceManager.getInstance().sendCurrentState() // should re-create the page if needed
             }
             val msg = EvenHubProto.audioControlMessage(true)
@@ -2650,18 +2756,7 @@ class G2 : SGCManager() {
     }
 
     // Camera & Media - G2 has no camera
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-    ) {
+    override fun requestPhoto(request: PhotoRequest) {
         Bridge.log("G2: requestPhoto - not supported (no camera)")
     }
 
@@ -2680,7 +2775,6 @@ class G2 : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
         Bridge.log("G2: startVideoRecording - not supported")
@@ -2701,10 +2795,6 @@ class G2 : SGCManager() {
 
     override fun sendButtonMaxRecordingTime() {
         Bridge.log("G2: sendButtonMaxRecordingTime")
-    }
-
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("G2: sendButtonCameraLedSetting")
     }
 
     override fun sendCameraFovSetting() {
@@ -2744,6 +2834,7 @@ class G2 : SGCManager() {
     override fun disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        clearDisplay()
         cancelPairingTimeout()
         stopScan()
         stopHeartbeats()
@@ -2761,8 +2852,8 @@ class G2 : SGCManager() {
         rightAuthenticated = false
         startupPageCreated = false
         pageCreated = false
-        pageHasTextContainer = false
         imageContainers.clear()
+        textContainers.clear()
         dashboardShowing = 0
         heartbeatCounter = 0
         currentBitmapBase64 = ""
@@ -2806,10 +2897,78 @@ class G2 : SGCManager() {
     }
 
     override fun dbg1() {
-        showNotificationsPanel()
+        // showNotificationsPanel()
     }
+
+    private var compassRunning = false
+
     override fun dbg2() {
-        disconnectController()
+        // compassRunning = !compassRunning
+        // Bridge.log("G2: dbg2() — ${if (compassRunning) "start" else "stop"} compass")
+        // if (compassRunning) {
+        //     startCompass()
+        // } else {
+        //     stopCompass()
+        // }
+    }
+
+    /**
+     * Start a navigation session so the glasses stream compass heading via
+     * OS_NOTIFY_COMPASS_CHANGED — surfaced as `CompassHeadingEvent { heading: 0…359 }` in
+     * handleNavigationResponse.
+     *
+     * If the magnetometer needs calibration, the glasses emit OS_NOTIFY_COMPASS_CALIBRATE_STRAT
+     * (→ `CompassCalibrationEvent {status:"start"}`); the wearer should look around until
+     * `…{status:"complete"}`.
+     */
+    fun startCompass() {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, NavigationCmd.APP_REQUEST_START_UP.value) // cmd
+        w.writeInt32Field(2, sendManager.nextMagicRandom()) // magicRandom
+        sendNavigationCommand(w.toByteArray())
+    }
+
+    /** Stop the navigation/compass session (ends heading streaming). */
+    fun stopCompass() {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, NavigationCmd.APP_REQUEST_EXIT.value)
+        w.writeInt32Field(2, sendManager.nextMagicRandom())
+        sendNavigationCommand(w.toByteArray())
+    }
+
+    override suspend fun setImuEnabled(enabled: Boolean) {
+        setImuEnabled(enabled, reportFrq = EvenHubProto.IMU_PACE_P100)
+    }
+
+    /**
+     * Enable or disable IMU motion reporting on the glasses.
+     *
+     * When enabled, the glasses continuously push `IMU_Report_Data { x, y, z }` (32-bit floats,
+     * gravity-normalized) via the EvenHub notify path; these surface in `handleTouchEvent` as a
+     * Sys_ItemEvent with `eventType == IMU_DATA_REPORT (8)` and are emitted through
+     * `Bridge.sendAccelEvent` (a single accelerometer reading; a richer combined IMU event
+     * covering gyro + magnetometer is future work).
+     */
+    suspend fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
+        Bridge.log("G2: setImuEnabled($enabled, frq=$reportFrq)")
+
+        displayMutex.withLock {
+            // IMU requires an active EvenHub page (same prerequisite as the mic). Await the
+            // rebuild so the control packet is sent only after the page actually exists — page
+            // creation is async with variable delays, so a fixed wait could send too early and
+            // reporting would never start.
+            if (enabled && !pageCreated) {
+                rebuildState()
+            }
+
+            val msg =
+                    EvenHubProto.imuControlMessage(
+                            enable = enabled,
+                            reportFrq = reportFrq,
+                            magicRandom = sendManager.nextMagicRandom()
+                    )
+            sendEvenHubCommand(msg)
+        }
     }
 
     fun reconnectController() {
@@ -2898,7 +3057,9 @@ class G2 : SGCManager() {
     }
 
     override fun sendShutdown() {
-        clearDisplay()
+        val msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
         disconnect()
     }
 
@@ -3247,7 +3408,6 @@ class G2 : SGCManager() {
 
                         startupPageCreated = false
                         pageCreated = false
-                        pageHasTextContainer = false
                         dashboardShowing = 0
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
@@ -3334,7 +3494,7 @@ class G2 : SGCManager() {
                         stopScan()
                         authStarted = true
                         Bridge.log("G2: Both sides initialized, starting auth sequence")
-                        runAuthSequence()
+                        displayScope.launch { runAuthSequence() }
                     }
                 }
             }
@@ -3349,7 +3509,15 @@ class G2 : SGCManager() {
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
                     G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
-                    G2BLE.CHAR_NOTIFY -> mainHandler.post { handleNotifyData(data, sourceKey) }
+                    G2BLE.CHAR_NOTIFY -> {
+                        // Correlate an in-flight image ACK INLINE on the BLE callback thread, before
+                        // posting the rest of the handling to the (potentially backed-up) main
+                        // queue. This guarantees the ACK that sendImageData() is awaiting resolves
+                        // promptly even while the main looper is busy draining a packet burst /
+                        // heartbeats — the cause of the intermittent "glasses stopped responding".
+                        correlateImageAck(data, sourceKey)
+                        mainHandler.post { handleNotifyData(data, sourceKey) }
+                    }
                 }
             }
 
@@ -3401,11 +3569,65 @@ class G2 : SGCManager() {
 
     // ---------- Incoming Data Handling ----------
 
+    /**
+     * Resolve an in-flight image-fragment ACK directly from a raw notify packet, on the BLE
+     * callback thread. This runs BEFORE [handleNotifyData] is posted to [mainHandler] so the ACK
+     * that [sendImageData] is awaiting completes promptly even when the main looper is saturated by
+     * a packet burst, heartbeats, or the text-queue tick — the root cause of the intermittent
+     * "glasses stop responding to image sends".
+     *
+     * Deliberately a read-only, SINGLE-PACKET parse: it does NOT touch the stateful [receiveManager]
+     * (that stays exclusively on the main thread). An ImgResCmd always fits in one BLE packet, so a
+     * multi-packet frame (totalPackets > 1) is not an image ACK and is left entirely to the
+     * main-thread path. Completing an already-completed CompletableDeferred is a no-op, so the
+     * duplicate L/R ACK and the residual main-thread correlation are both harmless.
+     */
+    private fun correlateImageAck(rawData: ByteArray, @Suppress("UNUSED_PARAMETER") sourceKey: String) {
+        // Fast path: only proceed if a transfer is actually outstanding.
+        val ack = pendingImgAck ?: return
+        if (rawData.size < 8) return
+        if (rawData[0] != G2BLE.HEADER_BYTE) return
+
+        val payloadLen = rawData[3].toInt() and 0xFF
+        val expectedLen = payloadLen + 8
+        if (rawData.size < expectedLen) return
+
+        val totalPackets = rawData[4].toInt() and 0xFF
+        val serialNum = rawData[5].toInt() and 0xFF
+        val serviceId = rawData[6]
+        val status = rawData[7].toInt() and 0xFF
+        val resultCode = (status shr 1) and 0x0F
+        if (resultCode != 0) return
+        if (serviceId != ServiceID.EVEN_HUB.value) return
+        // Single complete packet only (ImgResCmd never spans packets); else defer to main thread.
+        if (totalPackets != 1 || serialNum != 1) return
+
+        // Last packet carries a 2-byte CRC trailer; strip it from the payload.
+        val payloadEnd = 8 + payloadLen - 2
+        if (payloadEnd < 8 || payloadEnd > rawData.size) return
+        val payload = rawData.copyOfRange(8, payloadEnd)
+
+        val fields = ProtobufReader(payload).parseFields()
+        val resData = fields[6] as? ByteArray ?: return // field 6 = ImgResCmd
+        val resFields = ProtobufReader(resData).parseFields()
+        val errorCode = resFields[8] as? Int ?: return
+        val ackSession = resFields[3] as? Int ?: return
+        val ackFragment = (resFields[6] as? Int) ?: 0
+        Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
+        if (ackSession == pendingImgAckSession && ackFragment == pendingImgAckFragment) {
+            ack.complete(errorCode == 4)
+        }
+    }
+
     private fun handleNotifyData(data: ByteArray, sourceKey: String) {
         val result = receiveManager.handlePacket(data, sourceKey) ?: return
 
         val serviceId = result.first
         val payload = result.second
+        
+
+        // print raw log, first 32 bytes:
+        // Bridge.log("G2: handleNotifyData() - serviceId=$serviceId, payload=${payload.take(32).joinToString("") { String.format("%02X", it) }}")
 
         when (serviceId) {
             ServiceID.EVEN_HUB.value -> handleEvenHubResponse(payload)
@@ -3414,6 +3636,8 @@ class G2 : SGCManager() {
             ServiceID.MENU.value -> handleMenuResponse(payload)
             ServiceID.DASHBOARD.value -> handleDashboardResponse(payload)
             ServiceID.GESTURE_CTRL.value -> handleGestureCtrl(payload)
+            ServiceID.NAVIGATION.value -> handleNavigationResponse(payload)
+            ServiceID.EVEN_AI.value -> handleEvenAIResponse(payload)
             ServiceID.EVEN_HUB_CTRL.value -> handleEvenHubCtrlResponse(payload)
             else -> {
                 Bridge.log(
@@ -3425,9 +3649,80 @@ class G2 : SGCManager() {
         }
     }
 
+    /**
+     * EvenAI service (0x07). Logs the decoded EvenAIDataPackage so we can read the CONFIG
+     * (Hey Even) echo: commandId=10 (CONFIG), config sub-message in field 13.
+     */
+    private fun handleEvenAIResponse(payload: ByteArray) {
+        val reader = ProtobufReader(payload)
+        val fields = reader.parseFields()
+        val cmd = fields[1] as? Int ?: -1
+        val configData = fields[13] as? ByteArray
+        if (cmd == 10 && configData != null) {
+            val cReader = ProtobufReader(configData)
+            val cFields = cReader.parseFields()
+            val voiceSwitch = cFields[1] as? Int ?: 0 // omitted = 0 = OFF
+            Bridge.log(
+                    "G2: EvenAI CONFIG echo — voiceSwitch=$voiceSwitch (${if (voiceSwitch == 1) "ON" else "OFF"}) config=$cFields"
+            )
+        } else {
+            Bridge.log(
+                    "G2: EvenAI cmd=$cmd fields=${fields.keys.sorted()} raw=${payload.joinToString("") { String.format("%02X", it) }}"
+            )
+        }
+    }
+
+    /**
+     * Navigation service (0x08).
+     *
+     * OS_NOTIFY_COMPASS_CHANGED (15) carries the magnetometer heading in compass_info_msg
+     * (field 10) → field 1, as whole degrees 0…359. (The proto names that field `compassIndex`,
+     * but on the notify path it's the live heading — verified on-device: values sweep 0–359 as
+     * the wearer turns.)
+     */
+    private fun handleNavigationResponse(payload: ByteArray) {
+        val reader = ProtobufReader(payload)
+        val fields = reader.parseFields()
+        val cmd = fields[1] as? Int ?: return
+
+        when (cmd) {
+            NavigationCmd.OS_NOTIFY_COMPASS_CHANGED.value -> {
+                val compassData = fields[10] as? ByteArray ?: return
+                val cReader = ProtobufReader(compassData)
+                val cFields = cReader.parseFields()
+                val heading = cFields[1] as? Int ?: return
+                // Heading in degrees, 0…359.
+                Bridge.log("G2: compass heading=$heading°")
+                Bridge.sendTypedMessage(
+                        "CompassHeadingEvent",
+                        mapOf(
+                                "heading" to heading,
+                                "timestamp" to System.currentTimeMillis()
+                        )
+                )
+            }
+            NavigationCmd.OS_NOTIFY_COMPASS_CALIBRATE_START.value -> {
+                Bridge.log("G2: compass calibration started — wearer should look around")
+                Bridge.sendTypedMessage("CompassCalibrationEvent", mapOf("status" to "start"))
+            }
+            NavigationCmd.OS_NOTIFY_COMPASS_CALIBRATE_COMPLETE.value -> {
+                Bridge.log("G2: compass calibration complete")
+                Bridge.sendTypedMessage("CompassCalibrationEvent", mapOf("status" to "complete"))
+            }
+        }
+    }
+
     private fun handleEvenHubResponse(payload: ByteArray) {
         val reader = ProtobufReader(payload)
         val fields = reader.parseFields()
+
+        // print raw payload:
+        val payloadStr = payload.joinToString("") { String.format("%02X", it) }
+        if (payloadStr.contains("080C7A02100C")) {
+            // heartbeat response
+            return
+        }
+        Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
@@ -3475,7 +3770,24 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
-            // Parse error codes from responses
+            // NOTE: the per-fragment image ACK is correlated inline on the BLE callback thread in
+            // correlateImageAck() (called before this runs is posted to the main looper) so it is
+            // never delayed behind a saturated main queue. Nothing to do here for ImgResCmd.
+
+            val timestamp = System.currentTimeMillis()
+            val lastResponse = lastEvenHubResponseTimestamp
+            if (lastResponse != null && timestamp - lastResponse < 100) {
+                return
+            }
+            lastEvenHubResponseTimestamp = timestamp
+
+            // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state.
+            if (cmdValue == 9 || cmdValue == 10) {
+                Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
+                pageCreated = false
+            }
+
+            // Scan response fields for a shutdown/error code regardless of the debounce window.
             // field 4 = StartupResCmd, field 6 = ImgResCmd, field 8 = RebuildResCmd, field 10 =
             // TextResCmd
             for (resField in listOf(4, 6, 8, 10)) {
@@ -3489,30 +3801,25 @@ class G2 : SGCManager() {
                         Bridge.log(
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                         )
-                        startupPageCreated = false
                         pageCreated = false
-                        pageHasTextContainer = false
-                        currentTextContent = ""
-                    }
-                }
-                (resFields[8] as? Int)?.let { errorCode ->
-                    // ImgResCmd has ErrorCode in field 8
-                    if (errorCode == 4) {
-                        Bridge.log("G2: img_success")
-                    } else {
-                        Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
                     }
                 }
             }
 
-            // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state
-            if (cmdValue == 9 || cmdValue == 10) {
-                Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
-                startupPageCreated = false
-                pageCreated = false
-                pageHasTextContainer = false
-                currentTextContent = ""
-            }
+            // for (resField in listOf(4, 6, 8, 10)) {
+            //     val resData = fields[resField] as? ByteArray ?: continue
+            //     val resReader = ProtobufReader(resData)
+            //     val resFields = resReader.parseFields()
+            //     (resFields[8] as? Int)?.let { errorCode ->
+            //         // ImgResCmd ErrorCode in field 8 (the sendImageData ACK is completed above,
+            //         // before the dedup window — this is just the deduped logging path).
+            //         if (errorCode == 4) {
+            //             Bridge.log("G2: img_success")
+            //         } else {
+            //             Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+            //         }
+            //     }
+            // }
         }
     }
 
@@ -3540,6 +3847,39 @@ class G2 : SGCManager() {
         }
     }
 
+    /**
+     * Parse an IMU_Report_Data sub-message: fields 1/2/3 = x/y/z as 32-bit floats (wire type 5).
+     * `ProtobufReader.parseFields()` skips wire-type-5 fields, so this walks the bytes manually.
+     */
+    private fun parseImuReportData(data: ByteArray): Triple<Float, Float, Float>? {
+        var x: Float? = null
+        var y: Float? = null
+        var z: Float? = null
+        var i = 0
+        while (i < data.size) {
+            val tag = data[i].toInt() and 0xFF
+            i += 1
+            val fieldNum = tag shr 3
+            val wireType = tag and 0x07
+            if (wireType != 5 || data.size - i < 4) break
+            var bits = 0
+            for (b in 0 until 4) {
+                bits = bits or ((data[i + b].toInt() and 0xFF) shl (8 * b)) // little-endian
+            }
+            i += 4
+            val value = Float.fromBits(bits)
+            when (fieldNum) {
+                1 -> x = value
+                2 -> y = value
+                3 -> z = value
+            }
+        }
+        val fx = x ?: return null
+        val fy = y ?: return null
+        val fz = z ?: return null
+        return Triple(fx, fy, fz)
+    }
+
     private fun handleTouchEvent(devEventData: ByteArray) {
         // Parse SendDeviceEvent: field 1=ListEvent, field 2=TextEvent, field 3=SysEvent
         val reader = ProtobufReader(devEventData)
@@ -3554,6 +3894,19 @@ class G2 : SGCManager() {
         (fields[3] as? ByteArray)?.let { sysData ->
             val sysReader = ProtobufReader(sysData)
             val sysFields = sysReader.parseFields()
+
+            // IMU data report: eventType == IMU_DATA_REPORT (8), imuData in field 3
+            // (IMU_Report_Data { x, y, z } as 32-bit floats). Handle and return before the
+            // gesture-mapping path.
+            val imuData = sysFields[3] as? ByteArray
+            if ((sysFields[1] as? Int) == OsEventType.IMU_DATA_REPORT.value && imuData != null) {
+                val imu = parseImuReportData(imuData)
+                if (imu != null) {
+                    Bridge.log("G2: IMU data report: ${imu.first}, ${imu.second}, ${imu.third}")
+                    Bridge.sendAccelEvent(imu.first, imu.second, imu.third, timestamp)
+                    return
+                }
+            }
 
             val normalType = sysFields[1] as? Int
             val eventType: OsEventType? =
@@ -3595,11 +3948,7 @@ class G2 : SGCManager() {
             // System exit: glasses killed our EvenHub page (user opened menu or another app)
             // Reset page state and re-create the page to reclaim EvenHub focus
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
-                startupPageCreated = false
                 pageCreated = false
-                pageHasTextContainer = false
-                currentTextContent = ""
-                currentBitmapBase64 = ""
                 // Firmware kills the mic on system exit; re-arm it if it should be on
                 DeviceStore.apply("glasses", "micEnabled", false)
                 DeviceManager.getInstance().updateMicState()
@@ -3640,7 +3989,8 @@ class G2 : SGCManager() {
             OsEventType.FOREGROUND_ENTER -> "foreground_enter"
             OsEventType.FOREGROUND_EXIT -> "foreground_exit"
             OsEventType.SYSTEM_EXIT -> "system_exit"
-            OsEventType.ABNORMAL_EXIT -> null
+            OsEventType.IMU_DATA_REPORT -> null
+            OsEventType.ABNORMAL_EXIT -> null // don't report abnormal exits as gestures
         }
     }
 
@@ -3652,9 +4002,9 @@ class G2 : SGCManager() {
         // Ignore heartbeat acks
         if (cmdValue == DevCfgCommandId.BASE_CONN_HEART_BEAT.value) return
 
-        Bridge.log(
-                "G2: DevSettings response: ${payload.take(32).joinToString(":") { String.format("%02X", it) }}"
-        )
+        // Bridge.log(
+        //         "G2: DevSettings response: ${payload.take(32).joinToString(":") { String.format("%02X", it) }}"
+        // )
 
         if (cmdValue == DevCfgCommandId.AUTHENTICATION.value) {
             // DevCfgDataPackage: field 2 = magicRandom, field 3 = AuthMgr { field 1 = secAuth }
@@ -3696,7 +4046,7 @@ class G2 : SGCManager() {
                 }
 
                 val connStatus = ringFields[4] as? Int ?: -1
-                Bridge.log("G2: Ring connection status: connStatus?=$connStatus")
+                // Bridge.log("G2: Ring connection status: connStatus?=$connStatus")
 
                 if (connStatus == 22) {
                     Bridge.log("G2: Ring disconnected")
@@ -3764,7 +4114,7 @@ class G2 : SGCManager() {
         val timestamp = System.currentTimeMillis()
         val last = lastGestureCtrlTimestamp
         if (last != null && timestamp - last < 500) {
-            Bridge.log("G2: gesture_ctrl dedup")
+            // Bridge.log("G2: gesture_ctrl dedup")
             return
         }
         lastGestureCtrlTimestamp = timestamp
@@ -3774,24 +4124,36 @@ class G2 : SGCManager() {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
             if (!useNativeDashboard) {
-                // make sure the container exists:
-                DeviceManager.getInstance().sendCurrentState()
-                // re-send mic on / if it's enabled:
-                val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                if (micEnabled) {
-                    restartMic()
+                dashboardShowing = 0
+                // Rebuild the page from cached containers, then reconcile against
+                // DeviceManager's authoritative current view so the glasses match the phone
+                // (not just the last-cached G2 containers) after returning from the dashboard.
+                displayScope.launch {
+                    displayMutex.withLock { rebuildState() }
+                    DeviceManager.getInstance().sendCurrentState()
+                    // set the mic back on if it should be on — only after the rebuild
+                    // completes, matching iOS (which awaits rebuildState before restartMic).
+                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                    if (micEnabled) {
+                        restartMic()
+                    }
                 }
+                return
             } else {
                 // if we aren't trying to show the dashboard
                 // then we need to turn the mic back on and display the mentra main page:
                 if (dashboardShowing <= 1) {
                     dashboardShowing = 0
-                    // make sure the container exists:
-                    DeviceManager.getInstance().sendCurrentState()
-                    // set the mic back on if it should be on
-                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                    if (micEnabled) {
-                        restartMic()
+                    // Rebuild the page from cached containers, then reconcile against
+                    // DeviceManager's authoritative current view so the glasses match the phone
+                    // (not just the last-cached G2 containers) after returning from the dashboard.
+                    displayScope.launch {
+                        displayMutex.withLock { rebuildState() }
+                        // set the mic back on if it should be on
+                        val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                        if (micEnabled) {
+                            restartMic()
+                        }
                     }
                     return
                 }
@@ -3827,7 +4189,7 @@ class G2 : SGCManager() {
         // Battery
         (fields[12] as? Int)?.let { battery ->
             if (battery in 0..100) {
-                Bridge.log("G2: Battery level: $battery%")
+                // Bridge.log("G2: Battery level: $battery%")
                 batteryLevel_ = battery
             }
         }
@@ -3844,13 +4206,13 @@ class G2 : SGCManager() {
         // Software versions
         (fields[5] as? ByteArray)?.let { leftVer ->
             val leftVersion = String(leftVer, Charsets.UTF_8)
-            Bridge.log("G2: Left firmware: $leftVersion")
+            // Bridge.log("G2: Left firmware: $leftVersion")
             DeviceStore.apply("glasses", "leftFirmwareVersion", leftVersion)
         }
 
         (fields[6] as? ByteArray)?.let { rightVer ->
             val rightVersion = String(rightVer, Charsets.UTF_8)
-            Bridge.log("G2: Right firmware: $rightVersion")
+            // Bridge.log("G2: Right firmware: $rightVersion")
             DeviceStore.apply("glasses", "rightFirmwareVersion", rightVersion)
             DeviceStore.apply("glasses", "firmwareVersion", rightVersion)
         }
@@ -3879,7 +4241,7 @@ class G2 : SGCManager() {
             return
         }
         lastAudioFrame = audioData
-        Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
+        // Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
         DeviceManager.getInstance().handleGlassesMicData(audioData, 40)
     }
 

@@ -28,7 +28,48 @@ fi
 
 if [ "$needs_install" = true ]; then
   echo "📦 Installing dependencies..."
+  # Clear stale per-package symlinks first. --no-link installs leave behind
+  # symlinks like packages/cloud/node_modules/axios -> .bun/axios@<OLD>/... and
+  # when a dependency version bumps, those links dangle (the old .bun/<pkg>@ver
+  # dir is gone) so `bun --watch` dies with ENOENT. Wiping them forces the
+  # install below to regenerate links against the current versions.
+  echo "🧹 Clearing stale package node_modules..."
+  rm -rf packages/*/node_modules
   bun install --no-link --ignore-scripts
+  # The `bun` npm package ships a postinstall that `--ignore-scripts` skips;
+  # without it `bun x tsc` aborts with "Bun's postinstall script was not run."
+  # Run it manually (the fix the error message itself recommends). Guarded so a
+  # missing path or non-zero exit can't break startup.
+  if [ -f node_modules/bun/install.js ]; then
+    echo "🔧 Running bun postinstall..."
+    (cd node_modules/bun && node install.js) || echo "⚠️  bun postinstall skipped"
+  fi
+
+  # --no-link hoists all deps to the root /app/node_modules but does NOT create
+  # the per-package node_modules symlinks the cloud package needs at runtime.
+  # `bun --watch src/index.ts` then dies with ENOENT for hoisted deps
+  # (mongoose, axios, ...). Symlink every dep the cloud package declares from
+  # the root install into packages/cloud/node_modules so resolution succeeds.
+  echo "🔗 Linking hoisted deps into packages/cloud/node_modules..."
+  mkdir -p packages/cloud/node_modules
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const pkg = JSON.parse(fs.readFileSync("packages/cloud/package.json", "utf8"));
+    const deps = Object.assign({}, pkg.dependencies, pkg.devDependencies, pkg.peerDependencies);
+    const root = "node_modules", local = "packages/cloud/node_modules";
+    let linked = 0;
+    for (const name of Object.keys(deps)) {
+      const src = path.join(process.cwd(), root, name);
+      const dst = path.join(local, name);
+      if (!fs.existsSync(src)) continue;          // not hoisted to root, skip
+      if (fs.existsSync(dst)) continue;           // already present/linked
+      const scope = path.dirname(dst);
+      if (scope !== local) fs.mkdirSync(scope, { recursive: true });
+      try { fs.symlinkSync(src, dst, "dir"); linked++; } catch (e) {}
+    }
+    console.log("  linked " + linked + " deps");
+  ' || echo "⚠️  dep-link step failed (continuing)"
+
   mkdir -p node_modules/.cache
   touch "$MARKER"
 else

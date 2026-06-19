@@ -12,17 +12,18 @@ import Foundation
  *   d  = chunk data payload
  *
  * Each chunk after C-wrapping + K900 framing must fit within the BES2700's
- * 253-byte BLE write limit. With compact keys, 80 bytes of raw data produces
- * a final packed size of ~245 bytes worst-case (with heavy JSON escaping).
+ * 253-byte BLE write limit. Payload size is selected by measuring the final
+ * packed chunk so JSON escaping cannot push a chunk over the BLE limit.
  */
 class MessageChunker {
     // Threshold: if C-wrapped message exceeds this, chunking is triggered.
     // BES2700 limit is 253 bytes; anything over ~200 bytes packed needs chunking.
     private static let MESSAGE_SIZE_THRESHOLD = 200
 
-    /// Maximum raw bytes per chunk. After double JSON escaping + compact envelope
-    /// + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
-    private static let CHUNK_DATA_SIZE = 80
+    private static let INITIAL_CHUNK_DATA_SIZE = 80
+    private static let MIN_CHUNK_DATA_SIZE = 4
+    private static let MAX_PACKED_CHUNK_SIZE = 253
+    private static let K900_FRAME_OVERHEAD = 7
 
     /**
      * Check if a message needs to be chunked
@@ -51,34 +52,36 @@ class MessageChunker {
      * @param messageId The message ID for ACK tracking (if applicable)
      * @return Array of chunk dictionaries ready to be C-wrapped and sent
      */
-    static func createChunks(originalJson: String, messageId: Int64 = -1) -> [[String: Any]] {
+    static func createChunks(originalJson: String, messageId: Int64 = -1, wakeUp: Bool = false) -> [[String: Any]] {
         guard let messageData = originalJson.data(using: .utf8) else {
             print("MessageChunker: Failed to convert message to data")
             return []
         }
 
-        var chunks: [[String: Any]] = []
         let totalBytes = messageData.count
 
         // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
         let chunkId = "\(messageId)_\(Int(Date().timeIntervalSince1970 * 1000))"
 
-        // Calculate total chunks needed
-        let totalChunks = Int(ceil(Double(totalBytes) / Double(CHUNK_DATA_SIZE)))
+        for chunkSize in stride(from: INITIAL_CHUNK_DATA_SIZE, through: MIN_CHUNK_DATA_SIZE, by: -1) {
+            let chunks = buildChunks(messageData, chunkId: chunkId, messageId: messageId, chunkSize: chunkSize)
+            if allChunksFit(chunks, wakeUp: wakeUp) {
+                print("MessageChunker: Creating \(chunks.count) chunks for message of size \(totalBytes) bytes using \(chunkSize)-byte UTF-8 slices")
+                return chunks
+            }
+        }
 
-        print("MessageChunker: Creating \(totalChunks) chunks for message of size \(totalBytes) bytes")
+        print("MessageChunker: Unable to create K900 chunks within \(MAX_PACKED_CHUNK_SIZE) bytes")
+        return []
+    }
+
+    private static func buildChunks(_ messageData: Data, chunkId: String, messageId: Int64, chunkSize: Int) -> [[String: Any]] {
+        var chunks: [[String: Any]] = []
+        let chunkStrings = splitUtf8(messageData, chunkSize: chunkSize)
+        let totalChunks = chunkStrings.count
 
         for i in 0 ..< totalChunks {
-            let startIndex = i * CHUNK_DATA_SIZE
-            let endIndex = min(startIndex + CHUNK_DATA_SIZE, totalBytes)
-            let chunkRange = startIndex ..< endIndex
-
-            // Extract chunk data as string
-            let chunkData = messageData.subdata(in: chunkRange)
-            guard let chunkString = String(data: chunkData, encoding: .utf8) else {
-                print("MessageChunker: Failed to convert chunk \(i) to string")
-                continue
-            }
+            let chunkString = chunkStrings[i]
 
             // Create chunk dictionary with compact keys
             var chunk: [String: Any] = [
@@ -96,10 +99,64 @@ class MessageChunker {
 
             chunks.append(chunk)
 
-            print("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkData.count) bytes")
+            print("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkString.data(using: .utf8)?.count ?? 0) bytes")
         }
 
         return chunks
+    }
+
+    private static func allChunksFit(_ chunks: [[String: Any]], wakeUp: Bool) -> Bool {
+        for (index, chunk) in chunks.enumerated() {
+            let packedLength = packedK900Length(chunk, wakeUp: wakeUp && index == 0)
+            if packedLength == nil || packedLength! > MAX_PACKED_CHUNK_SIZE {
+                print("MessageChunker: Chunk \(index) packed to \(packedLength ?? 0) bytes, exceeding \(MAX_PACKED_CHUNK_SIZE)")
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func packedK900Length(_ chunk: [String: Any], wakeUp: Bool) -> Int? {
+        guard let chunkData = try? JSONSerialization.data(withJSONObject: chunk),
+              let chunkString = String(data: chunkData, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        var wrapper: [String: Any] = ["C": chunkString]
+        if wakeUp {
+            wrapper["W"] = 1
+        }
+
+        guard let wrappedData = try? JSONSerialization.data(withJSONObject: wrapper) else {
+            return nil
+        }
+
+        return wrappedData.count + K900_FRAME_OVERHEAD
+    }
+
+    private static func splitUtf8(_ messageData: Data, chunkSize: Int) -> [String] {
+        var chunkStrings: [String] = []
+        var offset = 0
+        while offset < messageData.count {
+            let endIndex = findUtf8ChunkEnd(messageData, startIndex: offset, chunkSize: chunkSize)
+            let chunkData = messageData.subdata(in: offset ..< endIndex)
+            chunkStrings.append(String(data: chunkData, encoding: .utf8)!)
+            offset = endIndex
+        }
+        return chunkStrings
+    }
+
+    private static func findUtf8ChunkEnd(_ messageData: Data, startIndex: Int, chunkSize: Int) -> Int {
+        var endIndex = min(startIndex + chunkSize, messageData.count)
+        while endIndex > startIndex, endIndex < messageData.count, isUtf8ContinuationByte(messageData[endIndex]) {
+            endIndex -= 1
+        }
+        return endIndex > startIndex ? endIndex : min(startIndex + chunkSize, messageData.count)
+    }
+
+    private static func isUtf8ContinuationByte(_ value: UInt8) -> Bool {
+        (value & 0xC0) == 0x80
     }
 
     /**

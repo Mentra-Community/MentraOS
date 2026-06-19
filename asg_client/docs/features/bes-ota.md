@@ -2,7 +2,7 @@
 
 The BES2700 microcontroller on Mentra Live runs its own firmware, separate from the Android (MTK) side. ASG Client can push new BES firmware over UART using the BES OTA protocol — this doc describes how that pipeline works.
 
-For the Android-side APK self-update, see `OtaUpdaterManager` (`OtaUpdaterManager.java`).
+For Android-side APK update and crash recovery, see `io/ota/helpers/OtaHelper` and `RecoveryWorkerManager` (`com.mentra.recovery` sidecar).
 
 > **Mentra Live = K900.** Throughout this doc and the BES code, you'll see `K900` — that's the internal codename for Mentra Live's hardware platform. See [overview.md](../overview.md#a-naming-note-k900--mentra-live).
 
@@ -27,7 +27,7 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 
 ## Update priority
 
-1. **APK update first.** `OtaUpdaterManager` checks for an updated APK; if found, it installs and the app restarts.
+1. **APK update first.** ASG `OtaHelper` checks for an updated APK; if found, it installs and the app restarts. The recovery sidecar can restore from backup if ASG fails to come back.
 2. **BES firmware second.** After restart (or if no APK update was needed), `OtaHelper` checks for new BES firmware. APK updates and BES updates are mutually exclusive at runtime.
 
 ## Update flow

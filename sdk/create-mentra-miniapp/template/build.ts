@@ -29,6 +29,7 @@
  */
 
 import {rm} from "fs/promises"
+import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
 
 const distDir = "./dist"
 
@@ -63,7 +64,7 @@ const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [],
+  plugins: [reactSingletonPlugin(import.meta.url)],
   minify: true,
   define,
 })

@@ -216,7 +216,7 @@ bun dev                              # starts dev server + prints QR
 1. Reads + validates `miniapp.json` (hard-fails on bad permissions/hardware types so you don't have to debug it on the phone).
 2. Spawns `bun run --hot server.ts` in the project (the template ships a tiny Bun.serve that serves `index.html`, `miniapp.json`, `icon.png`, and any assets under `public/`).
 3. Polls localhost until the server is reachable.
-4. Detects the LAN IP, builds a `mentra-miniapp://dev?url=…&name=…&package=…` URL, prints a terminal QR + the raw URL.
+4. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…` URL, prints a terminal QR + the raw URL.
 5. Watches for LAN-IP changes (Wi-Fi switch) and reprints the QR.
 
 You scan the QR from **MentraOS app → Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone loads your dev URL into a WebView, injects `window.MentraOS`, the SDK's `PostMessageTransport` connects, you're live with hot reload.

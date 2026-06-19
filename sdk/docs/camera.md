@@ -135,6 +135,68 @@ interface PhotoTaken {
 
 ---
 
+### `startVideoRecording(options?)` — `Promise<VideoRecordingStarted>`
+
+Start recording video on the glasses camera. Returns a `recordingId` to pass to
+`stopVideoRecording()`. Requires `CAMERA` declared in `miniapp.json`. Check
+`session.capabilities.hasCamera` before calling.
+
+Resolution and frame rate are optional — omit them to use the device's saved
+button-video settings. **Lowering `fps` keeps the glasses cooler and produces
+smaller files**, which is ideal for long recordings fed to AI where smooth
+motion isn't needed (e.g. `fps: 5` at 1080p runs markedly cooler than 30fps).
+
+Unlike `takePhoto`, this is fire-and-forget start/stop — no media URL is
+returned; the recording is saved/handled on the glasses.
+
+**Parameters:** `StartVideoRecordingOptions` (optional)
+
+```ts
+interface StartVideoRecordingOptions {
+  width?: number // omit → device default
+  height?: number // omit → device default
+  fps?: number // omit → device default (e.g. 30); lower = cooler
+  sound?: boolean
+  save?: boolean
+}
+```
+
+Defaults (applied client-side before the request is sent):
+
+| Field | Default |
+| --- | --- |
+| `width` / `height` / `fps` | device's saved button-video setting |
+| `sound` | `true` |
+| `save` | `false` |
+
+**Returns:** `VideoRecordingStarted`
+
+```ts
+interface VideoRecordingStarted {
+  recordingId: string
+}
+```
+
+```ts
+const {recordingId} = await session.camera.startVideoRecording({
+  width: 1920,
+  height: 1080,
+  fps: 5, // cool, long-recording-friendly
+})
+// ...later...
+await session.camera.stopVideoRecording(recordingId)
+```
+
+---
+
+### `stopVideoRecording(recordingId)` — `Promise<void>`
+
+Stop an in-progress recording started with `startVideoRecording()`. Pass the
+`recordingId` returned from that call. Resolves once the stop command has been
+dispatched to the glasses.
+
+---
+
 ## Errors
 
 | Code | Where | Meaning |
@@ -152,6 +214,8 @@ For host implementors — request/response message types this module emits:
 | --- | --- | --- |
 | `setFov` | `CAMERA_FOV` (`{horizontal, vertical}`, one-shot) | — |
 | `takePhoto` | `PHOTO` (`{size, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
+| `startVideoRecording` | `VIDEO_RECORDING_START` (`{width, height, fps, sound, save}`) | `REQUEST_RESULT` with `data: VideoRecordingStarted` |
+| `stopVideoRecording` | `VIDEO_RECORDING_STOP` (`{recordingId}`) | `REQUEST_RESULT` |
 
 This module subscribes to no streams. The `PHOTO_TAKEN` stream is
 not surfaced through `CameraModule` in v1.

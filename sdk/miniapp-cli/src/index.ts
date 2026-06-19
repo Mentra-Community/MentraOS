@@ -3,6 +3,7 @@
 import { dev } from './dev.js';
 import { release } from './release.js';
 import { pack } from './pack.js';
+import { buildProduction } from './build.js';
 import { schemaPrint, regenerateSchemaFile } from './schema.js';
 import { addPermissionCmd, listPermissionsCmd, removePermissionCmd } from './permission.js';
 import { addHardwareCmd, listHardwareCmd, removeHardwareCmd } from './hardware.js';
@@ -16,7 +17,7 @@ function printUsage(): void {
   console.log('Commands:');
   console.log('  dev                              Start dev server with hot reload and QR code');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
-  console.log('  pack                             Package miniapp into a distributable ZIP');
+  console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
   console.log('  manifest                         Edit miniapp.json interactively');
   console.log('  permission list                  List declared permissions');
   console.log('  permission add [TYPE]            Add a permission (interactive without TYPE)');
@@ -36,6 +37,12 @@ switch (subcommand) {
     await release({noCache: process.argv.includes('--no-cache')});
     break;
   case 'pack':
+    // Build with NODE_ENV=production before zipping, so `pack` never ships
+    // a stale dev-mode dist/ left behind by `dev`. `--no-build` zips dist/
+    // as-is for callers that manage the build themselves.
+    if (!process.argv.includes('--no-build')) {
+      await buildProduction(process.cwd());
+    }
     await pack();
     break;
   case 'manifest':

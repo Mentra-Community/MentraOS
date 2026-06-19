@@ -276,10 +276,7 @@ class G1: NSObject, SGCManager {
 
     func sendButtonMaxRecordingTime(_: Int) {}
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
 
     func startStream(_: [String: Any]) {}
 
@@ -287,7 +284,7 @@ class G1: NSObject, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -296,8 +293,6 @@ class G1: NSObject, SGCManager {
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime() {}
-
-    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 
@@ -317,7 +312,7 @@ class G1: NSObject, SGCManager {
 
     func queryGalleryStatus() {}
 
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func ping() {}
@@ -786,7 +781,11 @@ class G1: NSObject, SGCManager {
         //    }
     }
 
-    func sendTextWall(_ text: String) {
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
+    func sendTextWall(_ text: String) async {
         let chunks = textHelper.createTextWallChunks(text)
         queueChunks(chunks, sleepAfterMs: 10)
     }
@@ -799,7 +798,7 @@ class G1: NSObject, SGCManager {
         }
     }
 
-    func sendDoubleTextWall(_ top: String, _ bottom: String) {
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async {
         let chunks = textHelper.createDoubleTextWallChunks(textTop: top, textBottom: bottom)
         queueChunks(chunks, sleepAfterMs: 10)
 
@@ -1886,7 +1885,7 @@ extension G1 {
 
     func clearDisplay() {
         Bridge.log("G1: clearDisplay() - Using space")
-        sendTextWall(" ")
+        Task { await sendTextWall(" ") }
     }
 
     /// Create a simple test BMP pattern in hex format

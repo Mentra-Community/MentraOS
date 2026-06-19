@@ -20,19 +20,29 @@ import {useCallback, useEffect, useRef, useState} from "react"
 import {Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
+  Extrapolation,
+  interpolate,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
+  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated"
 
 import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
+import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useAppStatusStore, useForegroundApp} from "@mentra/island"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
+import {useNavigationStore} from "@/stores/navigation"
+import {hapticBuzz} from "@/utils/utils"
+import CrustModule from "@mentra/crust"
+import { SETTINGS, useSetting } from "@/stores/settings"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -46,11 +56,21 @@ const MIN_FLICK_TRANSLATION = 12
 // Cap the velocity we hand to the commit spring so a frantic flick doesn't
 // blow past the off-screen target and snap back visibly.
 const MAX_COMMIT_VELOCITY = 3000
+// Upward fling speed (px/s) that commits the bottom swipe-up to the app
+// switcher regardless of how far the drag got.
+const SWITCHER_COMMIT_VELOCITY = -500
+// How far the overlay shrinks while the bottom swipe-up follows the finger.
+const SWIPE_UP_SCALE_TO = 0.5
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = 1000
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 400 : 500
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
+// iOS liquid-glass warm-up for offline-hosted apps: the overlay mounts fully
+// opaque (but shrunk to a dot) for this long so the glass views configure
+// under an opaque ancestor before the real open animation plays.
+const GLASS_WARMUP_MS = 10
+const GLASS_WARMUP_SCALE = 0.15
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
@@ -62,16 +82,38 @@ export default function Compositor() {
   // null the instant clearForeground runs, but we hold `renderedApp` until the
   // fade-out completes so the overlay can animate off-screen before unmount.
   const [renderedApp, setRenderedApp] = useState(foregroundApp)
+  // The capsule (house/X button) is hidden during the open animation and only
+  // revealed once the fade-in/zoom-in completes, so it doesn't pop in while the
+  // overlay is still growing into place.
+  const [capsuleVisible, setCapsuleVisible] = useState(false)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
   useEffect(() => {
-    if (foregroundApp) setRenderedApp(foregroundApp)
+    if (foregroundApp) {
+      setRenderedApp(foregroundApp)
+    }
+    if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
+      if (foregroundApp) {
+        CrustModule.setDeferredSystemGestures(["bottom"]).catch((e) =>
+          console.warn("MANTLE: setDeferredSystemGestures failed", e),
+        )
+      } else {
+        CrustModule.setDeferredSystemGestures([]).catch((e) =>
+          console.warn("MANTLE: setDeferredSystemGestures failed", e),
+        )
+      }
+    }
   }, [foregroundApp])
 
   const isForeground = foregroundApp != null
+  // LocalMiniappView toggles this off while the foregrounded miniapp's WebView
+  // has in-app history (so the WebView's own back-swipe handles it) and back on
+  // once the WebView is at page 0 (so our edge swipe backgrounds the miniapp).
+  const gestureEnabled = useNavigationStore((s) => s.forceGestureEnabled)
   const screenWidth = Dimensions.get("window").width
+  const screenHeight = Dimensions.get("window").height
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
   const handleBack = useCallback(() => {
-    console.log("handleBack", insets.top)
     captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
     useAppStatusStore.getState().clearForeground()
   }, [foregroundApp?.packageName])
@@ -82,11 +124,12 @@ export default function Compositor() {
   }, [foregroundApp?.packageName, insets.top])
 
   const swipeTranslateX = useSharedValue(0)
+  const swipeTranslateY = useSharedValue(0)
   const fadeOpacity = useSharedValue(0)
   const fadeScale = useSharedValue(1)
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: fadeOpacity.value,
-    transform: [{translateX: swipeTranslateX.value}, {scale: fadeScale.value}],
+    transform: [{translateX: swipeTranslateX.value}, {translateY: swipeTranslateY.value}, {scale: fadeScale.value}],
   }))
 
   const markSwipedToExit = () => {
@@ -147,46 +190,130 @@ export default function Compositor() {
       }
     })
 
-  //   // Register a capsule handler whenever a miniapp is foregrounded so the
-  // // global house/X button reflects the Compositor-managed app. The X press
-  // // backgrounds the app (clearForeground), same as the swipe gesture.
-  // useEffect(() => {
-  //   if (!foregroundApp) return
-  //   const {setActive} = useCapsuleStore.getState()
-  //   setActive({
-  //     packageName: foregroundApp.packageName,
-  //     viewShotRef: {current: null},
-  //     appNameOverride: foregroundApp.name,
-  //     iconUrlOverride: foregroundApp.logoUrl,
-  //     handleLeftPress: () => {
-  //       handleBack()
-  //     },
-  //     handleRightPress: () => {
-  //       handleBack()
-  //       BgTimer.setTimeout(() => {
-  //         useAppStatusStore.getState().stop(foregroundApp.packageName)
-  //       }, 100)
-  //     },
-  //   })
-  //   return () => {
-  //     const current = useCapsuleStore.getState().active
-  //     if (current?.packageName === foregroundApp.packageName) {
-  //       setActive(null)
-  //     }
-  //   }
-  // }, [foregroundApp, viewShotRef])
+  // Bottom swipe-up → app switcher (iOS home-indicator style). Commits by
+  // backgrounding the miniapp and leaving the AppSwitcher open on /home.
+  const commitToSwitcher = useCallback(() => {
+    const {getCurrentRoute, clearHistoryAndGoHome} = useNavigationStore.getState()
+    // The switcher lives on the home route — make sure it's underneath us.
+    if (getCurrentRoute() !== "/home") clearHistoryAndGoHome()
+    // Not handleBack(): the overlay is already shrunk/faded, so capturing here
+    // would overwrite the fresh screenshot taken at gesture begin.
+    useAppStatusStore.getState().clearForeground()
+  }, [])
+
+  const hasBuzzed = useSharedValue(false)
+  const swipeUpGesture = Gesture.Pan()
+    .activeOffsetY(-10)
+    .failOffsetY(15)
+    .onBegin(() => {
+      // Fresh screenshot before any transform so the switcher card is current.
+      runOnJS(handleShouldCapture)()
+    })
+    .onUpdate((e) => {
+      let ty = Math.min(0, e.translationY)
+      ty = Math.max(ty, -screenHeight/4)
+      // swipeTranslateY.value = interpolate(ty, [0, screenHeight * 0.5], [0, ty*0.8], Extrapolation.CLAMP)
+      let translateY = ty - (fadeScale.value * screenHeight) / 2 + screenHeight / 2
+      // console.log("translateY", translateY, -screenHeight/4)
+      swipeTranslateY.value = Math.max(-screenHeight/2, translateY)
+      // Shrink toward the center following the finger.
+      fadeScale.value = interpolate(-ty, [0, screenHeight * 0.3], [1, 0.5], Extrapolation.CLAMP)
+      // Reveal the switcher behind us, capped below 1 until release (matching
+      // AppSwitcherButton) so the open snap only fires on commit.
+      // appSwitcherProgress.value = Math.min(0.9, -ty / SWIPE_DISTANCE_THRESHOLD)
+
+      // Reveal the switcher behind us, capped below 1 until release (matching
+      // AppSwitcherButton) so the open snap only fires on commit.
+      // appSwitcherProgress.value = Math.min(0.9, -ty / SWIPE_DISTANCE_THRESHOLD)
+
+      let val = Math.min(0.9, -ty / SWIPE_DISTANCE_THRESHOLD)
+      const shouldOpen = val > SWIPE_PERCENT_THRESHOLD || -ty > SWIPE_DISTANCE_THRESHOLD
+      if (shouldOpen && !hasBuzzed.value) {
+        hasBuzzed.value = true
+        runOnJS(hapticBuzz)()
+      }
+    })
+    .onEnd((e) => {
+      hasBuzzed.value = false
+      const distance = -e.translationY
+      let val = Math.min(0.9, distance / SWIPE_DISTANCE_THRESHOLD)
+      const committed =
+        val > SWIPE_PERCENT_THRESHOLD ||
+        distance > SWIPE_DISTANCE_THRESHOLD ||
+        (e.velocityY < SWITCHER_COMMIT_VELOCITY && distance > MIN_FLICK_TRANSLATION)
+
+      if (committed) {
+        runOnJS(markSwipedToExit)()
+        appSwitcherProgress.value = withSpring(1, OPEN_SPRING)
+        // Keep drifting up and shrinking while the fade-out plays.
+        // swipeTranslateY.value = withSpring(e.translationY - 60, {damping: 50, stiffness: 800})
+        fadeScale.value = withSpring(FADE_OUT_SCALE_TO, {damping: 50, stiffness: 800})
+        fadeOpacity.value = withTiming(0, {duration: 200}, (finished) => {
+          if (finished) runOnJS(commitToSwitcher)()
+        })
+      } else {
+        swipeTranslateY.value = withSpring(0, {
+          velocity: e.velocityY,
+          damping: 50,
+          stiffness: 800,
+          overshootClamping: true,
+        })
+        fadeScale.value = withSpring(1, {damping: 50, stiffness: 800, overshootClamping: true})
+        // appSwitcherProgress.value = withSpring(0, {damping: 20, stiffness: 500, overshootClamping: true})
+      }
+    })
 
   // Drive fade-in(foreground) and fade-out + shrink (clear).
   useEffect(() => {
     if (isForeground) {
       didSwipeToExit.current = false // reset the flag so we can animate out again
+      setCapsuleVisible(false) // hide the capsule until the open animation finishes
       swipeTranslateX.value = 0
-      fadeOpacity.value = 0
-      // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
-      // opacity fade so the app surface grows into place.
-      fadeScale.value = FADE_IN_SCALE_FROM
-      fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
-      fadeScale.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+      swipeTranslateY.value = 0
+      // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
+      // configured while an ancestor animates opacity. Warm-up trick: mount
+      // fully OPAQUE but scaled to a dot for ~10ms so the glass initializes
+      // under an opaque ancestor, then snap to the normal animation's start
+      // state and play the usual fade+zoom.
+      if (Platform.OS === "ios" && foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
+        fadeOpacity.value = 1
+        fadeScale.value = GLASS_WARMUP_SCALE
+        // Park the overlay off-screen during the warm-up so the opaque
+        // surface never actually paints in view; snap back as the real
+        // animation starts.
+        // swipeTranslateY.value = screenHeight
+        // swipeTranslateY.value = withSequence(
+        //   withTiming(screenHeight, {duration: GLASS_WARMUP_MS}),
+        //   withTiming(0, {duration: 0}),
+        // )
+        fadeOpacity.value = withSequence(
+          withTiming(1, {duration: GLASS_WARMUP_MS}), // hold opaque while glass configures
+          withTiming(0, {duration: 0}), // snap invisible
+          withTiming(1, {duration: FADE_IN_DURATION_MS}), // normal fade-in
+        )
+        fadeScale.value = withSequence(
+          withTiming(GLASS_WARMUP_SCALE, {duration: GLASS_WARMUP_MS}),
+          withTiming(FADE_IN_SCALE_FROM, {duration: 0}),
+          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
+            // Reveal the capsule only after the open animation completes.
+            if (finished) runOnJS(setCapsuleVisible)(true)
+          }), // normal zoom-in
+        )
+      } else {
+        fadeOpacity.value = 0
+        // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
+        // opacity fade so the app surface grows into place.
+        fadeScale.value = FADE_IN_SCALE_FROM
+        fadeOpacity.value = 0.5
+        fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+        fadeScale.value = withDelay(
+          FADE_IN_DELAY_MS,
+          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
+            // Reveal the capsule only after the open animation completes.
+            if (finished) runOnJS(setCapsuleVisible)(true)
+          }),
+        )
+      }
     } else {
       // only animate out if we didn't swipe to exit:
       if (!didSwipeToExit.current) {
@@ -197,7 +324,7 @@ export default function Compositor() {
         fadeScale.value = withTiming(FADE_OUT_SCALE_TO, {duration: FADE_OUT_DURATION_MS})
       }
     }
-  }, [isForeground, swipeTranslateX, fadeOpacity, fadeScale])
+  }, [isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale])
 
   if (!renderedApp) return null
 
@@ -213,18 +340,45 @@ export default function Compositor() {
         KeyboardAvoidingViewProps={{enabled: false}}
         className="px-0"
         ref={viewShotRef}>
-        <LocalMiniappView
-          packageName={renderedApp.packageName}
-          appName={renderedApp.name}
-          version={renderedApp.version}
-          devUrl={renderedApp.devUrl}
-          iconUrl={renderedApp.logoUrl}
-          onExit={handleBack}
-          onShouldCapture={handleShouldCapture}
-        />
+        {isOfflineHosted(renderedApp.packageName) ? (
+          <OfflineAppHost
+            // Key by package for the same reason as LocalMiniappView below:
+            // switching between two offline-hosted apps must mount a fresh host
+            // (the internal stack only seeds from def.initialRoute on mount, so
+            // a reused instance would keep the previous app's stack).
+            key={renderedApp.packageName}
+            packageName={renderedApp.packageName}
+            appName={renderedApp.name}
+            iconUrl={renderedApp.logoUrl}
+            onExit={handleBack}
+            onShouldCapture={handleShouldCapture}
+            // show capsule once the open animation is complete:
+            showCapsule={capsuleVisible}
+          />
+        ) : (
+          <LocalMiniappView
+            // Key by package so switching from app A to app B mounts a FRESH
+            // WebView instead of navigating the existing one to B's URL. Reusing
+            // the instance left A's page in WKWebView's back-history, so
+            // `webViewCanGoBack` became true under B — which disabled the
+            // Compositor's minimize-swipe and made the back-swipe pop to A's
+            // page instead of returning home.
+            key={renderedApp.packageName}
+            packageName={renderedApp.packageName}
+            appName={renderedApp.name}
+            version={renderedApp.version}
+            devUrl={renderedApp.devUrl}
+            devPort={renderedApp.devPort != null ? String(renderedApp.devPort) : undefined}
+            iconUrl={renderedApp.logoUrl}
+            onExit={handleBack}
+            onShouldCapture={handleShouldCapture}
+            // show capsule once the open animation is complete:
+            showCapsule={capsuleVisible}
+          />
+        )}
       </Screen>
       {/* </View> */}
-      {isForeground && (
+      {isForeground && gestureEnabled && Platform.OS === "ios" && (
         <GestureDetector gesture={swipeGesture}>
           <View
             style={{
@@ -234,6 +388,23 @@ export default function Compositor() {
               left: 0,
               width: EDGE_HIT_WIDTH,
               zIndex: 10,
+            }}
+          />
+        </GestureDetector>
+      )}
+      {/* Bottom swipe-up to the app switcher — always available while
+          foregrounded (unlike the edge swipe, it doesn't defer to webview
+          history via forceGestureEnabled). */}
+      {isForeground && Platform.OS === "ios" && iosAppSwitcherBottomSwipe && (
+        <GestureDetector gesture={swipeUpGesture}>
+          <View
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: Math.max(insets.bottom, 24),
+              zIndex: 11,
             }}
           />
         </GestureDetector>

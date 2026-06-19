@@ -198,6 +198,8 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
           </View>
         )
       }
+      case "clear_view":
+        return null
       default:
         return <Text style={[styles.cardContent, textStyle]}>Unknown layout type: {layout.layoutType}</Text>
     }

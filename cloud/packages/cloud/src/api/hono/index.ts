@@ -13,6 +13,7 @@ export {
   incidentLogsApi,
   locationApi,
   minVersionApi,
+  navigationApi,
   notificationsApi,
   photoApi,
   userSettingsApi,

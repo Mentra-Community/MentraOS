@@ -257,10 +257,7 @@ export default function NexDeveloperSettings() {
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const deviceModel = useGlassesStore((state) => state.deviceModel)
   const features: Capabilities = getModelCapabilities(defaultWearable)
-
-  console.log("Yash is the best!!!!!", deviceModel, "hello", defaultWearable)
 
   // Mentra Display BLE test state variables
   const [text, setText] = useState("Hello World")
@@ -272,15 +269,15 @@ export default function NexDeveloperSettings() {
   const [commandSender, setCommandSender] = useState<BleCommand | null>(null)
   const [commandReceiver, setCommandReceiver] = useState<BleCommand | null>(null)
 
-  // Heartbeat Console state variables
-  const [lastHeartbeatSent, setLastHeartbeatSent] = useState<number | null>(null)
-  const [lastHeartbeatReceived, setLastHeartbeatReceived] = useState<number | null>(null)
+  // LC3 Audio Control — persisted feature flag synced to the Bluetooth SDK (off by default).
+  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
 
-  // LC3 Audio Control state
-  const [lc3AudioEnabled, setLc3AudioEnabled] = useState(true)
+  // Chinese captions — persisted feature flag synced to the Bluetooth SDK (off by default).
+  // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
+  const [chineseCaptionsEnabled, setChineseCaptionsEnabled] = useSetting(SETTINGS.nex_chinese_captions.key)
 
-  // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
-  const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
+  // VAD (Voice Activity Detection) — Manager defaults this on, then syncs it through BLUETOOTH_SETTING_KEYS.
+  const [vadEnabled, setVadEnabled] = useSetting<boolean>(SETTINGS.voice_activity_detection_enabled.key)
 
   // // // Get both protobuf versions from core status
   // const protobufSchemaVersion = status.core_info.protobuf_schema_version || "Unknown"
@@ -302,29 +299,15 @@ export default function NexDeveloperSettings() {
       setCommandReceiver(receiver)
     }
 
-    const handleHeartbeatSent = (data: {timestamp: number}) => {
-      console.log("handleHeartbeatSent:", data)
-      setLastHeartbeatSent(data.timestamp)
-    }
-
-    const handleHeartbeatReceived = (data: {timestamp: number}) => {
-      console.log("handleHeartbeatReceived:", data)
-      setLastHeartbeatReceived(data.timestamp)
-    }
-
     if (!MOCK_CONNECTION) {
       GlobalEventEmitter.on("send_command_to_ble", handleCommandFromSender)
       GlobalEventEmitter.on("receive_command_from_ble", handleCommandFromReceiver)
-      GlobalEventEmitter.on("heartbeat_sent", handleHeartbeatSent)
-      GlobalEventEmitter.on("heartbeat_received", handleHeartbeatReceived)
     }
 
     return () => {
       if (!MOCK_CONNECTION) {
         GlobalEventEmitter.removeListener("send_command_to_ble", handleCommandFromSender)
         GlobalEventEmitter.removeListener("receive_command_from_ble", handleCommandFromReceiver)
-        GlobalEventEmitter.removeListener("heartbeat_sent", handleHeartbeatSent)
-        GlobalEventEmitter.removeListener("heartbeat_received", handleHeartbeatReceived)
       }
     }
   }, [])
@@ -389,25 +372,21 @@ export default function NexDeveloperSettings() {
     }
   }
 
-  const onLc3AudioToggle = async (enabled: boolean) => {
+  // These toggles persist to the settings store, which auto-syncs the flag to Bluetooth settings
+  // (BLUETOOTH_SETTING_KEYS) where native applies the behavior change.
+  const onLc3AudioToggle = (enabled: boolean) => {
     setLc3AudioEnabled(enabled)
-    if (glassesConnected) {
-      console.log("setLc3AudioEnabled", enabled)
-      console.warn("setLc3AudioEnabled not yet implemented in Bluetooth SDK API")
-    }
+  }
+
+  const onChineseCaptionsToggle = (enabled: boolean) => {
+    setChineseCaptionsEnabled(enabled)
   }
 
   const onVadToggle = async (enabled: boolean) => {
-    if (glassesConnected) {
-      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
+    const result = await setVadEnabled(enabled)
+    if (result.is_error()) {
+      showAlert("VAD setting failed", result.error.message || "Please try again.", [{text: "OK"}])
     }
-  }
-
-  // Helper function to format timestamps
-  const formatTimestamp = (timestamp: number | null): string => {
-    if (!timestamp) return "Never"
-    const date = new Date(timestamp)
-    return date.toLocaleTimeString()
   }
 
   return (
@@ -674,9 +653,25 @@ export default function NexDeveloperSettings() {
 
               <ToggleSetting
                 label="LC3 Audio Playback"
-                subtitle="Play audio received from glasses through LC3 codec"
+                subtitle="Play audio received from glasses through LC3 codec (off by default)"
                 value={lc3AudioEnabled}
                 onValueChange={onLc3AudioToggle}
+              />
+            </View>
+
+            {/* Chinese Captions */}
+            <View style={themed($settingsGroup)}>
+              <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
+              <Text style={themed($description)}>
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
+                before being sent to the glasses.
+              </Text>
+
+              <ToggleSetting
+                label="Chinese Captions"
+                subtitle="Render CJK text on glasses instead of stripping it (off by default)"
+                value={chineseCaptionsEnabled}
+                onValueChange={onChineseCaptionsToggle}
               />
             </View>
 
@@ -693,41 +688,6 @@ export default function NexDeveloperSettings() {
                 value={vadEnabled}
                 onValueChange={onVadToggle}
               />
-            </View>
-
-            {/* Ping-Pong Console */}
-            <View style={themed($settingsGroup)}>
-              <Text style={themed($sectionTitle)}>💓 Ping-Pong Console</Text>
-              <Text style={themed($description)}>Monitor ping-pong communication with Mentra Display glasses</Text>
-
-              <Text style={themed($label)}>🏓 Last Pong Sent:</Text>
-              <Text style={themed($timestampText)}>Time: {formatTimestamp(lastHeartbeatSent)}</Text>
-
-              <Text style={[themed($label), $topMargin]}>🏓 Last Ping Received:</Text>
-              <Text style={themed($timestampText)}>Time: {formatTimestamp(lastHeartbeatReceived)}</Text>
-
-              <Text style={[themed($label), $topMargin]}>Ping-Pong Health:</Text>
-              <Text
-                style={[
-                  themed($timestampText),
-                  {
-                    color:
-                      lastHeartbeatReceived && Date.now() - lastHeartbeatReceived < 45000
-                        ? theme.colors.palette.primary500
-                        : theme.colors.error,
-                  },
-                ]}>
-                {lastHeartbeatReceived
-                  ? Date.now() - lastHeartbeatReceived < 45000
-                    ? "🟢 Active (Receiving Pings)"
-                    : "🔴 Ping Timeout"
-                  : "⚪ No Pings Received"}
-              </Text>
-              {lastHeartbeatSent && lastHeartbeatReceived && (
-                <Text style={themed($timestampText)}>
-                  Response Time: {Math.abs(lastHeartbeatSent - lastHeartbeatReceived)}ms
-                </Text>
-              )}
             </View>
           </>
         ) : (

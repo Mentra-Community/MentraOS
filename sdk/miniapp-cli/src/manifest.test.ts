@@ -218,4 +218,88 @@ describe('validateManifest', () => {
       expect(valid).toBe(true);
     });
   });
+
+  describe('actions', () => {
+    test('accepts a well-formed action with typed parameters', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {
+            id: 'add_todo',
+            description: 'Add an item to the user\'s todo list.',
+            parameters: {
+              type: 'object',
+              properties: {
+                text: {type: 'string', description: 'The todo text'},
+                tags: {type: 'array', items: {type: 'string'}},
+              },
+              required: ['text'],
+            },
+          },
+        ],
+      });
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+
+    test('accepts an action with no parameters', () => {
+      const {valid} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'snooze', description: 'Snooze the current reminder.'}],
+      });
+      expect(valid).toBe(true);
+    });
+
+    test('rejects an id that breaks the pattern', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'Add-Todo', description: 'x'}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('actions[0].id'))).toBe(true);
+    });
+
+    test('rejects duplicate action ids', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'one'},
+          {id: 'go', description: 'two'},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('duplicated'))).toBe(true);
+    });
+
+    test('rejects a missing/empty description', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'go', description: '   '}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('description'))).toBe(true);
+    });
+
+    test('rejects "integer" param type (use "number")', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'x', parameters: {type: 'object', properties: {n: {type: 'integer'}}}},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('.type must be one of'))).toBe(true);
+    });
+
+    test('rejects an array param without items.type', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'x', parameters: {type: 'object', properties: {a: {type: 'array'}}}},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('items.type'))).toBe(true);
+    });
+  });
 });

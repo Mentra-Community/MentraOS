@@ -2,21 +2,20 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
-import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
-
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import java.util.Set;
 import org.json.JSONObject;
 
-import java.util.Set;
-
 /**
- * Handler for photo-related commands.
- * Follows Single Responsibility Principle by handling only photo commands.
- * Extends BaseMediaCommandHandler for common package directory management.
+ * Handler for photo-related commands. Follows Single Responsibility Principle by handling only
+ * photo commands. Extends BaseMediaCommandHandler for common package directory management.
  */
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
@@ -24,7 +23,11 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
 
-    public PhotoCommandHandler(Context context, AsgClientServiceManager serviceManager, FileManager fileManager, IStateManager stateManager) {
+    public PhotoCommandHandler(
+            Context context,
+            AsgClientServiceManager serviceManager,
+            FileManager fileManager,
+            IStateManager stateManager) {
         super(context, fileManager);
         this.serviceManager = serviceManager;
         this.stateManager = stateManager;
@@ -51,14 +54,14 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         }
     }
 
-    /**
-     * Handle take photo command
-     */
+    /** Handle take photo command */
     private boolean handleTakePhoto(JSONObject data) {
         String requestIdForLog = data.optString("requestId", "");
         // Do not log the raw `data` payload — it carries the user's authToken.
-        Log.i(TAG, "PHOTO PIPELINE [ASG 2/3] PhotoCommandHandler.handleTakePhoto requestId="
-                + requestIdForLog);
+        Log.i(
+                TAG,
+                "PHOTO PIPELINE [ASG 2/3] PhotoCommandHandler.handleTakePhoto requestId="
+                        + requestIdForLog);
         try {
             // Resolve package name using base class functionality
             String packageName = resolvePackageName(data);
@@ -75,30 +78,74 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String transferMethod = data.optString("transferMethod", "direct");
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
-            String size = data.optString("size", "medium");
-            String compress = data.optString("compress", "none"); // Default to none (no compression)
-            boolean flash = data.optBoolean("flash", true);
-            boolean sound = data.optBoolean("sound", true);
+            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            PhotoCaptureSettings requestCaptureSettings =
+                    PhotoCaptureSettings.fromTakePhotoJson(data);
+            PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
+            AsgSettings asgSettings = serviceManager.getAsgSettings();
+            PhotoCaptureSettings captureSettings = requestCaptureSettings;
+            if (asgSettings != null) {
+                captureSettings =
+                        PhotoCaptureSettings.mergeForSdkRequest(
+                                requestCaptureSettings, asgSettings);
+            }
+            PhotoCaptureSettings.logMergeDiagnostics(
+                    requestCaptureSettings, captureSettings, asgSettings, requestId);
+            String compress = resolvePhotoCompress(data, asgSettings);
+            // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
+            boolean flash = true;
+            boolean sound = resolvePhotoSound(data, asgSettings);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            Integer requestedIso = PhotoIso.parse(data);
+            Integer iso = exposureTimeNs != null ? requestedIso : null;
             if (exposureTimeNs != null) {
-                Log.i(TAG, "Mentra Live using manual exposure time for take_photo request "
-                        + requestId + ": " + exposureTimeNs + " ns");
+                Log.i(
+                        TAG,
+                        "Mentra Live using manual exposure time for take_photo request "
+                                + requestId
+                                + ": "
+                                + exposureTimeNs
+                                + " ns");
+            }
+            if (requestedIso != null && exposureTimeNs == null) {
+                Log.i(TAG, "Mentra Live ignoring ISO for take_photo request "
+                        + requestId + " because exposureTimeNs was not set");
+            }
+            if (iso != null) {
+                Log.i(TAG, "Mentra Live using manual ISO for take_photo request "
+                        + requestId + ": ISO " + iso);
             }
 
-            // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
-            // upload cannot be picked up by gallery_status or AsgCameraServer between capture and
-            // post-upload delete. Permanent (save=true) captures keep their original layout.
+            logResolvedTakePhotoParams(
+                    requestId,
+                    size,
+                    compress,
+                    flash,
+                    sound,
+                    save,
+                    transferMethod,
+                    bleImgId,
+                    webhookUrl,
+                    exposureTimeNs,
+                    iso,
+                    captureSettings);
+
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService == null) {
+                logCommandResult("take_photo", false, "Media capture service not available");
+                return false;
+            }
+
+            // Use the permanent gallery path only when the caller wants to save; otherwise use
+            // the transient _sdk_pending tree so in-flight SDK photos are invisible to gallery
+            // sync and are cleaned up automatically after upload.
             String photoFilePath = save
                     ? generateCaptureFilePath(packageName, "IMG_", ".jpg")
                     : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
-                return false;
-            }
-
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                logCommandResult("take_photo", false, "Media capture service not available");
+                captureService.sendPhotoErrorResponse(
+                        requestId, "PHOTO_FILE_PATH_FAILED", "Failed to generate file path");
                 return false;
             }
 
@@ -113,9 +160,14 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     captureService.playBatteryLowSound();
 
                     // Send error response to phone
-                    captureService.sendPhotoErrorResponse(requestId, "BATTERY_LOW",
-                        "Battery level too low (" + batteryLevel + "%) - minimum " +
-                        BatteryConstants.MIN_BATTERY_LEVEL + "% required");
+                    captureService.sendPhotoErrorResponse(
+                            requestId,
+                            "BATTERY_LOW",
+                            "Battery level too low ("
+                                    + batteryLevel
+                                    + "%) - minimum "
+                                    + BatteryConstants.MIN_BATTERY_LEVEL
+                                    + "% required");
 
                     return false;
                 }
@@ -126,18 +178,28 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             // VIDEO RECORDING CHECK: Reject photo requests if video is currently recording
             if (captureService.isRecordingVideo()) {
                 Log.w(TAG, "🚫 Photo request rejected - video recording in progress");
-                logCommandResult("take_photo", false, "Video recording in progress - request rejected");
+                logCommandResult(
+                        "take_photo", false, "Video recording in progress - request rejected");
                 // Send immediate error response to phone
-                captureService.sendPhotoErrorResponse(requestId, "VIDEO_RECORDING_ACTIVE", "Video recording in progress - request rejected");
+                captureService.sendPhotoErrorResponse(
+                        requestId,
+                        "VIDEO_RECORDING_ACTIVE",
+                        "Video recording in progress - request rejected");
                 return false;
             }
 
             // COOLDOWN CHECK: Reject photo requests if BLE transfer is in progress
             if (captureService.isBleTransferInProgress()) {
-                Log.w(TAG, "🚫 Photo request rejected - BLE transfer in progress (cooldown active)");
-                logCommandResult("take_photo", false, "BLE transfer in progress - request rejected");
+                Log.w(
+                        TAG,
+                        "🚫 Photo request rejected - BLE transfer in progress (cooldown active)");
+                logCommandResult(
+                        "take_photo", false, "BLE transfer in progress - request rejected");
                 // Send immediate error response to phone
-                captureService.sendPhotoErrorResponse(requestId, "BLE_TRANSFER_BUSY", "BLE transfer in progress - request rejected");
+                captureService.sendPhotoErrorResponse(
+                        requestId,
+                        "BLE_TRANSFER_BUSY",
+                        "BLE transfer in progress - request rejected");
                 return false;
             }
 
@@ -145,15 +207,37 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             if (captureService.isPhotoJobInFlight()) {
                 Log.w(TAG, "🚫 Photo request rejected - photo job already in flight");
                 logCommandResult("take_photo", false, "Photo job in flight - request rejected");
-                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
+                captureService.sendPhotoErrorResponse(
+                        requestId, "CAMERA_BUSY", "Another photo job is in progress");
                 return false;
             }
 
             // Process photo capture based on transfer method
-            Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Starting capture requestId=" + requestId
-                    + " transferMethod=" + transferMethod + " size=" + size);
-            boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
+            Log.i(
+                    TAG,
+                    "PHOTO PIPELINE [ASG 3/3] Starting capture requestId="
+                            + requestId
+                            + " transferMethod="
+                            + transferMethod
+                            + " size="
+                            + size);
+            boolean success =
+                    processPhotoCapture(
+                            captureService,
+                            photoFilePath,
+                            requestId,
+                            webhookUrl,
+                            authToken,
+                            bleImgId,
+                            save,
+                            size,
+                            transferMethod,
+                            flash,
+                            sound,
+                            compress,
+                            exposureTimeNs,
+                            iso,
+                            captureSettings);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
@@ -163,6 +247,13 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling take photo command", e);
             logCommandResult("take_photo", false, "Exception: " + e.getMessage());
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService != null && !requestIdForLog.isEmpty()) {
+                captureService.sendPhotoErrorResponse(
+                        requestIdForLog,
+                        "PHOTO_COMMAND_FAILED",
+                        "Error handling photo command: " + e.getMessage());
+            }
             return false;
         }
     }
@@ -184,25 +275,130 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      * @param compress Compression level
      * @return true if successful, false otherwise
      */
-    private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
-                                      String requestId, String webhookUrl, String authToken, String bleImgId,
-                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
-                                      Long exposureTimeNs) {
+    private boolean processPhotoCapture(
+            MediaCaptureService captureService,
+            String photoFilePath,
+            String requestId,
+            String webhookUrl,
+            String authToken,
+            String bleImgId,
+            boolean save,
+            String size,
+            String transferMethod,
+            boolean flash,
+            boolean sound,
+            String compress,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
-                return true;
+                return captureService.takePhotoForBleTransfer(
+                        photoFilePath,
+                        requestId,
+                        bleImgId,
+                        save,
+                        size,
+                        flash,
+                        sound,
+                        exposureTimeNs,
+                        iso,
+                        captureSettings);
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs);
-                return true;
+                return captureService.takePhotoAutoTransfer(
+                        photoFilePath,
+                        requestId,
+                        webhookUrl,
+                        authToken,
+                        bleImgId,
+                        save,
+                        size,
+                        flash,
+                        sound,
+                        compress,
+                        exposureTimeNs,
+                        iso,
+                        captureSettings);
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs);
-                return true;
+                return captureService.takePhotoAndUpload(
+                        photoFilePath,
+                        requestId,
+                        webhookUrl,
+                        authToken,
+                        save,
+                        size,
+                        flash,
+                        sound,
+                        compress,
+                        exposureTimeNs,
+                        iso,
+                        captureSettings);
         }
+    }
+
+    private static void logResolvedTakePhotoParams(
+            String requestId,
+            String size,
+            String compress,
+            boolean flash,
+            boolean sound,
+            boolean save,
+            String transferMethod,
+            String bleImgId,
+            String webhookUrl,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
+        Log.i(
+                TAG,
+                "📸 take_photo resolved params"
+                        + " requestId="
+                        + requestId
+                        + " size="
+                        + size
+                        + " compress="
+                        + compress
+                        + " flash="
+                        + flash
+                        + " sound="
+                        + sound
+                        + " save="
+                        + save
+                        + " transferMethod="
+                        + transferMethod
+                        + " bleImgId="
+                        + bleImgId
+                        + " webhookUrl="
+                        + webhookUrl
+                        + " exposureTimeNs="
+                        + exposureTimeNs
+                        + " iso="
+                        + iso
+                        + " captureTuning={"
+                        + (captureSettings != null ? captureSettings.describeForLog() : "null")
+                        + "}");
+    }
+
+    private static String resolvePhotoCompress(JSONObject data, AsgSettings stored) {
+        if (data != null && data.has("compress") && !data.isNull("compress")) {
+            return data.optString("compress", "none");
+        }
+        // SDK take_photo requests that omit compress should use the SDK default (none), not
+        // a stored button scan preset — button presets are for hardware-button captures only.
+        return "none";
+    }
+
+    private static boolean resolvePhotoSound(JSONObject data, AsgSettings stored) {
+        if (data != null && data.has("sound") && !data.isNull("sound")) {
+            return data.optBoolean("sound", true);
+        }
+        // Same as compress: SDK requests use the SDK default (sound on) regardless of
+        // any stored button_photo_setting scan preset.
+        return true;
     }
 }

@@ -47,6 +47,7 @@ internal data class GlassesStatus(
     val rightMacAddress: String,
     val macAddress: String,
     val buildNumber: String,
+    val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
     val bluetoothName: String,
@@ -69,8 +70,9 @@ internal data class GlassesStatus(
     val controllerSignalStrength: Int,
     val ringSignalStrength: Int,
 ) {
-    internal fun toMap(): Map<String, Any> =
-        mapOf(
+    internal fun toMap(): Map<String, Any> {
+        val values =
+            mutableMapOf<String, Any>(
             "connection" to connectionState.toStatusMap(connected, fullyBooted),
             "micEnabled" to micEnabled,
             "voiceActivityDetectionEnabled" to voiceActivityDetectionEnabled,
@@ -109,6 +111,9 @@ internal data class GlassesStatus(
             "controllerSignalStrength" to controllerSignalStrength,
             "ringSignalStrength" to ringSignalStrength,
         )
+        systemTimeMs?.let { values["systemTimeMs"] = it }
+        return values
+    }
 
     companion object {
         internal fun fromMap(values: Map<String, Any>): GlassesStatus =
@@ -116,7 +121,9 @@ internal data class GlassesStatus(
                 fullyBooted = boolValue(values, "fullyBooted") ?: false,
                 connected = boolValue(values, "connected") ?: false,
                 micEnabled = boolValue(values, "micEnabled") ?: false,
-                voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+                voiceActivityDetectionEnabled =
+                    boolValue(values, "voiceActivityDetectionEnabled")
+                        ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
                 connectionState = GlassesConnectionState.fromValue(stringValue(values, "connectionState")),
                 bluetoothClassicConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
                 signalStrength = numberValue(values, "signalStrength") ?: -1,
@@ -131,6 +138,7 @@ internal data class GlassesStatus(
                 rightMacAddress = stringValue(values, "rightMacAddress") ?: "",
                 macAddress = stringValue(values, "macAddress") ?: "",
                 buildNumber = stringValue(values, "buildNumber") ?: "",
+                systemTimeMs = longValue(values, "systemTimeMs"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
                 appVersion = stringValue(values, "appVersion") ?: "",
                 bluetoothName = stringValue(values, "bluetoothName") ?: "",
@@ -152,6 +160,55 @@ internal data class GlassesStatus(
                 controllerBatteryLevel = numberValue(values, "controllerBatteryLevel") ?: -1,
                 controllerSignalStrength = numberValue(values, "controllerSignalStrength") ?: -1,
                 ringSignalStrength = numberValue(values, "ringSignalStrength") ?: -1,
+            )
+    }
+}
+
+data class VersionInfoResult(
+    val androidVersion: String,
+    val firmwareVersion: String,
+    val besFirmwareVersion: String,
+    val mtkFirmwareVersion: String,
+    val buildNumber: String,
+    val systemTimeMs: Long?,
+    val otaVersionUrl: String,
+    val appVersion: String,
+) {
+    internal fun toMap(): Map<String, Any> =
+        buildMap {
+            put("androidVersion", androidVersion)
+            put("firmwareVersion", firmwareVersion)
+            put("besFirmwareVersion", besFirmwareVersion)
+            put("mtkFirmwareVersion", mtkFirmwareVersion)
+            put("buildNumber", buildNumber)
+            systemTimeMs?.let { put("systemTimeMs", it) }
+            put("otaVersionUrl", otaVersionUrl)
+            put("appVersion", appVersion)
+        }
+
+    companion object {
+        internal fun from(status: GlassesStatus): VersionInfoResult =
+            VersionInfoResult(
+                androidVersion = status.androidVersion,
+                firmwareVersion = status.firmwareVersion,
+                besFirmwareVersion = status.besFirmwareVersion,
+                mtkFirmwareVersion = status.mtkFirmwareVersion,
+                buildNumber = status.buildNumber,
+                systemTimeMs = status.systemTimeMs,
+                otaVersionUrl = status.otaVersionUrl,
+                appVersion = status.appVersion,
+            )
+
+        internal fun fromMap(values: Map<String, Any>): VersionInfoResult =
+            VersionInfoResult(
+                androidVersion = stringValue(values, "androidVersion", "android_version") ?: "",
+                firmwareVersion = stringValue(values, "firmwareVersion", "firmware_version") ?: "",
+                besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?: "",
+                mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?: "",
+                buildNumber = stringValue(values, "buildNumber", "build_number") ?: "",
+                systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
+                otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
+                appVersion = stringValue(values, "appVersion", "app_version") ?: "",
             )
     }
 }
@@ -191,7 +248,6 @@ internal data class BluetoothStatus(
     val contextualDashboard: Boolean,
     val galleryModeEnabled: Boolean,
     val buttonPhotoSize: ButtonPhotoSize,
-    val buttonCameraLed: Boolean,
     val buttonMaxRecordingTime: Int,
     val buttonVideoWidth: Int,
     val buttonVideoHeight: Int,
@@ -244,7 +300,6 @@ internal data class BluetoothStatus(
             "contextual_dashboard" to contextualDashboard,
             "galleryModeEnabled" to galleryModeEnabled,
             "button_photo_size" to buttonPhotoSize.value,
-            "button_camera_led" to buttonCameraLed,
             "button_max_recording_time" to buttonMaxRecordingTime,
             "button_video_width" to buttonVideoWidth,
             "button_video_height" to buttonVideoHeight,
@@ -292,7 +347,6 @@ internal data class BluetoothStatus(
                 galleryModeEnabled =
                     boolValue(values, "gallery_mode") ?: boolValue(values, "galleryModeEnabled") ?: true,
                 buttonPhotoSize = ButtonPhotoSize.fromValue(stringValue(values, "button_photo_size")),
-                buttonCameraLed = boolValue(values, "button_camera_led") ?: true,
                 buttonMaxRecordingTime = numberValue(values, "button_max_recording_time") ?: 10,
                 buttonVideoWidth = numberValue(values, "button_video_width") ?: 1280,
                 buttonVideoHeight = numberValue(values, "button_video_height") ?: 720,
@@ -497,7 +551,6 @@ internal data class BluetoothStatusUpdate(
     val contextualDashboard: Boolean? = null,
     val galleryModeEnabled: Boolean? = null,
     val buttonPhotoSize: ButtonPhotoSize? = null,
-    val buttonCameraLed: Boolean? = null,
     val buttonMaxRecordingTime: Int? = null,
     val buttonVideoWidth: Int? = null,
     val buttonVideoHeight: Int? = null,
@@ -540,7 +593,6 @@ internal data class BluetoothStatusUpdate(
             putIfNotNull("contextual_dashboard", contextualDashboard)
             putIfNotNull("galleryModeEnabled", galleryModeEnabled)
             buttonPhotoSize?.let { put("button_photo_size", it.value) }
-            putIfNotNull("button_camera_led", buttonCameraLed)
             putIfNotNull("button_max_recording_time", buttonMaxRecordingTime)
             putIfNotNull("button_video_width", buttonVideoWidth)
             putIfNotNull("button_video_height", buttonVideoHeight)
@@ -591,7 +643,6 @@ internal data class BluetoothStatusUpdate(
                     optionalBoolValue(values, "gallery_mode") ?: optionalBoolValue(values, "galleryModeEnabled"),
                 buttonPhotoSize =
                     optionalStringValue(values, "button_photo_size")?.let(ButtonPhotoSize::fromValue),
-                buttonCameraLed = optionalBoolValue(values, "button_camera_led"),
                 buttonMaxRecordingTime = optionalNumberValue(values, "button_max_recording_time"),
                 buttonVideoWidth = optionalNumberValue(values, "button_video_width"),
                 buttonVideoHeight = optionalNumberValue(values, "button_video_height"),

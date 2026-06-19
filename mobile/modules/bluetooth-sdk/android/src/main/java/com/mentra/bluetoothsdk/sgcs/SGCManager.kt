@@ -1,7 +1,9 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
 abstract class SGCManager {
@@ -14,34 +16,54 @@ abstract class SGCManager {
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media
-    abstract fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
+
+    /**
+     * Start video recording with optional per-recording resolution/fps. A width,
+     * height, or fps of 0 means "use the device's saved button-video default".
+     * The base implementation ignores the settings and delegates to the default
+     * recording path; devices that support custom settings (e.g. Mentra Live)
+     * override this.
+     */
+    open fun startVideoRecording(
+        requestId: String,
+        save: Boolean,
+        sound: Boolean,
+        width: Int,
+        height: Int,
+        fps: Int,
+        maxRecordingTimeMinutes: Int,
+    ) {
+        startVideoRecording(requestId, save, sound)
+    }
+
     abstract fun stopVideoRecording(requestId: String)
+
+    /**
+     * Stop recording and upload the result to [webhookUrl] (multipart) using
+     * [authToken]. These are supplied at stop time so the token is fresh when
+     * the upload runs. The base implementation ignores the upload target and
+     * just stops; devices that support webhook upload (e.g. Mentra Live)
+     * override this. An empty/null [webhookUrl] means "keep the video on device".
+     */
+    open fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        stopVideoRecording(requestId)
+    }
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
     abstract fun sendCameraFovSetting()
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
     abstract fun clearDisplay()
+    abstract fun sendText(text: String)
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
     /**
@@ -55,6 +77,20 @@ abstract class SGCManager {
             width: Int? = null,
             height: Int? = null
     ): Boolean
+
+    /**
+     * Show text in a positioned container with an optional rounded border.
+     * G2-only capability; default no-op so other glasses ignore it.
+     */
+    open fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int = 0,
+            borderRadius: Int = 0
+    ) {}
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 
@@ -80,7 +116,7 @@ abstract class SGCManager {
     open fun sendDashboardDisplaySettings() {}
 
     // Notification Panel (default no-op — only G2 supports this)
-    open fun showNotificationsPanel() {}
+    open suspend fun showNotificationsPanel() {}
 
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
@@ -88,6 +124,16 @@ abstract class SGCManager {
 
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
+
+    /**
+     * Enable/disable raw accelerometer (IMU) reporting from the glasses.
+     * Default no-op for devices without IMU support. G2 (both iOS and Android) overrides this to
+     * stream IMU data; other devices accept the call so the cross-platform JS API stays uniform.
+     */
+    open suspend fun setImuEnabled(enabled: Boolean) {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
+
     abstract fun getBatteryStatus()
     abstract fun setSilentMode(enabled: Boolean)
     abstract fun exit()
@@ -139,6 +185,9 @@ abstract class SGCManager {
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
 
+    // Start/stop LC3 audio playback from glasses based on the nex_audio_playback flag.
+    open fun applyNexAudioPlaybackSetting() {}
+
     // Version info
     abstract fun requestVersionInfo()
 
@@ -186,7 +235,9 @@ abstract class SGCManager {
         get() = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
 
     val voiceActivityDetectionEnabled: Boolean
-        get() = DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean ?: true
+        get() =
+            DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
 
     val batteryLevel: Int
         get() = DeviceStore.get("glasses", "batteryLevel") as? Int ?: -1

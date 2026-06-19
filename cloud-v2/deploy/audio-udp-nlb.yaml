@@ -1,0 +1,68 @@
+# Network Load Balancer for the audio service's UDP port.
+#
+# Porter's `additionalPorts:` in porter.yaml only exposes the port on the
+# container — it does NOT create a separate k8s Service or AWS NLB. UDP
+# traffic from the public internet needs an NLB; AWS ELBv2's NLB supports
+# UDP listeners (ALB does not).
+#
+# Apply via:
+#   porter kubectl apply -f deploy/audio-udp-nlb.yaml
+#
+# After applying, get the NLB hostname:
+#   porter kubectl get svc cloud-v2-audio-udp -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+#
+# Then update Doppler with that hostname:
+#   doppler secrets set "AUDIO_UDP_ADVERTISED_HOST=<nlb-hostname>" --config dev_aws
+# And redeploy: porter apply -f porter.yaml
+#
+# Selector matches the Porter-managed audio pods (labels set by their
+# Helm chart — see `porter kubectl describe svc cloud-v2-audio`).
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-v2-audio-udp
+  namespace: default
+  labels:
+    porter.run/app-name: cloud-v2
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "UDP LoadBalancer for audio ingress (not managed by Porter)"
+    # AWS LoadBalancer Controller annotations. NLB is required for UDP —
+    # ALB is HTTP/TCP only.
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    # Cross-zone load balancing distributes packets evenly across nodes
+    # in all AZs, not just the AZ the NLB ENI lives in. Costs slightly
+    # more (cross-zone data transfer) but eliminates AZ-skew failure
+    # modes. Worth it.
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  # Match Porter's runtime pods specifically (NOT the core service). The
+  # service was renamed audio -> runtime; this NLB Service keeps its name
+  # (cloud-v2-audio-udp) to preserve the NLB hostname already wired into
+  # AUDIO_UDP_ADVERTISED_HOST, but retargets the runtime pods. v1 used the
+  # same selector pattern in cloud/udp-service.yaml.
+  selector:
+    porter.run/app-name: cloud-v2
+    porter.run/service-name: runtime
+  ports:
+    - name: udp-audio
+      protocol: UDP
+      port: 8000
+      targetPort: 8000
+  # `externalTrafficPolicy: Local` does TWO things for us:
+  #
+  # 1. NLB health checks: when set to Local, k8s allocates a stable
+  #    `healthCheckNodePort` (TCP) that AWS LB Controller automatically
+  #    uses for the target group's health check. NLBs do TCP health checks
+  #    even for UDP listeners; without this, the target group tries to
+  #    TCP-connect to the UDP traffic port and ALL targets show
+  #    "FailedHealthChecks". This is the canonical UDP-on-NLB gotcha.
+  #
+  # 2. Source IP preservation: traffic only routes to nodes that have
+  #    pods, and the pod sees the real client IP (vs. the node IP under
+  #    `Cluster` policy). Audio doesn't currently depend on client IP,
+  #    but it's a nice side benefit.
+  externalTrafficPolicy: Local

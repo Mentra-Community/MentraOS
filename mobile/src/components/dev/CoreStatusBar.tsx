@@ -5,8 +5,10 @@ import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
+import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
 import {useDebugStore} from "@/stores/debug"
 import {selectGlassesConnected, selectGlassesReady, useGlassesStore} from "@/stores/glasses"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import BluetoothSdk, {TouchEvent} from "@mentra/bluetooth-sdk"
 import {BgTimer} from "@mentra/island"
@@ -23,6 +25,19 @@ function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   )
 }
 
+function cloudClientTransportLabel(audioTransport: string, localFallbackActive: boolean): string {
+  if (localFallbackActive) return "Offline"
+  if (audioTransport === "udp") return "UDP"
+  if (audioTransport === "ws") return "WS"
+  return "None"
+}
+
+function cloudClientStatusBg(status: string): string {
+  if (status === "connected") return "bg-primary"
+  if (status === "connecting" || status === "reconnecting") return "bg-chart-3"
+  return "bg-destructive"
+}
+
 export default function CoreStatusBar() {
   const searching = useCoreStore((state) => state.searching)
   const micRanking = useCoreStore((state) => state.micRanking)
@@ -33,8 +48,12 @@ export default function CoreStatusBar() {
   const glassesConnected = useGlassesStore(selectGlassesConnected)
   const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const cloudStatus = useConnectionStore((state) => state.status)
+  const cloudClientStatus = useCloudClientStatusStore((state) => state.status)
+  const cloudClientAudioTransport = useCloudClientStatusStore((state) => state.audioTransport)
+  const [localFallbackActive] = useSetting<boolean>(SETTINGS.local_stt_fallback_active.key)
   const insets = useSaferAreaInsets()
   const [touchEvent, setTouchEvent] = useState<TouchEvent | null>(null)
+  const cloudClientTransport = cloudClientTransportLabel(cloudClientAudioTransport, localFallbackActive)
 
   const touchEventTimer = useRef<number | null>(null)
   useEffect(() => {
@@ -109,12 +128,12 @@ export default function CoreStatusBar() {
               icon="wifi"
               label={
                 cloudStatus === "connected"
-                  ? "Cloud"
+                  ? "Core"
                   : cloudStatus === "connecting"
-                    ? "Connecting"
+                    ? "Core Conn"
                     : cloudStatus === "error"
-                      ? "Cloud Err"
-                      : "Cloud Off"
+                      ? "Core Err"
+                      : "Core Off"
               }
               bg={
                 cloudStatus === "connected"
@@ -124,6 +143,7 @@ export default function CoreStatusBar() {
                     : "bg-destructive"
               }
             />
+            <Tag icon="wifi" label={`Cloud V2: ${cloudClientTransport}`} bg={cloudClientStatusBg(cloudClientStatus)} />
           </View>
         </View>
       </View>

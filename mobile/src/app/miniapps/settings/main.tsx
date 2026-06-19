@@ -16,7 +16,7 @@ import {useRegisterCapsule} from "@/stores/capsule"
 export default function MainSettingsPage() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
-  const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const viewShotRef = useRef<View>(null)
@@ -24,12 +24,11 @@ export default function MainSettingsPage() {
   useRegisterCapsule({
     packageName: "com.mentra.settings",
     viewShotRef,
-    visibleOnRoutes: ["/miniapps/settings/main"],
+    visibleOnRoutes: ["/miniapps/settings/"],
     offsetRight: theme.spacing.s2,
   })
 
   return (
-    <>
       <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
         <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
           <View style={{flex: 1, gap: theme.spacing.s6}}>
@@ -89,14 +88,19 @@ export default function MainSettingsPage() {
             </Group>
 
             <Group title={translate("deviceSettings:advancedSettings")}>
-              {devMode && (
+              {debugMode && (
                 <RouteButton
                   icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-                  label={translate("settings:developerSettings")}
-                  onPress={() => push("/miniapps/settings/developer")}
+                  label={translate("settings:debugSettings")}
+                  onPress={() => push("/miniapps/settings/debug")}
                   onLongPress={() => superMode && push("/miniapps/settings/super")}
                 />
               )}
+              <RouteButton
+                icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:miniappDeveloperSettings")}
+                onPress={() => push("/miniapps/settings/miniapp-dev")}
+              />
             </Group>
           </View>
 
@@ -104,6 +108,5 @@ export default function MainSettingsPage() {
           <Spacer height={theme.spacing.s10} />
         </ScrollView>
       </Screen>
-    </>
   )
 }

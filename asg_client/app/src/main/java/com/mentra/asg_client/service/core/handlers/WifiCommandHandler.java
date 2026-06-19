@@ -172,25 +172,25 @@ public class WifiCommandHandler implements ICommandHandler {
                             public void onNetworksFoundEnhanced(List<NetworkInfo> networks) {
                                 Log.d(TAG, "📡 Streaming " + networks.size() + " enhanced WiFi networks to phone");
                                 // Send each batch of networks immediately as they're found
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(networks);
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(networks, false);
                             }
 
                             @Override
                             public void onScanComplete(int totalNetworksFound) {
                                 Log.d(TAG, "📡 WiFi scan completed, total networks found: " + totalNetworksFound);
-                                // Could optionally send a completion signal here if needed
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
                             }
 
                             @Override
                             public void onScanError(String error) {
                                 Log.e(TAG, "📡 WiFi scan error: " + error);
                                 // Send empty list on error to indicate scan failure
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>());
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
                             }
                         });
                     } catch (Exception e) {
                         Log.e(TAG, "Error scanning for WiFi networks", e);
-                        communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>());
+                        communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
                     }
                 }).start();
                 return true;
@@ -316,4 +316,4 @@ public class WifiCommandHandler implements ICommandHandler {
         }
     }
 
-} 
+}

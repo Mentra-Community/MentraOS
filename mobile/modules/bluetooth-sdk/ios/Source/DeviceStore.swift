@@ -28,7 +28,7 @@ class DeviceStore {
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
         store.set("glasses", "micEnabled", false)
-        store.set("glasses", "voiceActivityDetectionEnabled", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         store.set("glasses", "bluetoothClassicConnected", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
@@ -84,12 +84,14 @@ class DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
-        store.set("bluetooth", "voice_activity_detection_enabled", true)
+        store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+        // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", ["fov": 118, "roi_position": 0])
         store.set("bluetooth", "button_video_width", 1280)
@@ -111,6 +113,10 @@ class DeviceStore {
 
     func set(_ category: String, _ key: String, _ value: Any) {
         store.set(category, key, value)
+    }
+
+    func remove(_ category: String, _ key: String) {
+        store.remove(category, key)
     }
 
     private func scheduleDashboardHeightToGlasses() {
@@ -184,7 +190,7 @@ class DeviceStore {
             let auto = store.get("bluetooth", "auto_brightness") as? Bool ?? true
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
-                DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
+                await DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
                 DeviceManager.shared.sgc?.clearDisplay()
             }
@@ -196,7 +202,7 @@ class DeviceStore {
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
                 if autoBrightnessChanged {
-                    DeviceManager.shared.sgc?.sendTextWall(
+                    await DeviceManager.shared.sgc?.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
                     try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
@@ -213,6 +219,11 @@ class DeviceStore {
         case ("bluetooth", "head_up_angle"):
             if let angle = value as? Int {
                 DeviceManager.shared.sgc?.setHeadUpAngle(angle)
+            }
+
+        case ("bluetooth", "imu_enabled"):
+            if let enabled = value as? Bool {
+                Task { await DeviceManager.shared.sgc?.setImuEnabled(enabled) }
             }
 
         case ("bluetooth", "menu_apps"):
@@ -245,9 +256,6 @@ class DeviceStore {
 
         case ("bluetooth", "button_photo_size"):
             DeviceManager.shared.sgc?.sendButtonPhotoSettings()
-
-        case ("bluetooth", "button_camera_led"):
-            DeviceManager.shared.sgc?.sendButtonCameraLedSetting()
 
         case ("bluetooth", "button_max_recording_time"):
             DeviceManager.shared.sgc?.sendButtonMaxRecordingTime()

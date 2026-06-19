@@ -34,12 +34,14 @@
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
     "@mentra/miniapp": "workspace:*"
   },
   "peerDependencies": {
     "expo": "*",
     "react": "*",
     "react-native": "*",
+    "react-native-udp": "*",
     "@types/react": "*",
     "react-native-mmkv": "*",
     "react-native-nitro-bg-timer": "*",
@@ -53,6 +55,7 @@
     "react-native-share": "*",
     "@dr.pogodin/react-native-fs": "*",
     "@mentra/bluetooth-sdk": "*",
+    "@mentra/cloud-client": "*",
     "@mentra/miniapp": "*"
   }
 }

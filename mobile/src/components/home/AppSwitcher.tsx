@@ -26,6 +26,7 @@ import {
   type ClientApp,
 } from "@mentra/island"
 import AppIcon from "@/components/home/AppIcon"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -195,6 +196,14 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   const imageHeight = imageAspectRatio != null ? (CARD_WIDTH - 4) * imageAspectRatio : null
 
+  const SwipeIndicator = useCallback(() => {
+    return (
+      <View className="absolute bottom-2 left-0 right-0 items-center">
+        <View className="w-24 h-[5px] rounded-full bg-white/30" />
+      </View>
+    )
+  }, [])
+
   return (
     <GestureDetector gesture={composedGesture}>
       <AnimatedPressable
@@ -219,27 +228,23 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           </Animated.View>
         </View>
         <View
-          className="rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          className="rounded-4xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
           style={{
             boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
-            height: imageHeight,
+            // height: imageHeight,
+            height: CARD_HEIGHT - 24,
           }}>
-          {!app.screenshot && (
-            <View className="flex-1 items-center justify-center">
-              <AppIcon app={app} className="w-12 h-12" />
-            </View>
-          )}
-
-          {app.screenshot && (
+          {app.screenshot ? (
             <View className="flex-1" style={{overflow: "hidden"}}>
               <Image source={{uri: app.screenshot}} style={{width: "100%", height: "100%"}} contentFit="cover" />
+              <SwipeIndicator />
+            </View>
+          ) : (
+            <View className="flex-1 items-center justify-center">
+              <AppIcon app={app} className="w-12 h-12" />
+              <SwipeIndicator />
             </View>
           )}
-        </View>
-
-        {/* Swipe indicator */}
-        <View className="absolute bottom-2 left-0 right-0 items-center">
-          <View className="w-24 h-[5px] rounded-full bg-white/30" />
         </View>
       </AnimatedPressable>
     </GestureDetector>
@@ -323,9 +328,27 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   useEffect(() => {
     if (prevAppsLength.current === 0 && apps.length > 0) {
       translateX.value = -((apps.length - 2) * CARD_WIDTH)
+      // Opened-before-mount case (see mount-sync effect below): snap to the
+      // most recent card once the async-sorted list lands.
+      if (swipeProgress.value > 0.5) {
+        goToIndex(apps.length - 1, true)
+      }
     }
     prevAppsLength.current = apps.length
   }, [apps.length])
+
+  // The Compositor's bottom swipe-up can commit while home isn't mounted
+  // (clearHistoryAndGoHome remounts this screen with the shared progress
+  // already at 1), so the useAnimatedReaction below never sees the 0→1
+  // crossing — sync the open state on mount instead.
+  useEffect(() => {
+    if (swipeProgress.value > 0.5) {
+      openX.value = 0
+      setBlurPointerEvents("auto")
+      setShowNoAppsMessage(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Derive animations from swipeProgress
   const backdropStyle = useAnimatedStyle(() => ({
@@ -578,12 +601,16 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     [apps.length, translateX.value, apps],
   )
 
+  const goToEnd = useCallback(() => {
+    goToIndex(apps.length-1, true)
+  }, [apps.length])
+
   const goToIndex = useCallback(
     (index: number, instant: boolean = false) => {
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
-      console.log("APPSWITCHER: goToIndex()", index, clamped, instant)
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
       if (clamped === targetIndex.value) {
         // console.log("APPSWITCHER: goToIndex() - already at index", index)
         return
@@ -613,7 +640,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }
 
     // Handle apps with custom routes (offline or online with offlineRoute override)
-    if (applet.offlineRoute) {
+    if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
+      // Registry-hosted offline apps render in the Compositor overlay like
+      // local miniapps (setForeground already saves last-open time).
+      setForeground(applet.packageName)
+    } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
     } else if (applet.webviewUrl && applet.healthy) {
@@ -661,7 +692,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // setTimeout(() => {
         if (apps.length > 1) {
           console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
-          runOnJS(goToIndex)(apps.length - 1, true)
+          runOnJS(goToEnd)()
         }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
         // }, 200)
@@ -671,8 +702,8 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - closing to last index", apps.length - 1)
-        runOnJS(goToIndex)(apps.length - 1, true)
+        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
+        runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
         if (apps.length > 0) {
           runOnJS(setShowNoAppsMessage)(false)

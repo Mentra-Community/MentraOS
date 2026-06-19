@@ -1,8 +1,12 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
@@ -108,12 +112,48 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_response", event.values)
                 }
 
+                override fun onPhotoStatus(event: PhotoStatusEvent) {
+                    sendEvent("photo_status", event.values)
+                }
+
+                override fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {
+                    sendEvent("video_recording_status", event.values)
+                }
+
+                override fun onMediaUpload(event: MediaUploadEvent) {
+                    sendEvent(event.type, event.values)
+                }
+
+                override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
+                    sendEvent("rgb_led_control_response", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
 
                 override fun onKeepAliveAck(event: KeepAliveAckEvent) {
                     sendEvent("keep_alive_ack", event.values)
+                }
+
+                override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
+                    sendEvent("ota_update_available", event.values)
+                }
+
+                override fun onOtaStartAck(event: OtaStartAckEvent) {
+                    sendEvent("ota_start_ack", event.values)
+                }
+
+                override fun onOtaStatus(event: OtaStatusEvent) {
+                    sendEvent("ota_status", event.values)
+                }
+
+                override fun onSettingsAck(event: SettingsAckEvent) {
+                    sendEvent("settings_ack", event.values)
+                }
+
+                override fun onVersionInfo(event: VersionInfoResult) {
+                    sendEvent("version_info", event.toMap() + mapOf("type" to "version_info"))
                 }
 
                 override fun onMicPcm(event: MicPcmEvent) {
@@ -139,7 +179,14 @@ class BluetoothSdkModule : Module() {
                 override fun onRawEvent(eventName: String, values: Map<String, Any>) {
                     sendEvent(eventName, values)
                 }
-            }
+        }
+
+    private fun requireSdk(): MentraBluetoothSdk =
+            sdk
+                    ?: throw BluetoothException(
+                            "sdk_not_initialized",
+                            "Bluetooth SDK is not initialized.",
+                    )
 
     override fun definition() = ModuleDefinition {
         Name("BluetoothSdk")
@@ -155,15 +202,23 @@ class BluetoothSdkModule : Module() {
             "glasses_not_ready",
             "button_press",
             "touch_event",
+            "accel_event",
+            "CompassHeadingEvent",
+            "CompassCalibrationEvent",
             "head_up",
             "voice_activity_detection_status",
             "speaking_status",
             "battery_status",
             "local_transcription",
             "wifi_status_change",
+            "wifi_scan_result",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
+            "video_recording_status",
+            "media_success",
+            "media_error",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -173,6 +228,8 @@ class BluetoothSdkModule : Module() {
             "swipe_volume_status",
             "switch_status",
             "rgb_led_control_response",
+            "settings_ack",
+            "version_info",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
@@ -204,11 +261,24 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
-            sdk = MentraBluetoothSdk.create(context, sdkListener)
+            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
+            sdk =
+                    MentraBluetoothSdk.create(
+                            context,
+                            MentraBluetoothSdkConfig(
+                                    analytics = BluetoothSdkAnalyticsConfig().withSurface("react_native")
+                            ),
+                            sdkListener,
+                    )
             deviceManager = DeviceManager.getInstance()
         }
 
         OnDestroy {
+            BleTraceLogger.logLifecycle(
+                    appContext.reactContext ?: appContext.currentActivity,
+                    "BluetoothSdkModule",
+                    "module_destroy"
+            )
             sdk?.close()
             sdk = null
             deviceManager = null
@@ -345,16 +415,16 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - WiFi Commands
 
-        AsyncFunction("requestWifiScan") { sdk?.requestWifiScan() }
+        AsyncFunction("requestWifiScan") { requireSdk().requestWifiScan().map { it.toMap() } }
 
         AsyncFunction("sendWifiCredentials") { ssid: String, password: String ->
-            sdk?.sendWifiCredentials(ssid, password)
+            requireSdk().sendWifiCredentials(ssid, password).values
         }
 
-        AsyncFunction("forgetWifiNetwork") { ssid: String -> sdk?.forgetWifiNetwork(ssid) }
+        AsyncFunction("forgetWifiNetwork") { ssid: String -> requireSdk().forgetWifiNetwork(ssid).values }
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
-            sdk?.setHotspotState(enabled)
+            requireSdk().setHotspotState(enabled).values
         }
 
         AsyncFunction("setSystemTime") { timestampMs: Double ->
@@ -364,14 +434,35 @@ class BluetoothSdkModule : Module() {
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
-            sdk?.setGalleryModeEnabled(enabled)
+            requireSdk().setGalleryModeEnabled(enabled).values
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { enabled: Boolean ->
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus() }
+        AsyncFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
+            requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
+        }
+
+        AsyncFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
+            requireSdk().setVideoRecordingDefaults(VideoRecordingDefaults(width, height, fps)).values
+        }
+
+        AsyncFunction("setMaxVideoRecordingDuration") { minutes: Int ->
+            requireSdk().setMaxVideoRecordingDuration(minutes).values
+        }
+
+        AsyncFunction("setCameraFov") { fov: Map<String, Any> ->
+            val value = (fov["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
+            val roiPosition = CameraRoiPosition.fromValue(
+                (fov["roiPosition"] as? Number)?.toInt()
+                    ?: (fov["roi_position"] as? Number)?.toInt(),
+            )
+            requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
+        }
+
+        AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
@@ -381,29 +472,41 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
-            val activeSdk = sdk
-            if (activeSdk == null) {
-                Bridge.log(
-                        "NATIVE: PHOTO PIPELINE — sdk is null; requestPhoto dropped requestId=${req.requestId}"
-                )
-            } else {
-                activeSdk.requestPhoto(req)
-            }
+            requireSdk().requestPhoto(req).values
         }
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
+        Function("setOtaVersionUrl") { otaVersionUrl: String ->
+            requireSdk().setOtaVersionUrl(otaVersionUrl)
+        }
 
-        AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
+        Function("getOtaVersionUrl") { requireSdk().getOtaVersionUrl() }
 
-        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue:
+        // manifest fetches and version waits can block for several seconds.
+        AsyncFunction("checkForOtaUpdate") Coroutine { ->
+            withContext(Dispatchers.IO) { requireSdk().checkForOtaUpdate() }
+        }
+
+        AsyncFunction("startOtaUpdate") { otaVersionUrl: String? ->
+            val sdk = requireSdk()
+            if (otaVersionUrl.isNullOrBlank()) {
+                sdk.startOtaUpdate().values
+            } else {
+                sdk.startOtaUpdate(otaVersionUrl).values
+            }
+        }
+
+        AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
+
+        AsyncFunction("retryOtaVersionCheck") { requireSdk().retryOtaVersionCheck().values }
 
         // MARK: - Version Info Commands
 
-        AsyncFunction("requestVersionInfo") { sdk?.requestVersionInfo() }
+        AsyncFunction("requestVersionInfo") { requireSdk().requestVersionInfo().toMap() }
 
         // MARK: - Power Control Commands
 
@@ -413,24 +516,51 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, sound: Boolean ->
-            sdk?.startVideoRecording(VideoRecordingRequest(requestId, save, sound))
+        AsyncFunction("startVideoRecording") {
+                requestId: String,
+                save: Boolean,
+                sound: Boolean,
+                settings: Map<String, Any?>? ->
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
+            requireSdk().startVideoRecording(
+                    VideoRecordingRequest(
+                            requestId,
+                            save,
+                            sound,
+                            dim("width"),
+                            dim("height"),
+                            dim("fps"),
+                            dim("maxRecordingTimeMinutes"),
+                    )
+            ).values
         }
 
-        AsyncFunction("stopVideoRecording") { requestId: String ->
-            sdk?.stopVideoRecording(requestId)
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/null webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+                requestId: String,
+                webhookUrl: String?,
+                authToken: String? ->
+            requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
         }
 
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { params: Map<String, Any> ->
-            sdk?.startStream(StreamRequest.fromMap(params))
+            requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        AsyncFunction("stopStream") { sdk?.stopStream() }
+        AsyncFunction("startExternallyManagedStream") { params: Map<String, Any> ->
+            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
+        }
 
-        AsyncFunction("keepStreamAlive") { params: Map<String, Any> ->
-            sdk?.keepStreamAlive(StreamKeepAliveRequest.fromMap(params))
+        AsyncFunction("stopStream") { requireSdk().stopStream().values }
+
+        AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
+            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
         }
 
         // MARK: - Microphone Commands
@@ -448,7 +578,12 @@ class BluetoothSdkModule : Module() {
             )
         }
 
-        AsyncFunction("restartTranscriber") { deviceManager?.restartTranscriber() }
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
+        // does a synchronous JNI model reload that would otherwise block every other
+        // native call in the app until it completes.
+        AsyncFunction("restartTranscriber") Coroutine { ->
+            withContext(Dispatchers.IO) { deviceManager?.restartTranscriber() }
+        }
 
         // MARK: - Audio Playback Monitoring
 
@@ -456,14 +591,17 @@ class BluetoothSdkModule : Module() {
             sdk?.setOwnAppAudioPlaying(playing)
         }
 
-        AsyncFunction("getGlassesMediaVolume") {
+        // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on
+        // a CountDownLatch (up to 5s) for a BLE round-trip, which would otherwise stall
+        // every other native call queued behind them.
+        AsyncFunction("getGlassesMediaVolume") Coroutine { ->
             val cm = deviceManager ?: throw IllegalStateException("device_manager_null")
-            cm.getGlassesMediaVolumeBlocking()
+            withContext(Dispatchers.IO) { cm.getGlassesMediaVolumeBlocking() }
         }
 
-        AsyncFunction("setGlassesMediaVolume") { level: Int ->
+        AsyncFunction("setGlassesMediaVolume") Coroutine { level: Int ->
             val cm = deviceManager ?: throw IllegalStateException("device_manager_null")
-            cm.setGlassesMediaVolumeBlocking(level)
+            withContext(Dispatchers.IO) { cm.setGlassesMediaVolumeBlocking(level) }
         }
 
         // MARK: - RGB LED Control
@@ -476,7 +614,7 @@ class BluetoothSdkModule : Module() {
                 onDurationMs: Int,
                 offDurationMs: Int,
                 count: Int ->
-            sdk?.rgbLedControl(
+            requireSdk().rgbLedControl(
                     RgbLedRequest(
                             requestId = requestId,
                             packageName = packageName,
@@ -486,7 +624,7 @@ class BluetoothSdkModule : Module() {
                             offDurationMs = offDurationMs,
                             count = count,
                     )
-            )
+            ).values
         }
 
         // MARK: - STT Commands
@@ -519,8 +657,13 @@ class BluetoothSdkModule : Module() {
             com.mentra.bluetoothsdk.stt.STTTools.validateSTTModel(path)
         }
 
-        AsyncFunction("extractTarBz2") { sourcePath: String, destinationPath: String ->
-            com.mentra.bluetoothsdk.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
+        // extraction of the 100–350MB model is a multi-minute, CPU-bound job. On the
+        // shared queue it froze every other native call in the app until it finished.
+        AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
+            }
         }
 
         // MARK: - TTS Commands
@@ -561,7 +704,9 @@ class BluetoothSdkModule : Module() {
             com.mentra.core.tts.TTSTools.validateTTSModel(path)
         }
 
-        AsyncFunction("generateTtsAudio") {
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: TTS synthesis
+        // is a synchronous JNI call that would otherwise block other native calls.
+        AsyncFunction("generateTtsAudio") Coroutine {
                 text: String,
                 modelPath: String,
                 outputPath: String,
@@ -571,14 +716,16 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
-            com.mentra.core.tts.TTSTools.generateTtsAudio(
-                    context,
-                    text,
-                    modelPath,
-                    outputPath,
-                    speakerId,
-                    speed.toFloat()
-            )
+            withContext(Dispatchers.IO) {
+                com.mentra.core.tts.TTSTools.generateTtsAudio(
+                        context,
+                        text,
+                        modelPath,
+                        outputPath,
+                        speakerId,
+                        speed.toFloat()
+                )
+            }
         }
     }
 }
@@ -598,6 +745,22 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )
 }
+
+private fun Map<String, Any?>.toPhotoCaptureDefaults(): PhotoCaptureDefaults =
+        PhotoCaptureDefaults(
+                size = (this["size"] as? String)?.let { PhotoSize.fromValue(it) },
+                mfnr = this["mfnr"] as? Boolean,
+                zsl = this["zsl"] as? Boolean,
+                noiseReduction = this["noiseReduction"] as? Boolean,
+                edgeEnhancement = this["edgeEnhancement"] as? Boolean,
+                ispDigitalGain = (this["ispDigitalGain"] as? Number)?.toInt(),
+                ispAnalogGain = this["ispAnalogGain"] as? String,
+                aeExposureDivisor = (this["aeExposureDivisor"] as? Number)?.toInt(),
+                isoCap = (this["isoCap"] as? Number)?.toInt(),
+                compress = this["compress"] as? String,
+                sound = this["sound"] as? Boolean,
+                resetCaptureTuning = this["resetCaptureTuning"] as? Boolean == true,
+        )
 
 private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
     val values = this ?: return ConnectOptions()
