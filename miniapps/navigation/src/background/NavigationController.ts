@@ -19,7 +19,7 @@ import type {
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../shared/types"
-import {arrowForKind, deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
+import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -28,7 +28,7 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
+import {bearingDeg, distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {borderTestImageBase64} from "./lib/bmp"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
@@ -136,6 +136,16 @@ export class NavigationController {
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
   private heading: number | null = null
+
+  // Movement-vector heading for the minimap "you" arrow. Instead of assuming
+  // the arrow points along the route, we derive the TRUE direction of travel
+  // from the user's own displacement: when they move ≥ MOVE_BEARING_MIN_M from
+  // the last anchor, the bearing anchor→current IS the heading. We hold the
+  // last computed bearing between moves so the arrow doesn't spin while the
+  // user stands still (GPS jitter) or snap back to the route direction.
+  private moveBearingAnchor: LatLng | null = null
+  private moveBearingDeg: number | null = null
+  private readonly MOVE_BEARING_MIN_M = 3
   private trip: TripState = {
     status: "idle",
     running: false,
@@ -211,6 +221,19 @@ export class NavigationController {
     // Location
     this.unsubs.push(
       this.location.onUpdate((d) => {
+        const here: LatLng = {lat: d.lat, lng: d.lng}
+        // Movement-vector heading: derive the TRUE direction of travel from the
+        // user's displacement. Seed the anchor on the first fix; thereafter,
+        // once they've moved ≥ MOVE_BEARING_MIN_M from the anchor, the bearing
+        // anchor→here is the heading, and we re-anchor. Below that threshold we
+        // keep the last bearing (so the arrow holds steady through GPS jitter /
+        // standing still instead of spinning).
+        if (this.moveBearingAnchor == null) {
+          this.moveBearingAnchor = here
+        } else if (haversineMeters(this.moveBearingAnchor, here) >= this.MOVE_BEARING_MIN_M) {
+          this.moveBearingDeg = bearingDeg(this.moveBearingAnchor, here)
+          this.moveBearingAnchor = here
+        }
         this.coords = {
           lat: d.lat,
           lng: d.lng,
@@ -512,6 +535,10 @@ export class NavigationController {
         // rebuilds on "user has actually moved away from start".
         this.lastStartOpts = opts
         this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+        // Reset the movement-vector heading so this trip's "you" arrow measures
+        // direction of travel fresh (anchor re-seeds on the next fix).
+        this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+        this.moveBearingDeg = null
         this.lastAutoRebuildAt = 0
         this.lastOffRouteBucket = 0
         this.offRouteAdvisory = false
@@ -1108,8 +1135,12 @@ export class NavigationController {
       viewRadiusMeters = Math.max(80, Math.max(halfH, halfW) * 1.15)
     }
 
+    // "You" arrow heading: the TRUE direction of travel from the user's own
+    // movement vector (anchor→current, updated every ≥3 m). Fall back to the
+    // route's forward bearing, then the compass, only until we've actually
+    // moved enough to measure a real heading.
     const routeBearing = nextSegmentBearing(me, route)
-    const markerHeading = routeBearing ?? this.heading
+    const markerHeading = this.moveBearingDeg ?? routeBearing ?? this.heading
     const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
       center,
       width: w,
@@ -1212,17 +1243,20 @@ export class NavigationController {
           dDest != null ? `Arriving in ${formatDistance(dDest, this.unitSystem)}` : "Arriving"
         next = `↑\n${distLine}`
       } else {
-        // Live distance to the next turn, with fallback to md's value so it's
-        // never blank. atTurn re-evaluated against the live value.
+        // DISTANCE shown comes from the live position (smooth). But the ARROW
+        // and the "Now" state come from `md`, whose atTurn is gated on the
+        // EVENT's distance — NOT the live one. This avoids the wrong-arrow flash:
+        // `md.arrow`/`md.atTurn` always belong to the same turn as `md.kind`, so
+        // the glyph can't briefly point the wrong way as you pass a turn (the
+        // live distance can already be measuring the NEXT turn). See
+        // deriveManeuverDisplay for the full rationale.
         const dTurn = liveDist ?? md.distanceMeters
-        const atTurn = dTurn != null ? dTurn <= 10 : md.atTurn
-        const arrow = atTurn ? md.kind && arrowForKind(md.kind) : "↑"
-        const distLine = atTurn
+        const distLine = md.atTurn
           ? "Now"
           : dTurn != null
             ? `In ${formatDistance(dTurn, this.unitSystem)}`
             : null
-        next = [arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
+        next = [md.arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
       }
     } else if (running) {
       // Running but no maneuver yet — the brief gap right after Start, before
@@ -1355,11 +1389,13 @@ export class NavigationController {
         })
     }
 
-    // Heading arrow points along the route's forward direction at the user's
-    // position (the way they should go next), falling back to the live compass
-    // heading when there's no route to follow.
+    // "You" arrow heading: the TRUE direction of travel from the user's own
+    // movement vector (anchor→current, recomputed every ≥3 m of travel) — no
+    // longer assuming the arrow points along the route. Fall back to the route's
+    // forward bearing, then the compass, only until we've moved enough to
+    // measure a real heading.
     const routeBearing = nextSegmentBearing(me, this.trip.routePoints)
-    const markerHeading = routeBearing ?? this.heading
+    const markerHeading = this.moveBearingDeg ?? routeBearing ?? this.heading
     // Only draw the route AHEAD of the user: trim the part already walked so
     // the line behind the position marker disappears as they progress.
     const remainingRoute = remainingRoutePoints(me, this.trip.routePoints)

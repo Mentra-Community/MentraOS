@@ -69,8 +69,20 @@ export function deriveManeuverDisplay(
     liveDistanceMeters != null && liveDistanceMeters >= 0 ? liveDistanceMeters : null
   const eventDist =
     maneuver.distanceMeters != null && maneuver.distanceMeters >= 0 ? maneuver.distanceMeters : null
+  // DISPLAYED distance: live (smooth) when available, else the event's.
   const distanceMeters = liveDist ?? eventDist
-  const atTurn = distanceMeters != null && distanceMeters <= AT_TURN_M
+
+  // "At turn" (and therefore whether to show a DIRECTIONAL arrow) must be gated
+  // on the EVENT's own distance — NOT the live distance. Reason: `kind` (the
+  // turn direction) comes from the maneuver EVENT, while `liveDist` is derived
+  // from the live position against the route STEPS and can already be measuring
+  // the turn AFTER the one `kind` describes. If we let liveDist decide atTurn,
+  // there's a brief window right as you pass a turn where liveDist says "now"
+  // but `kind` still points at the wrong/next turn — that's the flash of the
+  // wrong arrow (right turn shows, then a left arrow blips before it settles).
+  // Gating atTurn on eventDist keeps the arrow and its direction from the SAME
+  // turn, so the glyph can never disagree with the distance that triggered it.
+  const atTurn = eventDist != null && eventDist <= AT_TURN_M
 
   // Arrival leg (the LAST step) — show ONLY the destination countdown
   // ("Arriving in X m") and drop the turn instruction entirely: there are no
