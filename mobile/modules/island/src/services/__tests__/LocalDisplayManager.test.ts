@@ -1,8 +1,9 @@
 /**
  * Unit tests for LocalDisplayManager.
  *
- * Covers boot window, throttle, durationMs expiry, and core-vs-background
- * arbitration. Uses jest fake timers + an injected clock.
+ * Covers boot window, pass-through (pacing now lives in the native per-device
+ * queue, not here), durationMs expiry, and core-vs-background arbitration.
+ * Uses jest fake timers + an injected clock.
  */
 
 const displayEventMock = jest.fn()
@@ -141,63 +142,55 @@ describe("LocalDisplayManager", () => {
   })
 
   // ==========================================================================
-  // Throttle
+  // Pass-through (no JS-side throttle)
   // ==========================================================================
+  //
+  // Display pacing + last-wins coalescing now live in the native per-device
+  // queue (e.g. G2's event-driven EvenHub queue), not here — a JS throttle could
+  // not flush on schedule while the iOS app was suspended, so updates bursted on
+  // the next wake. This class forwards every request straight through.
 
-  describe("throttle", () => {
+  describe("pass-through", () => {
     beforeEach(() => {
       mgr.onCoreAppChange("com.app.foo")
       mgr.onMount("com.app.foo", "Foo")
-      // Consume the boot message so timing is clean.
+      // Consume the boot message so counts are clean.
       mgr.request("com.app.foo", {
         layout: {layoutType: "text_wall", text: "boot-flush"},
       })
       displayEventMock.mockClear()
     })
 
-    test("5 rapid-fire requests → 2 sends (leading + trailing, last wins)", () => {
-      // Leading send fires immediately at t=0 (lastSendAt from boot-flush above
-      // was set; advance past the throttle window first so this is truly a
-      // fresh burst).
-      advance(THROTTLE_MS)
-      displayEventMock.mockClear()
-
+    test("5 rapid-fire requests → 5 sends, no time advance, in order", () => {
       for (let i = 0; i < 5; i++) {
         mgr.request("com.app.foo", {
           layout: {layoutType: "text_wall", text: `msg${i}`},
         })
-        advance(30)
       }
 
-      // After the burst: leading send of "msg0" happened; msg1..msg4 are pending.
-      expect(displayEventMock.mock.calls.length).toBe(1)
-      expect(lastText()).toBe("msg0")
-
-      // Flush the trailing timer.
-      advance(THROTTLE_MS)
-      expect(displayEventMock.mock.calls.length).toBe(2)
+      // Every request forwarded immediately — no throttle, no coalescing here.
+      expect(displayEventMock.mock.calls.length).toBe(5)
       expect(lastText()).toBe("msg4")
+
+      // Nothing deferred to a trailing timer.
+      advance(THROTTLE_MS)
+      expect(displayEventMock.mock.calls.length).toBe(5)
     })
 
-    test("later request from same app replaces pending one", () => {
-      advance(THROTTLE_MS)
-      displayEventMock.mockClear()
-
+    test("each request renders immediately without waiting for a window", () => {
       mgr.request("com.app.foo", {
         layout: {layoutType: "text_wall", text: "a"},
       })
-      advance(50)
+      expect(lastText()).toBe("a")
       mgr.request("com.app.foo", {
         layout: {layoutType: "text_wall", text: "b"},
       })
+      expect(lastText()).toBe("b")
       mgr.request("com.app.foo", {
         layout: {layoutType: "text_wall", text: "c"},
       })
-      // Leading send: "a"
-      expect(lastText()).toBe("a")
-      // Trailing flush: "c" wins.
-      advance(THROTTLE_MS)
       expect(lastText()).toBe("c")
+      expect(displayEventMock.mock.calls.length).toBe(3)
     })
   })
 
@@ -336,29 +329,36 @@ describe("LocalDisplayManager", () => {
   // ==========================================================================
 
   describe("onCoreAppChange", () => {
-    test("flipping core drops pending throttled request from previous core", () => {
+    test("flipping core to null drops the saved core display", () => {
       mgr.onCoreAppChange("com.app.a")
       mgr.onMount("com.app.a", "A")
       advance(1500)
-      advance(THROTTLE_MS)
       displayEventMock.mockClear()
 
-      // Start a burst to create a pending trailing send for com.app.a
-      mgr.request("com.app.a", {layout: {layoutType: "text_wall", text: "a1"}})
-      mgr.request("com.app.a", {layout: {layoutType: "text_wall", text: "a2"}})
-      // Leading "a1" has fired; "a2" is pending.
+      mgr.request("com.app.a", {
+        layout: {layoutType: "text_wall", text: "a1"},
+        durationMs: 10_000,
+      })
       expect(lastText()).toBe("a1")
 
-      // Core flips to a different app.
-      mgr.onCoreAppChange("com.app.b")
+      // Core goes away → saved frame is dropped so it can't flicker back later.
+      mgr.onCoreAppChange(null)
+      expect(mgr._peekForTest().coreApp).toBeNull()
 
-      // Trailing timer fires — should NOT send "a2" because a is no longer core.
+      // A bg app can now take the screen; the old core frame is not restored
+      // when that bg app later unmounts.
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg"}})
+      expect(lastText()).toBe("bg")
       displayEventMock.mockClear()
-      advance(THROTTLE_MS)
-      expect(displayEventMock).not.toHaveBeenCalled()
+      mgr.onUnmount("com.app.bg")
+      const restoredOldCore = displayEventMock.mock.calls.some(
+        ([e]: any[]) => e.layout?.text === "a1",
+      )
+      expect(restoredOldCore).toBe(false)
     })
   })
 })
 
-// Keep in sync with THROTTLE_MS in LocalDisplayManager.ts.
+// Generic "let some time pass" amount for arbitration/expiry tests. The JS
+// throttle this once mirrored is gone; pacing now lives in the native queue.
 const THROTTLE_MS = 300

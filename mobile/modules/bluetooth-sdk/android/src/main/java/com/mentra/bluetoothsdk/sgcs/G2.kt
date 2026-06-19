@@ -1302,12 +1302,21 @@ class G2 : SGCManager() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var heartbeatRunnable: Runnable? = null
     private var devSettingsHeartbeatRunnable: Runnable? = null
-    private var evenHubQueueRunnable: Runnable? = null
-    private var pendingTextMsg: ByteArray? = null
+    // Event-driven text-container update queue.
+    //
+    // History: a 100ms postDelayed polling loop drained the latest pending update.
+    // A polling loop does not run on schedule while the app is suspended in the
+    // background, so under streaming captions updates piled up and flushed in a burst
+    // on the next wake. Now we drain on enqueue (post to the handler immediately) and
+    // keep the LATEST update PER containerID, so distinct containers all survive while
+    // repeated updates to the same container coalesce to newest — a backlog cannot form.
+    private var pendingTextByContainer = LinkedHashMap<Int, ByteArray>()
     private var lastEvenHubMsg: ByteArray? = null
-    private var lastEvenHubResendsRemaining: Int = 0
-    private val EVEN_HUB_RESEND_COUNT: Int = 1
-    private val EVEN_HUB_QUEUE_TICK_MS = 100L
+    // One-shot resend (write-without-response reliability): the only piece that needs a
+    // timer, since it is a deferred action with no triggering event. Superseded if a
+    // newer update is sent first.
+    private var evenHubResendRunnable: Runnable? = null
+    private val EVEN_HUB_RESEND_DELAY_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
     private var currentTextContent: String = ""
@@ -1806,16 +1815,8 @@ class G2 : SGCManager() {
         devSettingsHeartbeatRunnable = dsRunnable
         mainHandler.postDelayed(dsRunnable, 5000)
 
-        // EvenHub text command queue: drain the most recent pending updateText every 100ms
-        val queueRunnable =
-                object : Runnable {
-                    override fun run() {
-                        drainEvenHubQueue()
-                        mainHandler.postDelayed(this, EVEN_HUB_QUEUE_TICK_MS)
-                    }
-                }
-        evenHubQueueRunnable = queueRunnable
-        mainHandler.postDelayed(queueRunnable, EVEN_HUB_QUEUE_TICK_MS)
+        // EvenHub text command queue is drained event-driven (see queueEvenHubCommand);
+        // no standing poll here.
     }
 
     private fun stopHeartbeats() {
@@ -1823,11 +1824,12 @@ class G2 : SGCManager() {
         heartbeatRunnable = null
         devSettingsHeartbeatRunnable?.let { mainHandler.removeCallbacks(it) }
         devSettingsHeartbeatRunnable = null
-        evenHubQueueRunnable?.let { mainHandler.removeCallbacks(it) }
-        evenHubQueueRunnable = null
-        pendingTextMsg = null
-        lastEvenHubMsg = null
-        lastEvenHubResendsRemaining = 0
+        evenHubResendRunnable?.let { mainHandler.removeCallbacks(it) }
+        evenHubResendRunnable = null
+        synchronized(this) {
+            pendingTextByContainer.clear()
+            lastEvenHubMsg = null
+        }
     }
 
     private fun sendEvenHubHeartbeat() {
@@ -1990,7 +1992,7 @@ class G2 : SGCManager() {
                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
                     content = container.content
             )
-            queueEvenHubCommand(msg)
+            queueEvenHubCommand(msg, container.id)
             return
         }
         container =
@@ -2546,25 +2548,54 @@ class G2 : SGCManager() {
     }
 
     @Synchronized
-    private fun queueEvenHubCommand(payload: ByteArray) {
-        pendingTextMsg = payload
+    private fun queueEvenHubCommand(payload: ByteArray, containerID: Int) {
+        synchronized(this) {
+            // Keep only the LATEST update per container (LinkedHashMap preserves
+            // insertion order for fair draining across containers). Distinct containers
+            // all survive; repeated updates to the same container coalesce to newest, so
+            // no backlog can form even if many frames arrive between BLE wakes. Text
+            // updates are idempotent, so dropping superseded frames is correct.
+            pendingTextByContainer.remove(containerID) // move to most-recent insertion order
+            pendingTextByContainer[containerID] = payload
+        }
+        // Drain on the handler immediately — the enqueue (typically a transcription
+        // event) is itself what woke the process, so the update goes out in that wake
+        // rather than waiting on a timer that may have stalled in the background.
+        mainHandler.post { drainEvenHubQueue() }
     }
 
     @Synchronized
     private fun drainEvenHubQueue() {
-        val msg = pendingTextMsg
-        pendingTextMsg = null
-        val toSend: ByteArray? = if (msg != null) {
-            lastEvenHubMsg = msg
-            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
-            msg
-        } else if (lastEvenHubResendsRemaining > 0 && lastEvenHubMsg != null) {
-            lastEvenHubResendsRemaining -= 1
-            lastEvenHubMsg
-        } else {
-            null
+        val entry = pendingTextByContainer.entries.firstOrNull()
+        if (entry == null) return
+        pendingTextByContainer.remove(entry.key)
+        val toSend = entry.value
+        lastEvenHubMsg = toSend
+        sendEvenHubCommand(toSend)
+
+        // Arm the one-shot resend for reliability. Superseded by any newer send, and
+        // skipped entirely if the app suspends before it fires — the next real frame
+        // re-pushes current content, so correctness doesn't depend on it.
+        scheduleEvenHubResend(toSend)
+
+        // Keep draining if other containers are still pending.
+        if (pendingTextByContainer.isNotEmpty()) {
+            mainHandler.post { drainEvenHubQueue() }
         }
-        toSend?.let { sendEvenHubCommand(it) }
+    }
+
+    private fun scheduleEvenHubResend(expected: ByteArray) {
+        evenHubResendRunnable?.let { mainHandler.removeCallbacks(it) }
+        val runnable = Runnable {
+            synchronized(this) {
+                // Only resend if nothing newer was sent in the meantime.
+                if (lastEvenHubMsg === expected) {
+                    sendEvenHubCommand(expected)
+                }
+            }
+        }
+        evenHubResendRunnable = runnable
+        mainHandler.postDelayed(runnable, EVEN_HUB_RESEND_DELAY_MS)
     }
 
     // ---------- Bitmap Conversion ----------

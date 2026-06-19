@@ -1563,16 +1563,36 @@ class G2: NSObject, SGCManager {
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
     private var evenHubQueueTask: Task<Void, Never>?
-    // FIFO of pending text-container updates. A single-slot var here used to let
-    // a later update (e.g. the constantly-refreshing maneuver text) overwrite an
-    // earlier one for a DIFFERENT container (e.g. the bottom-left trip stats),
-    // so the second container's content never reached the glasses. A queue lets
-    // updates to distinct containers each get drained.
-    private var pendingTextMsgs: [Data] = []
+    // Event-driven text-container update queue.
+    //
+    // History: a single-slot var let a later update (e.g. the constantly-refreshing
+    // maneuver text) overwrite an earlier one for a DIFFERENT container (e.g. the
+    // bottom-left trip stats), so the second container never reached the glasses.
+    // That was fixed with a FIFO array drained by a 100ms polling Task.sleep loop —
+    // but a polling loop does not run on schedule while the app is suspended in the
+    // background (iOS only wakes the process briefly per BLE event, and Mach time
+    // stops while suspended). Under streaming captions that meant updates piled up
+    // and then flushed in a burst on the next wake.
+    //
+    // Now: keep the LATEST pending update PER containerID (distinct containers all
+    // survive; repeated updates to the same container coalesce to newest), and drain
+    // event-driven — `queueEvenHubCommand` signals `evenHubQueueSignal`, which wakes
+    // the drain coroutine immediately in whatever wake delivered the update. No
+    // standing timer gates throughput, so no backlog can accumulate behind a frozen
+    // tick.
+    private var pendingTextByContainer: [Int32: Data] = [:]
+    private var pendingTextOrder: [Int32] = []
+    // One-shot resend: after a real send we re-transmit it ONCE after a short delay
+    // (write-without-response reliability). This is the only piece that needs a
+    // timer — it is a deferred action with no triggering event. It rides a one-shot
+    // Task (see AckManager pattern) and is superseded if a newer update arrives.
     private var lastEvenHubMsg: Data?
-    private var lastEvenHubResendsRemaining: Int = 0
-    private let EVEN_HUB_RESEND_COUNT: Int = 1
+    private var evenHubResendTask: Task<Void, Never>?
+    private let EVEN_HUB_RESEND_DELAY_NS: UInt64 = 100_000_000  // 100ms, matches old tick spacing
     private let evenHubQueueLock = NSLock()
+    // Continuation parked by the drain coroutine while the queue is empty; resumed by
+    // `queueEvenHubCommand` on enqueue. Guarded by `evenHubQueueLock`.
+    private var evenHubQueueSignal: CheckedContinuation<Void, Never>?
     private var authStarted: Bool = false
 
     /// Dashboard menu: appId → packageName mapping for selection reverse lookup
@@ -1986,11 +2006,14 @@ class G2: NSObject, SGCManager {
             }
         }
 
-        // EvenHub text command queue: drain the most recent pending updateText every 100ms
+        // EvenHub text command queue: drain event-driven. The coroutine parks on a
+        // continuation while the queue is empty and is woken the instant an update is
+        // enqueued — so a pending caption frame goes out in whatever BLE wake delivered
+        // it, never waiting on a timer that has stalled in the background.
         evenHubQueueTask?.cancel()
         evenHubQueueTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 100_000_000)
+                await self?.waitForEvenHubWork()
                 guard !Task.isCancelled else { break }
                 await MainActor.run {
                     self?.drainEvenHubQueue()
@@ -1999,15 +2022,40 @@ class G2: NSObject, SGCManager {
         }
     }
 
+    /// Suspends until there is at least one pending text update. Returns immediately
+    /// if work is already queued; otherwise parks on a continuation that
+    /// `queueEvenHubCommand` resumes.
+    private func waitForEvenHubWork() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            evenHubQueueLock.lock()
+            if !pendingTextOrder.isEmpty {
+                evenHubQueueLock.unlock()
+                cont.resume()
+                return
+            }
+            // Park. A prior continuation should never exist (single consumer), but if
+            // it somehow does, resume it so it isn't leaked.
+            evenHubQueueSignal?.resume()
+            evenHubQueueSignal = cont
+            evenHubQueueLock.unlock()
+        }
+    }
+
     private func stopHeartbeats() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
         evenHubQueueTask?.cancel()
         evenHubQueueTask = nil
+        evenHubResendTask?.cancel()
+        evenHubResendTask = nil
         evenHubQueueLock.lock()
-        pendingTextMsgs.removeAll()
+        pendingTextByContainer.removeAll()
+        pendingTextOrder.removeAll()
         lastEvenHubMsg = nil
-        lastEvenHubResendsRemaining = 0
+        // Wake the drain coroutine so it observes cancellation and exits instead of
+        // staying parked on a continuation forever.
+        evenHubQueueSignal?.resume()
+        evenHubQueueSignal = nil
         evenHubQueueLock.unlock()
     }
 
@@ -2128,7 +2176,7 @@ class G2: NSObject, SGCManager {
                 contentLength: Int32(container.content.utf8.count),
                 content: container.content
             )
-            queueEvenHubCommand(msg)
+            queueEvenHubCommand(msg, containerID: container.id)
             return
         }
 
@@ -2887,36 +2935,71 @@ class G2: NSObject, SGCManager {
         pageCreated = true
     }
 
-    private func queueEvenHubCommand(_ payload: Data) {
+    private func queueEvenHubCommand(_ payload: Data, containerID: Int32) {
         evenHubQueueLock.lock()
-        // Append rather than overwrite so updates to different text containers
-        // (maneuver text + bottom-left trip stats) all survive. Cap the backlog
-        // so a stall can't grow it unbounded; dropping the oldest is fine since
-        // text updates are idempotent (the next frame re-pushes current content).
-        pendingTextMsgs.append(payload)
-        if pendingTextMsgs.count > 8 {
-            pendingTextMsgs.removeFirst(pendingTextMsgs.count - 8)
+        // Keep only the LATEST update per container: distinct containers (maneuver
+        // text + bottom-left trip stats) all survive, while repeated updates to the
+        // same container coalesce to newest. This is what makes a backlog impossible —
+        // even if many caption frames arrive between wakes, only the current one for
+        // each container is ever pending. Text updates are idempotent, so dropping
+        // superseded frames is correct, not lossy.
+        if pendingTextByContainer[containerID] == nil {
+            pendingTextOrder.append(containerID)
         }
+        pendingTextByContainer[containerID] = payload
+        // Wake the drain coroutine if it's parked.
+        let signal = evenHubQueueSignal
+        evenHubQueueSignal = nil
         evenHubQueueLock.unlock()
+        signal?.resume()
     }
 
     private func drainEvenHubQueue() {
         evenHubQueueLock.lock()
-        let toSend: Data?
-        if !pendingTextMsgs.isEmpty {
-            let msg = pendingTextMsgs.removeFirst()
-            lastEvenHubMsg = msg
-            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
-            toSend = msg
-        } else if lastEvenHubResendsRemaining > 0, let last = lastEvenHubMsg {
-            lastEvenHubResendsRemaining -= 1
-            toSend = last
-        } else {
-            toSend = nil
+        guard !pendingTextOrder.isEmpty else {
+            evenHubQueueLock.unlock()
+            return
         }
+        let containerID = pendingTextOrder.removeFirst()
+        let toSend = pendingTextByContainer.removeValue(forKey: containerID)
+        let moreQueued = !pendingTextOrder.isEmpty
+        lastEvenHubMsg = toSend
         evenHubQueueLock.unlock()
+
         guard let toSend = toSend else { return }
         sendEvenHubCommand(toSend)
+        // Arm the one-shot resend for reliability (write-without-response). A newer
+        // enqueue supersedes lastEvenHubMsg and re-arms this, so a stale duplicate is
+        // never sent. If the app is suspended before it fires, the resend is simply
+        // skipped — the next real frame re-pushes current content, so correctness does
+        // not depend on this timer firing.
+        scheduleEvenHubResend()
+
+        // If other containers are still pending, keep draining without parking — the
+        // drain coroutine loops and waitForEvenHubWork() returns immediately.
+        if moreQueued {
+            evenHubQueueLock.lock()
+            let signal = evenHubQueueSignal
+            evenHubQueueSignal = nil
+            evenHubQueueLock.unlock()
+            signal?.resume()
+        }
+    }
+
+    /// One-shot resend of the last sent EvenHub message, after a short delay. Cancels
+    /// any prior pending resend. Skipped if a newer message has since been sent.
+    private func scheduleEvenHubResend() {
+        evenHubResendTask?.cancel()
+        let expected = lastEvenHubMsg
+        evenHubResendTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: self?.EVEN_HUB_RESEND_DELAY_NS ?? 100_000_000)
+            guard let self, !Task.isCancelled else { return }
+            await MainActor.run {
+                // Only resend if nothing newer was sent in the meantime.
+                guard let expected, self.lastEvenHubMsg == expected else { return }
+                self.sendEvenHubCommand(expected)
+            }
+        }
     }
 
     private func restartMicIfAlreadyEnabled() {
