@@ -183,7 +183,7 @@ class BluetoothSdkModule : Module() {
 
     private fun requireSdk(): MentraBluetoothSdk =
             sdk
-                    ?: throw BluetoothException(
+                    ?: throw BluetoothSdkException(
                             "sdk_not_initialized",
                             "Bluetooth SDK is not initialized.",
                     )

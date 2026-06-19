@@ -317,7 +317,7 @@ public protocol MentraBluetoothSDKDelegate: AnyObject {
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothError)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothSdkError)
 }
 
 @MainActor
@@ -333,5 +333,5 @@ public extension MentraBluetoothSDKDelegate {
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 _: MicLc3Event) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: Device?) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog _: String) {}
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail _: BluetoothError) {}
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail _: BluetoothSdkError) {}
 }
