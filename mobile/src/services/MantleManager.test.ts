@@ -383,34 +383,6 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
   })
 
-  it("renders offline local transcription locally instead of forwarding it to cloud", async () => {
-    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
-    ;(socketComms.handle_display_event as jest.Mock).mockClear()
-
-    await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true, false)
-
-    emitBluetoothSdkEvent("local_transcription", {
-      text: "offline words",
-      isFinal: true,
-      transcribeLanguage: "en-US",
-    })
-
-    await waitFor(() => {
-      expect(socketComms.handle_display_event).toHaveBeenCalledWith(
-        expect.objectContaining({
-          view: "main",
-          layout: expect.objectContaining({
-            layoutType: "text_wall",
-            text: expect.stringContaining("offline words"),
-          }),
-        }),
-      )
-    })
-    expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
-
-    await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false, false)
-  })
-
   it("maps notification events to REST payloads", async () => {
     ;(restComms.sendPhoneNotification as jest.Mock).mockClear()
     ;(restComms.sendPhoneNotificationDismissed as jest.Mock).mockClear()

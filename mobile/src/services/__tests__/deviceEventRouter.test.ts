@@ -8,6 +8,7 @@ import {useSettingsStore} from "../../../modules/island/src/stores/settings"
 import GlobalEventEmitter from "../../../modules/island/src/utils/GlobalEventEmitter"
 import restComms from "../../../modules/island/src/services/RestComms"
 import localMiniappRuntime from "../../../modules/island/src/services/LocalMiniappRuntime"
+import localSttFallbackCoordinator from "../../../modules/island/src/services/LocalSttFallbackCoordinator"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("DeviceEventRouter", () => {
@@ -81,5 +82,31 @@ describe("DeviceEventRouter", () => {
     const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitBluetoothSdkEvent("button_press", {type: "button_press", buttonId: "main", pressType: "short"})
     expect(fwdSpy).toHaveBeenCalledWith("button_press", expect.objectContaining({buttonId: "main"}))
+  })
+
+  it("forwards local_transcription to local miniapps (transcription:<lang>) when STT fallback is active", () => {
+    jest.spyOn(localSttFallbackCoordinator, "isActive").mockReturnValue(true)
+    const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    fwdSpy.mockClear()
+    emitBluetoothSdkEvent("local_transcription", {
+      type: "local_transcription",
+      text: "hello",
+      isFinal: true,
+      transcribeLanguage: "fr-FR",
+    })
+    expect(fwdSpy).toHaveBeenCalledWith("transcription:fr-FR", expect.objectContaining({text: "hello"}))
+  })
+
+  it("drops local_transcription when STT fallback is inactive (cloud STT owns delivery)", () => {
+    jest.spyOn(localSttFallbackCoordinator, "isActive").mockReturnValue(false)
+    const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    fwdSpy.mockClear()
+    emitBluetoothSdkEvent("local_transcription", {
+      type: "local_transcription",
+      text: "hi",
+      isFinal: true,
+      transcribeLanguage: "en-US",
+    })
+    expect(fwdSpy).not.toHaveBeenCalledWith(expect.stringContaining("transcription:"), expect.anything())
   })
 })
