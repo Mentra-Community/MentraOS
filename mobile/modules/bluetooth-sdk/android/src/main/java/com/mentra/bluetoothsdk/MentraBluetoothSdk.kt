@@ -631,8 +631,10 @@ class MentraBluetoothSdk private constructor(
             if (error.code == "request_timeout") {
                 val fallbackResults =
                     synchronized(oneShotLock) {
-                        if (pendingWifiScan === request && request.latestResults.isNotEmpty()) {
-                            pendingWifiScan = null
+                        if (request.latestResults.isNotEmpty()) {
+                            if (pendingWifiScan === request) {
+                                pendingWifiScan = null
+                            }
                             request.latestResults
                         } else {
                             emptyList()
