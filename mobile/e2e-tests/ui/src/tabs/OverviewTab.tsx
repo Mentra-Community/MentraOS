@@ -1,34 +1,45 @@
 import {MetricCard} from "../components/MetricCard"
+import {RelativeAge} from "../components/RelativeAge"
 import {SectionCard} from "../components/SectionCard"
 import {StatusBadge} from "../components/StatusBadge"
 import type {MonitorSnapshot} from "../types"
-import {formatAge, formatClockWithMs} from "../utils"
+import {formatClockWithMs} from "../utils"
 
-export function OverviewTab({snapshot}: {snapshot: MonitorSnapshot}) {
-  const currentWord = snapshot.current_utterance?.words?.filter((word) => word.logcat_true_first_visible_ts_ms).at(-1)
+interface OverviewTabProps {
+  compareDevice?: boolean
+  snapshot: MonitorSnapshot
+}
+
+export function OverviewTab({compareDevice = false, snapshot}: OverviewTabProps) {
+  const visibleWords = snapshot.current_utterance?.words.filter((word) => word.logcat_true_first_visible_ts_ms) ?? []
+  const currentWord = visibleWords[visibleWords.length - 1]
   const nextWord = snapshot.current_utterance?.words?.find((word) => !word.logcat_true_first_visible_ts_ms)
 
   return (
     <div className="tab-layout">
       <div className="metric-grid">
-        <MetricCard
-          label="Status"
-          value={<StatusBadge status={snapshot.status} />}
-          detail={snapshot.status_detail || "Live monitor health"}
-        />
-        <MetricCard
-          label="Current Row"
-          value={snapshot.current_utterance ? `#${snapshot.current_utterance.dataset_row_idx}` : "-"}
-          detail={
-            snapshot.current_utterance
-              ? `${snapshot.current_utterance.word_count} words in flight`
-              : "Waiting for the next utterance"
-          }
-        />
+        {compareDevice ? null : (
+          <>
+            <MetricCard
+              label="Status"
+              value={<StatusBadge status={snapshot.status} />}
+              detail={snapshot.status_detail || "Live monitor health"}
+            />
+            <MetricCard
+              label="Current Row"
+              value={snapshot.current_utterance ? `#${snapshot.current_utterance.dataset_row_idx}` : "-"}
+              detail={
+                snapshot.current_utterance
+                  ? `${snapshot.current_utterance.word_count} words in flight`
+                  : "Waiting for the next utterance"
+              }
+            />
+          </>
+        )}
         <MetricCard
           label="Logcat Feed"
           value={snapshot.logcat_visible_lines.length ? "Active" : "Idle"}
-          detail={`Last event ${formatAge(snapshot.last_logcat_event_ts_ms)}`}
+          detail={<RelativeAge ms={snapshot.last_logcat_event_ts_ms} prefix="Last event " />}
         />
         <MetricCard
           label="Open Incidents"
@@ -52,16 +63,26 @@ export function OverviewTab({snapshot}: {snapshot: MonitorSnapshot}) {
           </pre>
         </SectionCard>
 
-        <SectionCard title="Current Timing" subtitle="Ground-truth alignment for the active utterance">
+        <SectionCard
+          title={compareDevice ? "Device Timing" : "Current Timing"}
+          subtitle={
+            compareDevice
+              ? "Caption progress observed on this phone"
+              : "Ground-truth alignment for the active utterance"
+          }>
           <div className="detail-list">
-            <div>
-              <span>Utterance start</span>
-              <strong>{formatClockWithMs(snapshot.current_utterance?.start_ts_ms)}</strong>
-            </div>
-            <div>
-              <span>Utterance end</span>
-              <strong>{formatClockWithMs(snapshot.current_utterance?.end_ts_ms)}</strong>
-            </div>
+            {compareDevice ? null : (
+              <>
+                <div>
+                  <span>Utterance start</span>
+                  <strong>{formatClockWithMs(snapshot.current_utterance?.start_ts_ms)}</strong>
+                </div>
+                <div>
+                  <span>Utterance end</span>
+                  <strong>{formatClockWithMs(snapshot.current_utterance?.end_ts_ms)}</strong>
+                </div>
+              </>
+            )}
             <div>
               <span>Last matched word</span>
               <strong>
@@ -76,9 +97,11 @@ export function OverviewTab({snapshot}: {snapshot: MonitorSnapshot}) {
         </SectionCard>
       </div>
 
-      <SectionCard title="Current Utterance" subtitle="Active reference row being monitored against live captions">
-        <div className="large-text">{snapshot.current_utterance?.text || "No utterance is active right now."}</div>
-      </SectionCard>
+      {compareDevice ? null : (
+        <SectionCard title="Current Utterance" subtitle="Active reference row being monitored against live captions">
+          <div className="large-text">{snapshot.current_utterance?.text || "No utterance is active right now."}</div>
+        </SectionCard>
+      )}
     </div>
   )
 }
