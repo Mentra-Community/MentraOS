@@ -64,6 +64,9 @@ permissions:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
+    # Slightly above the 30-min poll ceiling in the script so the loop, not the
+    # runner, decides when to give up.
+    timeout-minutes: 32
     steps:
       - name: Evaluate gated workflows and post ci-gate-dev status
         uses: actions/github-script@v7
@@ -96,73 +99,91 @@ jobs:
 
             const { owner, repo } = context.repo;
 
-            // All workflow runs for this commit (paginated). Each run exposes its
-            // workflow `name`, `status`, and `conclusion` directly — no need to
-            // disambiguate job/check-run names.
-            const allRuns = await github.paginate(
-              github.rest.actions.listWorkflowRunsForRepo,
-              { owner, repo, head_sha: sha, per_page: 100 },
-            );
-
-            // Keep only gated workflows, and for reruns keep the NEWEST run per
-            // workflow name (listWorkflowRunsForRepo returns newest first).
-            const latestByName = new Map();
-            for (const run of allRuns) {
-              if (!GATED.has(run.name)) continue;
-              if (!latestByName.has(run.name)) latestByName.set(run.name, run);
-            }
-            const gated = [...latestByName.values()];
-
             const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
             const OK = new Set(["success", "skipped", "neutral"]);
-
-            const incomplete = gated.filter(r => r.status !== "completed");
-            const failed = gated.filter(r => r.status === "completed" && BAD.has(r.conclusion));
-            const passed = gated.filter(r => r.status === "completed" && OK.has(r.conclusion));
-            // Any completed run whose conclusion is neither OK nor BAD is treated
-            // conservatively as not-yet-passing (keeps the gate from passing on an
-            // unknown conclusion).
-            const unknown = gated.filter(r => r.status === "completed" && !OK.has(r.conclusion) && !BAD.has(r.conclusion));
-
-            let state, description;
-            if (failed.length > 0) {
-              state = "failure";
-              description = `Failed: ${failed.map(r => r.name).join(", ")}`.slice(0, 140);
-            } else if (incomplete.length > 0 || unknown.length > 0) {
-              state = "pending";
-              const waiting = [...incomplete, ...unknown].map(r => r.name);
-              description = `Waiting on: ${waiting.join(", ")}`.slice(0, 140);
-            } else if (passed.length > 0) {
-              // Every gated workflow that ran is complete and OK.
-              state = "success";
-              description = `All required area builds passed (${passed.length})`;
-            } else {
-              // No gated workflow has appeared for this commit yet. Stay pending
-              // — builders are likely still spinning up. The cloud builds run on
-              // every dev PR, so for any real PR a gated run appears shortly.
-              state = "pending";
-              description = "Waiting for area builds to report";
-            }
-
-            core.info(`${STATUS_CONTEXT} -> ${state}: ${description}`);
-            core.info(`gated runs: ${gated.map(r => `${r.name}=${r.status}/${r.conclusion}`).join("; ") || "(none yet)"}`);
 
             // The commit-status `description` field rejects 4-byte Unicode
             // (422 "Description doesn't accept 4-byte Unicode"). Some gated
             // workflow names contain emoji (e.g. "🧪 Test Cloud build"), so strip
             // any astral-plane code points and clamp to the 140-char limit.
-            const safeDescription = description
-              .replace(/[\u{10000}-\u{10FFFF}]/gu, "")
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 140);
+            const sanitize = (s) =>
+              s.replace(/[\u{10000}-\u{10FFFF}]/gu, "").replace(/\s+/g, " ").trim().slice(0, 140);
 
-            await github.rest.repos.createCommitStatus({
-              owner,
-              repo,
-              sha,
-              state,
-              context: STATUS_CONTEXT,
-              description: safeDescription,
-              target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
-            });
+            const postStatus = (state, description) =>
+              github.rest.repos.createCommitStatus({
+                owner, repo, sha, state, context: STATUS_CONTEXT,
+                description: sanitize(description),
+                target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+              });
+
+            // Take one snapshot of the gated workflow runs for this commit and
+            // reduce it to a verdict. We match by unique WORKFLOW NAME (not the
+            // ambiguous job name "build"), and for reruns keep the NEWEST run per
+            // workflow (listWorkflowRunsForRepo returns newest first).
+            async function snapshot() {
+              const allRuns = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, head_sha: sha, per_page: 100 },
+              );
+              const latestByName = new Map();
+              for (const run of allRuns) {
+                if (!GATED.has(run.name)) continue;
+                if (!latestByName.has(run.name)) latestByName.set(run.name, run);
+              }
+              const gated = [...latestByName.values()];
+
+              const incomplete = gated.filter(r => r.status !== "completed");
+              const failed = gated.filter(r => r.status === "completed" && BAD.has(r.conclusion));
+              const passed = gated.filter(r => r.status === "completed" && OK.has(r.conclusion));
+              // Completed but neither OK nor BAD -> treat conservatively as pending,
+              // never as a pass.
+              const unknown = gated.filter(r => r.status === "completed" && !OK.has(r.conclusion) && !BAD.has(r.conclusion));
+
+              let state, description, settled;
+              if (failed.length > 0) {
+                state = "failure"; settled = true;
+                description = `Failed: ${failed.map(r => r.name).join(", ")}`;
+              } else if (incomplete.length > 0 || unknown.length > 0) {
+                state = "pending"; settled = false;
+                description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
+              } else if (passed.length > 0) {
+                state = "success"; settled = true;
+                description = `All required area builds passed (${passed.length})`;
+              } else {
+                // No gated workflow has appeared for this commit yet — builders are
+                // still spinning up. Not settled; keep polling.
+                state = "pending"; settled = false;
+                description = "Waiting for area builds to report";
+              }
+              core.info(`gated runs: ${gated.map(r => `${r.name}=${r.status}/${r.conclusion}`).join("; ") || "(none yet)"}`);
+              return { state, description, settled };
+            }
+
+            // Poll until the gated runs settle (all OK -> success, any BAD ->
+            // failure) or we hit the time budget. Polling makes the gate
+            // self-healing: it does not depend on a workflow_run wakeup arriving
+            // for every builder completion (those only fire once ci-gate.yml is on
+            // the base branch, and can race even then). We post intermediate
+            // pending statuses so the required check reflects live progress.
+            const MAX_MS = 30 * 60 * 1000;   // 30 min ceiling
+            const INTERVAL_MS = 20 * 1000;   // poll every 20s
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            const deadline = Date.now() + MAX_MS;
+
+            let result = await snapshot();
+            await postStatus(result.state, result.description);
+            core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
+
+            while (!result.settled && Date.now() < deadline) {
+              await sleep(INTERVAL_MS);
+              result = await snapshot();
+              await postStatus(result.state, result.description);
+              core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
+            }
+
+            if (!result.settled) {
+              // Timed out still pending — leave the pending status in place and
+              // fail this job so it is visible/rerunnable, rather than silently
+              // leaving the gate stuck.
+              core.setFailed(`ci-gate-dev did not settle within ${MAX_MS / 60000} min: ${result.description}`);
+            }
