@@ -163,8 +163,17 @@ export function GalleryScreen() {
             "WiFi is Disabled",
             "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
             [
+              // Cancel arms nothing — the island only arms the retry/cooldown via ack().
               {text: "Cancel", style: "cancel"},
-              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openWifiSettings()},
+              {
+                text: "Open Settings",
+                onPress: () => {
+                  // Affirmative choice → let the island arm its WiFi auto-retry + cooldown,
+                  // then navigate to OS settings (host-owned UI).
+                  notice.ack?.()
+                  void SettingsNavigationUtils.openWifiSettings()
+                },
+              },
             ],
             {cancelable: false},
           )
