@@ -36,12 +36,10 @@ import {useDisplayStore} from "@/stores/display"
 import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import TranscriptProcessor from "@/utils/TranscriptProcessor"
 import {useCoreStore} from "@/stores/core"
 import udp from "@/services/UdpManager"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
@@ -84,10 +82,8 @@ function parseBundledMiniappName(name: string): {packageName: string; version: s
 class MantleManager {
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
-  private clearTextTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private MIC_TIMEOUT_MS: number = 1000
-  private transcriptProcessor: TranscriptProcessor
   private subs: Array<any> = []
   private initialized: boolean = false
 
@@ -98,26 +94,7 @@ class MantleManager {
     return MantleManager.instance
   }
 
-  private constructor() {
-    // Pass callback to send pending updates when timer fires
-    this.transcriptProcessor = new TranscriptProcessor(() => {
-      this.sendPendingTranscript()
-    })
-  }
-
-  private sendPendingTranscript() {
-    const pendingText = this.transcriptProcessor.getPendingUpdate()
-    if (pendingText) {
-      socketComms.handle_display_event({
-        type: "display_event",
-        view: "main",
-        layout: {
-          layoutType: "text_wall",
-          text: pendingText,
-        },
-      })
-    }
-  }
+  private constructor() {}
 
   // run at app start on the init.tsx screen:
   // should only ever be run once
@@ -300,7 +277,6 @@ class MantleManager {
     this.subs = []
 
     phoneLocationService.stopPhoneLocation()
-    this.transcriptProcessor.clear()
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
@@ -765,11 +741,8 @@ class MantleManager {
 
       // miniapp_selected: moved to island DeviceEventRouter (started by toolkit.start())
 
-      this.subs.push(
-        BluetoothSdk.addListener("local_transcription", (event) => {
-          mantle.handle_local_transcription(event)
-        }),
-      )
+      // local_transcription: moved to island DeviceEventRouter (started by toolkit.start());
+      // its offline-captions display path was removed with the pseudo captions renderer.
 
       this.subs.push(
         BluetoothSdk.addListener("ws_text", (event) => {
@@ -982,23 +955,6 @@ class MantleManager {
     }
   }
 
-  // mostly for debugging / local stt:
-  public async displayTextMain(text: string) {
-    logE2EMetric("display_text_main", {
-      text,
-      line_count: text.split("\n").length,
-    })
-    this.resetDisplayTimeout()
-    socketComms.handle_display_event({
-      type: "display_event",
-      view: "main",
-      layout: {
-        layoutType: "text_wall",
-        text: text,
-      },
-    })
-  }
-
   public async handle_head_up(isUp: boolean) {
     socketComms.sendHeadPosition(isUp)
 
@@ -1010,65 +966,6 @@ class MantleManager {
       useDisplayStore.getState().setView("dashboard")
     } else {
       useDisplayStore.getState().setView("main")
-    }
-  }
-
-  public async resetDisplayTimeout() {
-    if (this.clearTextTimeout) {
-      // console.log("MANTLE: canceling pending timeout")
-      BgTimer.clearTimeout(this.clearTextTimeout)
-    }
-    this.clearTextTimeout = BgTimer.setTimeout(() => {
-      console.log("MANTLE: clearing text from wall")
-    }, 10000) // 10 seconds
-  }
-
-  public async handle_local_transcription(data: any) {
-    console.log(
-      `MANTLE: handle_local_transcription text="${data?.text}" isFinal=${data?.isFinal} lang=${
-        data?.transcribeLanguage
-      } fallbackActive=${localSttFallbackCoordinator.isActive()}`,
-    )
-    logE2EMetric("local_transcription_received", {
-      text: data?.text ?? "",
-      is_final: data?.isFinal ?? false,
-      language: data?.transcribeLanguage ?? "",
-    })
-
-    // TODO: performance!
-    const offlineStt = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
-    if (offlineStt) {
-      this.transcriptProcessor.changeLanguage(data.transcribeLanguage)
-      const processedText = this.transcriptProcessor.processString(data.text, data.isFinal ?? false)
-
-      logE2EMetric("local_transcription_processed", {
-        text: data?.text ?? "",
-        processed_text: processedText ?? "",
-        is_final: data?.isFinal ?? false,
-      })
-
-      // Scheduling timeout to clear text from wall. In case of online STT online dashboard manager will handle it.
-      // if (data.isFinal) {
-      //   this.resetDisplayTimeout()
-      // }
-
-      if (processedText) {
-        this.displayTextMain(processedText)
-      }
-
-      return
-    }
-
-    // Local transcripts only ever flow to local miniapps. The cloud-side
-    // pipeline (cloud miniapps, cloud-relayed transcripts) is unaffected
-    // by this branch — when the cloud WS is up, cloud transcripts arrive
-    // independently via SocketComms and reach miniapps via the same
-    // forwardEvent. Coordinator's `isActive()` already covers
-    // "subscription present AND cloud is dead", so if we got here without
-    // it being active there's no consumer and we drop the transcript.
-    if (localSttFallbackCoordinator.isActive()) {
-      const lang = data?.transcribeLanguage ?? localSttFallbackCoordinator.getActiveLanguage() ?? "en-US"
-      localMiniappRuntime.forwardEvent(`transcription:${lang}`, data)
     }
   }
 
