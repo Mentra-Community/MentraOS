@@ -42,7 +42,9 @@ export const incidents = {
       const r = await restComms.uploadIncidentLogs(incidentId, input.logs)
       if (r.is_error()) console.warn("incidents.file: upload logs failed:", r.error?.message)
     }
-    this.notifyGlasses(incidentId, backendUrl)
+    // Reference the object directly (not `this`) so a detached call —
+    // `const {file} = toolkit.incidents; file(input)` — still notifies the glasses.
+    incidents.notifyGlasses(incidentId, backendUrl)
     if (input.screenshots && input.screenshots.length > 0) {
       const r = await restComms.uploadIncidentAttachments(incidentId, input.screenshots)
       if (r.is_error()) console.warn("incidents.file: upload attachments failed:", r.error?.message)
