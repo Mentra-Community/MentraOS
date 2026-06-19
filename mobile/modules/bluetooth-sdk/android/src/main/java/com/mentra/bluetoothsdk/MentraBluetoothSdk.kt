@@ -1024,13 +1024,6 @@ class MentraBluetoothSdk private constructor(
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
-    /** Re-run the glasses-side OTA version check after an internal clock-skew recovery. */
-    @JvmSynthetic
-    internal fun retryOtaVersionCheck(): OtaQueryResult =
-        performOtaQuery("OTA version retry") {
-            deviceManager.retryOtaVersionCheck()
-        }
-
     private fun getFreshGlassesStatus(): GlassesStatus {
         val status = getRawGlassesStatus()
         if (!status.connected || status.buildNumber.isNotBlank()) {
@@ -1347,13 +1340,6 @@ class MentraBluetoothSdk private constructor(
                 if (!handleStreamKeepAliveAck(event)) {
                     dispatchToListeners { it.onKeepAliveAck(event) }
                 }
-            }
-            "ota_update_available" -> {
-                val resultValues = data + mapOf("type" to "ota_update_available")
-                synchronized(oneShotLock) {
-                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
-                }
-                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(resultValues)) }
             }
             "ota_start_ack" -> {
                 val event = OtaStartAckEvent.fromMap(data + mapOf("type" to "ota_start_ack"))

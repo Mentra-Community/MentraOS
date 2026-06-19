@@ -73,28 +73,6 @@ public struct SpeakingStatusEvent: CustomStringConvertible {
     }
 }
 
-public struct OtaUpdateAvailableEvent: CustomStringConvertible {
-    public let versionCode: Int?
-    public let versionName: String?
-    public let updates: [String]
-    public let totalSize: Int?
-    public let cacheReady: Bool?
-    public let values: [String: Any]
-
-    public init(values: [String: Any]) {
-        versionCode = intValue(values["version_code"])
-        versionName = stringValue(values, "version_name")
-        updates = values["updates"] as? [String] ?? []
-        totalSize = intValue(values["total_size"])
-        cacheReady = boolValue(values, "cache_ready")
-        self.values = values
-    }
-
-    public var description: String {
-        "OtaUpdateAvailableEvent(versionName: \(versionName ?? "unknown"), updates: \(updates.joined(separator: ",")))"
-    }
-}
-
 public struct OtaStartAckEvent: CustomStringConvertible {
     public let timestamp: Int?
     public let values: [String: Any]
@@ -248,7 +226,6 @@ public enum BluetoothEvent: CustomStringConvertible {
     case rgbLedControlResponse(RgbLedControlResponseEvent)
     case streamStatus(StreamStatusEvent)
     case keepAliveAck(KeepAliveAckEvent)
-    case otaUpdateAvailable(OtaUpdateAvailableEvent)
     case otaStartAck(OtaStartAckEvent)
     case otaStatus(OtaStatusEvent)
     case settingsAck(SettingsAckEvent)
@@ -285,8 +262,6 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .streamStatus(event):
             event.description
         case let .keepAliveAck(event):
-            event.description
-        case let .otaUpdateAvailable(event):
             event.description
         case let .otaStartAck(event):
             event.description

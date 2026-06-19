@@ -195,8 +195,6 @@ export type {
   OtaStatus,
   OtaStatusEvent,
   OtaQueryResult,
-  OtaUpdateAvailableEvent,
-  OtaUpdateInfo,
   PairFailureEvent,
   PhotoCaptureMetadata,
   PhotoResolvedConfig,

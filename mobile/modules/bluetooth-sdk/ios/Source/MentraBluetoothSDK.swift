@@ -1083,13 +1083,6 @@ public final class MentraBluetoothSDK {
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
 
-    /// Re-run the glasses-side OTA version check after an internal clock-skew recovery.
-    func retryOtaVersionCheck() async throws -> OtaQueryResult {
-        try await performOtaQuery(operation: "OTA version retry") {
-            DeviceManager.shared.retryOtaVersionCheck()
-        }
-    }
-
     private func getFreshGlassesStatus() async -> GlassesStatus {
         let status = glassesStatus
         if !status.connected || !status.buildNumber.isEmpty {
@@ -1774,11 +1767,6 @@ public final class MentraBluetoothSDK {
             if !handleStreamKeepAliveAck(event) {
                 delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(event))
             }
-        case "ota_update_available":
-            var resultValues = data
-            resultValues["type"] = "ota_update_available"
-            pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
-            delegate?.mentraBluetoothSDK(self, didReceive: .otaUpdateAvailable(OtaUpdateAvailableEvent(values: resultValues)))
         case "ota_start_ack":
             var values = data
             values["type"] = "ota_start_ack"
