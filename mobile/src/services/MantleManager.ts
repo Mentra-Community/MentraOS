@@ -733,17 +733,6 @@ class MantleManager {
       )
 
       this.subs.push(
-        BluetoothSdk.addListener("ws_bin", (event) => {
-          const binaryString = atob(event.base64)
-          const bytes = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i)
-          }
-          socketComms.sendBinary(bytes)
-        }),
-      )
-
-      this.subs.push(
         BluetoothSdk.addListener("mic_lc3", (event) => {
           this.noteMicDataReceived()
 

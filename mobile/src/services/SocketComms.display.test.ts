@@ -20,7 +20,6 @@ jest.mock("@/services/WebSocketManager", () => ({
     disconnect: jest.fn(),
     isConnected: jest.fn(() => true),
     sendText: jest.fn(),
-    sendBinary: jest.fn(),
     cleanup: jest.fn(),
   },
 }))

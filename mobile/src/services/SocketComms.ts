@@ -178,10 +178,6 @@ class SocketComms {
     ws.sendText(text)
   }
 
-  public sendBinary(data: ArrayBuffer | Uint8Array) {
-    ws.sendBinary(data)
-  }
-
   // SERVER COMMANDS
   // these are public functions that can be called from anywhere to notify the server of something:
   // should all be prefixed with send
