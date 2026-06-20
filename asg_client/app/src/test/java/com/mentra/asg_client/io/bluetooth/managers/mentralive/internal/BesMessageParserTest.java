@@ -83,6 +83,23 @@ public class BesMessageParserTest {
         assertThat(parser.getBufferSize()).isEqualTo(0);
     }
 
+    @Test
+    public void parseMessages_keepsNonStringFramesOnDelimiterParsing() {
+        BesMessageParser parser = new BesMessageParser();
+        byte[] frame =
+                new byte[] {
+                    0x23, 0x23, BesWireFormat.CMD_TYPE_PHOTO, 0x00, 0x01, 0x42, 0x24, 0x24
+                };
+
+        assertThat(parser.addData(frame, frame.length)).isTrue();
+
+        List<byte[]> messages = parser.parseMessages();
+
+        assertThat(messages).hasSize(1);
+        assertThat(messages.get(0)).isEqualTo(frame);
+        assertThat(parser.getBufferSize()).isEqualTo(0);
+    }
+
     private static byte[] packPhoneJson(String json, boolean wakeup) {
         byte[] packed = BesWireFormat.packJsonToK900(json, wakeup);
         assertThat(packed).isNotNull();

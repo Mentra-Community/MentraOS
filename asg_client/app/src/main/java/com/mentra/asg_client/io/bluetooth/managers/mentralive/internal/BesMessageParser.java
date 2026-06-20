@@ -24,16 +24,6 @@ public class BesMessageParser {
     // Buffer size for parsing messages
     private static final int BUFFER_SIZE = 8192; // 8KB buffer
     private static final int STRING_FRAME_OVERHEAD = 7; // ## + type + length + payload + $$
-    private static final int FILE_FRAME_OVERHEAD =
-            BesWireFormat.LENGTH_FILE_START
-                    + BesWireFormat.LENGTH_FILE_TYPE
-                    + BesWireFormat.LENGTH_FILE_PACKSIZE
-                    + BesWireFormat.LENGTH_FILE_PACKINDEX
-                    + BesWireFormat.LENGTH_FILE_SIZE
-                    + BesWireFormat.LENGTH_FILE_NAME
-                    + BesWireFormat.LENGTH_FILE_FLAG
-                    + BesWireFormat.LENGTH_FILE_VERIFY
-                    + BesWireFormat.LENGTH_FILE_END;
     private static final int FRAME_INCOMPLETE = -1;
     private static final int FRAME_INVALID = -2;
 
@@ -176,12 +166,10 @@ public class BesMessageParser {
             return getExpectedStringFrameLength(buffer, start, available);
         }
 
-        if (isFileCommandType(commandType)) {
-            return getExpectedFileFrameLength(buffer, start, available);
-        }
-
-        Log.w(TAG, "Unknown K900 command type: 0x" + String.format("%02X", commandType));
-        return FRAME_INVALID;
+        // The observed Wi-Fi failure was on string/JSON frames. Keep non-string
+        // commands on the previous delimiter parser until their frame variants have
+        // dedicated evidence and tests.
+        return getDelimitedFrameLength(buffer, start, available);
     }
 
     private int getExpectedStringFrameLength(byte[] buffer, int start, int available) {
@@ -238,27 +226,22 @@ public class BesMessageParser {
         return FRAME_INVALID;
     }
 
-    private int getExpectedFileFrameLength(byte[] buffer, int start, int available) {
-        int packSize = ((buffer[start + 3] & 0xFF) << 8) | (buffer[start + 4] & 0xFF);
-        int frameLength = FILE_FRAME_OVERHEAD + packSize;
-        if (frameLength < FILE_FRAME_OVERHEAD || frameLength > BUFFER_SIZE) {
-            return FRAME_INVALID;
-        }
-
-        if (available < frameLength) {
+    private int getDelimitedFrameLength(byte[] buffer, int start, int available) {
+        int endMarkerPos =
+                findMarker(
+                        buffer,
+                        start + START_MARKER_BYTES.length,
+                        available - START_MARKER_BYTES.length,
+                        END_MARKER_BYTES);
+        if (endMarkerPos == -1) {
             return FRAME_INCOMPLETE;
         }
 
-        int endMarkerPos = start + frameLength - END_MARKER_BYTES.length;
-        return hasMarkerAt(buffer, endMarkerPos, END_MARKER_BYTES) ? frameLength : FRAME_INVALID;
-    }
+        if (endMarkerPos - start < 6) {
+            return FRAME_INVALID;
+        }
 
-    private boolean isFileCommandType(byte commandType) {
-        return commandType == BesWireFormat.CMD_TYPE_PHOTO
-                || commandType == BesWireFormat.CMD_TYPE_VIDEO
-                || commandType == BesWireFormat.CMD_TYPE_MUSIC
-                || commandType == BesWireFormat.CMD_TYPE_AUDIO
-                || commandType == BesWireFormat.CMD_TYPE_DATA;
+        return (endMarkerPos + END_MARKER_BYTES.length) - start;
     }
 
     private boolean hasMarkerAt(byte[] buffer, int offset, byte[] marker) {
