@@ -3942,23 +3942,25 @@ class G2: NSObject, SGCManager {
             //     Bridge.log("G2: Click detected")
             // }
 
-            // System exit: glasses killed our EvenHub page (user opened menu or another app)
-            // Reset page state and re-create the page to reclaim EvenHub focus
+            // System exit: glasses killed our EvenHub page (e.g. the firmware's
+            // "End this feature? Yes/No" screen, or another app taking focus). The page
+            // is gone, so re-create it to reclaim EvenHub focus — otherwise the next
+            // sendText reuses a container on a page that no longer exists and nothing
+            // renders. rebuildState() recreates the page, re-pushes current text + image
+            // content through the reconcile loop, and re-arms the mic if it should be on
+            // (the firmware also kills the mic on system exit). We intentionally do NOT
+            // clear glasses/micEnabled first: that flag is the intended state, and
+            // rebuildState relies on it to know whether to re-send the mic-enable command
+            // (mirrors the dashboard-shutdown recovery path).
             if eventType == .systemExit || eventType == .abnormalExit {
-                // Bridge.log("G2: System exit detected")
+                Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                // Firmware kills the mic on system exit; re-arm it if it should be on
-                DeviceStore.shared.apply("glasses", "micEnabled", false)
-                DeviceManager.shared.updateMicState()
-                // Force re-create the page to reclaim EvenHub focus
-                // Task {
-                //     try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1000ms for glasses to finish transition
-                //     if !savedBitmap.isEmpty {
-                //         await self.displayBitmap(base64ImageData: savedBitmap)
-                //     } else {
-                //         self.sendTextWall(savedText.isEmpty ? " " : savedText)
-                //     }
-                // }
+                Task { [weak self] in
+                    await self?.rebuildState()
+                    // Reconcile against DeviceManager's authoritative current view so the
+                    // glasses match the phone, not just the last-cached G2 containers.
+                    DeviceManager.shared.sendCurrentState()
+                }
             }
             return
         }
