@@ -63,12 +63,13 @@ on:
     types: [completed]
 
 concurrency:
-  # Key per-PR. For pull_request events github.ref is refs/pull/<n>/merge, which
-  # is unique per PR (so unrelated fork PRs sharing a branch name like "fix" or
-  # "main" do NOT collide). For workflow_run events github.ref is the base branch
-  # (dev), so we fall back to the triggering run's head_sha to keep re-evaluations
-  # grouped with the right PR.
-  group: ci-gate-dev-${{ github.event.workflow_run.head_sha || github.ref }}
+  # Key by the COMMIT (head SHA), consistently across every event type, so all
+  # evaluations of the same commit land in one group and never run in parallel
+  # (which would race on createCommitStatus for that SHA). Both the pull_request
+  # head SHA and the workflow_run head SHA refer to the same commit, so unrelated
+  # fork PRs sharing a branch name do NOT collide (different commits -> different
+  # groups). github.sha is the final fallback (e.g. workflow_dispatch).
+  group: ci-gate-dev-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}
   # Do NOT cancel in progress: re-evaluations from builder completions should
   # queue and replace, not cancel each other. Cancelling was what littered every
   # PR with "cancelled" CI Gate runs. The poll loop exits quickly once settled,
@@ -121,6 +122,25 @@ jobs:
             const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
             const OK = new Set(["success", "skipped", "neutral"]);
 
+            // Was this commit ALREADY marked green by an earlier ci-gate run? If
+            // so, a re-evaluation (e.g. a workflow_run wakeup after a builder
+            // rerun) must not regress the required check back to pending during
+            // its own grace window. We only need this snapshot once, at startup.
+            let alreadyGreen = false;
+            try {
+              const existing = await github.paginate(
+                github.rest.repos.listCommitStatusesForRef,
+                { owner, repo, ref: sha, per_page: 100 },
+              );
+              // listCommitStatusesForRef returns newest first; find the latest
+              // status for our context.
+              const latest = existing.find(s => s.context === STATUS_CONTEXT);
+              alreadyGreen = latest?.state === "success";
+            } catch (e) {
+              core.info(`could not read existing ci-gate-dev status: ${e.message}`);
+            }
+            core.info(`alreadyGreen=${alreadyGreen}`);
+
             // The commit-status `description` field rejects 4-byte Unicode
             // (422 "Description doesn't accept 4-byte Unicode"). Some gated
             // workflow names contain emoji (e.g. "🧪 Test Cloud build"), so strip
@@ -166,16 +186,20 @@ jobs:
               } else if (incomplete.length > 0 || unknown.length > 0) {
                 state = "pending"; settled = false;
                 description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
-              } else if (passed.length > 0 && elapsedMs >= GRACE_MS) {
-                // Every gated workflow PRESENT so far has passed AND we've waited
-                // out the grace window, so a slow-to-register builder has had time
-                // to appear. Safe to declare success.
+              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadyGreen)) {
+                // Every gated workflow PRESENT has passed, and EITHER we've waited
+                // out the grace window (so a slow-to-register builder has had time
+                // to appear) OR this commit was already marked green by a prior
+                // run. The `alreadyGreen` case is important for workflow_run
+                // re-evaluations: without it, a re-eval would start at elapsedMs=0
+                // and regress the required check success -> pending for up to 90s
+                // even though the commit was already green.
                 state = "success"; settled = true;
                 description = `All required area builds passed (${passed.length})`;
               } else if (passed.length > 0) {
-                // Present builders all passed, but we're still inside the grace
-                // window — a path-matched builder may not have registered its run
-                // yet. Hold pending until the window elapses.
+                // Present builders all passed, but this is a first evaluation still
+                // inside the grace window — a path-matched builder may not have
+                // registered its run yet. Hold pending until the window elapses.
                 state = "pending"; settled = false;
                 description = "Confirming all area builds have registered…";
               } else {
