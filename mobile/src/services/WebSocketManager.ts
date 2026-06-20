@@ -324,7 +324,6 @@ class WebSocketManager extends EventEmitter {
     const wsUrl = new URL(url)
     wsUrl.searchParams.set("token", coreToken)
     wsUrl.searchParams.set("livekit", "true")
-    wsUrl.searchParams.set("udpEncryption", "true")
 
     console.log("WSM: Connecting to WebSocket URL:", wsUrl.toString().replace(/token=[^&]+/, "token=REDACTED"))
 
@@ -528,20 +527,6 @@ class WebSocketManager extends EventEmitter {
       this.webSocket?.send(text)
     } catch (error) {
       console.log("WSM: Error sending text message:", error)
-    }
-  }
-
-  // Send binary data (for audio)
-  public sendBinary(data: ArrayBuffer | Uint8Array) {
-    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {
-      console.log("WSM: Cannot send binary data: WebSocket not connected")
-      return
-    }
-
-    try {
-      this.webSocket?.send(data)
-    } catch (error) {
-      console.log("WSM: Error sending binary data:", error)
     }
   }
 
