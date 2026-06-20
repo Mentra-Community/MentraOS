@@ -462,13 +462,18 @@ export class TeleprompterController {
     // an in-progress read.
     if (next === this.settings.script) return
     this.settings.script = next
-    await this.persist(STORAGE_KEYS.script, this.settings.script)
-    this.engine.setScript(this.settings.script)
+    // Apply the new script SYNCHRONOUSLY (before any await). A transport command
+    // delivered right after tp:set-script — e.g. the UI flushing a pending edit
+    // and then sending tp:play — is handled on the next turn of the bus; if we
+    // awaited persist first, play() would run against the old script and the
+    // toIdle reset would land mid-playback and halt it.
+    this.engine.setScript(next)
     // Editing the script resets the read position and stops playback.
     this.toIdle()
     this.render()
     this.broadcastSettings()
     this.broadcastStatus()
+    await this.persist(STORAGE_KEYS.script, next)
   }
 
   private async setWpm(wpm: number): Promise<void> {

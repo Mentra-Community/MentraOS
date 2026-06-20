@@ -57,6 +57,30 @@ export function ScriptView({
     debounceRef.current = setTimeout(() => flush(value), 450)
   }
 
+  // Commit any pending debounced edit before a transport action so playback
+  // uses the on-screen draft — and so the background's set-script reset lands
+  // BEFORE play/seek rather than firing mid-playback and halting it. No-op on
+  // the background when the script is unchanged.
+  const flushPending = () => {
+    if (debounceRef.current) flush(draft)
+  }
+  const handlePlay = () => {
+    flushPending()
+    onPlay()
+  }
+  const handleRestart = () => {
+    flushPending()
+    onRestart()
+  }
+  const handleSeek = (percent: number) => {
+    flushPending()
+    onSeek(percent)
+  }
+  const handleNudge = (lines: number) => {
+    flushPending()
+    onNudge(lines)
+  }
+
   const totalWords = status?.totalWords ?? 0
   const playing = status?.state === "playing"
   const voiceMode = status?.voiceMode ?? settings.voiceFollow
@@ -96,7 +120,7 @@ export function ScriptView({
         <div className="flex items-center justify-center gap-5">
           <button
             aria-label="Restart from top"
-            onClick={onRestart}
+            onClick={handleRestart}
             disabled={empty}
             className="w-11 h-11 rounded-full bg-zinc-100 active:bg-zinc-200 flex items-center justify-center text-zinc-700 disabled:opacity-40 transition-colors">
             <RotateCcw className="w-5 h-5" aria-hidden="true" />
@@ -104,7 +128,7 @@ export function ScriptView({
 
           <button
             aria-label={playing ? "Pause" : "Play"}
-            onClick={playing ? onPause : onPlay}
+            onClick={playing ? onPause : handlePlay}
             disabled={empty}
             className="w-16 h-16 rounded-full flex items-center justify-center shadow-md active:scale-95 disabled:opacity-40 transition-transform"
             style={{backgroundColor: ACCENT, color: ACCENT_FG}}>
@@ -118,14 +142,14 @@ export function ScriptView({
           <div className="flex flex-col gap-1">
             <button
               aria-label="Back one line"
-              onClick={() => onNudge(-1)}
+              onClick={() => handleNudge(-1)}
               disabled={empty}
               className="w-11 h-[18px] rounded-t-full bg-zinc-100 active:bg-zinc-200 flex items-center justify-center text-zinc-700 disabled:opacity-40 transition-colors">
               <ChevronUp className="w-4 h-4" aria-hidden="true" />
             </button>
             <button
               aria-label="Forward one line"
-              onClick={() => onNudge(1)}
+              onClick={() => handleNudge(1)}
               disabled={empty}
               className="w-11 h-[18px] rounded-b-full bg-zinc-100 active:bg-zinc-200 flex items-center justify-center text-zinc-700 disabled:opacity-40 transition-colors">
               <ChevronDown className="w-4 h-4" aria-hidden="true" />
@@ -146,7 +170,7 @@ export function ScriptView({
             onChange={(e) => {
               const v = Number(e.target.value)
               setDrag(v)
-              onSeek(v)
+              handleSeek(v)
             }}
             onPointerUp={() => setDrag(null)}
             onPointerCancel={() => setDrag(null)}
