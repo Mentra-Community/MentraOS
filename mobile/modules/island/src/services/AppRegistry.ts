@@ -24,7 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {getRuntimeHooks} from "../runtime/config"
+import {getConfigValues} from "../runtime/bootstrap"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -942,7 +942,7 @@ function configuredDevHost(): string | undefined {
       if (/^[\w.-]+$/.test(explicit)) return explicit
     }
   }
-  return getRuntimeHooks().devServerHost?.()
+  return getConfigValues().devServerHost?.()
 }
 
 function isPrivateLanHost(hostname: string): boolean {

@@ -1,3 +1,7 @@
+/// <reference types="bun-types" />
+
+import {afterEach, beforeEach, describe, expect, jest, mock, test} from "bun:test"
+
 /**
  * Unit tests for LocalDisplayManager.
  *
@@ -6,21 +10,34 @@
  * Uses jest fake timers + an injected clock.
  */
 
-const displayEventMock = jest.fn()
+const displayEventMock = mock(() => {})
 
 // DisplayProcessor: pass through unchanged so we can assert on the raw event.
-jest.doMock("../DisplayProcessor", () => ({
+mock.module("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))
 
-const setDisplayEventMock = jest.fn()
+mock.module("../../../../bluetooth-sdk/build/_internal", () => ({
+  __esModule: true,
+  default: {
+    displayEvent: displayEventMock,
+  },
+}))
+
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+  },
+}))
 
 // Import AFTER mocks
 
-const {configureRuntime} = require("../../runtime/config")
 const {LocalDisplayManager} = require("../LocalDisplayManager")
 
 type Mgr = InstanceType<typeof LocalDisplayManager>
@@ -57,11 +74,6 @@ describe("LocalDisplayManager", () => {
   beforeEach(() => {
     jest.useFakeTimers()
     displayEventMock.mockClear()
-    setDisplayEventMock.mockClear()
-    configureRuntime({
-      sendDisplayEvent: displayEventMock,
-      setDisplayEvent: setDisplayEventMock,
-    })
     now = 1_000_000
     // Fresh singleton per test.
     mgr = LocalDisplayManager.getInstance()

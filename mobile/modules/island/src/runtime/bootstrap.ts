@@ -1,17 +1,9 @@
 /**
  * Bootstrap — the toolkit's single front door (`toolkit.configure` / `start` / `stop`).
  *
- * The Phase-1 contract's end state is: the host hands island its auth + config in
- * ONE call and island owns the rest. This is the additive first step of that: a
- * config holder the host populates, plus the lifecycle verbs. It lives ALONGSIDE
- * the three transitional config seams (`configureRuntime` / `configureLauncher` /
- * `configureIsland`) — those still carry the host adapters during the migration
- * and collapse into this front door only as each domain lands in island.
- *
- * So today `configure()` stores auth/config/analytics for island to read, and
- * `start()`/`stop()` mark the lifecycle; the host's existing boot is unchanged.
- * Future domain PRs route their consumers through `getAuth()` / `getConfigValues()`
- * / `getAnalytics()` and retire the matching adapter.
+ * The host hands island auth + config + analytics in one call; island owns the
+ * runtime construction behind `start()`. Internal services read this holder
+ * directly instead of exposing host-facing adapter bags.
  */
 
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
@@ -39,6 +31,11 @@ export interface IslandConfigValues {
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.
    */
   audioFrameSizeBytes?: number
+  /**
+   * Dev-only live Metro/LAN host used to repair persisted local-miniapp dev URLs
+   * after the laptop changes networks. Omitted in production/OEM builds.
+   */
+  devServerHost?: () => string | undefined
 }
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void

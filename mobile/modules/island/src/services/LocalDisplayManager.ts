@@ -29,7 +29,7 @@
 
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import displayProcessor from "./DisplayProcessor"
-import {getRuntimeHooks} from "../runtime/config"
+import {useDisplayStore} from "../stores/display"
 import {BgTimer} from "../utils/timers"
 
 // =============================================================================
@@ -331,9 +331,9 @@ class LocalDisplayManager {
       void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
         console.error(`${LOG_TAG}: native display failed:`, err)
       })
-      // setDisplayEvent stays a host hook — it feeds the host's on-screen glasses-mirror
-      // UI (a host concern; unset on installed-only / OEM hosts).
-      getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
+      // The mirror store also lives in island, so display requests update the
+      // phone-side preview without any host hook.
+      useDisplayStore.getState().setDisplayEvent(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }

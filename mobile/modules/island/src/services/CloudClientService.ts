@@ -7,11 +7,11 @@
  * provides through the toolkit front door: `auth.getSubjectToken` (the one
  * permanent seam — the OEM owns login) and the resolved cloud endpoints
  * (`config.coreUrl/runtimeUrl`, computed host-side from dev/settings). On init it
- * self-wires the `cloud` + `cloudConnection` runtime hooks, so the host no longer
- * injects a CloudRuntimeAdapter — island owns construction AND wiring.
+ * exposes cloud runtime methods directly from this service, so the host no longer
+ * injects a cloud adapter — island owns construction and wiring.
  *
  * The local-miniapp path drives the cloud's transcription/translation through
- * the adapter this registers.
+ * this service.
  */
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
@@ -20,16 +20,10 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
-import {
-  configureRuntime,
-  type CloudClientStatusSnapshot,
-  type CloudRuntimeAdapter,
-  type MiniappAuthToken,
-} from "../runtime/config"
+import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
-import {DEV_APP_PACKAGE_NAME, getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 
@@ -60,8 +54,6 @@ const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
-let adapter: CloudRuntimeAdapter | null = null
-let wired = false
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
@@ -292,111 +284,18 @@ function clearRuntimeEventSubscriptions(): void {
   translationUnsubscribe = null
 }
 
-function buildAdapter(): CloudRuntimeAdapter {
-  return {
-    setSubscriptions: async (subs: AudioSubscription[]): Promise<void> => {
-      // Cache unconditionally so the desired set survives a not-yet-connected
-      // session and reconnects; only push when connected (the runtime throws
-      // otherwise). The onConnected handler re-applies the cached set, so
-      // subscribe-before-connect self-heals.
-      audioSubscriptions = subs
-      const c = client
-      if (connected && c) {
-        await c.runtime.setSubscriptions(subs)
-      }
-    },
-    sendAudioFrame: (frame: Uint8Array): void => {
-      client?.runtime.sendAudioFrame(frame)
-    },
-    onTranscript: (cb: (d: TranscriptionData) => void): (() => void) => {
-      transcriptListeners.add(cb)
-      return () => {
-        transcriptListeners.delete(cb)
-      }
-    },
-    onTranslation: (cb: (d: TranslationData) => void): (() => void) => {
-      translationListeners.add(cb)
-      return () => {
-        translationListeners.delete(cb)
-      }
-    },
-    getStatus: (): CloudClientStatusSnapshot => currentRuntimeStatus(),
-    onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void): (() => void) => {
-      statusListeners.add(cb)
-      return () => {
-        statusListeners.delete(cb)
-      }
-    },
-    tts: {
-      speak: (text, options) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.tts.speak(text, options)
-      },
-    },
-    maps: {
-      directions: (req) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.maps.directions(req)
-      },
-      reverseGeocode: (coord) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.maps.reverseGeocode(coord)
-      },
-      placeAutocomplete: (req) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.maps.placeAutocomplete(req)
-      },
-      placeDetails: (req) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.maps.placeDetails(req)
-      },
-    },
-    hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
-    isConnected: (): boolean => connected,
-  }
-}
-
-/** Register island's own cloud adapter + connection surface into the runtime
- * hooks (once). Replaces the host's former `configureRuntime({cloud, ...})`. */
-function selfWire(): void {
-  if (wired) return
-  wired = true
-  configureRuntime({
-    cloud: adapter ?? undefined,
-    cloudConnection: {
-      isConnected: () => connected,
-      addListener: (l) => cloudClientService.onConnectionChange(l),
-    },
-    miniappAuth: {
-      getToken: (packageName, opts) => {
-        const isDevApp = packageName === DEV_APP_PACKAGE_NAME
-        const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
-        if (!authPackageName) {
-          throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
-        }
-        const devAttestation = isDevApp ? getDevAppAttestation() : undefined
-        if (isDevApp && !devAttestation) {
-          throw new Error("Dev miniapp auth token unavailable without a signed `mentra dev` attestation")
-        }
-        return cloudClientService.getMiniappAuthToken(authPackageName, {
-          ...opts,
-          ...(devAttestation ? {devAttestation} : {}),
-        })
-      },
-    },
-  })
-}
-
 function construct(): void {
   ensureTransports()
-  if (!adapter) adapter = buildAdapter()
 
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
   const coreAuth = {getSubjectToken}
   const auth = shouldUseLocalDevRuntimeToken(endpoints)
-    ? {core: coreAuth, runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)}}
+    ? {
+        core: coreAuth,
+        runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)},
+      }
     : {core: coreAuth, runtime: {source: "core" as const}}
 
   client = new CloudClient({
@@ -480,18 +379,14 @@ function construct(): void {
  */
 export const cloudClientService = {
   /**
-   * Construct (once) + connect the client, and self-wire the runtime cloud
-   * hooks. Idempotent. Best-effort connect — a failure is logged and the app
-   * keeps running. Requires `toolkit.configure({auth, config})` first.
+   * Construct (once) + connect the client. Idempotent. Best-effort connect — a
+   * failure is logged and the app keeps running. Requires
+   * `toolkit.configure({auth, config})` first.
    */
   init(): void {
-    if (client) {
-      selfWire()
-      return
-    }
+    if (client) return
     ensureAuthWatch()
     construct()
-    selfWire()
   },
 
   /**
@@ -517,7 +412,6 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
 
     construct()
-    selfWire()
   },
 
   async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
@@ -597,5 +491,75 @@ export const cloudClientService = {
     return () => {
       connectionListeners.delete(listener)
     }
+  },
+
+  /** Replace the v2 cloud's audio subscription set for the live session. */
+  async setSubscriptions(subs: AudioSubscription[]): Promise<void> {
+    // Cache unconditionally so the desired set survives a not-yet-connected
+    // session and reconnects; the onConnected handler re-applies the cached set.
+    audioSubscriptions = subs
+    const c = client
+    if (connected && c) {
+      await c.runtime.setSubscriptions(subs)
+    }
+  },
+
+  sendAudioFrame(frame: Uint8Array): void {
+    client?.runtime.sendAudioFrame(frame)
+  },
+
+  onTranscript(cb: (d: TranscriptionData) => void): () => void {
+    transcriptListeners.add(cb)
+    return () => {
+      transcriptListeners.delete(cb)
+    }
+  },
+
+  onTranslation(cb: (d: TranslationData) => void): () => void {
+    translationListeners.add(cb)
+    return () => {
+      translationListeners.delete(cb)
+    }
+  },
+
+  getStatus(): CloudClientStatusSnapshot {
+    return currentRuntimeStatus()
+  },
+
+  onStatusChanged(cb: (snapshot: CloudClientStatusSnapshot) => void): () => void {
+    statusListeners.add(cb)
+    return () => {
+      statusListeners.delete(cb)
+    }
+  },
+
+  tts: {
+    speak(text: string, options?: Parameters<CloudClient["runtime"]["tts"]["speak"]>[1]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.tts.speak(text, options)
+    },
+  },
+
+  maps: {
+    directions(req: Parameters<CloudClient["runtime"]["maps"]["directions"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.directions(req)
+    },
+    reverseGeocode(coord: Parameters<CloudClient["runtime"]["maps"]["reverseGeocode"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.reverseGeocode(coord)
+    },
+    placeAutocomplete(req: Parameters<CloudClient["runtime"]["maps"]["placeAutocomplete"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.placeAutocomplete(req)
+    },
+    placeDetails(req: Parameters<CloudClient["runtime"]["maps"]["placeDetails"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.placeDetails(req)
+    },
+  },
+
+  hasAudioSubscriptions(): boolean {
+    return audioSubscriptions.length > 0
   },
 }

@@ -19,14 +19,7 @@ export {default as devServerBridge} from "./services/DevServerBridge"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
-export {
-  miniappLauncher,
-  configureLauncher,
-  type LauncherDeps,
-  type LaunchHints,
-  type LaunchResult,
-  type ResolvedBundle,
-} from "./services/MiniappLauncher"
+export {miniappLauncher, type LaunchHints, type LaunchResult, type ResolvedBundle} from "./services/MiniappLauncher"
 export {
   MentraJSRouter,
   type MentraJSCrustBinding,
@@ -71,7 +64,12 @@ export {
   validateCaptureMetadataForDownload,
   validateDownloadedMediaFile,
 } from "./services/asg/galleryMediaValidation"
-export {emitGalleryNotice, onGalleryNotice, type GalleryNotice, type GalleryNoticeCode} from "./services/asg/galleryNotices"
+export {
+  emitGalleryNotice,
+  onGalleryNotice,
+  type GalleryNotice,
+  type GalleryNoticeCode,
+} from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
 export type {CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
@@ -153,8 +151,8 @@ export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from
 export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
-// The cloud-client singleton now lives in island (keystone #5). Construction +
-// runtime-hook wiring happen here; the host's @/services/cloudClient is a thin
+// The cloud-client singleton now lives in island (keystone #5). Construction and
+// live runtime surfaces happen here; the host's @/services/cloudClient is a thin
 // delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
 export {cloudClientService} from "./services/CloudClientService"
 // Settings store + RestComms — the mutually-coupled v1-comms pair, moved into
@@ -171,26 +169,23 @@ export {default as restComms} from "./services/RestComms"
 export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
 export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
 
-// Runtime config (host-injected adapters)
+// Runtime-shared constants and DTOs
 export {
+  ISLAND_SETTINGS_KEYS,
   configureRuntime,
   getRuntimeHooks,
-  ISLAND_SETTINGS_KEYS,
-  type RuntimeHooks,
   type CloudClientStatusSnapshot,
-  type CloudRuntimeAdapter,
-  type MiniappAuthAdapter,
   type MiniappAuthToken,
-  type StoreAccessor,
-  type GlassesSnapshot,
-  type InteropAdapter,
   type InteropAuditEvent,
+  type RuntimeHooks,
+  type TtsSynthesisResult,
+  type WifiSetupAdapter,
 } from "./runtime/config"
 
 // Stores
 export {
   useAppStatusStore,
-  configureIsland,
+  installAppStoreHooks,
   DUMMY_APPLET,
   saveAppsOrder,
   getAppsOrder,
@@ -214,7 +209,7 @@ export {
   useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
-  type IslandHostHooks,
+  type AppStoreHooks,
   type StartOptions,
   type OrderMap,
 } from "./stores/apps"

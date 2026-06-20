@@ -22,7 +22,8 @@
  *     during a trip).
  */
 
-import {getRuntimeHooks, type NavLocation, type NavRoute, type NavUpdate} from "../runtime/config"
+import {type NavLocation, type NavRoute, type NavUpdate} from "../runtime/config"
+import {cloudClientService} from "./CloudClientService"
 import navigationService from "./NavigationService"
 import {MiniappErrorCode, MiniappResponseType, MiniappStreamType} from "@mentra/miniapp"
 
@@ -309,25 +310,13 @@ export class NavigationHandlers {
     }
   }
 
-  async handleComputeRoute(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  async handleComputeRoute(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       // Computed in the v2 cloud (provider-abstracted maps service). The SDK
       // payload shape ({origin, stops, mode, avoid, alternatives}) is the v2
       // DirectionsRequest field-for-field, so it passes straight through. The
       // direct-Mapbox path in NavigationService is deprecated.
-      const cloud = getRuntimeHooks().cloud
-      if (!cloud?.maps) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: "cloud maps unavailable",
-        })
-        return
-      }
-      const {routes} = await cloud.maps.directions(payload as never)
+      const {routes} = await cloudClientService.maps.directions(payload as never)
       this.sendResult(packageName, requestId, true, {ok: true, routes})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
@@ -345,11 +334,7 @@ export class NavigationHandlers {
    * resolves with `{ok, road?, address?}` — a missing road/address is
    * `{ok: true, road: null, address: null}`, not an error.
    */
-  async handleReverseGeocode(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  async handleReverseGeocode(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const lat = Number(payload.lat)
       const lng = Number(payload.lng)
@@ -362,15 +347,7 @@ export class NavigationHandlers {
       }
       // Resolved in the v2 cloud (provider-abstracted maps service). The
       // direct-Mapbox geocoding path in NavigationService is deprecated.
-      const cloud = getRuntimeHooks().cloud
-      if (!cloud?.maps) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: "cloud maps unavailable",
-        })
-        return
-      }
-      const {road, address} = await cloud.maps.reverseGeocode({lat, lng})
+      const {road, address} = await cloudClientService.maps.reverseGeocode({lat, lng})
       this.sendResult(packageName, requestId, true, {ok: true, road, address})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation reverseGeocode error:`, err)
@@ -396,15 +373,7 @@ export class NavigationHandlers {
       const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
       const near = this.parseNear(payload.near)
 
-      const cloud = getRuntimeHooks().cloud
-      if (!cloud?.maps) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: "cloud maps unavailable",
-        })
-        return
-      }
-      const {suggestions} = await cloud.maps.placeAutocomplete({query, near, sessionToken})
+      const {suggestions} = await cloudClientService.maps.placeAutocomplete({query, near, sessionToken})
       this.sendResult(packageName, requestId, true, {ok: true, suggestions})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation placeAutocomplete error:`, err)
@@ -419,11 +388,7 @@ export class NavigationHandlers {
    * Resolve a suggestion (`placeId` + `sessionToken`) to a full place with
    * coordinates, via the v2 cloud maps service. Resolves `{ok: true, place}`.
    */
-  async handlePlaceDetails(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  async handlePlaceDetails(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const placeId = typeof payload.placeId === "string" ? payload.placeId : ""
       const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
@@ -435,15 +400,7 @@ export class NavigationHandlers {
         return
       }
 
-      const cloud = getRuntimeHooks().cloud
-      if (!cloud?.maps) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: "cloud maps unavailable",
-        })
-        return
-      }
-      const place = await cloud.maps.placeDetails({placeId, sessionToken})
+      const place = await cloudClientService.maps.placeDetails({placeId, sessionToken})
       this.sendResult(packageName, requestId, true, {ok: true, place})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation placeDetails error:`, err)

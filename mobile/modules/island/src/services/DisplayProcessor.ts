@@ -296,14 +296,14 @@ export class DisplayProcessor {
     this.composer = new ColumnComposer(toolkit.profile, this.options.breakMode)
     this.profile = toolkit.profile
 
-    // Runtime hooks may not be populated yet at module-load time; attachToRuntime()
-    // is called by the host after configureRuntime() runs.
+    // Island stores may not be hydrated yet at module-load time; attachToRuntime()
+    // is called again by the host after app services start.
     this.attachToRuntime()
   }
 
   /**
-   * Read the current default wearable and subscribe to host glasses-status changes.
-   * Idempotent — safe to call again after configureRuntime() once hooks are wired.
+   * Read the current default wearable and subscribe to island glasses-status changes.
+   * Idempotent — safe to call again after app services start.
    */
   public attachToRuntime(): void {
     if (this.runtimeAttached) {

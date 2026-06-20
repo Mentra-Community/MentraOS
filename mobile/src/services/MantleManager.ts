@@ -16,8 +16,7 @@ import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {cloudClient, cloudConfigValues} from "@/services/cloudClient"
-import {devServerHost} from "@/utils/cloudClient/devHost"
+import {cloudConfigValues} from "@/services/cloudClient"
 import {gallerySyncService} from "@mentra/island"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
@@ -167,9 +166,9 @@ class MantleManager {
     }
     this.initialized = true
 
-    // Island front door: hand island the host's auth provider, then mark it
-    // started. Additive — the `configure*` adapter seams below still wire the
-    // host services during the migration; consumers move onto this incrementally.
+    // Island front door: hand island the host's auth provider and config, then
+    // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
+    // startup, not an island configuration seam.
     toolkit.configure({
       auth: {
         getSubjectToken: async () => {
@@ -185,7 +184,14 @@ class MantleManager {
       // client from these; the host keeps the dev/settings URL resolution.
       config: cloudConfigValues(),
     })
-    void toolkit.start()
+    configureRuntime({
+      wifiSetup: {
+        requestSetup: (reason?: string) => {
+          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
+        },
+      },
+    })
+    await toolkit.start()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -194,71 +200,12 @@ class MantleManager {
     //   console.warn("MANTLE: setDeferredSystemGestures failed", e),
     // )
 
-    // Wire host-side adapters into the island runtime. Must run before any
-    // island service that reads settings / glasses status / audio
-    // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
-    // DisplayProcessor) is touched.
-    // Construct + connect the cloud client (best-effort). It now lives in island
-    // (cloudClientService) and self-wires the runtime cloud/cloudConnection
-    // hooks from island-owned transports + the auth/config passed above, so the
-    // host no longer injects a CloudRuntimeAdapter. The local-miniapp path is
-    // powered by this client.
-    cloudClient.init()
-
-    configureRuntime({
-      // audioPlayback (miniapp speaker / TTS playback) moved into island
-      // (AudioPlaybackService — pure expo-audio + btsdk volume control) — no longer a hook.
-      // glassesStatus read/subscribe moved into island (DisplayProcessor /
-      // LocalMiniappRuntime read the island glasses store directly) — no longer hooks.
-      // cloud + miniappAuth are self-wired by island's cloudClientService (not injected here).
-      // settings read/subscribe moved into island — the runtime reads the island
-      // useSettingsStore directly (LocalMiniappRuntime / LocalSttFallbackCoordinator /
-      // DisplayProcessor) — no longer a host hook (it just re-wrapped the island store).
-      // cloudConnection is self-wired by island's cloudClientService now (it
-      // powers the local-miniapp on-device-STT fallback off cloud liveness), so
-      // the host no longer injects it.
-      // The dev laptop's live address, from Metro. The island runtime uses it
-      // to repair persisted dev-miniapp URLs that froze a previous network's
-      // IP (the bundle host is, by construction, reachable right now).
-      devServerHost: () => devServerHost(),
-      setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
-      // sendDisplayEvent / restartTranscriber / setMicRequirements moved into island
-      // (LocalDisplayManager / LocalSttFallbackCoordinator / MicStateCoordinator call
-      // BluetoothSdk directly) — no longer host hooks. glassesStatus read/subscribe also
-      // moved into island (the runtime reads the island glasses store directly).
-      // photo capture + video recording moved into island (PhonePhotoCoordinator /
-      // PhoneVideoCoordinator, called directly by the runtime) — no longer host hooks.
-      // (The photo_response error-routing listener below still drives the coordinator.)
-      // camera FOV moved into island too (LocalMiniappRuntime calls BluetoothSdk.setCameraFov
-      // directly) — no longer a host cameraSettings hook.
-      // Navigation (Google Nav SDK) moved into island (NavigationService, called
-      // directly by the runtime's NavigationHandlers) — no longer a host hook.
-      // heading / compass moved into island (HeadingService, subscribed directly by
-      // the runtime) — no longer a host hook.
-      // phone GPS / location tier moved into island (PhoneLocationService, driven
-      // directly by the runtime's recomputeLocation) — no longer a host locationTier hook.
-      wifiSetup: {
-        // session.glasses.requestWifiSetup → open the phone's glasses Wi-Fi
-        // setup flow (same screen pairing/deeplinks use for "wifi-setup"). The
-        // miniapp's `reason` is forwarded as a route param so the screen can show
-        // it as the prompt (mirrors the cloud SDK's requestWifiSetup(reason)).
-        // `as any` matches the repo idiom for dynamic params under typedRoutes
-        // (see stores/navigation.ts).
-        requestSetup: (reason?: string) => {
-          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
-        },
-      },
-      // streaming (RTMP/SRT/WHIP) moved into island (PhoneStreamCoordinator, called
-      // directly by the runtime) — no longer a host hook. (The stream_status /
-      // keep_alive_ack listeners below still route events to the coordinator.)
-    })
     // Wire the runtime's status fanout (now subscribes the island coordinator directly).
     localMiniappRuntime.wireStreamingStatusFanout()
 
-    // DisplayProcessor's singleton was constructed at module load — before runtime
-    // hooks existed — so its initial deviceModel read and glasses-status subscription
-    // silently no-op'd. Re-attach now that hooks are wired so captions are wrapped with
-    // the correct profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
+    // DisplayProcessor's singleton was constructed at module load, before app
+    // services hydrated the island stores. Re-attach so captions are wrapped with
+    // the current profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
     displayProcessor.attachToRuntime()
 
     // Register the offline-app catalog with island's AppRegistry before

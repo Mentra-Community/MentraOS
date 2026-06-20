@@ -1,27 +1,10 @@
 /**
- * Runtime configuration — host-injected accessors used by services that
- * cannot be fully self-contained inside the island module (LocalMiniappRuntime,
- * LocalDisplayManager, LocalSttFallbackCoordinator, DisplayProcessor).
+ * Runtime-shared constants and DTOs.
  *
- * The mobile manager calls `configureRuntime(...)` early at boot to wire in
- * the manager's own stores and adapters. OEM hosts implement the same shape
- * with their own backing.
- *
- * Keep this surface tight — every entry here is a coupling point between
- * the host and the runtime. Prefer pushing data IN over pulling it via a
- * getter when reasonable.
+ * The old host-injected runtime adapter surface has moved behind island-owned
+ * services and `toolkit.configure({auth, config, analytics})`. Keep this file
+ * limited to stable types that are shared across those services.
  */
-import type {
-  AudioSubscription,
-  DirectionsRequest,
-  DirectionsResult,
-  LatLng,
-  PlaceAutocompleteResult,
-  PlaceDetailsResult,
-  ReverseGeocodeResult,
-  TranscriptionData,
-  TranslationData,
-} from "@mentra/cloud-runtime/protocol"
 
 export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
 export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
@@ -31,123 +14,11 @@ export interface CloudClientStatusSnapshot {
   audioTransport: CloudClientAudioTransport
 }
 
-export interface CloudRuntimeTtsSpeakOptions {
-  voiceId?: string
-  voice_id?: string
-  modelId?: string
-  model_id?: string
-  voiceSettings?: Record<string, unknown>
-  voice_settings?: Record<string, unknown>
-}
-
-export interface CloudRuntimeTtsSpeechSource {
-  audioUrl: string
-  contentType: string
-  source: "cloud"
-}
-
-export interface CloudRuntimeTtsAdapter {
-  speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
-}
-
-/**
- * Runtime maps API: directions + reverse geocoding, computed in the v2 cloud
- * (provider-abstracted, Mapbox today). The cloud holds the provider token; the
- * device no longer calls Mapbox directly. Request/response — not a stream.
- */
-export interface CloudRuntimeMapsAdapter {
-  directions: (req: DirectionsRequest) => Promise<DirectionsResult>
-  reverseGeocode: (coord: LatLng) => Promise<ReverseGeocodeResult>
-  placeAutocomplete: (req: {query: string; near?: LatLng; sessionToken: string}) => Promise<PlaceAutocompleteResult>
-  placeDetails: (req: {placeId: string; sessionToken: string}) => Promise<PlaceDetailsResult>
-}
-
 export interface MiniappAuthToken {
   mentraUserId: string
   tenantId?: string
   token: string
   expiresAt: number
-}
-
-export interface MiniappAuthAdapter {
-  /** Mint or return a cached token scoped to one miniapp packageName. */
-  getToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) => Promise<MiniappAuthToken>
-}
-
-import type {ClientApp} from "../types/applet"
-
-/**
- * Snapshot the host exposes about the connected glasses. The host's full
- * glasses store is too rich for the runtime — these are the fields the
- * runtime actually reads. Extra fields are passed through verbatim on the
- * `glasses_connection` stream snapshot.
- */
-export interface GlassesSnapshot {
-  connected: boolean
-  deviceModel?: string
-  modelName?: string
-  batteryLevel?: number
-  charging?: boolean
-  headUp?: boolean
-  /** Extra host-defined fields surfaced on glasses_connection. */
-  [key: string]: unknown
-}
-
-/**
- * Cloud-v2 (`@mentra/cloud-client`) runtime surface. The island cloud client
- * owns the singleton and self-wires this adapter so the local-miniapp runtime
- * can drive transcription/translation subscriptions and fan results back to
- * local miniapps.
- *
- * Typed against `@mentra/cloud-runtime/protocol` so the subscription/result
- * shapes are the real wire types, not loosely-typed mirrors. Optional on
- * `RuntimeHooks` so hosts without cloud-v2 can leave it unset; the local STT
- * fallback still works for offline transcription when enabled.
- */
-export interface CloudRuntimeAdapter {
-  /** Replace the v2 cloud's audio subscription set for the live session. */
-  setSubscriptions: (subs: AudioSubscription[]) => Promise<void>
-  /** Encrypt + send one LC3 (or PCM) audio frame over the v2 UDP path. */
-  sendAudioFrame: (frame: Uint8Array) => void
-  /** Subscribe to v2 transcription results. Returns an unsubscribe fn. */
-  onTranscript: (cb: (d: TranscriptionData) => void) => () => void
-  /** Subscribe to v2 translation results. Returns an unsubscribe fn. */
-  onTranslation: (cb: (d: TranslationData) => void) => () => void
-  /** Current cloud-client runtime status, without host UI labels. */
-  getStatus: () => CloudClientStatusSnapshot
-  /** Subscribe to cloud-client runtime status changes. Returns an unsubscribe fn. */
-  onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void) => () => void
-  /** Runtime TTS API. The cloud-client owns endpoint paths and validation. */
-  tts: CloudRuntimeTtsAdapter
-  /** Runtime maps API (directions + reverse geocoding) computed in the v2 cloud. */
-  maps: CloudRuntimeMapsAdapter
-  /**
-   * Whether any transcription/translation subscription is currently set on v2.
-   * The host's audio-capture site gates `sendAudioFrame` on this so we don't
-   * burn UDP bandwidth when nobody is subscribed on the v2 cloud.
-   */
-  hasAudioSubscriptions: () => boolean
-  /** Whether the v2 live session is connected (handshake completed). */
-  isConnected: () => boolean
-}
-
-/**
- * Cloud connection state surface used by LocalSttFallbackCoordinator to decide when
- * on-device STT should take over from cloud transcription. island's cloudClientService
- * self-wires this from its own cloud-v2 liveness (no host injection).
- */
-export interface CloudConnectionAdapter {
-  isConnected: () => boolean
-  addListener: (l: (connected: boolean) => void) => () => void
-}
-
-// Audio playback (miniapp speaker / TTS) moved into island (AudioPlaybackService —
-// pure expo-audio + btsdk volume control) — no longer a host hook.
-
-export interface MicRequirements {
-  shouldSendPcm: boolean
-  shouldSendLc3: boolean
-  shouldSendTranscript: boolean
 }
 
 /**
@@ -158,17 +29,6 @@ export interface TtsSynthesisResult {
   audioUrl: string
   cleanup?: () => Promise<void> | void
 }
-
-/**
- * Generic store accessor. The host wraps its Zustand / Redux / etc. selector
- * so the island module never imports the host's store implementation.
- */
-export interface StoreAccessor<T> {
-  get: () => T
-}
-
-// Settings read/subscribe moved into island — the runtime reads useSettingsStore
-// directly (the host hook just re-wrapped that same store) — no longer a hook.
 
 /**
  * Stable settings keys read by island services. Hosts must wire their own
@@ -183,8 +43,8 @@ export const ISLAND_SETTINGS_KEYS = {
 } as const
 
 /**
- * Navigation event payloads. Mirror the host's `NavigationService` types
- * but are duplicated here so the island module doesn't import host types.
+ * Navigation event payloads. Mirror the host's NavigationService types but are
+ * duplicated here so the island module does not import host types.
  */
 export type NavManeuverEvent = {
   kind: "maneuver"
@@ -238,21 +98,19 @@ export type NavTripSnapshot = {
   speedLimitMps?: number | null
 }
 
-// Navigation moved into island (NavigationService, called directly by the runtime's
-// NavigationHandlers) — no longer a host-provided hook. The Nav* data types below stay
-// (the runtime handlers use them).
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
 
-/**
- * Heading adapter — compass / device heading subscription. The host's
- * HeadingService wraps native sensor output; the runtime only needs the
- * subscribe-and-unsubscribe surface.
- */
-// Location-tier control + the background GPS task moved into island
-// (PhoneLocationService, driven directly by the runtime's recomputeLocation) — no
-// longer a host-provided hook.
-
-// Streaming (RTMP/SRT/WHIP publishing) moved into island (PhoneStreamCoordinator,
-// called directly by the runtime) — no longer a host-provided hook.
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraFovPreset = "narrow" | "standard" | "wide"
@@ -273,12 +131,7 @@ export interface CameraFovResult {
   timestamp: number
 }
 
-// Camera FOV moved into island — LocalMiniappRuntime calls BluetoothSdk.setCameraFov
-// directly (a pure passthrough with no host coupling) — no longer a host hook.
-// CameraFovRequest/CameraFovResult below stay: they're the miniapp-facing payload types.
-
-/** One audited inter-miniapp call. An LLM caller (Mentra AI) will eventually do
- * something a user wants to trace — every interop op emits one of these. */
+/** One audited inter-miniapp call. */
 export interface InteropAuditEvent {
   /** The system app that made the call. */
   caller: string
@@ -293,88 +146,12 @@ export interface InteropAuditEvent {
   errorCode?: string
 }
 
-/**
- * Inter-miniapp interop adapter — backs `session.miniapps` (list/start/stop)
- * and `session.actions.invoke`. The host provides the system-app *policy* and
- * the app-store operations so the runtime stays decoupled from the host's
- * store and its hardcoded SYSTEM_APPS list. Wired by the host at bootstrap.
- */
-export interface InteropAdapter {
-  /** Is this package a system app — allowed to use the SYSTEM-only interop APIs? */
-  isSystemApp: (packageName: string) => boolean
-  /** Snapshot of all installed miniapps (the host's app-store state). */
-  listApps: () => ClientApp[]
-  /**
-   * Start (and foreground) another miniapp — user-tap semantics. Resolves true
-   * if it actually started; false if a host gate aborted it (incompatible
-   * hardware, captions STT gate, …) or its JS context failed to spawn.
-   */
-  startApp: (packageName: string) => Promise<boolean>
-  /** Stop another miniapp. */
-  stopApp: (packageName: string) => Promise<void>
-  /**
-   * Headless-wake a miniapp's background context AND wait for its CONNECT
-   * handshake (for action invoke). No foreground, no arbitration. Rejects on
-   * spawn/connect failure.
-   */
-  wakeMiniapp: (packageName: string) => Promise<void>
-  /** Optional audit sink — one event per interop call (caller, op, outcome). */
-  audit?: (event: InteropAuditEvent) => void
-}
-
-/**
- * Opens the phone's glasses Wi-Fi setup flow on behalf of a miniapp
- * (session.glasses.requestWifiSetup). The host owns the actual setup UI; the
- * runtime only forwards the request. Glasses Wi-Fi STATE is delivered
- * separately via the `glasses_wifi` stream (forwarded by the host).
- */
 export interface WifiSetupAdapter {
-  /** Open the Wi-Fi setup UI. `reason` is a user-facing line for the prompt. */
   requestSetup: (reason?: string) => Promise<void> | void
 }
 
 export interface RuntimeHooks {
-  /**
-   * Cloud-v2 (`@mentra/cloud-client`) runtime adapter.
-   */
-  cloud?: CloudRuntimeAdapter
-  /**
-   * Package-scoped backend auth for local miniapps. The host owns the real
-   * Core/runtime credentials; this adapter returns only miniapp tokens.
-   */
-  miniappAuth?: MiniappAuthAdapter
-  // Glasses status read/subscribe moved into island — the runtime reads the island
-  // useGlassesStore directly (DisplayProcessor / LocalMiniappRuntime) — no longer hooks.
-  // Settings read/subscribe moved into island too — runtime services read useSettingsStore directly.
-  // Device heading / compass moved into island (HeadingService, subscribed
-  // directly by the runtime) — no longer a host-provided hook.
-  // Location-tier + GPS task moved into island (PhoneLocationService) — no longer a hook.
-  /** Cloud WebSocket connection state surface. */
-  cloudConnection?: CloudConnectionAdapter
-  /**
-   * The dev machine's live LAN host (no port), derived by the host from
-   * Metro's `hostUri` — the address this dev bundle was actually served from,
-   * so it is always current for whatever network the phone is on. Used to
-   * repair persisted dev-miniapp URLs that froze a previous network's IP.
-   * Unset outside Metro-served dev builds.
-   */
-  devServerHost?: () => string | undefined
-  /**
-   * Forward processed display events into the host's mirror store. The
-   * default no-op skips the mirror — installed-only hosts (no UI mirror)
-   * can leave this unset.
-   */
-  setDisplayEvent?: (event: string) => void
-  // Display output (sendDisplayEvent), the local-transcriber restart (restartTranscriber),
-  // and the mic control plane (setMicRequirements) moved into island — the runtime calls
-  // BluetoothSdk directly (LocalDisplayManager / LocalSttFallbackCoordinator /
-  // MicStateCoordinator) — no longer host hooks.
-  // Photo capture + video recording + camera FOV moved into island (PhonePhotoCoordinator
-  // / PhoneVideoCoordinator + a direct BluetoothSdk.setCameraFov call) — no longer host hooks.
-  /** Open the glasses Wi-Fi setup flow on the phone (session.glasses.requestWifiSetup). */
   wifiSetup?: WifiSetupAdapter
-  /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
-  interop?: InteropAdapter
 }
 
 let hooks: RuntimeHooks = {}

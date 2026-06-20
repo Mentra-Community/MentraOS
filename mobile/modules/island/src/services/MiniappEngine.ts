@@ -4,10 +4,9 @@
  * wires the dev-server background-respawn signal, and starts the message pump.
  *
  * Island owns this so a bare OEM's `toolkit.start()` brings up the local-miniapp
- * engine with no host construction step. Host-only concerns — crashloop telemetry
- * (Sentry / incident filing / user alert) and the inter-miniapp interop policy
- * (which packages count as system apps, the app-store start/stop) — are attached
- * by the host *after* this returns, via `router.onCrashloop` / `configureRuntime`.
+ * engine with no host construction step. Host-only concerns that remain outside
+ * island, such as Mentra-app crashloop telemetry, are attached by the host after
+ * this returns via `router.onCrashloop` / `router.onRestartToast`.
  *
  * Idempotent — `ensureMiniappEngine()` returns the same singletons on every call,
  * so it's safe to call from both `toolkit.start()` and the host bootstrap.
@@ -17,7 +16,7 @@ import CrustModule from "@mentra/crust"
 
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime from "./LocalMiniappRuntime"
-import {configureLauncher, miniappLauncher} from "./MiniappLauncher"
+import {miniappLauncher} from "./MiniappLauncher"
 import {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSRouter, type MentraJSCrustBinding} from "./MentraJSRouter"
 import {MentraUIRouter} from "./MentraUIRouter"
@@ -60,7 +59,7 @@ export function ensureMiniappEngine(): MiniappEngine {
   // Hand the router to the island MiniappLauncher so headless launch/teardown
   // (apps.ts start/stop, the action broker, the WebView mount path) all spawn
   // through one place.
-  configureLauncher({router})
+  miniappLauncher.configure({router})
 
   // Wire up the dev server's "respawn-bg" signal so a touch under
   // src/background/ kills + re-spawns the JSContext with the latest bundle.
