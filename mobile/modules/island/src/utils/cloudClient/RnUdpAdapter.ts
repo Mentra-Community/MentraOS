@@ -3,8 +3,7 @@
  *
  * The cloud-client encrypts each audio frame in shared code (NaCl secretbox) and
  * hands the raw bytes here; this adapter only owns the native dgram socket and
- * sends them. Mirrors v1's UdpManager socket setup (create udp4, bind to any
- * port, send). Audio bytes never round-trip through extra JS here beyond the
+ * sends them. Audio bytes never round-trip through extra JS here beyond the
  * Buffer wrap the native module needs.
  */
 import dgram from "react-native-udp"

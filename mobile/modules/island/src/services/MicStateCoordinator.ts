@@ -1,12 +1,11 @@
 /**
  * MicStateCoordinator
  *
- * Unions cloud-driven and local-miniapp-driven microphone requirements.
+ * Owns local-miniapp-driven microphone requirements.
  *
- * The cloud sends mic state changes via SocketComms (e.g., "pcm", "transcription").
  * Local miniapps subscribe to audio_chunk / transcription streams.
- * This coordinator merges both sets of requirements and pushes the union to
- * BluetoothSdk so the mic runs whenever at least one consumer needs it.
+ * This coordinator pushes the aggregate local requirement set to BluetoothSdk
+ * so the mic runs whenever at least one local consumer needs it.
  */
 
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
@@ -15,11 +14,6 @@ const LOG_TAG = "MIC_COORDINATOR"
 
 class MicStateCoordinator {
   private static instance: MicStateCoordinator | null = null
-
-  // Cloud requirements (set by SocketComms on mic_state_change)
-  private cloudWantsPcm = false
-  private cloudWantsLc3 = false
-  private cloudWantsTranscript = false
 
   // Local miniapp requirements (set when miniapps subscribe to audio streams)
   private localWantsPcm = false
@@ -35,20 +29,6 @@ class MicStateCoordinator {
   }
 
   /**
-   * Update cloud-side requirements. Called by SocketComms when the cloud
-   * sends a mic_state_change message.
-   */
-  public setCloudRequirements(req: {pcm: boolean; lc3: boolean; transcript: boolean}): void {
-    this.cloudWantsPcm = req.pcm
-    this.cloudWantsLc3 = req.lc3
-    this.cloudWantsTranscript = req.transcript
-    // console.log(
-    //   `${LOG_TAG}: cloud requirements updated — pcm=${req.pcm} lc3=${req.lc3} transcript=${req.transcript}`,
-    // )
-    this.applyUnion()
-  }
-
-  /**
    * Update local miniapp requirements. Called by LocalMiniappRuntime when
    * the aggregated set of local subscriptions changes.
    */
@@ -60,22 +40,15 @@ class MicStateCoordinator {
   }
 
   /**
-   * Compute the union of cloud and local requirements and push to BluetoothSdk.
-   *
-   * Wire-format note: the cloud only ever receives LC3 over the binary
-   * WebSocket. Its `requiredData=["pcm"]` is a logical "I need audio"
-   * request — we always answer it with LC3. So neither cloudWantsPcm nor
-   * cloudWantsLc3 ever flips `should_send_pcm` on; both map to
-   * `should_send_lc3`. `should_send_pcm` is strictly for on-device PCM
-   * consumers (local miniapps' audio_chunk listeners and Sherpa STT).
+   * Push local requirements to BluetoothSdk. `should_send_pcm` is strictly for
+   * on-device PCM consumers; cloud audio uses LC3 through AudioCloudUplink.
    */
   private applyUnion(): void {
     const shouldSendPcm = this.localWantsPcm
-    const shouldSendLc3 = this.cloudWantsPcm || this.cloudWantsLc3 || this.localWantsLc3
-    const shouldSendTranscript = this.cloudWantsTranscript
+    const shouldSendLc3 = this.localWantsLc3
 
     // console.log(
-    //   `${LOG_TAG}: applying union — pcm=${shouldSendPcm} lc3=${shouldSendLc3} transcript=${shouldSendTranscript}`,
+    //   `${LOG_TAG}: applying requirements — pcm=${shouldSendPcm} lc3=${shouldSendLc3}`,
     // )
 
     // The mic control plane is a direct btsdk call now (was a host setMicRequirements
@@ -85,7 +58,7 @@ class MicStateCoordinator {
         BluetoothSdk.updateBluetoothSettings({
           should_send_pcm: shouldSendPcm,
           should_send_lc3: shouldSendLc3,
-          should_send_transcript: shouldSendTranscript,
+          should_send_transcript: false,
         }),
       ).catch((err) => {
         console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
@@ -99,9 +72,6 @@ class MicStateCoordinator {
    * Reset all requirements to off. Called during cleanup.
    */
   public reset(): void {
-    this.cloudWantsPcm = false
-    this.cloudWantsLc3 = false
-    this.cloudWantsTranscript = false
     this.localWantsPcm = false
     this.localWantsLc3 = false
     this.applyUnion()

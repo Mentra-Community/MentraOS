@@ -1,24 +1,20 @@
 import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor, localMiniappRuntime, micStateCoordinator, phoneLocationService} from "@mentra/island"
+import {displayProcessor, phoneLocationService} from "@mentra/island"
 
-import {audioPlaybackService} from "@mentra/island"
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
 import {
   normalizePhotoCompression,
   normalizePhotoSize,
   normalizeRgbLedAction,
   normalizeRgbLedColor,
 } from "@/services/SocketComms.normalizers"
-import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
-import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -86,7 +82,6 @@ class SocketComms {
 
   public async cleanup() {
     console.log("SOCKET: cleanup()")
-    udp.cleanup()
     await ws.cleanup()
   }
 
@@ -128,17 +123,6 @@ class SocketComms {
     this.userid = userid
     useSettingsStore.getState().setSetting(SETTINGS.core_token.key, coreToken)
     // this.connectWebsocket()
-  }
-
-  public sendAudioPlayResponse(requestId: string, success: boolean, error: string | null, duration: number | null) {
-    const msg = {
-      type: "audio_play_response",
-      requestId: requestId,
-      success: success,
-      error: error,
-      duration: duration,
-    }
-    ws.sendText(JSON.stringify(msg))
   }
 
   public sendStreamStatus(statusMessage: any) {
@@ -201,16 +185,6 @@ class SocketComms {
   // SERVER COMMANDS
   // these are public functions that can be called from anywhere to notify the server of something:
   // should all be prefixed with send
-
-  public sendVadStatus(isSpeaking: boolean) {
-    const vadMsg = {
-      type: "VAD",
-      status: isSpeaking,
-    }
-
-    const jsonString = JSON.stringify(vadMsg)
-    ws.sendText(jsonString)
-  }
 
   public sendLocationUpdate(lat: number, lng: number, accuracy?: number, correlationId?: string) {
     const event: any = {
@@ -328,125 +302,6 @@ class SocketComms {
     return
   }
 
-  public sendUdpRegister(userIdHash: number) {
-    const msg = {
-      type: "udp_register",
-      userIdHash: userIdHash,
-    }
-    ws.sendText(JSON.stringify(msg))
-  }
-
-  // MARK: - UDP Audio Methods
-
-  // message handlers, these should only ever be called from handle_message / the server:
-  private async handle_connection_ack(msg: any) {
-    // LiveKit connection disabled - using WebSocket/UDP audio instead
-    // const isChina = await useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
-    // if (!isChina) {
-    //   await livekit.connect()
-    // }
-
-    // Resync the cloud's stream-subscription set to whatever's actually
-    // live locally. The cloud retains subscriptions across app
-    // restarts; without this push, a previous session's miniapp subs
-    // (e.g. transcription:auto from a dev miniapp that was killed when
-    // Mentra was force-quit) keep firing — cloud sends
-    // mic_state_change=pcm and fans transcripts that no JSContext is
-    // alive to receive. Common case on cold boot is "[]" which silences
-    // the cloud until a miniapp actually starts.
-    localMiniappRuntime.resyncCloudSubscriptions()
-
-    // Configure audio format (LC3) for bandwidth savings
-    // This tells the cloud that we're sending LC3-encoded audio
-    this.configureAudioFormat().catch((err) => {
-      console.log("SOCKET: Audio format configuration failed (cloud will expect PCM):", err)
-    })
-
-    // Try to register for UDP audio (non-blocking)
-    // UDP endpoint is provided by server in connection_ack message
-    const udpHost = msg.udpHost || msg.udp_host
-    const udpPort = msg.udpPort || msg.udp_port || 8000
-
-    // console.log("SOCKET: connection_ack UDP fields:", {
-    //   udpHost: msg.udpHost,
-    //   udp_host: msg.udp_host,
-    //   udpPort: msg.udpPort,
-    //   udp_port: msg.udp_port,
-    //   resolvedHost: udpHost,
-    //   resolvedPort: udpPort,
-    //   hasEncryption: !!msg.udpEncryption,
-    //   allKeys: Object.keys(msg),
-    // })
-
-    if (udpHost) {
-      // console.log(`SOCKET: UDP endpoint found, configuring with ${udpHost}:${udpPort}`)
-      udp.configure(udpHost, udpPort, this.userid)
-
-      // Configure encryption if server provided a key
-      if (msg.udpEncryption?.key) {
-        const encryptionConfigured = udp.setEncryption(msg.udpEncryption.key)
-        console.log(
-          `SOCKET: UDP encryption ${encryptionConfigured ? "enabled" : "failed"} (algorithm: ${
-            msg.udpEncryption.algorithm
-          })`,
-        )
-      } else {
-        udp.clearEncryption()
-        console.log("SOCKET: UDP encryption not enabled (no key in connection_ack)")
-      }
-
-      udp.handleAck()
-    } else {
-      console.log(
-        "SOCKET: No UDP endpoint in connection_ack, skipping UDP audio. Full message:",
-        JSON.stringify(msg, null, 2),
-      )
-    }
-  }
-
-  /**
-   * Configure audio format with the cloud server.
-   * Tells the server we're sending LC3-encoded audio.
-   * Uses canonical LC3 config: 16kHz, 10ms frame duration.
-   * Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps).
-   */
-  public async configureAudioFormat(): Promise<void> {
-    const backendUrl = useSettingsStore.getState().getSetting(SETTINGS.backend_url.key)
-    const coreToken = useSettingsStore.getState().getSetting(SETTINGS.core_token.key)
-    const frameSizeBytes = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
-    const bypassEncoding = useSettingsStore.getState().getSetting(SETTINGS.bypass_audio_encoding_for_debugging.key)
-
-    if (!backendUrl || !coreToken) {
-      console.log("SOCKET: Cannot configure audio format - missing backend URL or token")
-      return
-    }
-
-    // Determine format based on bypass setting
-    const audioFormat = bypassEncoding ? "pcm" : "lc3"
-    console.log(`SOCKET: Configuring audio format: ${audioFormat} (bypass=${bypassEncoding})`)
-
-    let lc3Config: any = null
-    if (!bypassEncoding) {
-      lc3Config = {
-        sampleRate: 16000,
-        frameDurationMs: 10,
-        frameSizeBytes: frameSizeBytes,
-      }
-    }
-
-    let res = await restComms.configureAudioFormat(audioFormat, lc3Config)
-    if (res.is_error()) {
-      console.error("SOCKET: Failed to configure audio format:", res.error)
-      return
-    }
-
-    // console.log(
-    //   `SOCKET: Audio format configured successfully: ${audioFormat}${
-    //     bypassEncoding ? " (raw PCM)" : `, ${frameSizeBytes} bytes/frame`
-    //   }`,
-    // )
-  }
-
   private handle_app_state_change(msg: any) {
     console.log("SOCKET: ignoring legacy cloud-v1 app_state_change", msg)
   }
@@ -457,44 +312,6 @@ class SocketComms {
 
   private handle_auth_error() {
     console.error("SOCKET: auth error")
-  }
-
-  private async handle_microphone_state_change(msg: any) {
-    // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
-    // per-utterance offline/online STT switching, so we never want to
-    // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
-    const requiredDataStrings = msg.requiredData || []
-    // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
-    let shouldSendPcmData = false
-    let shouldSendTranscript = false
-    if (requiredDataStrings.includes("pcm")) {
-      shouldSendPcmData = true
-    }
-    if (requiredDataStrings.includes("transcription")) {
-      shouldSendTranscript = true
-    }
-    if (requiredDataStrings.includes("pcm_or_transcription")) {
-      shouldSendPcmData = true
-      shouldSendTranscript = true
-    }
-
-    // check permission if we're turning the mic ON.
-    // Turning it off is always allowed and should go through regardless.
-    // This prevents setting systemMicUnavailable=true before permissions are granted,
-    // which would cause the mic to never start even after permissions are granted.
-    if (shouldSendPcmData || shouldSendTranscript) {
-      const hasMicPermission = await checkFeaturePermissions(PermissionFeatures.MICROPHONE)
-      if (!hasMicPermission) {
-        console.log("SOCKET: mic_state_change ignored - microphone permission not granted yet")
-        return
-      }
-    }
-
-    micStateCoordinator.setCloudRequirements({
-      pcm: !!shouldSendPcmData,
-      lc3: !!shouldSendPcmData, // online apps always want lc3
-      transcript: !!shouldSendTranscript,
-    })
   }
 
   public handle_display_event(msg: any) {
@@ -734,57 +551,6 @@ class SocketComms {
     )
   }
 
-  /**
-   * Handle UDP ping acknowledgement from server.
-   * This is sent via WebSocket when the Go bridge receives our UDP ping.
-   */
-  private handle_udp_ping_ack(_msg: any) {
-    // console.log("UDP: Received ping ack from server")
-
-    // Notify the React Native UDP service that ping was acknowledged
-    udp.onPingAckReceived()
-  }
-
-  /**
-   * Handle audio play request from cloud.
-   * Downloads and plays audio from the provided URL using expo-av.
-   */
-  private handle_audio_play_request(msg: any) {
-    const requestId = msg.requestId
-    const audioUrl = msg.audioUrl
-    const appId = msg.appId || msg.packageName // Optional - may be undefined
-    const volume = msg.volume ?? 1.0
-    const stopOtherAudio = msg.stopOtherAudio ?? true
-
-    if (!requestId || !audioUrl) {
-      console.log("SOCKET: Invalid audio_play_request - missing requestId or audioUrl")
-      if (requestId) {
-        this.sendAudioPlayResponse(requestId, false, "Missing audioUrl", null)
-      }
-      return
-    }
-
-    console.log(`SOCKET: Received audio_play_request: ${requestId}${appId ? ` from ${appId}` : ""}, url: ${audioUrl}`)
-
-    // Play audio and send response when complete
-    audioPlaybackService.play(
-      {requestId, audioUrl, appId, volume, stopOtherAudio},
-      (respRequestId, success, error, duration) => {
-        this.sendAudioPlayResponse(respRequestId, success, error, duration)
-      },
-    )
-  }
-
-  /**
-   * Handle audio stop request from cloud.
-   * Stops audio playback for the specified app.
-   */
-  private handle_audio_stop_request(msg: any) {
-    const appId = msg.appId || msg.packageName // Optional - may be undefined
-    console.log(`SOCKET: Received audio_stop_request${appId ? ` for app: ${appId}` : ""}`)
-    audioPlaybackService.stopForApp(appId)
-  }
-
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
@@ -795,7 +561,7 @@ class SocketComms {
         break
 
       case "connection_ack":
-        this.handle_connection_ack(msg)
+        // Legacy cloud-v1 audio handshake has been removed.
         break
 
       case "app_state_change":
@@ -808,10 +574,6 @@ class SocketComms {
 
       case "auth_error":
         this.handle_auth_error()
-        break
-
-      case "microphone_state_change":
-        this.handle_microphone_state_change(msg)
         break
 
       case "display_event":
@@ -868,18 +630,6 @@ class SocketComms {
 
       case "show_wifi_setup":
         this.handle_show_wifi_setup(msg)
-        break
-
-      case "audio_play_request":
-        this.handle_audio_play_request(msg)
-        break
-
-      case "audio_stop_request":
-        this.handle_audio_stop_request(msg)
-        break
-
-      case "udp_ping_ack":
-        this.handle_udp_ping_ack(msg)
         break
 
       case "data_stream":

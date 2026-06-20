@@ -25,24 +25,7 @@ jest.mock("@/services/WebSocketManager", () => ({
   },
 }))
 
-jest.mock("@/services/RestComms", () => ({
-  __esModule: true,
-  default: {
-    configureAudioFormat: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
-}))
-
-// AudioPlaybackService moved into @mentra/island; the global @mentra/island jest mock
-// supplies audioPlaybackService, so no local mock is needed.
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {}}))
-jest.mock("@/services/UdpManager", () => ({__esModule: true, default: {cleanup: jest.fn()}}))
-jest.mock("@/utils/PermissionsUtils", () => ({
-  PermissionFeatures: {MICROPHONE: "microphone"},
-  checkFeaturePermissions: jest.fn(() => Promise.resolve(true)),
-}))
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 
 const socketComms = jest.requireActual("./SocketComms").default
