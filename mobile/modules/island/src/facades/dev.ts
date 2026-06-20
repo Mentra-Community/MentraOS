@@ -12,23 +12,38 @@ import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
+import {getConfigValues} from "../runtime/bootstrap"
 
 /**
- * Reconnect the cloud client onto the current cloud-URL overrides. When both are
- * explicit, reconnect with them; otherwise rebuild with the boot-resolved config
- * (which carries the host's Metro/env URL resolution).
+ * Reconnect the cloud client onto the current cloud-URL overrides. Explicit
+ * partial overrides merge over the boot-resolved config (which carries the
+ * host's Metro/env URL resolution); both empty clears the live override.
  */
 function applyCloudUrlReconnect(): void {
   const s = useSettingsStore.getState()
-  const core = s.getSetting(SETTINGS.cloud_core_url.key)
-  const runtime = s.getSetting(SETTINGS.cloud_runtime_url.key)
-  if (typeof core === "string" && core.trim() && typeof runtime === "string" && runtime.trim()) {
-    cloudClientService.reconnect({core: core.trim(), runtime: runtime.trim()})
-  } else {
-    // No explicit override → CLEAR any stale override and fall back to the
-    // boot-resolved config (don't keep reconnecting to a previously-set URL).
+  const core = trimSetting(s.getSetting(SETTINGS.cloud_core_url.key))
+  const runtime = trimSetting(s.getSetting(SETTINGS.cloud_runtime_url.key))
+
+  if (!core && !runtime) {
     cloudClientService.reconnect(null)
+    return
   }
+
+  const config = getConfigValues()
+  const resolvedCore = core || config.coreUrl?.trim()
+  const resolvedRuntime = runtime || config.runtimeUrl?.trim()
+  if (resolvedCore && resolvedRuntime) {
+    cloudClientService.reconnect({core: resolvedCore, runtime: resolvedRuntime})
+  } else {
+    // Keep the previous client if the host did not provide enough boot config to
+    // complete a partial override; reconnecting with null would silently discard
+    // the explicit side the user just set.
+    console.warn("toolkit.dev.setCloudUrls: partial cloud override missing boot-resolved sibling endpoint")
+  }
+}
+
+function trimSetting(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
 export const dev = {
