@@ -41,27 +41,21 @@ on:
   # landing on dev (no pull_request event ever fired for them) — re-run this
   # workflow against the PR branch to evaluate and post the status.
   workflow_dispatch:
-  # Re-evaluate when a gated builder workflow COMPLETES. We intentionally do NOT
-  # listen on `requested` (builder start): combined with cancel-in-progress it
-  # made every builder start cancel the in-flight poll, so the gate could never
-  # post a status. The poll loop already covers "still running", so a single
-  # completion event is enough to drive evaluation.
-  workflow_run:
-    workflows:
-      - "Mobile App iOS Build"
-      - "Mobile App Android Build"
-      - "MentraOS ASG Client Build"
-      - "Mobile App Quality Checks"
-      - "🧪 Test Cloud build"
-      - "🧪 Test SDK build"
-      - "🧪 Test Console build"
-      - "🧪 Test Store build"
-      - "Run Cloud Tests ☁️"
-    types: [completed]
+
+# NOTE: we deliberately do NOT use a `workflow_run` trigger anymore. Each gated
+# builder completing fired a fresh ci-gate run that cancelled the in-flight poll
+# (cancel-in-progress), littering every PR with a pile of "cancelled" CI Gate
+# runs. The single poll loop below already watches every builder to completion,
+# so one run per commit (from pull_request / workflow_dispatch) is sufficient.
+# To avoid declaring success before a slow-to-register builder has appeared, the
+# loop enforces a settling grace window (see GRACE_MS).
 
 concurrency:
-  # One evaluation per head SHA at a time; newer evaluations supersede older.
-  group: ci-gate-dev-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  # Key by PR BRANCH (like the builder workflows), not by SHA. A new commit on
+  # the same PR then cancels the previous commit's in-flight poll, freeing the
+  # runner and stopping a now-stale evaluation — instead of leaving it to time
+  # out. One live evaluation per PR branch at a time.
+  group: ci-gate-dev-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -128,7 +122,7 @@ jobs:
             // reduce it to a verdict. We match by unique WORKFLOW NAME (not the
             // ambiguous job name "build"), and for reruns keep the NEWEST run per
             // workflow (listWorkflowRunsForRepo returns newest first).
-            async function snapshot() {
+            async function snapshot(elapsedMs) {
               const allRuns = await github.paginate(
                 github.rest.actions.listWorkflowRunsForRepo,
                 { owner, repo, head_sha: sha, per_page: 100 },
@@ -149,14 +143,24 @@ jobs:
 
               let state, description, settled;
               if (failed.length > 0) {
+                // A real failure settles immediately — no grace needed.
                 state = "failure"; settled = true;
                 description = `Failed: ${failed.map(r => r.name).join(", ")}`;
               } else if (incomplete.length > 0 || unknown.length > 0) {
                 state = "pending"; settled = false;
                 description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
-              } else if (passed.length > 0) {
+              } else if (passed.length > 0 && elapsedMs >= GRACE_MS) {
+                // Every gated workflow PRESENT so far has passed AND we've waited
+                // out the grace window, so a slow-to-register builder has had time
+                // to appear. Safe to declare success.
                 state = "success"; settled = true;
                 description = `All required area builds passed (${passed.length})`;
+              } else if (passed.length > 0) {
+                // Present builders all passed, but we're still inside the grace
+                // window — a path-matched builder may not have registered its run
+                // yet. Hold pending until the window elapses.
+                state = "pending"; settled = false;
+                description = "Confirming all area builds have registered…";
               } else {
                 // No gated workflow has appeared for this commit yet — builders are
                 // still spinning up. Not settled; keep polling.
@@ -175,16 +179,21 @@ jobs:
             // pending statuses so the required check reflects live progress.
             const MAX_MS = 30 * 60 * 1000;   // 30 min ceiling
             const INTERVAL_MS = 20 * 1000;   // poll every 20s
+            // Minimum time before we'll declare success, so a path-matched builder
+            // that is slow to register a run (e.g. queued behind Mac runners) is
+            // not missed. A real failure still settles immediately regardless.
+            const GRACE_MS = 90 * 1000;      // 90s settle window
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-            const deadline = Date.now() + MAX_MS;
+            const start = Date.now();
+            const deadline = start + MAX_MS;
 
-            let result = await snapshot();
+            let result = await snapshot(Date.now() - start);
             await postStatus(result.state, result.description);
             core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
 
             while (!result.settled && Date.now() < deadline) {
               await sleep(INTERVAL_MS);
-              result = await snapshot();
+              result = await snapshot(Date.now() - start);
               await postStatus(result.state, result.description);
               core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
             }
