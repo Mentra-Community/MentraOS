@@ -21,10 +21,13 @@ export class LogoutUtils {
       // Step 1: Disconnect and forget any connected glasses
       await this.disconnectAndForgetGlasses()
 
-      // Step 2: Clear Supabase authentication
+      // Step 2: Stop island runtime services before clearing auth/session state
+      await this.stopToolkitRuntime()
+
+      // Step 3: Clear Supabase authentication
       await this.clearSupabaseAuth()
 
-      // Step 3: Clear backend communication tokens
+      // Step 4: Clear backend communication tokens
       await this.clearBackendTokens()
 
       // Step 5: Clear all app settings and user data
@@ -63,6 +66,20 @@ export class LogoutUtils {
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
+    }
+  }
+
+  /**
+   * Stop island runtime services that were started by toolkit.start()
+   */
+  private static async stopToolkitRuntime(): Promise<void> {
+    console.log(`${this.TAG}: Stopping island runtime...`)
+
+    try {
+      await toolkit.stop()
+      console.log(`${this.TAG}: Stopped island runtime`)
+    } catch (error) {
+      console.warn(`${this.TAG}: Error stopping island runtime:`, error)
     }
   }
 
