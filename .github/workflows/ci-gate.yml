@@ -117,24 +117,26 @@ jobs:
               context.payload.pull_request?.head?.sha ||
               context.sha;
 
-            // If a builder COMPLETION triggered this run (workflow_run), then by
-            // definition every builder has already registered its run, so the
-            // grace window — which only guards against a not-yet-registered
-            // builder on a fresh commit — is unnecessary. Skipping it here means a
-            // recovery after a failed builder rerun posts success immediately
-            // rather than waiting the full grace window.
-            const triggeredByBuilderCompletion = context.eventName === "workflow_run";
-
             const { owner, repo } = context.repo;
 
             const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
             const OK = new Set(["success", "skipped", "neutral"]);
 
-            // Was this commit ALREADY marked green by an earlier ci-gate run? If
-            // so, a re-evaluation (e.g. a workflow_run wakeup after a builder
-            // rerun) must not regress the required check back to pending during
-            // its own grace window. We only need this snapshot once, at startup.
-            let alreadyGreen = false;
+            // Did an earlier ci-gate run already SETTLE this commit (post success
+            // or failure)? If so, every builder the PR triggers had already
+            // registered by then, so the grace window — whose only job is to wait
+            // for path-filtered builders to first appear — is no longer needed.
+            // Skipping grace when already settled does two things:
+            //   - a workflow_run re-eval of an already-green commit re-affirms
+            //     success immediately instead of regressing to pending for 90s;
+            //   - recovery after a failed builder rerun (prior status = failure)
+            //     posts success immediately instead of waiting the full window.
+            // Crucially we do NOT skip grace merely because a builder completion
+            // triggered the run: the builder that completed may be a fast cloud
+            // check while a path-filtered mobile build has not registered yet —
+            // skipping grace there could declare success without the heavy
+            // builders. "Already settled" is the correct signal, not the trigger.
+            let alreadySettled = false;
             try {
               const existing = await github.paginate(
                 github.rest.repos.listCommitStatusesForRef,
@@ -143,11 +145,11 @@ jobs:
               // listCommitStatusesForRef returns newest first; find the latest
               // status for our context.
               const latest = existing.find(s => s.context === STATUS_CONTEXT);
-              alreadyGreen = latest?.state === "success";
+              alreadySettled = latest?.state === "success" || latest?.state === "failure";
             } catch (e) {
               core.info(`could not read existing ci-gate-dev status: ${e.message}`);
             }
-            core.info(`alreadyGreen=${alreadyGreen}`);
+            core.info(`alreadySettled=${alreadySettled}`);
 
             // The commit-status `description` field rejects 4-byte Unicode
             // (422 "Description doesn't accept 4-byte Unicode"). Some gated
@@ -194,16 +196,15 @@ jobs:
               } else if (incomplete.length > 0 || unknown.length > 0) {
                 state = "pending"; settled = false;
                 description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
-              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadyGreen || triggeredByBuilderCompletion)) {
-                // Every gated workflow PRESENT has passed. Declare success when any
-                // of these hold:
+              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadySettled)) {
+                // Every gated workflow PRESENT has passed. Declare success when
+                // either:
                 //   - the grace window has elapsed (a slow-to-register builder has
                 //     had time to appear), OR
-                //   - this commit was already marked green by a prior run (don't
-                //     regress success -> pending on a re-evaluation), OR
-                //   - a builder completion triggered this run, so every builder has
-                //     already registered and grace is moot (this also makes
-                //     recovery after a failed builder rerun post success at once).
+                //   - a prior run already settled this commit (success or failure),
+                //     so all expected builders had already registered by then —
+                //     no need to re-wait grace. This re-affirms green without a
+                //     pending dip, and makes failure->rerun->green post at once.
                 state = "success"; settled = true;
                 description = `All required area builds passed (${passed.length})`;
               } else if (passed.length > 0) {
