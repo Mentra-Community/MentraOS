@@ -93,22 +93,16 @@ export interface GlassesSnapshot {
   [key: string]: unknown
 }
 
-export interface SocketCommsAdapter {
-  sendMessage: (message: object) => void
-  updatePhoneSubscriptions: (subscriptions: string[]) => void
-}
-
 /**
- * Cloud-v2 (`@mentra/cloud-client`) runtime surface, wired in alongside the v1
- * `socketComms` path during the dual-cloud transition. The host owns the
- * singleton CloudClient; this adapter is the thin slice the island runtime
- * needs to drive transcription/translation subscriptions and fan results back
- * to local miniapps.
+ * Cloud-v2 (`@mentra/cloud-client`) runtime surface. The island cloud client
+ * owns the singleton and self-wires this adapter so the local-miniapp runtime
+ * can drive transcription/translation subscriptions and fan results back to
+ * local miniapps.
  *
  * Typed against `@mentra/cloud-runtime/protocol` so the subscription/result
  * shapes are the real wire types, not loosely-typed mirrors. Optional on
- * `RuntimeHooks`: hosts still on v1-only leave it unset and the runtime keeps
- * driving cloud transcription purely through `socketComms`.
+ * `RuntimeHooks` so hosts without cloud-v2 can leave it unset; the local STT
+ * fallback still works for offline transcription when enabled.
  */
 export interface CloudRuntimeAdapter {
   /** Replace the v2 cloud's audio subscription set for the live session. */
@@ -340,11 +334,9 @@ export interface WifiSetupAdapter {
 }
 
 export interface RuntimeHooks {
-  socketComms?: SocketCommsAdapter
   /**
-   * Cloud-v2 (`@mentra/cloud-client`) runtime adapter. Additive alongside
-  * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
-  */
+   * Cloud-v2 (`@mentra/cloud-client`) runtime adapter.
+   */
   cloud?: CloudRuntimeAdapter
   /**
    * Package-scoped backend auth for local miniapps. The host owns the real

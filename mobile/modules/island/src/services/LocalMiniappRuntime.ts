@@ -2693,12 +2693,10 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Recompute the aggregated subscription list across all local miniapps and
-   * send PHONE_SUBSCRIPTION_UPDATE to the cloud so TranscriptionManager /
-   * TranslationManager deliver data to the __phone__ subscriber.
+   * Recompute the aggregated v2 cloud subscription list across all local miniapps.
    *
    * Cloud-dependent streams (transcription:*, translation:*) only flow if the
-   * cloud knows the phone wants them. Local-only streams (button_press, etc.)
+   * v2 runtime knows the phone wants them. Local-only streams (button_press, etc.)
    * are NOT sent — they come from the Bluetooth SDK, not from cloud.
    */
   private updateCloudSubscriptions(): void {
@@ -2716,7 +2714,6 @@ class LocalMiniappRuntime {
         transcriptionLang = stream.substring("transcription:".length)
       }
     }
-    getRuntimeHooks().socketComms?.updatePhoneSubscriptions(Array.from(cloudStreams))
     localSttFallbackCoordinator.onSubscriptionChange(transcriptionLang !== null, transcriptionLang)
 
     // Mirror the same set as typed AudioSubscription[] and push it to the cloud
