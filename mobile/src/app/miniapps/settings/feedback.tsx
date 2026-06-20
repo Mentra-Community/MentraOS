@@ -13,10 +13,9 @@ import {translate} from "@/i18n"
 import {buildBugReportFeedbackDataForBug, submitBugIncident} from "@/services/bugReport/bugReportIncident"
 import {buildIncidentCategorization} from "@/services/bugReport/incidentCategorization"
 import restComms from "@/services/RestComms"
-import {useAppStatusStore} from "@mentra/island"
+import {toolkit, useAppStatusStore} from "@mentra/island"
 
 import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import showAlert from "@/utils/AlertUtils"
@@ -66,22 +65,6 @@ export default function FeedbackPage() {
     }
     return null
   }, [apps])
-
-  // Glasses info for bug reports
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const deviceModel = useGlassesStore((state) => state.deviceModel)
-  const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
-  const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesFirmwareVersion = useGlassesStore((state) => state.firmwareVersion)
-  const appVersion = useGlassesStore((state) => state.appVersion)
-  const serialNumber = useGlassesStore((state) => state.serialNumber)
-  const androidVersion = useGlassesStore((state) => state.androidVersion)
-  const glassesWifi = useGlassesStore((state) => state.wifi)
-  const glassesWifiInfo =
-    glassesWifi.state === "connected"
-      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
-      : {wifiConnected: false}
-  const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
 
   const [userEmail, setUserEmail] = useState("")
 
@@ -230,7 +213,12 @@ export default function FeedbackPage() {
       }
 
       const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
-      const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
+      const glassesStatus = toolkit.glasses.status()
+      const glassesInfo = toolkit.glasses.info()
+      const glassesWifi = toolkit.glasses.wifi.status()
+      const glassesWifiInfo =
+        glassesWifi.state === "connected" ? {wifiConnected: true, wifiSsid: glassesWifi.ssid} : {wifiConnected: false}
+      const glassesBluetoothId = glassesInfo.bluetoothName?.split("_").pop() || glassesInfo.bluetoothName
 
       const feedbackData = {
         type: feedbackType,
@@ -242,7 +230,7 @@ export default function FeedbackPage() {
           deviceName,
           osVersion,
           platform: Platform.OS,
-          glassesConnected,
+          glassesConnected: glassesStatus.connected,
           defaultWearable: defaultWearable as string,
           runningApps,
           offlineMode: !!offlineMode,
@@ -258,17 +246,17 @@ export default function FeedbackPage() {
           buildTime,
           buildUser,
         },
-        ...(glassesConnected && {
+        ...(glassesStatus.connected && {
           glassesInfo: {
-            deviceModel: deviceModel || undefined,
+            deviceModel: glassesInfo.deviceModel || undefined,
             bluetoothId: glassesBluetoothId || undefined,
-            serialNumber: serialNumber || undefined,
-            buildNumber: buildNumber || undefined,
-            firmwareVersion: glassesFirmwareVersion || undefined,
-            appVersion: appVersion || undefined,
-            androidVersion: androidVersion || undefined,
+            serialNumber: glassesInfo.serialNumber || undefined,
+            buildNumber: glassesInfo.buildNumber || undefined,
+            firmwareVersion: glassesInfo.firmwareVersion || undefined,
+            appVersion: glassesInfo.appVersion || undefined,
+            androidVersion: glassesInfo.androidVersion || undefined,
             ...glassesWifiInfo,
-            ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
+            ...(glassesStatus.battery >= 0 && {batteryLevel: glassesStatus.battery}),
           },
         }),
       }

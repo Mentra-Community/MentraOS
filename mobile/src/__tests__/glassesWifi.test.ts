@@ -8,6 +8,7 @@ import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 describe("glassesWifi facade", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    useGlassesStore.getState().reset()
   })
 
   it("scan() delegates to requestWifiScan and returns its results", async () => {
@@ -34,8 +35,17 @@ describe("glassesWifi facade", () => {
   })
 
   it("status() reads the glasses store's wifi state", () => {
-    useGlassesStore.setState({wifi: {state: "connected", ssid: "home"}})
+    useGlassesStore.setState({wifi: {state: "connected", ssid: "home"}, wifiStatusKnown: true})
     expect(glassesWifi.status()).toEqual({state: "connected", ssid: "home"})
+  })
+
+  it("snapshot() includes known and connected flags", () => {
+    useGlassesStore.setState({wifi: {state: "connected", ssid: "home"}, wifiStatusKnown: true})
+    expect(glassesWifi.snapshot()).toEqual({
+      status: {state: "connected", ssid: "home"},
+      known: true,
+      connected: true,
+    })
   })
 
   it("onStatus() fires on wifi change and stops after unsubscribe", () => {

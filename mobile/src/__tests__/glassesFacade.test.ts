@@ -20,6 +20,8 @@ describe("glasses facade", () => {
       bluetoothClassicConnected: true,
     })
     const st = glasses.status()
+    expect(st.connected).toBe(true)
+    expect(st.ready).toBe(true)
     expect(st.state).toBe("connected")
     expect(st.fullyBooted).toBe(true)
     expect(st.battery).toBe(80)
@@ -29,11 +31,53 @@ describe("glasses facade", () => {
   })
 
   it("info() projects device info from the store", () => {
-    useGlassesStore.setState({deviceModel: "Even Realities G1", firmwareVersion: "1.2.3", serialNumber: "SN1"})
+    useGlassesStore.setState({
+      deviceModel: "Even Realities G1",
+      firmwareVersion: "1.2.3",
+      serialNumber: "SN1",
+      bluetoothName: "Mentra_SN1",
+      androidVersion: "13",
+      appVersion: "1.0.0",
+    })
     const info = glasses.info()
     expect(info.model).toBe("Even Realities G1")
+    expect(info.deviceModel).toBe("Even Realities G1")
     expect(info.firmwareVersion).toBe("1.2.3")
     expect(info.serialNumber).toBe("SN1")
+    expect(info.bluetoothName).toBe("Mentra_SN1")
+    expect(info.androidVersion).toBe("13")
+    expect(info.appVersion).toBe("1.0.0")
+  })
+
+  it("diagnostics() strips store mutators and redacts hotspot secrets", () => {
+    useGlassesStore.setState({
+      hotspot: {state: "enabled", ssid: "Mentra", password: "secret", localIp: "192.168.0.1"},
+    })
+    const diagnostics = glasses.diagnostics()
+    expect("setGlassesInfo" in diagnostics).toBe(false)
+    expect(diagnostics.hotspot).toEqual({
+      state: "enabled",
+      ssid: "Mentra",
+      password: "[redacted]",
+      localIp: "192.168.0.1",
+    })
+  })
+
+  it("controller.status() projects controller fields", () => {
+    useGlassesStore.setState({
+      controllerConnected: true,
+      controllerFullyBooted: true,
+      controllerMacAddress: "AA:BB",
+      controllerBatteryLevel: 91,
+      controllerSignalStrength: -44,
+    })
+    expect(glasses.controller.status()).toEqual({
+      connected: true,
+      fullyBooted: true,
+      macAddress: "AA:BB",
+      battery: 91,
+      signal: -44,
+    })
   })
 
   it("connectDefault / disconnect / forget delegate to bluetooth-sdk", async () => {

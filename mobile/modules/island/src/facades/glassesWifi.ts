@@ -19,6 +19,17 @@ import {useGlassesStore} from "../stores/glasses"
 
 export type {WifiSearchResult, WifiStatus}
 
+function projectWifiSnapshot() {
+  const s = useGlassesStore.getState()
+  return {
+    status: s.wifi,
+    known: s.wifiStatusKnown,
+    connected: s.wifi.state === "connected",
+  }
+}
+
+export type GlassesWifiSnapshot = ReturnType<typeof projectWifiSnapshot>
+
 export const glassesWifi = {
   /** Scan for nearby wifi networks. Request/response — resolves with the results. */
   scan(): Promise<WifiSearchResult[]> {
@@ -44,8 +55,25 @@ export const glassesWifi = {
     return useGlassesStore.getState().wifi
   },
 
+  /** Wi-Fi status plus whether the glasses has reported a status this session. */
+  snapshot(): GlassesWifiSnapshot {
+    return projectWifiSnapshot()
+  },
+
   /** Subscribe to wifi-status changes; returns an unsubscribe. */
   onStatus(cb: (status: WifiStatus) => void): () => void {
     return useGlassesStore.subscribe((s) => s.wifi, cb)
+  },
+
+  /** Subscribe to Wi-Fi status + known/unknown changes; returns an unsubscribe. */
+  onSnapshot(cb: (snapshot: GlassesWifiSnapshot) => void): () => void {
+    let last = JSON.stringify(projectWifiSnapshot())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectWifiSnapshot()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
   },
 }

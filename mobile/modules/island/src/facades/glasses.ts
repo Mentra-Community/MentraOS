@@ -13,6 +13,7 @@
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {ButtonPressEvent, TouchEvent} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
+import type {GlassesState} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
@@ -20,38 +21,108 @@ import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
 
-function projectStatus() {
-  const s = useGlassesStore.getState()
+type GlassesStoreSnapshot = GlassesState
+type HotspotSnapshot = GlassesStoreSnapshot["hotspot"]
+
+function projectStatusFrom(s: GlassesStoreSnapshot) {
+  const connected = isGlassesConnected(s.connection)
+  const ready = isGlassesReady(s.connection)
   return {
+    connection: s.connection,
     state: s.connection.state,
-    fullyBooted: isGlassesReady(s.connection),
+    connected,
+    ready,
+    fullyBooted: ready,
     battery: s.batteryLevel,
     charging: s.charging,
     case: {battery: s.caseBatteryLevel, charging: s.caseCharging, open: s.caseOpen, removed: s.caseRemoved},
     signal: s.signalStrength,
+    signalUpdatedAt: s.signalStrengthUpdatedAt,
     micEnabled: s.micEnabled,
     vadEnabled: s.voiceActivityDetectionEnabled,
     btClassic: s.bluetoothClassicConnected,
   }
 }
 
-function projectInfo() {
-  const s = useGlassesStore.getState()
+function projectInfoFrom(s: GlassesStoreSnapshot) {
   return {
     model: s.deviceModel,
+    deviceModel: s.deviceModel,
     style: s.style,
     color: s.color,
     firmwareVersion: s.firmwareVersion,
     mtkFirmware: s.mtkFirmwareVersion,
+    mtkFirmwareVersion: s.mtkFirmwareVersion,
     besFirmware: s.besFirmwareVersion,
+    besFirmwareVersion: s.besFirmwareVersion,
     serialNumber: s.serialNumber,
     buildNumber: s.buildNumber,
+    androidVersion: s.androidVersion,
+    appVersion: s.appVersion,
+    bluetoothName: s.bluetoothName,
     btMac: s.bluetoothMacAddress,
+    bluetoothMacAddress: s.bluetoothMacAddress,
+    leftMacAddress: s.leftMacAddress,
+    rightMacAddress: s.rightMacAddress,
+    otaVersionUrl: s.otaVersionUrl,
   }
+}
+
+function projectControllerFrom(s: GlassesStoreSnapshot) {
+  return {
+    connected: s.controllerConnected,
+    fullyBooted: s.controllerFullyBooted,
+    macAddress: s.controllerMacAddress,
+    battery: s.controllerBatteryLevel,
+    signal: s.controllerSignalStrength,
+  }
+}
+
+function projectDiagnosticsFrom(s: GlassesStoreSnapshot) {
+  const {
+    setGlassesInfo: _setGlassesInfo,
+    setBatteryInfo: _setBatteryInfo,
+    setWifiInfo: _setWifiInfo,
+    setHotspotInfo: _setHotspotInfo,
+    setOtaStatus: _setOtaStatus,
+    setOtaUpdateAvailable: _setOtaUpdateAvailable,
+    setOtaProgress: _setOtaProgress,
+    setOtaInProgress: _setOtaInProgress,
+    setMtkUpdatedThisSession: _setMtkUpdatedThisSession,
+    clearOtaState: _clearOtaState,
+    reset: _reset,
+    ...snapshot
+  } = s
+
+  return {
+    ...snapshot,
+    hotspot:
+      snapshot.hotspot.state === "enabled"
+        ? {...snapshot.hotspot, password: snapshot.hotspot.password ? "[redacted]" : ""}
+        : snapshot.hotspot,
+  }
+}
+
+function projectStatus() {
+  return projectStatusFrom(useGlassesStore.getState())
+}
+
+function projectInfo() {
+  return projectInfoFrom(useGlassesStore.getState())
+}
+
+function projectController() {
+  return projectControllerFrom(useGlassesStore.getState())
+}
+
+function projectDiagnostics() {
+  return projectDiagnosticsFrom(useGlassesStore.getState())
 }
 
 export type GlassesStatusSnapshot = ReturnType<typeof projectStatus>
 export type GlassesInfoSnapshot = ReturnType<typeof projectInfo>
+export type GlassesControllerSnapshot = ReturnType<typeof projectController>
+export type GlassesDiagnosticsSnapshot = ReturnType<typeof projectDiagnostics>
 
 export const glasses = {
   // --- connection (bluetooth-sdk passthrough) ---
@@ -107,6 +178,21 @@ export const glasses = {
     })
   },
   info: (): GlassesInfoSnapshot => projectInfo(),
+  onInfo: (cb: (info: GlassesInfoSnapshot) => void): (() => void) => {
+    let last = JSON.stringify(projectInfo())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectInfo()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
+  },
+  /**
+   * Diagnostics snapshot for bug reports. This intentionally stays broader than
+   * `info()`/`status()`, but excludes store mutators and redacts hotspot secrets.
+   */
+  diagnostics: (): GlassesDiagnosticsSnapshot => projectDiagnostics(),
   capabilities: () => getModelCapabilities(useGlassesStore.getState().deviceModel as DeviceTypes),
   /** Ask the glasses to report fresh firmware/version info (updates the store). */
   requestVersionInfo: () => BluetoothSdk.requestVersionInfo(),
@@ -126,6 +212,25 @@ export const glasses = {
     connectDefault: (): Promise<void> => BluetoothSdk.connectDefaultController(),
     disconnect: (): Promise<void> => BluetoothSdk.disconnectController(),
     forget: (): Promise<void> => BluetoothSdk.forgetController(),
+    status: (): GlassesControllerSnapshot => projectController(),
+    onStatus: (cb: (status: GlassesControllerSnapshot) => void): (() => void) => {
+      let last = JSON.stringify(projectController())
+      return useGlassesStore.subscribe(() => {
+        const snap = projectController()
+        const key = JSON.stringify(snap)
+        if (key === last) return
+        last = key
+        cb(snap)
+      })
+    },
+  },
+
+  // --- hotspot (glasses-hosted network used by gallery/media sync) ---
+  hotspot: {
+    status: () => useGlassesStore.getState().hotspot,
+    onStatus: (cb: (status: HotspotSnapshot) => void): (() => void) => {
+      return useGlassesStore.subscribe((s) => s.hotspot, cb)
+    },
   },
 
   // --- audio (glasses media-volume + own-app playback hint) ---

@@ -9,12 +9,10 @@ import {toolkit, useAppStatusStore} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
-import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {logBuffer} from "@/utils/dev/logging"
 
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
-const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
 
 export interface BuildBugReportFeedbackDataForBugParams {
   expectedBehavior: string
@@ -39,24 +37,7 @@ export function buildBugReportPhoneState(): Record<string, unknown> {
     reset: _resetConnection,
     ...connectionState
   } = useConnectionStore.getState()
-  const {
-    setGlassesInfo: _setGlassesInfo,
-    setBatteryInfo: _setBatteryInfo,
-    setWifiInfo: _setWifiInfo,
-    setHotspotInfo: _setHotspotInfo,
-    setOtaUpdateAvailable: _setOtaUpdateAvailable,
-    setOtaProgress: _setOtaProgress,
-    setOtaInProgress: _setOtaInProgress,
-    setMtkUpdatedThisSession: _setMtkUpdatedThisSession,
-    clearOtaState: _clearOtaState,
-    reset: _resetGlasses,
-    ...glassesState
-  } = useGlassesStore.getState()
-  const filteredGlasses = Object.fromEntries(
-    Object.entries(glassesState).filter(
-      ([key]) => !SENSITIVE_GLASSES_KEYS.includes(key as (typeof SENSITIVE_GLASSES_KEYS)[number]),
-    ),
-  )
+  const glassesState = toolkit.glasses.diagnostics()
   const filteredSettings = Object.fromEntries(
     Object.entries(settingsState.settings || {}).filter(
       ([key]) => !SENSITIVE_SETTINGS_KEYS.includes(key as (typeof SENSITIVE_SETTINGS_KEYS)[number]),
@@ -76,7 +57,7 @@ export function buildBugReportPhoneState(): Record<string, unknown> {
   }))
 
   return {
-    glasses: filteredGlasses,
+    glasses: glassesState,
     core: bluetoothState,
     debug: debugState,
     connection: connectionState,
@@ -153,20 +134,14 @@ export async function buildBugReportFeedbackDataForBug(
   const apps = useAppStatusStore.getState().apps
   const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
 
-  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
-  const deviceModel = useGlassesStore.getState().deviceModel
-  const glassesBluetoothName = useGlassesStore.getState().bluetoothName
-  const buildNumber = useGlassesStore.getState().buildNumber
-  const glassesFirmwareVersion = useGlassesStore.getState().firmwareVersion
-  const appVersion = useGlassesStore.getState().appVersion
-  const serialNumber = useGlassesStore.getState().serialNumber
-  const androidVersion = useGlassesStore.getState().androidVersion
-  const glassesWifi = useGlassesStore.getState().wifi
+  const glassesStatus = toolkit.glasses.status()
+  const glassesInfo = toolkit.glasses.info()
+  const glassesConnected = glassesStatus.connected
+  const glassesWifi = toolkit.glasses.wifi.status()
   const glassesWifiInfo =
     glassesWifi.state === "connected" ? {wifiConnected: true, wifiSsid: glassesWifi.ssid} : {wifiConnected: false}
-  const glassesBatteryLevel = useGlassesStore.getState().batteryLevel
 
-  const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
+  const glassesBluetoothId = glassesInfo.bluetoothName?.split("_").pop() || glassesInfo.bluetoothName
 
   const feedbackData: Record<string, unknown> = {
     type: "bug",
@@ -197,15 +172,15 @@ export async function buildBugReportFeedbackDataForBug(
     },
     ...(glassesConnected && {
       glassesInfo: {
-        deviceModel: deviceModel || undefined,
+        deviceModel: glassesInfo.deviceModel || undefined,
         bluetoothId: glassesBluetoothId || undefined,
-        serialNumber: serialNumber || undefined,
-        buildNumber: buildNumber || undefined,
-        firmwareVersion: glassesFirmwareVersion || undefined,
-        appVersion: appVersion || undefined,
-        androidVersion: androidVersion || undefined,
+        serialNumber: glassesInfo.serialNumber || undefined,
+        buildNumber: glassesInfo.buildNumber || undefined,
+        firmwareVersion: glassesInfo.firmwareVersion || undefined,
+        appVersion: glassesInfo.appVersion || undefined,
+        androidVersion: glassesInfo.androidVersion || undefined,
         ...glassesWifiInfo,
-        ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
+        ...(glassesStatus.battery >= 0 && {batteryLevel: glassesStatus.battery}),
       },
     }),
     ...extraFeedbackFields,

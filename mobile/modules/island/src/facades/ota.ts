@@ -8,7 +8,7 @@
  * moves out of the host progress screen; bootloop-risk, needs on-device verification).
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
-import type {OtaStatus, OtaUpdateInfo} from "../../../bluetooth-sdk/build/_internal"
+import type {OtaProgress, OtaStatus, OtaUpdateInfo} from "../../../bluetooth-sdk/build/_internal"
 import {useGlassesStore} from "../stores/glasses"
 
 export const ota = {
@@ -27,6 +27,10 @@ export const ota = {
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
   status: (): OtaStatus | null => useGlassesStore.getState().otaStatus,
+  /** Legacy OTA progress snapshot used by the current MentraOS progress screens. */
+  progress: (): OtaProgress | null => useGlassesStore.getState().otaProgress,
+  /** Whether this phone session already updated MTK firmware. */
+  mtkUpdatedThisSession: (): boolean => useGlassesStore.getState().mtkUpdatedThisSession,
 
   /** Subscribe to "an update became available" (null → info). Returns an unsubscribe. */
   onUpdateAvailable: (cb: (info: OtaUpdateInfo) => void): (() => void) => {
@@ -47,6 +51,17 @@ export const ota = {
       if (status === last) return
       last = status
       cb(status)
+    })
+  },
+
+  /** Subscribe to legacy OTA progress changes. Returns an unsubscribe. */
+  onProgress: (cb: (progress: OtaProgress | null) => void): (() => void) => {
+    let last = useGlassesStore.getState().otaProgress
+    return useGlassesStore.subscribe(() => {
+      const progress = useGlassesStore.getState().otaProgress
+      if (progress === last) return
+      last = progress
+      cb(progress)
     })
   },
 }
