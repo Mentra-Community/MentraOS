@@ -278,14 +278,6 @@ export async function captureScreenshot(
 //       })
 //     }, [packageName, app?.name])
 
-//     const handleSettings = useCallback(() => {
-//       internalRef.current?.dismiss()
-//       useNavigationStore.getState().push("/applet/settings", {
-//         packageName: packageName,
-//         appName: app?.name,
-//       })
-//     }, [packageName, app?.name])
-
 //     const isSystemApp = SYSTEM_APPS.includes(packageName)
 //     const size = 28
 

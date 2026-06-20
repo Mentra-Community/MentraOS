@@ -368,25 +368,6 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
   },
 
-  // Universal app link routes (for apps.mentra.glass)
-  {
-    pattern: "/apps/:packageName",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const {packageName} = params
-      nav.push(`/applet/webview?packageName=${packageName}`)
-    },
-    requiresAuth: true,
-  },
-  {
-    pattern: "/apps/:packageName/settings",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const {packageName} = params
-      nav.push(`/applet/settings?packageName=${packageName}`)
-    },
-    requiresAuth: true,
-  },
 ]
 
 interface DeeplinkContextType {

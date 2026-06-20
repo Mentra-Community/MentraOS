@@ -67,12 +67,12 @@ describe("RestComms", () => {
     }
     mockRequest
       .mockRejectedValueOnce(noActiveSessionError)
-      .mockResolvedValueOnce({data: {success: true, data: [{packageName: "com.demo"}]}})
+      .mockResolvedValueOnce({data: {success: true}})
 
     const noActiveSessionSpy = jest.fn()
     GlobalEventEmitter.on("NO_ACTIVE_SESSION", noActiveSessionSpy)
 
-    const resultPromise = (async () => await restComms.getApplets())()
+    const resultPromise = (async () => await restComms.updateGlassesState({battery: 50}))()
 
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(noActiveSessionSpy).toHaveBeenCalled())
@@ -82,7 +82,7 @@ describe("RestComms", () => {
     const result = await resultPromise
 
     expect(result.is_ok()).toBe(true)
-    expect(result.value).toEqual([{packageName: "com.demo"}])
+    expect(result.value).toBeUndefined()
     expect(mockRequest).toHaveBeenCalledTimes(2)
     expect(mockRequest).toHaveBeenNthCalledWith(
       2,
@@ -105,7 +105,7 @@ describe("RestComms", () => {
       },
     })
 
-    const resultPromise = (async () => await restComms.getApplets())()
+    const resultPromise = (async () => await restComms.updateGlassesState({battery: 50}))()
 
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1))
 
