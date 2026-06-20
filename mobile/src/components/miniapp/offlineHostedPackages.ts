@@ -14,12 +14,10 @@ import {
   feedbackPackageName,
   mirrorPackageName,
   settingsPackageName,
-  storePackageName,
 } from "@/constants/miniapps"
 
 export const OFFLINE_HOSTED_PACKAGES = new Set([
   settingsPackageName,
-  storePackageName,
   mirrorPackageName,
   cameraPackageName,
   feedbackPackageName,

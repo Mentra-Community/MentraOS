@@ -147,7 +147,8 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
-  // Smart start: activates the app if installed, otherwise shows the store page
+  // Smart start: activates the app if installed. The cloud-v1 MiniApp Store
+  // fallback has been removed.
   {
     pattern: "/package/:packageName/start",
     handler: async (url: string, params: Record<string, string>) => {
@@ -157,7 +158,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         // Deep links can fire while the app is still in the background state.
         // Navigation calls made before the app is active get lost, so wait first.
         await waitForActive()
-        // Reset stack to home, then push store on top so back always goes home.
+        // Reset stack to home before attempting to start the app.
         useNavigationStore.getState().replaceAll("/home")
         await useAppStatusStore.getState().refresh()
         const applet = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
@@ -165,10 +166,9 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         if (applet) {
           setTimeout(() => useAppStatusStore.getState().start(applet), 150)
           return
-        } else {
-          setTimeout(() => nav.push("/miniapps/store/store", {packageName}), 150)
-          return
         }
+        console.warn("[DEEPLINK] Package not installed and MiniApp Store is no longer available:", packageName)
+        return
       }
       // Cold start or not authenticated — store raw URL so processUrl re-matches it after init
       nav.setPendingRoute(url)
@@ -177,13 +177,13 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
-  // Store routes
+  // Deprecated Store routes: keep them as home redirects for stale links.
   {
     pattern: "/store",
     handler: (url: string, params: Record<string, string>) => {
       const nav = useNavigationStore.getState()
-      const {packageName} = params
-      nav.replace(`/store?packageName=${packageName}`)
+      console.warn("[DEEPLINK] MiniApp Store route is no longer available:", url)
+      nav.replaceAll("/home")
     },
     requiresAuth: true,
   },
@@ -196,9 +196,9 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         // Deep links can fire while the app is still in the background state.
         // Navigation calls made before the app is active get lost, so wait first.
         await waitForActive()
-        // Reset stack to home, then push store on top so back always goes home.
+        // Reset stack to home. The cloud-v1 MiniApp Store is no longer available.
         nav.replaceAll("/home")
-        setTimeout(() => nav.push("/miniapps/store/store", {packageName}), 150)
+        console.warn("[DEEPLINK] MiniApp Store package route is no longer available:", packageName)
         return
       }
       // Cold start or not authenticated — store raw URL so processUrl re-matches it after init

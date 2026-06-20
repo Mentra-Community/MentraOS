@@ -267,16 +267,6 @@ export async function captureScreenshot(
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])
 
-//     const handleShare = useCallback(() => {
-//       const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
-//       // on Android, Share.share ignores `url` and only uses `message`
-//       Share.share(
-//         Platform.OS === "android"
-//           ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
-//           : {message: app?.name ?? packageName, url: storeUrl},
-//       )
-//     }, [packageName, app?.name])
-
 //     const handleFeedback = useCallback(() => {
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().push("/miniapps/settings/feedback", {

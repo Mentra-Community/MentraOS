@@ -148,7 +148,6 @@ const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.offline_captions",
   "com.mentra.gallery",
   "com.mentra.settings",
-  "com.mentra.store",
   "com.mentra.simulated",
   "com.mentra.mirror",
   "com.mentra.ai",

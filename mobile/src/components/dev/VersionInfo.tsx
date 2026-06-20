@@ -16,7 +16,6 @@ export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [storeUrl] = useSetting(SETTINGS.store_url.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
   const [audioTransport, setAudioTransport] = useState<string>("websocket")
 
@@ -91,7 +90,6 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `store_url: ${storeUrl}`,
       `backend_url: ${backendUrl}`,
       `audio: ${audioTransport}`,
     ]
@@ -150,9 +148,6 @@ export const VersionInfo = () => {
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_TIME}`} />
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
-          </View>
-          <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={storeUrl} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${backendUrl}`} />

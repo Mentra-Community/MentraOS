@@ -33,7 +33,6 @@ import {
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
-  storePackageName,
 } from "@/constants/miniapps"
 
 /**
@@ -268,22 +267,6 @@ class BuiltInMiniappCatalog {
         offlineRoute: "/miniapps/settings/main",
         webviewUrl: "",
         hardwareRequirements: [],
-      },
-      {
-        packageName: storePackageName,
-        name: translate("miniApps:store"),
-        offlineRoute: "/miniapps/store/store",
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offline: true,
-        running: false,
-        loading: false,
-        hardwareRequirements: [],
-        type: "background",
-        logoUrl: require("@assets/applet-icons/store.png"),
-        local: false,
       },
       {
         packageName: mirrorPackageName,
