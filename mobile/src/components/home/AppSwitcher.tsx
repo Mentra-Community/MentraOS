@@ -1,5 +1,5 @@
 import {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Platform} from "react-native"
+import {View, Dimensions, Pressable, Platform, BackHandler} from "react-native"
 import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -294,6 +294,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
+  // JS-thread mirror of swipeProgress open-ness, so the Android hardware back
+  // gesture can dismiss the switcher (the switcher is an overlay, not a route,
+  // so navigation's back handler never sees it). Synced from the swipeProgress
+  // useAnimatedReaction below.
+  const [isOpen, setIsOpen] = useState(false)
   const dotsPanGestureRef = useRef(Gesture.Pan())
 
   // for testing:
@@ -685,6 +690,19 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }, 250)
   }, [apps.length])
 
+  // Android: the hardware/native back gesture should dismiss the switcher. It's an
+  // overlay (not a route), so navigation never sees it — register a BackHandler
+  // while open and consume the event so it doesn't fall through to navigating away
+  // from home.
+  useEffect(() => {
+    if (Platform.OS !== "android" || !isOpen) return
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleClose()
+      return true
+    })
+    return () => sub.remove()
+  }, [isOpen, handleClose])
+
   useAnimatedReaction(
     () => swipeProgress.value,
     (current, previous) => {
@@ -705,6 +723,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
         runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
+        runOnJS(setIsOpen)(true)
         if (apps.length > 0) {
           runOnJS(setShowNoAppsMessage)(false)
         }
@@ -713,6 +732,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // console.log("just closed")
         runOnJS(setBlurPointerEvents)("none")
         runOnJS(setShowNoAppsMessage)(true)
+        runOnJS(setIsOpen)(false)
       }
     },
   )
