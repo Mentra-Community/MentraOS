@@ -127,6 +127,7 @@ export class TeleprompterController {
       numberOfLines: this.settings.numberOfLines,
     })
     this.engine.setScript(this.settings.script)
+    this.applyViewport()
 
     // React to glasses model / display changes.
     try {
@@ -150,7 +151,8 @@ export class TeleprompterController {
       this.profile = getProfileForModel(getModelName(this.session))
       this.hasDisplay = hasDisplayCapability(this.session)
       this.hasMic = hasMicrophoneCapability(this.session)
-      this.engine.setLayout({profile: this.profile, numberOfLines: this.settings.numberOfLines})
+      this.engine.setLayout({profile: this.profile})
+      this.applyViewport()
     }
 
     // When the miniapp returns to the foreground it must reclaim the main view —
@@ -485,7 +487,7 @@ export class TeleprompterController {
   private async setLines(lines: number): Promise<void> {
     this.settings.numberOfLines = this.clampLines(lines)
     await this.persist(STORAGE_KEYS.numberOfLines, String(this.settings.numberOfLines))
-    this.engine.setLayout({numberOfLines: this.settings.numberOfLines})
+    this.applyViewport()
     this.render()
     this.broadcastSettings()
     this.broadcastStatus()
@@ -528,6 +530,10 @@ export class TeleprompterController {
   private async setShowTimecode(enabled: boolean): Promise<void> {
     this.settings.showTimecode = enabled
     await this.persist(STORAGE_KEYS.showTimecode, String(enabled))
+    // The timecode footer occupies a row, so the script viewport shrinks by one
+    // when it's on. Re-apply so windowAt builds exactly the rows we display —
+    // otherwise a line scrolls past unseen.
+    this.applyViewport()
     this.render()
     this.broadcastSettings()
     this.broadcastStatus()
@@ -546,13 +552,29 @@ export class TeleprompterController {
   // ───────────────────────────────────────────────────────────────────────
 
   private onCapabilitiesChanged(): void {
+    const prevHasMic = this.hasMic
     const newProfile = getProfileForModel(getModelName(this.session))
     this.hasDisplay = hasDisplayCapability(this.session)
     this.hasMic = hasMicrophoneCapability(this.session)
     if (newProfile.id !== this.profile.id) {
       this.profile = newProfile
-      this.engine.setLayout({profile: newProfile, numberOfLines: this.settings.numberOfLines})
+      this.engine.setLayout({profile: newProfile})
     }
+    // maxLines can differ across profiles, so re-derive the viewport (it also
+    // accounts for the timecode footer).
+    this.applyViewport()
+
+    // Capabilities can arrive after the user already hit play (the first reliable
+    // read is on "ready"). If the microphone availability changed while
+    // voice-follow is the intended mode, re-select the scroll driver — otherwise
+    // voice-follow can stay attached on a mic-less device (and stall) or stay on
+    // timed scroll when a mic became available.
+    if (this.state === "playing" && this.settings.voiceFollow && this.hasMic !== prevHasMic) {
+      this.recentSpoken = []
+      this.clearTimer()
+      this.startVoiceFollow()
+    }
+
     // Glasses (re)connected or the device changed — the lenses no longer hold
     // our last frame. Clear the dedupe cache so render() force-pushes instead of
     // assuming the current window is still on screen.
@@ -585,12 +607,26 @@ export class TeleprompterController {
     }
   }
 
-  /** Content lines (+ optional timecode footer), bounded to the profile's max. */
+  /**
+   * Append the timecode footer when enabled. The script viewport already
+   * reserves a row for it (see applyViewport), so `content` fits beneath the
+   * profile's max-lines without trimming — no script row is dropped unseen.
+   */
   private composeDisplay(content: string[]): string[] {
     if (!this.settings.showTimecode) return content
-    const maxContent = Math.max(1, this.profile.maxLines - 1)
-    const trimmed = content.slice(0, maxContent)
-    return [...trimmed, this.timecodeLine()]
+    return [...content, this.timecodeLine()]
+  }
+
+  /**
+   * Re-derive the on-glasses script viewport from the user's line count, the
+   * device's max lines, and whether the timecode footer steals a row. Keeping
+   * the engine's window in lockstep with what we actually render means scrolling
+   * advances by exactly the rows the reader sees.
+   */
+  private applyViewport(): void {
+    const footer = this.settings.showTimecode ? 1 : 0
+    const effective = Math.min(this.settings.numberOfLines, Math.max(2, this.profile.maxLines - footer))
+    this.engine.setLayout({numberOfLines: effective})
   }
 
   private timecodeLine(): string {
