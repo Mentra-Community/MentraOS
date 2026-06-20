@@ -68,6 +68,10 @@ export function ScriptView({
     flushPending()
     onPlay()
   }
+  const handlePause = () => {
+    flushPending()
+    onPause()
+  }
   const handleRestart = () => {
     flushPending()
     onRestart()
@@ -128,7 +132,7 @@ export function ScriptView({
 
           <button
             aria-label={playing ? "Pause" : "Play"}
-            onClick={playing ? onPause : handlePlay}
+            onClick={playing ? handlePause : handlePlay}
             disabled={empty}
             className="w-16 h-16 rounded-full flex items-center justify-center shadow-md active:scale-95 disabled:opacity-40 transition-transform"
             style={{backgroundColor: ACCENT, color: ACCENT_FG}}>
