@@ -282,15 +282,6 @@ class SocketComms {
     ws.sendText(JSON.stringify(msg))
   }
 
-  public updatePhoneSubscriptions(subscriptions: string[]) {
-    const msg = {
-      type: "phone_subscription_update",
-      subscriptions,
-      timestamp: new Date().toISOString(),
-    }
-    ws.sendText(JSON.stringify(msg))
-  }
-
   public sendSwitchStatus(switchType: number, switchValue: number, timestamp: number) {
     const payload = {
       type: "switch_status",

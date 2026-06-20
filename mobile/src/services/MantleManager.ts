@@ -135,7 +135,7 @@ class MantleManager {
     // )
 
     // Wire host-side adapters into the island runtime. Must run before any
-    // island service that reads settings / glasses status / sockets / audio
+    // island service that reads settings / glasses status / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
     // Construct + connect the cloud client (best-effort). It now lives in island
@@ -146,10 +146,6 @@ class MantleManager {
     cloudClient.init()
 
     configureRuntime({
-      socketComms: {
-        sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
-        updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
-      },
       // audioPlayback (miniapp speaker / TTS playback) moved into island
       // (AudioPlaybackService — pure expo-audio + btsdk volume control) — no longer a hook.
       // glassesStatus read/subscribe moved into island (DisplayProcessor /
