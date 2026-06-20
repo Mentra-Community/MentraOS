@@ -13,11 +13,10 @@
  *   - the dev hot-reload respawn path and the WebView mount path share one
  *     resolve+spawn recipe instead of three copies.
  *
- * The launcher is **headless**: no React, no RN components. It is configured
- * once at host bootstrap with the {@link MentraJSRouter} instance (the router
- * needs the native Crust binding, so it is constructed host-side and injected
- * here — the same DI seam as `configureRuntime`). OEMs embedding the runtime
- * as a native library drive miniapp lifecycle through this surface.
+ * The launcher is **headless**: no React, no RN components. The island-owned
+ * MiniappEngine hands it the {@link MentraJSRouter} instance once during
+ * engine construction. OEMs embedding the runtime drive miniapp lifecycle
+ * through the toolkit facade and stores, not a separate launcher configure API.
  *
  * Boundary: the launcher owns the **background** context. WebView *rendering*
  * (the UI layer) stays with the host — the launcher just hands back the
@@ -33,7 +32,7 @@ import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
 
-export interface LauncherDeps {
+interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
   router: MentraJSRouter
 }
@@ -75,14 +74,14 @@ class MiniappLauncher {
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
 
-  /** Wire the router in. Called once from host bootstrap. */
+  /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
   }
 
   private requireRouter(): MentraJSRouter {
     if (!this.deps) {
-      throw new Error("MiniappLauncher not configured — call configureLauncher() at host bootstrap")
+      throw new Error("MiniappLauncher not configured — ensureMiniappEngine() has not run")
     }
     return this.deps.router
   }
@@ -295,8 +294,3 @@ class MiniappLauncher {
 }
 
 export const miniappLauncher = new MiniappLauncher()
-
-/** Wire the router into the launcher. Called once at host bootstrap. */
-export function configureLauncher(deps: LauncherDeps): void {
-  miniappLauncher.configure(deps)
-}

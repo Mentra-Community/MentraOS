@@ -5,11 +5,11 @@ import * as Sentry from "@sentry/react-native"
 import {
   appRegistry,
   BgTimer,
-  configureIsland,
   decideDevLaunchRoute,
   HardwareCompatibility,
   HardwareRequirementLevel,
   HardwareType,
+  installAppStoreHooks,
   sttModelManager as STTModelManager,
   toolkit,
   type ClientApp,
@@ -71,7 +71,7 @@ class MiniappCatalog {
       appRegistry.installOfflineApp(app)
     }
 
-    configureIsland({
+    installAppStoreHooks({
       loadExtraApps: () => this.loadExtraApps(),
       getCapabilities: () => this.getCapabilities(),
       beforeStart: (app, opts) => this.beforeStart(app, opts),

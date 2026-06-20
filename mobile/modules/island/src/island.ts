@@ -50,9 +50,8 @@ export const toolkit = {
   async start() {
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
-    // lifecycle yields a live toolkit.session for OEMs. Idempotent — when the
-    // Mentra app has already called cloudClient.init() (synchronously, right after
-    // start()), THIS call is the no-op.
+    // lifecycle yields a live toolkit.session for OEMs. Idempotent for repeated
+    // start() calls.
     cloudClientService.init()
     // Project native device status -> the island stores (the inbound feed the rest
     // of the runtime reads). Established first so the stores are live before the
@@ -78,8 +77,8 @@ export const toolkit = {
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor
     // (layout arbitration over the island stores), and the gallery-sync service.
     // All idempotent — when the Mentra app's host bootstrap also calls these, the
-    // second call is a no-op. Host-only concerns (crashloop telemetry, the
-    // inter-miniapp interop policy) are attached separately by the host.
+    // second call is a no-op. Host-only crashloop telemetry is attached
+    // separately by the Mentra app.
     localMiniappRuntime.initialize()
     ensureMiniappEngine()
     displayProcessor.attachToRuntime()

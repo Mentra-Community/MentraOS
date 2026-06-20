@@ -4,8 +4,8 @@
  * The CloudClient singleton now lives in `@mentra/island` (`cloudClientService`):
  * island constructs it from island-owned transports (UDP, MMKV secure store,
  * status store) + the host-injected `auth` seam + the resolved endpoints the
- * host passes via `toolkit.configure({config})`, and self-wires the runtime
- * `cloud`/`cloudConnection` hooks.
+ * host passes via `toolkit.configure({config})`, then exposes the cloud runtime
+ * surface directly through island services.
  *
  * What stays here is the host-side ENDPOINT RESOLUTION — the rebuild-free Dev
  * Settings URL switcher, which reads the host settings store + the live Metro
@@ -97,14 +97,24 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  * The cloud config the host hands island at `toolkit.configure({config})`:
  * resolved endpoints + the live LC3 frame size.
  */
-export function cloudConfigValues(): {coreUrl: string; runtimeUrl: string; audioFrameSizeBytes: number} {
+export function cloudConfigValues(): {
+  coreUrl: string
+  runtimeUrl: string
+  audioFrameSizeBytes: number
+  devServerHost: () => string | undefined
+} {
   const endpoints = resolvedEndpoints()
-  return {coreUrl: endpoints.core, runtimeUrl: endpoints.runtime, audioFrameSizeBytes: lc3FrameSizeBytes()}
+  return {
+    coreUrl: endpoints.core,
+    runtimeUrl: endpoints.runtime,
+    audioFrameSizeBytes: lc3FrameSizeBytes(),
+    devServerHost,
+  }
 }
 
 /**
- * Host-facing handle to island's cloud client. Construction + runtime wiring
- * live in island (`cloudClientService`); this delegates so existing consumers
+ * Host-facing handle to island's cloud client. Construction and live runtime
+ * methods live in island (`cloudClientService`); this delegates so existing consumers
  * (PhonePhotoCoordinator, cloudStreamApi, the dev Cloud-URL switcher) are
  * untouched. `reconnect()` re-resolves the host endpoints before rebuilding.
  */

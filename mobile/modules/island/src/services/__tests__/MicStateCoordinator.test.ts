@@ -1,32 +1,40 @@
-const mockSetMicRequirements = jest.fn()
+/// <reference types="bun-types" />
+
+import {beforeEach, describe, expect, mock, test} from "bun:test"
+
+const mockUpdateBluetoothSettings = mock(() => Promise.resolve())
+
+mock.module("../../../../bluetooth-sdk/build/_internal", () => ({
+  __esModule: true,
+  default: {
+    updateBluetoothSettings: mockUpdateBluetoothSettings,
+  },
+}))
 
 // Import AFTER the mock is registered
-
-const {configureRuntime} = require("../../runtime/config")
 const MicStateCoordinator = require("../MicStateCoordinator").default
 
 describe("MicStateCoordinator", () => {
   beforeEach(() => {
-    configureRuntime({setMicRequirements: mockSetMicRequirements})
     MicStateCoordinator.reset()
-    mockSetMicRequirements.mockClear()
+    mockUpdateBluetoothSettings.mockClear()
   })
 
   test("cloud-only PCM requirement", () => {
     MicStateCoordinator.setCloudRequirements({pcm: true, lc3: false, transcript: false})
-    expect(mockSetMicRequirements).toHaveBeenCalledWith(
+    expect(mockUpdateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: true,
+        should_send_pcm: false,
+        should_send_lc3: true,
       }),
     )
   })
 
   test("local-only LC3 requirement", () => {
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
-    expect(mockSetMicRequirements).toHaveBeenCalledWith(
+    expect(mockUpdateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        shouldSendLc3: true,
+        should_send_lc3: true,
       }),
     )
   })
@@ -38,12 +46,12 @@ describe("MicStateCoordinator", () => {
       transcript: true,
     })
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: true,
-        shouldSendTranscript: true,
+        should_send_pcm: false,
+        should_send_lc3: true,
+        should_send_transcript: true,
       }),
     )
   })
@@ -51,11 +59,11 @@ describe("MicStateCoordinator", () => {
   test("both off means all false", () => {
     MicStateCoordinator.setCloudRequirements({pcm: false, lc3: false, transcript: false})
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: false,
+        should_send_pcm: false,
+        should_send_lc3: false,
       }),
     )
   })
@@ -64,10 +72,10 @@ describe("MicStateCoordinator", () => {
     MicStateCoordinator.setCloudRequirements({pcm: false, lc3: true, transcript: true})
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendLc3: true,
+        should_send_lc3: true,
       }),
     )
   })

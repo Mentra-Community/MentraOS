@@ -20,8 +20,6 @@ export {default as localDisplayManager, type DisplayPayload} from "./services/Lo
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
 export {
   miniappLauncher,
-  configureLauncher,
-  type LauncherDeps,
   type LaunchHints,
   type LaunchResult,
   type ResolvedBundle,
@@ -155,8 +153,8 @@ export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from
 export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
-// The cloud-client singleton now lives in island (keystone #5). Construction +
-// runtime-hook wiring happen here; the host's @/services/cloudClient is a thin
+// The cloud-client singleton now lives in island (keystone #5). Construction and
+// live runtime surfaces happen here; the host's @/services/cloudClient is a thin
 // delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
 export {cloudClientService} from "./services/CloudClientService"
 // Settings store + RestComms — the mutually-coupled v1-comms pair, moved into
@@ -181,26 +179,19 @@ export {default as restComms} from "./services/RestComms"
 export {default as BluetoothSdk} from "../../bluetooth-sdk/build/_internal"
 export type {PairFailureEvent, GlassesNotReadyEvent} from "../../bluetooth-sdk/build/_internal"
 
-// Runtime config (host-injected adapters)
+// Runtime-shared constants and DTOs
 export {
-  configureRuntime,
-  getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
-  type RuntimeHooks,
   type CloudClientStatusSnapshot,
-  type CloudRuntimeAdapter,
-  type MiniappAuthAdapter,
   type MiniappAuthToken,
-  type StoreAccessor,
-  type GlassesSnapshot,
-  type InteropAdapter,
   type InteropAuditEvent,
+  type TtsSynthesisResult,
 } from "./runtime/config"
 
 // Stores
 export {
   useAppStatusStore,
-  configureIsland,
+  installAppStoreHooks,
   DUMMY_APPLET,
   saveAppsOrder,
   getAppsOrder,
@@ -224,7 +215,7 @@ export {
   useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
-  type IslandHostHooks,
+  type AppStoreHooks,
   type StartOptions,
   type OrderMap,
 } from "./stores/apps"

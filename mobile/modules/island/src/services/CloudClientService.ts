@@ -7,11 +7,11 @@
  * provides through the toolkit front door: `auth.getSubjectToken` (the one
  * permanent seam — the OEM owns login) and the resolved cloud endpoints
  * (`config.coreUrl/runtimeUrl`, computed host-side from dev/settings). On init it
- * self-wires the `cloud` + `cloudConnection` runtime hooks, so the host no longer
- * injects a CloudRuntimeAdapter — island owns construction AND wiring.
+ * exposes cloud runtime methods directly from this service, so the host no longer
+ * injects a cloud adapter — island owns construction and wiring.
  *
  * The local-miniapp path drives the cloud's transcription/translation through
- * the adapter this registers.
+ * this service.
  */
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
@@ -20,12 +20,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
-import {
-  configureRuntime,
-  type CloudClientStatusSnapshot,
-  type CloudRuntimeAdapter,
-  type MiniappAuthToken,
-} from "../runtime/config"
+import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 
 /** Core/cloud-client may speak Unix seconds while the miniapp SDK uses JS millis. */
 function normalizeExpiresAt(expiresAt: number): number {
@@ -63,8 +58,6 @@ const FALLBACK_CORE_URL = "http://localhost:3000"
 const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 
 let client: CloudClient | null = null
-let adapter: CloudRuntimeAdapter | null = null
-let wired = false
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
@@ -240,69 +233,8 @@ function clearRuntimeEventSubscriptions(): void {
   translationUnsubscribe = null
 }
 
-function buildAdapter(): CloudRuntimeAdapter {
-  return {
-    setSubscriptions: async (subs: AudioSubscription[]): Promise<void> => {
-      // Cache unconditionally so the desired set survives a not-yet-connected
-      // session and reconnects; only push when connected (the runtime throws
-      // otherwise). The onConnected handler re-applies the cached set, so
-      // subscribe-before-connect self-heals.
-      audioSubscriptions = subs
-      const c = client
-      if (connected && c) {
-        await c.runtime.setSubscriptions(subs)
-      }
-    },
-    sendAudioFrame: (frame: Uint8Array): void => {
-      client?.runtime.sendAudioFrame(frame)
-    },
-    onTranscript: (cb: (d: TranscriptionData) => void): (() => void) => {
-      transcriptListeners.add(cb)
-      return () => {
-        transcriptListeners.delete(cb)
-      }
-    },
-    onTranslation: (cb: (d: TranslationData) => void): (() => void) => {
-      translationListeners.add(cb)
-      return () => {
-        translationListeners.delete(cb)
-      }
-    },
-    getStatus: (): CloudClientStatusSnapshot => currentRuntimeStatus(),
-    onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void): (() => void) => {
-      statusListeners.add(cb)
-      return () => {
-        statusListeners.delete(cb)
-      }
-    },
-    tts: {
-      speak: (text, options) => {
-        if (!client) throw new Error("cloud client not connected")
-        return client.runtime.tts.speak(text, options)
-      },
-    },
-    hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
-    isConnected: (): boolean => connected,
-  }
-}
-
-/** Register island's own cloud adapter + connection surface into the runtime
- * hooks (once). Replaces the host's former `configureRuntime({cloud, ...})`. */
-function selfWire(): void {
-  if (wired) return
-  wired = true
-  configureRuntime({
-    cloud: adapter ?? undefined,
-    cloudConnection: {
-      isConnected: () => connected,
-      addListener: (l) => cloudClientService.onConnectionChange(l),
-    },
-  })
-}
-
 function construct(): void {
   ensureTransports()
-  if (!adapter) adapter = buildAdapter()
 
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
@@ -393,17 +325,13 @@ function construct(): void {
  */
 export const cloudClientService = {
   /**
-   * Construct (once) + connect the client, and self-wire the runtime cloud
-   * hooks. Idempotent. Best-effort connect — a failure is logged and the app
-   * keeps running. Requires `toolkit.configure({auth, config})` first.
+   * Construct (once) + connect the client. Idempotent. Best-effort connect — a
+   * failure is logged and the app keeps running. Requires
+   * `toolkit.configure({auth, config})` first.
    */
   init(): void {
-    if (client) {
-      selfWire()
-      return
-    }
+    if (client) return
     construct()
-    selfWire()
   },
 
   /**
@@ -429,7 +357,6 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
 
     construct()
-    selfWire()
   },
 
   /** Tear down the client + connection (the toolkit.stop() lifecycle). */
@@ -500,5 +427,56 @@ export const cloudClientService = {
     return () => {
       connectionListeners.delete(listener)
     }
+  },
+
+  /** Replace the v2 cloud's audio subscription set for the live session. */
+  async setSubscriptions(subs: AudioSubscription[]): Promise<void> {
+    // Cache unconditionally so the desired set survives a not-yet-connected
+    // session and reconnects; the onConnected handler re-applies the cached set.
+    audioSubscriptions = subs
+    const c = client
+    if (connected && c) {
+      await c.runtime.setSubscriptions(subs)
+    }
+  },
+
+  sendAudioFrame(frame: Uint8Array): void {
+    client?.runtime.sendAudioFrame(frame)
+  },
+
+  onTranscript(cb: (d: TranscriptionData) => void): () => void {
+    transcriptListeners.add(cb)
+    return () => {
+      transcriptListeners.delete(cb)
+    }
+  },
+
+  onTranslation(cb: (d: TranslationData) => void): () => void {
+    translationListeners.add(cb)
+    return () => {
+      translationListeners.delete(cb)
+    }
+  },
+
+  getStatus(): CloudClientStatusSnapshot {
+    return currentRuntimeStatus()
+  },
+
+  onStatusChanged(cb: (snapshot: CloudClientStatusSnapshot) => void): () => void {
+    statusListeners.add(cb)
+    return () => {
+      statusListeners.delete(cb)
+    }
+  },
+
+  tts: {
+    speak(text: string, options?: Parameters<CloudClient["runtime"]["tts"]["speak"]>[1]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.tts.speak(text, options)
+    },
+  },
+
+  hasAudioSubscriptions(): boolean {
+    return audioSubscriptions.length > 0
   },
 }

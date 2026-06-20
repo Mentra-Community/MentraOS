@@ -6,9 +6,10 @@
  * AppRegistry, and exposes hooks (`useApps`, `useStart`, `useStop`,
  * `useRefresh`, `useStopAll`) that the host UI can read.
  *
- * Side-effects the host needs (cloud REST calls, navigation, alerts) are
- * injected via `configureIsland`. The store invokes those hooks at the
- * right moments — but never imports them directly.
+ * Side-effects the legacy Mentra app catalog still needs (cloud REST calls,
+ * navigation, alerts) are registered as transitional app-store hooks. The
+ * store invokes those hooks at the right moments, but never imports them
+ * directly.
  *
  * Source of `apps`:
  *   - Local: appRegistry.getInstalledMiniapps()    (always)
@@ -39,7 +40,7 @@ export interface StartOptions {
   skipNavigation?: boolean
 }
 
-export interface IslandHostHooks {
+export interface AppStoreHooks {
   /** Return host-provided extra apps (e.g. cloud applets). Called on every refresh. */
   loadExtraApps?: () => Promise<ClientApp[]>
   /** Return the connected device's capabilities for compatibility checks. */
@@ -54,9 +55,9 @@ export interface IslandHostHooks {
   postProcessApps?: (apps: ClientApp[]) => ClientApp[] | Promise<ClientApp[]>
 }
 
-let hostHooks: IslandHostHooks = {}
+let hostHooks: AppStoreHooks = {}
 
-export function configureIsland(hooks: IslandHostHooks): void {
+export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
 }
 

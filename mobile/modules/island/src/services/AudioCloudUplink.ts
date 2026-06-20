@@ -16,18 +16,15 @@
  * Started by `toolkit.start()`. Idempotent.
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
-import {getRuntimeHooks} from "../runtime/config"
+import {cloudClientService} from "./CloudClientService"
 
 let sub: {remove: () => void} | null = null
 
 export function startAudioCloudUplink(): void {
   if (sub) return
   sub = BluetoothSdk.addListener("mic_lc3", (event) => {
-    // The cloud adapter is island's own (CloudClientService.selfWire registers it);
-    // optional-chain so a not-yet-wired / v1-only-without-cloud host is a no-op.
-    const cloud = getRuntimeHooks().cloud
-    if (cloud?.isConnected() && cloud.hasAudioSubscriptions()) {
-      cloud.sendAudioFrame(new Uint8Array(event.lc3))
+    if (cloudClientService.isConnected() && cloudClientService.hasAudioSubscriptions()) {
+      cloudClientService.sendAudioFrame(new Uint8Array(event.lc3))
     }
   })
 }

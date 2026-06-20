@@ -46,12 +46,10 @@ mock.module("expo-file-system", () => ({
 }))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
-let configureLauncher: typeof import("../MiniappLauncher").configureLauncher
 
 beforeAll(async () => {
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
-  configureLauncher = mod.configureLauncher
 })
 
 // Fresh router (mutable registered set) per test.
@@ -81,7 +79,7 @@ describe("MiniappLauncher", () => {
     activeVersion = "1.0.0"
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
-    configureLauncher({router: mockRouter.router})
+    miniappLauncher.configure({router: mockRouter.router})
   })
 
   test("ensureRunning spawns the background context when not registered", async () => {
