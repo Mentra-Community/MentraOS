@@ -41,22 +41,39 @@ on:
   # landing on dev (no pull_request event ever fired for them) — re-run this
   # workflow against the PR branch to evaluate and post the status.
   workflow_dispatch:
-
-# NOTE: we deliberately do NOT use a `workflow_run` trigger anymore. Each gated
-# builder completing fired a fresh ci-gate run that cancelled the in-flight poll
-# (cancel-in-progress), littering every PR with a pile of "cancelled" CI Gate
-# runs. The single poll loop below already watches every builder to completion,
-# so one run per commit (from pull_request / workflow_dispatch) is sufficient.
-# To avoid declaring success before a slow-to-register builder has appeared, the
-# loop enforces a settling grace window (see GRACE_MS).
+  # Re-evaluate when a gated builder COMPLETES. This is what makes the gate
+  # self-correct after a builder is RE-RUN (e.g. a flaky failure that an
+  # engineer reruns to green) or after a builder registers/finishes later than
+  # the initial poll's settle — without it, the status would be frozen at
+  # whatever the one poll concluded. We listen only on `completed` (never
+  # `requested`), and concurrency below uses cancel-in-progress: false, so these
+  # re-evaluations queue-and-replace instead of producing a litter of cancelled
+  # runs (the original storm).
+  workflow_run:
+    workflows:
+      - "Mobile App iOS Build"
+      - "Mobile App Android Build"
+      - "MentraOS ASG Client Build"
+      - "Mobile App Quality Checks"
+      - "🧪 Test Cloud build"
+      - "🧪 Test SDK build"
+      - "🧪 Test Console build"
+      - "🧪 Test Store build"
+      - "Run Cloud Tests ☁️"
+    types: [completed]
 
 concurrency:
-  # Key by PR BRANCH (like the builder workflows), not by SHA. A new commit on
-  # the same PR then cancels the previous commit's in-flight poll, freeing the
-  # runner and stopping a now-stale evaluation — instead of leaving it to time
-  # out. One live evaluation per PR branch at a time.
-  group: ci-gate-dev-${{ github.event.pull_request.head.ref || github.ref }}
-  cancel-in-progress: true
+  # Key per-PR. For pull_request events github.ref is refs/pull/<n>/merge, which
+  # is unique per PR (so unrelated fork PRs sharing a branch name like "fix" or
+  # "main" do NOT collide). For workflow_run events github.ref is the base branch
+  # (dev), so we fall back to the triggering run's head_sha to keep re-evaluations
+  # grouped with the right PR.
+  group: ci-gate-dev-${{ github.event.workflow_run.head_sha || github.ref }}
+  # Do NOT cancel in progress: re-evaluations from builder completions should
+  # queue and replace, not cancel each other. Cancelling was what littered every
+  # PR with "cancelled" CI Gate runs. The poll loop exits quickly once settled,
+  # so the queue drains fast.
+  cancel-in-progress: false
 
 permissions:
   actions: read
