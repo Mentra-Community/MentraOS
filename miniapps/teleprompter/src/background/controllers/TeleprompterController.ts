@@ -155,6 +155,15 @@ export class TeleprompterController {
       this.applyViewport()
     }
 
+    // Tear down playback drivers when the session ends (app disabled / glasses
+    // disconnected) so the WPM timer and mic subscription don't outlive the
+    // session. onBeforeDisconnect fires just before the transport closes.
+    try {
+      this.unsubs.push(this.session.onBeforeDisconnect(() => this.stop()))
+    } catch {
+      /* before-disconnect hook not available in this runtime — ignore */
+    }
+
     // When the miniapp returns to the foreground it must reclaim the main view —
     // another app or a system screen may have overwritten it while we were
     // backgrounded. Force the next render to push by clearing the dedupe cache.
