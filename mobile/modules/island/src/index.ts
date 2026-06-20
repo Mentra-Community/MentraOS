@@ -191,7 +191,6 @@ export {
 // Stores
 export {
   useAppStatusStore,
-  installAppStoreHooks,
   DUMMY_APPLET,
   saveAppsOrder,
   getAppsOrder,
@@ -215,7 +214,6 @@ export {
   useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
-  type AppStoreHooks,
   type StartOptions,
   type OrderMap,
 } from "./stores/apps"

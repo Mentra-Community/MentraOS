@@ -2,7 +2,6 @@ import {useAppStatusStore, type ClientApp} from "@mentra/island"
 
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 
 export const uninstallAppUI = async (app: ClientApp): Promise<void> => {
   console.log(`Uninstalling app: ${app.packageName}`)
@@ -26,7 +25,7 @@ export const uninstallAppUI = async (app: ClientApp): Promise<void> => {
   const res = await store.uninstall(app.packageName)
   if (res.is_error()) {
     console.error("APPLET: Error uninstalling app:", res.error)
-    void miniappCatalog.refresh()
+    void store.refresh()
     await showAlert({
       title: translate("common:error"),
       message: translate("appSettings:uninstallError", {error: res.error.message || "Unknown error"}),

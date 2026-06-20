@@ -28,7 +28,6 @@ jest.mock("@/services/WebSocketManager", () => ({
 jest.mock("@/services/RestComms", () => ({
   __esModule: true,
   default: {
-    getApplets: jest.fn(),
     configureAudioFormat: jest.fn(async () => ({
       is_ok: () => true,
       is_error: () => false,

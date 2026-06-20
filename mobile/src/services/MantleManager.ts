@@ -8,7 +8,7 @@ import {shallow} from "zustand/shallow"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {phonePhotoCoordinator} from "@mentra/island"
 import {phoneStreamCoordinator} from "@mentra/island"
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
@@ -140,7 +140,7 @@ class MantleManager {
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
-    miniappCatalog.init()
+    builtInMiniappCatalog.init()
 
     await migrate() // do any local migrations here
     const res = await restComms.loadUserSettings() // get settings from server

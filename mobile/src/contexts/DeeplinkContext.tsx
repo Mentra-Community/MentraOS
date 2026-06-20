@@ -4,7 +4,6 @@ import {FC, ReactNode, createContext, useContext, useEffect} from "react"
 import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useAppStatusStore} from "@mentra/island"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer} from "@mentra/island"
@@ -160,7 +159,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         await waitForActive()
         // Reset stack to home, then push store on top so back always goes home.
         useNavigationStore.getState().replaceAll("/home")
-        await miniappCatalog.refresh()
+        await useAppStatusStore.getState().refresh()
         const applet = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
         console.log("[DEEPLINK] Smart start for package:", packageName, "applet found:", !!applet)
         if (applet) {
