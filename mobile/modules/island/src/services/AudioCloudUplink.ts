@@ -9,9 +9,8 @@
  * including a bare OEM that never runs the v1 SocketComms plane — gets cloud
  * transcription/translation, not just the first-party Mentra app.
  *
- * The v1 legs of the old handler (UDP / SocketComms WebSocket + the on-device PCM fan-out
- * + the debug-store mic-activity flag) stay in MantleManager — they are Mentra-app v1
- * concerns and get deleted at v1 retirement. Only this v2 cloud fork moved.
+ * The old v1 UDP/SocketComms upload legs were removed; MantleManager only keeps
+ * host-side debug mic-activity tracking and on-device PCM fan-out.
  *
  * Started by `toolkit.start()`. Idempotent.
  */

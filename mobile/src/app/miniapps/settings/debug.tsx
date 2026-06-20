@@ -274,12 +274,6 @@ export default function DebugSettingsScreen() {
               onValueChange={async (value) => {
                 const frameSize = parseInt(value, 10)
                 setLc3FrameSize(frameSize)
-                // Apply immediately to native encoder and cloud
-                try {
-                  await socketComms.configureAudioFormat()
-                } catch (err) {
-                  console.error("Failed to apply LC3 frame size:", err)
-                }
               }}
               description="Higher bitrates improve transcription quality but use more bandwidth."
             />

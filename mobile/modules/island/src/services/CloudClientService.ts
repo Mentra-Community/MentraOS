@@ -276,15 +276,13 @@ function construct(): void {
     // Cloud is up — cancel any pending persistent-failure alarm and re-arm for the
     // next outage.
     clearPersistentFailureAlarm()
-    // Re-apply any subscriptions queued before connect (or dropped across a
-    // reconnect) — best-effort; never throw out of the connect handler.
-    if (audioSubscriptions.length > 0) {
-      c.runtime
-        .setSubscriptions(audioSubscriptions)
-        .catch((err) =>
-          console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`),
-        )
-    }
+    // Re-apply the authoritative subscription set, including the empty set, so
+    // a fresh phone launch clears any stale server-side audio subscriptions.
+    c.runtime
+      .setSubscriptions(audioSubscriptions)
+      .catch((err) =>
+        console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`),
+      )
     notifyConnectionListeners(true)
   })
   c.runtime.onDisconnected((info) => {

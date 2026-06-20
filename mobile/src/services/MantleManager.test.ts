@@ -73,10 +73,6 @@ jest.mock("@/services/RestComms", () => ({
       is_ok: () => true,
       is_error: () => false,
     })),
-    configureAudioFormat: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
   },
 }))
 
@@ -90,7 +86,6 @@ jest.mock("@/services/SocketComms", () => ({
     sendButtonPress: jest.fn(),
     sendHeadPosition: jest.fn(),
     sendLocalTranscription: jest.fn(),
-    sendVadStatus: jest.fn(),
     sendSwipeVolumeStatus: jest.fn(),
     sendSwitchStatus: jest.fn(),
     sendRgbLedControlResponse: jest.fn(),
@@ -105,15 +100,6 @@ jest.mock("@/services/SocketComms", () => ({
 
 // gallerySyncService moved into @mentra/island; the global @mentra/island jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
-
-jest.mock("@/services/UdpManager", () => ({
-  __esModule: true,
-  default: {
-    enabledAndReady: jest.fn(() => false),
-    sendAudio: jest.fn(),
-    cleanup: jest.fn(),
-  },
-}))
 
 jest.mock("@/services/Livekit", () => ({
   __esModule: true,
@@ -281,9 +267,6 @@ describe("MantleManager", () => {
       expect(useDisplayStore.getState().view).toBe("dashboard")
     })
 
-    emitBluetoothSdkEvent("speaking_status", {type: "speaking_status", speaking: true})
-    expect(socketComms.sendVadStatus).toHaveBeenCalledWith(true)
-
     emitBluetoothSdkEvent("battery_status", {
       type: "battery_status",
       level: 88,
@@ -298,7 +281,6 @@ describe("MantleManager", () => {
         core_token: "new-token",
       }),
     )
-
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(

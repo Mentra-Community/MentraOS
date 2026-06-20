@@ -33,7 +33,6 @@ import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/store
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useCoreStore} from "@/stores/core"
-import udp from "@/services/UdpManager"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
@@ -486,12 +485,6 @@ class MantleManager {
       // live further down (head_up there is the superset — it also forwards to miniapps).
 
       this.subs.push(
-        BluetoothSdk.addListener("speaking_status", (event) => {
-          socketComms.sendVadStatus(event.speaking)
-        }),
-      )
-
-      this.subs.push(
         BluetoothSdk.addListener("battery_status", (event) => {
           socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
         }),
@@ -708,25 +701,15 @@ class MantleManager {
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
 
-          // Route audio to: UDP (if enabled) -> WebSocket (fallback). This is the
-          // v1 plane (Mentra-app only), deleted at v1 retirement. The v2 cloud fork
-          // moved into island (AudioCloudUplink, started by toolkit.start()) so a
-          // bare OEM gets cloud audio without this host handler.
-          if (udp.enabledAndReady()) {
-            // UDP audio is enabled and ready - send directly via UDP
-            udp.sendAudio(event.lc3)
-          } else {
-            socketComms.sendBinary(event.lc3)
-          }
+          // Cloud upload moved to island's AudioCloudUplink (started by toolkit.start()).
+          // This host-side listener only keeps the debug mic-activity flag current.
         }),
       )
 
       this.subs.push(
         BluetoothSdk.addListener("mic_pcm", (event) => {
-          // mic_pcm events are strictly on-device. The cloud only ever
-          // receives LC3 (mic_lc3 listener above) — never forward PCM
-          // bytes upstream, or we'd interleave them with LC3 frames on
-          // the same binary WebSocket and corrupt the cloud's decoder.
+          // mic_pcm events are strictly on-device. Cloud V2 receives LC3 through
+          // island's AudioCloudUplink; never forward PCM bytes upstream.
           // Sherpa-ONNX is fed PCM natively inside the BT SDK, not here.
           if (this.micDataTimeout) {
             BgTimer.clearTimeout(this.micDataTimeout)
@@ -770,10 +753,11 @@ class MantleManager {
         }),
       )
 
-      // (The OTA BLE event handlers — ota_update_available / mtk_update_complete /
-      // ota_start_ack / ota_status → island stores + clock-skew auto-fix — moved into
-      // island's OtaService, started by toolkit.start(), behind the toolkit.ota read
-      // surface. Removed here to avoid double-handling.)
+      // OTA availability (`ota_update_available`) was removed in the OTA-simplify
+      // path; update discovery now comes from the phone-side manifest check. The
+      // remaining OTA BLE handlers (mtk_update_complete / ota_start_ack /
+      // ota_status -> island stores + clock-skew auto-fix) moved into island's
+      // OtaService, started by toolkit.start(), behind the toolkit.ota read surface.
     }
 
     // one time get all:
