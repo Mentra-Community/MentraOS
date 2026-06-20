@@ -15,7 +15,6 @@ import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useAppStatusStore} from "@mentra/island"
 
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useConnectionStore} from "@/stores/connection"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
@@ -142,11 +141,10 @@ export default function AppWebView() {
     if (isLocal) return
 
     const POST_RECONNECT_GRACE_MS = 5_000
-    // The island store's `loading: true` stamp lands ~1 frame AFTER nav
-    // (beforeStart awaits an alert/network call before island.start() sets
-    // it). Without this grace, the screen mounts seeing stale loading=false
-    // running=false and immediately latches appStartFailed, causing the
-    // "Can't connect" screen to flash for ~500ms before the real load.
+    // The island store's `loading: true` stamp can land ~1 frame after nav.
+    // Without this grace, the screen can mount seeing stale loading=false
+    // running=false and immediately latch appStartFailed, causing the
+    // "Can't connect" screen to flash before the real load.
     const MOUNT_GRACE_MS = 3_000
     const mountedAt = Date.now()
 
@@ -428,8 +426,7 @@ export default function AppWebView() {
               setIsServerConfirmed(false)
               webViewOpacity.value = 0
               loadingOpacity.value = 1
-              // Re-send the start request and poll for confirmation
-              void miniappCatalog.retryStart(packageName as string)
+              void useAppStatusStore.getState().refresh()
               setRetryTrigger((prev) => prev + 1)
             }}
           />

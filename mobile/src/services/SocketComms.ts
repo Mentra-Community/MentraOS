@@ -1,6 +1,6 @@
 import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor, localMiniappRuntime, micStateCoordinator, phoneLocationService, throttle} from "@mentra/island"
+import {displayProcessor, localMiniappRuntime, micStateCoordinator, phoneLocationService} from "@mentra/island"
 
 import {audioPlaybackService} from "@mentra/island"
 import mantle from "@/services/MantleManager"
@@ -13,7 +13,6 @@ import {
 } from "@/services/SocketComms.normalizers"
 import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
@@ -357,9 +356,6 @@ class SocketComms {
     // the cloud until a miniapp actually starts.
     localMiniappRuntime.resyncCloudSubscriptions()
 
-    // refresh the mini app list:
-    restComms.getApplets()
-
     // Configure audio format (LC3) for bandwidth savings
     // This tells the cloud that we're sending LC3-encoded audio
     this.configureAudioFormat().catch((err) => {
@@ -451,14 +447,8 @@ class SocketComms {
     // )
   }
 
-  private refreshAppletsThrottled = throttle(() => {
-    void miniappCatalog.refresh()
-  }, 500)
-
   private handle_app_state_change(msg: any) {
-    console.log("SOCKET: app_state_change", msg)
-    // throttle so we don't call more than once in 500ms
-    this.refreshAppletsThrottled()
+    console.log("SOCKET: ignoring legacy cloud-v1 app_state_change", msg)
   }
 
   private handle_connection_error(msg: any) {
@@ -554,12 +544,10 @@ class SocketComms {
       console.log("SOCKET: No package name provided")
       return
     }
-    console.log(`SOCKET: Received app_started message for package: ${msg.packageName}`)
-    void miniappCatalog.refresh()
+    console.log(`SOCKET: ignoring legacy cloud-v1 app_started message for package: ${msg.packageName}`)
   }
   private handle_app_stopped(msg: any) {
-    console.log(`SOCKET: Received app_stopped message for package: ${msg.packageName}`)
-    void miniappCatalog.refresh()
+    console.log(`SOCKET: ignoring legacy cloud-v1 app_stopped message for package: ${msg.packageName}`)
   }
 
   private handle_photo_request(msg: any) {

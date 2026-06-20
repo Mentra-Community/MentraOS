@@ -185,7 +185,6 @@ export {
 // Stores
 export {
   useAppStatusStore,
-  installAppStoreHooks,
   DUMMY_APPLET,
   saveAppsOrder,
   getAppsOrder,
@@ -202,6 +201,7 @@ export {
   useStopAll,
   useInstall,
   useUninstall,
+  installAppStoreHooks,
   useActiveApps,
   useActiveBackgroundApps,
   useBackgroundApps,

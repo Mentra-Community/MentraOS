@@ -73,7 +73,6 @@ jest.mock("@/services/RestComms", () => ({
       is_ok: () => true,
       is_error: () => false,
     })),
-    getApplets: jest.fn(),
     configureAudioFormat: jest.fn(async () => ({
       is_ok: () => true,
       is_error: () => false,
