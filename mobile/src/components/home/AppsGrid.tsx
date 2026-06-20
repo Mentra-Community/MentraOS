@@ -13,8 +13,10 @@ import {
   saveAppsOrder,
   sortAppsByPackageNamePriority,
   useAppStatusStore,
+  useSetForeground,
   useStart,
   useStop,
+  HardwareType,
   type ClientApp,
   type OrderMap,
 } from "@mentra/island"
@@ -28,6 +30,8 @@ import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
+import {showAlert} from "@/contexts/ModalContext"
 import {DraggableMasonryList} from "react-native-draggable-masonry"
 
 const GRID_COLUMNS = 4
@@ -51,6 +55,35 @@ interface PopoverPosition {
   y: number
   screenX: number
   screenY: number
+}
+
+async function showCompatibilityAlert(app: ClientApp): Promise<boolean> {
+  if (app.compatibility?.isCompatible !== false) {
+    return false
+  }
+
+  const missingTypes = app.compatibility.missingRequired?.map((req) => req.type) ?? []
+  if (missingTypes.includes(HardwareType.EXIST)) {
+    await showAlert({
+      title: translate("home:glassesRequired"),
+      buttons: [{text: translate("common:ok")}],
+      message: translate("home:glassesRequiredMessage", {app: app.name}),
+    })
+    return true
+  }
+
+  const missingHardware =
+    missingTypes
+      .filter((type) => type !== HardwareType.EXIST)
+      .map((type) => type.toLowerCase())
+      .join(", ") || translate("home:requiredFeatures")
+
+  await showAlert({
+    title: translate("home:hardwareIncompatible"),
+    buttons: [{text: translate("common:ok")}],
+    message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+  })
+  return true
 }
 
 const AppPopover: React.FC<{
@@ -200,6 +233,7 @@ export function AppsGrid({
 
   const startApplet = useStart()
   const stopApplet = useStop()
+  const setForeground = useSetForeground()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -392,6 +426,31 @@ export function AppsGrid({
     [apps, selectedApp],
   )
 
+  const openApp = useCallback(
+    async (app: ClientApp) => {
+      if (await showCompatibilityAlert(app)) return
+
+      const started = app.running || (await startApplet(app, {skipNavigation: true}))
+      if (!started) return
+
+      if (isOfflineHosted(app.packageName) || app.local) {
+        await setForeground(app.packageName)
+      } else if (app.offlineRoute) {
+        push(app.offlineRoute, {transition: "fade"})
+      } else if (app.webviewUrl && app.healthy) {
+        push("/applet/webview", {
+          webviewURL: app.webviewUrl,
+          appName: app.name,
+          packageName: app.packageName,
+          transition: "fade",
+        })
+      }
+
+      onOpenApp?.(app)
+    },
+    [onOpenApp, push, setForeground, startApplet],
+  )
+
   const placeAppOnHome = useCallback(
     (app: ClientApp) => {
       const packageName = app.packageName
@@ -432,10 +491,7 @@ export function AppsGrid({
           icon: "play",
           onPress: () => {
             if (liveSelectedApp) {
-              startApplet(liveSelectedApp, {skipNavigation: true})
-              if (onOpenApp) {
-                onOpenApp?.(liveSelectedApp)
-              }
+              void openApp(liveSelectedApp)
             }
           },
         },
@@ -489,18 +545,17 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, startApplet, stopApplet, showAllApps, placeAppOnHome, push, onOpenApp],
+    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
   )
 
-  const handlePress = async (app: ClientApp) => {
+  const handlePress = useCallback(async (app: ClientApp) => {
     if (app.packageName.includes("@empty")) return // ignore dummy apps
+    if (await showCompatibilityAlert(app)) return
+
     const result = await askPermissionsUI(app, theme)
     if (result !== 1) return
-    startApplet(app)
-    if (onOpenApp) {
-      onOpenApp?.(app)
-    }
-  }
+    await openApp(app)
+  }, [openApp, theme])
 
   const showPopover = useCallback(
     (key: string) => {
@@ -618,7 +673,7 @@ export function AppsGrid({
         </TouchableOpacity>
       )
     },
-    [themed, theme, startApplet],
+    [handlePress, showAllApps, showPopover],
   )
 
   if (showPlaceholders) {
