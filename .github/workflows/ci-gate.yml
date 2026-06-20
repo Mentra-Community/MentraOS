@@ -117,6 +117,14 @@ jobs:
               context.payload.pull_request?.head?.sha ||
               context.sha;
 
+            // If a builder COMPLETION triggered this run (workflow_run), then by
+            // definition every builder has already registered its run, so the
+            // grace window — which only guards against a not-yet-registered
+            // builder on a fresh commit — is unnecessary. Skipping it here means a
+            // recovery after a failed builder rerun posts success immediately
+            // rather than waiting the full grace window.
+            const triggeredByBuilderCompletion = context.eventName === "workflow_run";
+
             const { owner, repo } = context.repo;
 
             const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
@@ -186,14 +194,16 @@ jobs:
               } else if (incomplete.length > 0 || unknown.length > 0) {
                 state = "pending"; settled = false;
                 description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
-              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadyGreen)) {
-                // Every gated workflow PRESENT has passed, and EITHER we've waited
-                // out the grace window (so a slow-to-register builder has had time
-                // to appear) OR this commit was already marked green by a prior
-                // run. The `alreadyGreen` case is important for workflow_run
-                // re-evaluations: without it, a re-eval would start at elapsedMs=0
-                // and regress the required check success -> pending for up to 90s
-                // even though the commit was already green.
+              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadyGreen || triggeredByBuilderCompletion)) {
+                // Every gated workflow PRESENT has passed. Declare success when any
+                // of these hold:
+                //   - the grace window has elapsed (a slow-to-register builder has
+                //     had time to appear), OR
+                //   - this commit was already marked green by a prior run (don't
+                //     regress success -> pending on a re-evaluation), OR
+                //   - a builder completion triggered this run, so every builder has
+                //     already registered and grace is moot (this also makes
+                //     recovery after a failed builder rerun post success at once).
                 state = "success"; settled = true;
                 description = `All required area builds passed (${passed.length})`;
               } else if (passed.length > 0) {
