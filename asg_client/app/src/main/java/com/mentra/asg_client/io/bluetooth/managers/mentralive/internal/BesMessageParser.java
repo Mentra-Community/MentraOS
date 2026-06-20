@@ -1,8 +1,10 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.bluetooth.utils.CircleBuffer;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +23,19 @@ public class BesMessageParser {
 
     // Buffer size for parsing messages
     private static final int BUFFER_SIZE = 8192; // 8KB buffer
+    private static final int STRING_FRAME_OVERHEAD = 7; // ## + type + length + payload + $$
+    private static final int FILE_FRAME_OVERHEAD =
+            BesWireFormat.LENGTH_FILE_START
+                    + BesWireFormat.LENGTH_FILE_TYPE
+                    + BesWireFormat.LENGTH_FILE_PACKSIZE
+                    + BesWireFormat.LENGTH_FILE_PACKINDEX
+                    + BesWireFormat.LENGTH_FILE_SIZE
+                    + BesWireFormat.LENGTH_FILE_NAME
+                    + BesWireFormat.LENGTH_FILE_FLAG
+                    + BesWireFormat.LENGTH_FILE_VERIFY
+                    + BesWireFormat.LENGTH_FILE_END;
+    private static final int FRAME_INCOMPLETE = -1;
+    private static final int FRAME_INVALID = -2;
 
     private final CircleBuffer mCircleBuffer;
     private final byte[] mTempBuffer;
@@ -72,7 +87,7 @@ public class BesMessageParser {
 
         List<byte[]> completeMessages = new ArrayList<>();
         int currentPos = 0;
-        boolean foundValidMessage = false;
+        int removeUntil = 0;
 
         // Continue until we can't find any more complete messages
         while (currentPos < fetchSize) {
@@ -80,52 +95,45 @@ public class BesMessageParser {
             int startMarkerPos =
                     findMarker(mTempBuffer, currentPos, fetchSize - currentPos, START_MARKER_BYTES);
             if (startMarkerPos == -1) {
-                // No start marker found
-                if (!foundValidMessage) {
-                    // If we haven't found any valid messages, clear the whole buffer
-                    mCircleBuffer.clear();
-                    return null;
+                // No complete marker pair. Drop junk but preserve a trailing single '#'
+                // because it may be the first byte of a split start marker.
+                if (completeMessages.isEmpty()) {
+                    removeUntil = trailingPartialStartOffset(mTempBuffer, fetchSize);
                 }
                 break;
             }
 
             // If we found a start marker that's not at our current position, skip to it
             if (startMarkerPos > currentPos) {
+                removeUntil = startMarkerPos;
                 currentPos = startMarkerPos;
             }
 
-            // Find end marker
-            int endMarkerPos =
-                    findMarker(
-                            mTempBuffer,
-                            currentPos + 2,
-                            fetchSize - currentPos - 2,
-                            END_MARKER_BYTES);
-            if (endMarkerPos == -1) {
-                // No end marker found
-                // If we've already found at least one valid message, process that and keep the rest
-                if (foundValidMessage) {
-                    break;
-                }
-
-                // Check if buffer has been waiting too long
-                // For now, if the buffer size exceeds a reasonable message size, clear it
-                if (fetchSize > 512) { // 512 bytes should be more than enough for any valid message
-                    Log.d(TAG, "Buffer size too large without valid message - clearing");
-                    mCircleBuffer.clear();
-                }
-                return null;
+            int messageLength = getExpectedFrameLength(mTempBuffer, currentPos, fetchSize);
+            if (messageLength == FRAME_INCOMPLETE) {
+                break;
             }
 
-            // Validate the message format (check ## is followed by at least 4 bytes of command
-            // header)
-            if (endMarkerPos - currentPos < 6) {
-                currentPos = endMarkerPos + 2;
+            if (messageLength == FRAME_INVALID) {
+                int nextStart =
+                        findMarker(
+                                mTempBuffer,
+                                currentPos + START_MARKER_BYTES.length,
+                                fetchSize - currentPos - START_MARKER_BYTES.length,
+                                START_MARKER_BYTES);
+                if (nextStart == -1) {
+                    removeUntil = currentPos + START_MARKER_BYTES.length;
+                    currentPos = removeUntil;
+                } else {
+                    Log.w(
+                            TAG,
+                            "Dropping malformed K900 frame prefix and resyncing at offset "
+                                    + nextStart);
+                    removeUntil = nextStart;
+                    currentPos = nextStart;
+                }
                 continue;
             }
-
-            // Calculate message length including markers
-            int messageLength = (endMarkerPos + 2) - currentPos;
 
             // Extract the complete message
             byte[] completeMessage = new byte[messageLength];
@@ -134,27 +142,137 @@ public class BesMessageParser {
             // Verify this looks like a valid K900 message with proper structure
             if (isValidK900Message(completeMessage)) {
                 completeMessages.add(completeMessage);
-                foundValidMessage = true;
             }
 
             // Move past this message
-            currentPos = endMarkerPos + 2;
+            currentPos += messageLength;
+            removeUntil = currentPos;
         }
 
         // Remove the processed data from the circle buffer
-        if (currentPos > 0) {
-            mCircleBuffer.removeHead(currentPos);
+        if (removeUntil > 0) {
+            mCircleBuffer.removeHead(removeUntil);
             // Keep this log as it's useful for monitoring circle buffer state
             Log.d(
                     TAG,
                     "Removed "
-                            + currentPos
+                            + removeUntil
                             + " bytes from buffer, "
                             + mCircleBuffer.getDataLen()
                             + " remaining");
         }
 
         return completeMessages.isEmpty() ? null : completeMessages;
+    }
+
+    private int getExpectedFrameLength(byte[] buffer, int start, int fetchSize) {
+        int available = fetchSize - start;
+        if (available < 5) {
+            return FRAME_INCOMPLETE;
+        }
+
+        byte commandType = buffer[start + 2];
+        if (commandType == BesWireFormat.CMD_TYPE_STRING) {
+            return getExpectedStringFrameLength(buffer, start, available);
+        }
+
+        if (isFileCommandType(commandType)) {
+            return getExpectedFileFrameLength(buffer, start, available);
+        }
+
+        Log.w(TAG, "Unknown K900 command type: 0x" + String.format("%02X", commandType));
+        return FRAME_INVALID;
+    }
+
+    private int getExpectedStringFrameLength(byte[] buffer, int start, int available) {
+        int beLength = ((buffer[start + 3] & 0xFF) << 8) | (buffer[start + 4] & 0xFF);
+        int leLength = (buffer[start + 3] & 0xFF) | ((buffer[start + 4] & 0xFF) << 8);
+
+        int beFrameLength = beLength + STRING_FRAME_OVERHEAD;
+        int leFrameLength = leLength + STRING_FRAME_OVERHEAD;
+
+        boolean waitingForMore = false;
+        boolean sawCompleteButMalformed = false;
+
+        int beStatus = getCandidateFrameStatus(buffer, start, available, beFrameLength);
+        if (beStatus > 0) {
+            return beStatus;
+        } else if (beStatus == FRAME_INCOMPLETE) {
+            waitingForMore = true;
+        } else {
+            sawCompleteButMalformed = true;
+        }
+
+        if (leFrameLength != beFrameLength) {
+            int leStatus = getCandidateFrameStatus(buffer, start, available, leFrameLength);
+            if (leStatus > 0) {
+                return leStatus;
+            } else if (leStatus == FRAME_INCOMPLETE) {
+                waitingForMore = true;
+            } else {
+                sawCompleteButMalformed = true;
+            }
+        }
+
+        if (waitingForMore && !sawCompleteButMalformed) {
+            return FRAME_INCOMPLETE;
+        }
+
+        return waitingForMore ? FRAME_INCOMPLETE : FRAME_INVALID;
+    }
+
+    private int getCandidateFrameStatus(byte[] buffer, int start, int available, int frameLength) {
+        if (frameLength < STRING_FRAME_OVERHEAD || frameLength > BUFFER_SIZE) {
+            return FRAME_INVALID;
+        }
+
+        if (available < frameLength) {
+            return FRAME_INCOMPLETE;
+        }
+
+        int endMarkerPos = start + frameLength - END_MARKER_BYTES.length;
+        if (hasMarkerAt(buffer, endMarkerPos, END_MARKER_BYTES)) {
+            return frameLength;
+        }
+
+        return FRAME_INVALID;
+    }
+
+    private int getExpectedFileFrameLength(byte[] buffer, int start, int available) {
+        int packSize = ((buffer[start + 3] & 0xFF) << 8) | (buffer[start + 4] & 0xFF);
+        int frameLength = FILE_FRAME_OVERHEAD + packSize;
+        if (frameLength < FILE_FRAME_OVERHEAD || frameLength > BUFFER_SIZE) {
+            return FRAME_INVALID;
+        }
+
+        if (available < frameLength) {
+            return FRAME_INCOMPLETE;
+        }
+
+        int endMarkerPos = start + frameLength - END_MARKER_BYTES.length;
+        return hasMarkerAt(buffer, endMarkerPos, END_MARKER_BYTES) ? frameLength : FRAME_INVALID;
+    }
+
+    private boolean isFileCommandType(byte commandType) {
+        return commandType == BesWireFormat.CMD_TYPE_PHOTO
+                || commandType == BesWireFormat.CMD_TYPE_VIDEO
+                || commandType == BesWireFormat.CMD_TYPE_MUSIC
+                || commandType == BesWireFormat.CMD_TYPE_AUDIO
+                || commandType == BesWireFormat.CMD_TYPE_DATA;
+    }
+
+    private boolean hasMarkerAt(byte[] buffer, int offset, byte[] marker) {
+        return offset >= 0
+                && offset + marker.length <= buffer.length
+                && buffer[offset] == marker[0]
+                && buffer[offset + 1] == marker[1];
+    }
+
+    private int trailingPartialStartOffset(byte[] buffer, int length) {
+        if (length > 0 && buffer[length - 1] == START_MARKER_BYTES[0]) {
+            return length - 1;
+        }
+        return length;
     }
 
     /**
