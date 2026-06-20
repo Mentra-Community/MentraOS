@@ -9,6 +9,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
+import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 
 export const pairing = {
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
@@ -30,7 +31,10 @@ export const pairing = {
   },
 
   /** Pair with (connect to) a discovered device. */
-  pair: (...args: Parameters<typeof BluetoothSdk.connect>) => BluetoothSdk.connect(...args),
+  pair: async (...args: Parameters<typeof BluetoothSdk.connect>): Promise<void> => {
+    await pushAllBluetoothSettings()
+    return BluetoothSdk.connect(...args)
+  },
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
 

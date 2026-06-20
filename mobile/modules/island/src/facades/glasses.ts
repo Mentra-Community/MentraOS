@@ -67,7 +67,10 @@ export const glasses = {
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
   /** Connect to a specific (discovered) device. */
-  connect: (...args: Parameters<typeof BluetoothSdk.connect>) => BluetoothSdk.connect(...args),
+  connect: async (...args: Parameters<typeof BluetoothSdk.connect>): Promise<void> => {
+    await pushAllBluetoothSettings()
+    return BluetoothSdk.connect(...args)
+  },
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
   /** Set a device as the `connectDefault()` target. */
