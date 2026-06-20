@@ -5,7 +5,6 @@ import {ScrollView, View} from "react-native"
 import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
-import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -291,8 +290,6 @@ export default function DebugSettingsScreen() {
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />
           </Group>
-
-          <StoreUrl />
 
           {/* Super mode only: a wrong OTA manifest can brick glasses */}
           {superMode && <OtaVersionUrl />}

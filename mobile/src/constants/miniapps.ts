@@ -2,7 +2,6 @@ export const cameraPackageName = "com.mentra.camera"
 export const captionsPackageName = "com.mentra.offline_captions"
 export const galleryPackageName = "com.mentra.gallery"
 export const settingsPackageName = "com.mentra.settings"
-export const storePackageName = "com.mentra.store"
 export const simulatedPackageName = "com.mentra.simulated"
 export const mirrorPackageName = "com.mentra.mirror"
 export const lmaInstallerPackageName = "com.mentra.miniappdev"
@@ -16,7 +15,6 @@ export const SYSTEM_APPS = [
   captionsPackageName,
   galleryPackageName,
   settingsPackageName,
-  storePackageName,
   simulatedPackageName,
   mirrorPackageName,
   mentraAiPackageName,

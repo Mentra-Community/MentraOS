@@ -16,7 +16,6 @@ import {
   lmaInstallerPackageName,
   mirrorPackageName,
   settingsPackageName,
-  storePackageName,
 } from "@/constants/miniapps"
 import {OFFLINE_HOSTED_PACKAGES} from "./offlineHostedPackages"
 
@@ -49,7 +48,6 @@ import ProfileSettings from "@/app/miniapps/settings/profile"
 import SpeechSettings from "@/app/miniapps/settings/speech"
 import StressTestScreen from "@/app/miniapps/settings/stress-test"
 import SuperSettings from "@/app/miniapps/settings/super"
-import StoreScreen from "@/app/miniapps/store/store"
 
 export interface OfflineAppDef {
   initialRoute: string
@@ -86,10 +84,6 @@ export const offlineAppRegistry: Record<string, OfflineAppDef> = {
   [settingsPackageName]: {
     initialRoute: "/miniapps/settings/main",
     routes: settingsRoutes,
-  },
-  [storePackageName]: {
-    initialRoute: "/miniapps/store/store",
-    routes: {"/miniapps/store/store": StoreScreen},
   },
   [mirrorPackageName]: {
     initialRoute: "/miniapps/mirror/mirror",

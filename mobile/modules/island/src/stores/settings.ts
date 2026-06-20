@@ -129,23 +129,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
-  store_url: {
-    key: "store_url",
-    defaultValue: () => {
-      if (process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE) {
-        return process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE
-      }
-      if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
-        return "https://apps.mentraglass.cn"
-      }
-      return "https://apps.mentra.glass"
-    },
-    // If env var is set, always use it (on every boot)
-    override: () => process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE,
-    writable: true,
-    saveOnServer: false,
-    persist: true,
-  },
   // Cloud V2 endpoint OVERRIDES. Empty = no override; cloudClient's resolveUrl
   // owns the full precedence (override -> env -> Metro-derived dev default).
   // The value may be an explicit URL or the METRO_AUTO sentinel ("my dev
@@ -168,13 +151,6 @@ export const SETTINGS: Record<string, Setting> = {
   },
   saved_backend_urls: {
     key: "saved_backend_urls",
-    defaultValue: () => [],
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
-  saved_store_urls: {
-    key: "saved_store_urls",
     defaultValue: () => [],
     writable: true,
     saveOnServer: true,
