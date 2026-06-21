@@ -32,6 +32,7 @@ const CONCURRENCY_COOLDOWN_MS = 5_000;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
 const QUOTA_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 10_000;
+const sharedPools = new Map<string, SonioxKeyPool>();
 
 export function parseSonioxFallbackApiKeys(value: string | undefined): string[] {
   if (!value) return [];
@@ -73,7 +74,10 @@ export function classifySonioxCredentialFailure(error: Error): SonioxCredentialF
   }
 
   if (
+    code === 402 ||
     lower.includes("quota") ||
+    lower.includes("budget") ||
+    lower.includes("exhausted") ||
     lower.includes("credit") ||
     lower.includes("billing") ||
     lower.includes("spend") ||
@@ -94,6 +98,24 @@ export function classifySonioxCredentialFailure(error: Error): SonioxCredentialF
   }
 
   return { kind: "transient", cooldownMs: TRANSIENT_COOLDOWN_MS };
+}
+
+export function getSharedSonioxKeyPool(primaryApiKey: string, fallbackApiKeys: string[] = []): SonioxKeyPool {
+  const poolKey = [
+    fingerprintSonioxKey(primaryApiKey.trim()),
+    ...fallbackApiKeys.map((key) => key.trim()).filter(Boolean).map(fingerprintSonioxKey),
+  ].join(":");
+
+  const existing = sharedPools.get(poolKey);
+  if (existing) return existing;
+
+  const pool = new SonioxKeyPool(primaryApiKey, fallbackApiKeys);
+  sharedPools.set(poolKey, pool);
+  return pool;
+}
+
+export function resetSharedSonioxKeyPoolsForTests(): void {
+  sharedPools.clear();
 }
 
 export class SonioxKeyPool {
