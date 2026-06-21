@@ -8,6 +8,8 @@
  *
  * Configuration:
  *   - Requires `SONIOX_API_KEY` env var.
+ *   - Optional `SONIOX_FALLBACK_API_KEYS` is comma-separated and used when the
+ *     primary key hits auth/quota/rate/concurrency errors.
  *   - Model defaults to `"stt-rt-v4"`; override via `SONIOX_MODEL`.
  *   - Audio format hardcoded to s16le, 16kHz, mono (matches our LC3 output).
  *
@@ -36,6 +38,11 @@ import type {
   TranscriptionProvider,
   TranscriptEvent,
 } from "./provider";
+import {
+  type SonioxCredential,
+  SonioxKeyPool,
+  parseSonioxFallbackApiKeys,
+} from "./soniox-key-pool";
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
 function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
@@ -98,26 +105,45 @@ export interface CreateSonioxProviderOptions extends ProviderOptions {
   targetLanguage?: string;
 }
 
-/** Shared client per worker. Soniox SDK is happy with one client for many streams. */
-let sharedClient: SonioxNodeClient | null = null;
-function getClient(): SonioxNodeClient {
-  if (sharedClient) return sharedClient;
+/** Shared clients per worker. Soniox SDK is happy with one client per key. */
+let sharedKeyPool: SonioxKeyPool | null = null;
+const sharedClients = new Map<string, SonioxNodeClient>();
+
+function getKeyPool(): SonioxKeyPool {
+  if (sharedKeyPool) return sharedKeyPool;
   const apiKey = process.env.SONIOX_API_KEY;
   if (!apiKey) {
     throw new Error(
       "SONIOX_API_KEY is not set — required to use the soniox provider. Set AUDIO_PROVIDER=mock to use the mock instead.",
     );
   }
-  sharedClient = new SonioxNodeClient({ api_key: apiKey });
-  return sharedClient;
+  sharedKeyPool = new SonioxKeyPool(
+    apiKey,
+    parseSonioxFallbackApiKeys(process.env.SONIOX_FALLBACK_API_KEYS),
+  );
+  if (sharedKeyPool.hasFallbacks) {
+    console.log(`[soniox] fallback key pool enabled size=${sharedKeyPool.size}`);
+  }
+  return sharedKeyPool;
+}
+
+function getClientForCredential(credential: SonioxCredential): SonioxNodeClient {
+  const existing = sharedClients.get(credential.id);
+  if (existing) return existing;
+
+  const client = new SonioxNodeClient({ api_key: credential.apiKey });
+  sharedClients.set(credential.id, client);
+  return client;
 }
 
 export async function createSonioxProvider(
   opts: CreateSonioxProviderOptions,
 ): Promise<TranscriptionProvider> {
-  const client = opts.client ?? getClient();
   const gapConfig = audioGapConfig();
   const endpointDebounce = endpointDebounceMs();
+  const injectedClient = opts.client;
+  const keyPool = injectedClient ? null : getKeyPool();
+  let activeCredential: SonioxCredential | null = null;
 
   // Build session config. For language="auto" we enable detection; for a
   // specific code we pass it as hint with detection still on. (Letting
@@ -158,7 +184,7 @@ export async function createSonioxProvider(
   // reconnect (the old one is dead; a fresh `client.realtime.stt(...)` takes its
   // place) while keeping THIS provider object — and therefore its identity in
   // the worker's per-user provider map — stable.
-  let session: RealtimeSttSession = client.realtime.stt(sessionConfig);
+  let session!: RealtimeSttSession;
 
   // True once `close()` has run. Gates the self-heal path so an expected
   // teardown (our own `session.finish()` → `disconnected`) does not trigger a
@@ -620,6 +646,7 @@ export async function createSonioxProvider(
 
   const handleError = (err: Error) => {
     stopGapDetection();
+    recordCredentialFailure(activeCredential, err, "stream-error");
     opts.onError?.(err);
     // A provider-side error usually precedes (or accompanies) the socket dying.
     // Treat it as a trigger for the self-heal path: if the session is no longer
@@ -631,6 +658,15 @@ export async function createSonioxProvider(
   // The `disconnected` handler is named so the same function is wired onto every
   // session instance (original + each reconnect) and can be `off`-ed on close.
   const handleDisconnected = (reason: unknown) => {
+    const disconnectError =
+      reason instanceof Error
+        ? reason
+        : new Error(
+            typeof reason === "string" ? reason : JSON.stringify(reason),
+          );
+    if (!closed) {
+      recordCredentialFailure(activeCredential, disconnectError, "disconnected");
+    }
     console.log(
       `[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
     );
@@ -643,7 +679,7 @@ export async function createSonioxProvider(
 
   const handleConnected = () => {
     console.log(
-      `[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
+      `[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""} ${describeCredential(activeCredential)}`,
     );
   };
 
@@ -681,6 +717,102 @@ export async function createSonioxProvider(
       s.off("error", handleError);
     } catch {
       /* best-effort */
+    }
+  };
+
+  const describeCredential = (credential: SonioxCredential | null): string => {
+    if (!credential) return "credential=injected-client";
+    return `credential=${credential.role}:${credential.id}`;
+  };
+
+  const createSessionCandidate = (
+    attempted: Set<string>,
+  ): { session: RealtimeSttSession; credential: SonioxCredential | null } | null => {
+    if (injectedClient) {
+      return {
+        session: injectedClient.realtime.stt(sessionConfig),
+        credential: null,
+      };
+    }
+
+    const credential = keyPool!.selectCredential(attempted);
+    if (!credential) return null;
+    attempted.add(credential.id);
+
+    return {
+      session: getClientForCredential(credential).realtime.stt(sessionConfig),
+      credential,
+    };
+  };
+
+  const recordCredentialSuccess = (
+    credential: SonioxCredential | null,
+    context: string,
+  ): void => {
+    if (!credential) return;
+    keyPool!.recordSuccess(credential.id);
+    console.log(
+      `[soniox] credential success scope=${opts.scope} context=${context} ${describeCredential(credential)}`,
+    );
+  };
+
+  const recordCredentialFailure = (
+    credential: SonioxCredential | null,
+    err: Error,
+    context: string,
+  ): void => {
+    if (!credential) return;
+    const classification = keyPool!.recordFailure(credential.id, err);
+    console.warn(
+      `[soniox] credential failure scope=${opts.scope} context=${context} ${describeCredential(credential)} kind=${classification?.kind ?? "unknown"} message=${err.message}`,
+    );
+  };
+
+  const connectFreshSession = async (
+    attempted: Set<string>,
+    context: string,
+  ): Promise<void> => {
+    let lastError: Error | null = null;
+
+    while (true) {
+      const candidate = createSessionCandidate(attempted);
+      if (!candidate) {
+        const availability = keyPool
+          ? keyPool
+              .describeAvailability()
+              .map(
+                (item) =>
+                  `${item.role}:${item.id}:${item.available ? "available" : item.disabled ? "disabled" : `cooldown-${item.failureKind ?? "unknown"}`}`,
+              )
+              .join(",")
+          : "none";
+        throw (
+          lastError ??
+          new Error(
+            `No Soniox credential is currently available (scope=${opts.scope}, availability=${availability})`,
+          )
+        );
+      }
+
+      wireSession(candidate.session);
+      activeCredential = candidate.credential;
+      try {
+        await candidate.session.connect();
+        session = candidate.session;
+        recordCredentialSuccess(candidate.credential, context);
+        return;
+      } catch (err) {
+        const error = err as Error;
+        lastError = error;
+        recordCredentialFailure(candidate.credential, error, context);
+        unwireSession(candidate.session);
+        try {
+          await candidate.session.close();
+        } catch {
+          /* best-effort */
+        }
+        if (injectedClient) throw error;
+      }
     }
   };
 
@@ -753,15 +885,10 @@ export async function createSonioxProvider(
         await new Promise((resolve) => setTimeout(resolve, delay));
         if (closed) break;
 
-        // Drop the dead session's handlers so its late events can't drive us.
-        unwireSession(session);
-
-        const next = client.realtime.stt(sessionConfig);
-        wireSession(next);
         try {
-          await next.connect();
-          // Connected: swap in the fresh session and clear the heal state.
-          session = next;
+          // Drop the dead session's handlers so its late events can't drive us.
+          unwireSession(session);
+          await connectFreshSession(new Set<string>(), "self-heal");
           reconnecting = false;
           reconnectAttempts = 0;
           startGapDetection();
@@ -772,12 +899,6 @@ export async function createSonioxProvider(
             `[soniox] self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}:`,
             err,
           );
-          unwireSession(next);
-          try {
-            await next.close();
-          } catch {
-            /* best-effort */
-          }
           // Loop and back off again.
         }
       }
@@ -787,10 +908,10 @@ export async function createSonioxProvider(
     void attempt();
   };
 
-  // Wire the initial session and connect it.
-  wireSession(session);
+  // Connect the initial session, trying a fallback credential immediately if
+  // the primary is already over quota/rate/concurrency capacity.
   try {
-    await session.connect();
+    await connectFreshSession(new Set<string>(), "initial-connect");
     startGapDetection();
   } catch (err) {
     console.error(`[soniox] connect failed scope=${opts.scope}:`, err);
