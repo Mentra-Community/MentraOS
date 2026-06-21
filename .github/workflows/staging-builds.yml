@@ -182,11 +182,15 @@ jobs:
           # gh CLI inside release-android.mjs uploads the APK to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Mapbox Downloads:Read secret token (sk.…). Gradle reads it via
-          # System.getenv('MAPBOX_DOWNLOADS_TOKEN') (mobile/android/build.gradle)
-          # to authenticate the private Maven repo and fetch the Nav SDK binaries.
-          # Build-time only — never written into the APK.
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo for the Nav SDK (com.mapbox.navigationcore). Build-time
+          # only — never in the APK. Passed under BOTH env names: our repo block
+          # reads MAPBOX_DOWNLOADS_TOKEN; the @rnmapbox/maps-generated allprojects
+          # repo block (applies to :mentra-crust too) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN — without it that repo is added
+          # unauthenticated → "Could not find navigationcore".
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         # release-android.mjs handles: prebuild → gradle assemble/bundle →
         # GH release upload (v{X.Y}/_Beta_N.apk) → Play internal track upload
         # (if google-play-key.json is at ~/.mentra/credentials/).

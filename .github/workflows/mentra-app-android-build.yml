@@ -158,11 +158,17 @@ jobs:
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
-          # Mapbox Downloads:Read secret token (sk.…). Gradle reads it via
-          # System.getenv('MAPBOX_DOWNLOADS_TOKEN') (mobile/android/build.gradle)
-          # to authenticate the private Maven repo and fetch the Nav SDK binaries.
-          # Build-time only — never written into the APK. Missing → 401.
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo so Gradle can fetch the Nav SDK (com.mapbox.navigationcore)
+          # binaries. Build-time only — never written into the APK.
+          # Passed under BOTH names: our hand-written repo block reads
+          # MAPBOX_DOWNLOADS_TOKEN, while the @rnmapbox/maps-generated repo block
+          # (allprojects, in mobile/android/build.gradle) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN. The generated block applies to ALL
+          # modules incl. :mentra-crust, so without the second name it adds the
+          # repo UNAUTHENTICATED → "Could not find navigationcore".
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Retry build with clean cache (if first attempt failed)
         if: steps.gradle-build.outcome == 'failure'
