@@ -90,9 +90,39 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into Info.plist
+        # (MBXAccessToken) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
-          # Create .env from example
           cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
+          fi
+
+      - name: Configure Mapbox SPM credentials (~/.netrc)
+        # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
+        # api.mapbox.com at prebuild / pod install / SPM resolve time. SPM
+        # authenticates via ~/.netrc with the Downloads:Read secret token (sk.…).
+        # Without this the package download returns 401. Build-time only — never
+        # written into the IPA.
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "::error::MAPBOX_DOWNLOADS_TOKEN secret not set — SPM cannot fetch the Mapbox Nav SDK; iOS build will fail with 401."
+            exit 1
+          fi
+          # Remove any prior api.mapbox.com entry so re-runs on the persistent
+          # self-hosted runner don't stack duplicate machine lines.
+          if [ -f "$HOME/.netrc" ]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
 
       - name: Run Expo prebuild
         working-directory: ./mobile

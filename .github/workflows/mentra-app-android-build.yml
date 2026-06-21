@@ -125,9 +125,19 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into the Android
+        # manifest (com.mapbox.token) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
 
       - name: Run Expo prebuild
         working-directory: ./mobile
@@ -148,6 +158,11 @@ jobs:
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          # Mapbox Downloads:Read secret token (sk.…). Gradle reads it via
+          # System.getenv('MAPBOX_DOWNLOADS_TOKEN') (mobile/android/build.gradle)
+          # to authenticate the private Maven repo and fetch the Nav SDK binaries.
+          # Build-time only — never written into the APK. Missing → 401.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Retry build with clean cache (if first attempt failed)
         if: steps.gradle-build.outcome == 'failure'
@@ -160,6 +175,7 @@ jobs:
           ./gradlew assembleRelease --build-cache --parallel
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Fail if both builds failed
         if: steps.gradle-build.outcome == 'failure'
