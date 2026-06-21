@@ -12,7 +12,7 @@ dotenv.config();
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
 export const SONIOX_FALLBACK_API_KEYS = process.env.SONIOX_FALLBACK_API_KEYS || "";
 export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
-export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v4";
+export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v5";
 
 export const ALIBABA_ENDPOINT = process.env.ALIBABA_ENDPOINT || "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
 export const ALIBABA_WORKSPACE = process.env.ALIBABA_WORKSPACE || "";
@@ -71,7 +71,7 @@ export interface SonioxTranslationConfig {
   apiKey: string;
   fallbackApiKeys?: string[];
   endpoint: string;
-  model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v4'
+  model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v5'
   maxConnections?: number;
 }
 

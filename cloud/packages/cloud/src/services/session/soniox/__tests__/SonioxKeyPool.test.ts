@@ -7,8 +7,15 @@ import {
   parseSonioxFallbackApiKeys,
   resetSharedSonioxKeyPoolsForTests,
 } from "../SonioxKeyPool";
+import { SONIOX_MODEL as TRANSCRIPTION_SONIOX_MODEL } from "../../transcription/types";
+import { SONIOX_MODEL as TRANSLATION_SONIOX_MODEL } from "../../translation/types";
 
 describe("SonioxKeyPool", () => {
+  it("defaults legacy Soniox transcription and translation to the current real-time model", () => {
+    expect(TRANSCRIPTION_SONIOX_MODEL).toBe("stt-rt-v5");
+    expect(TRANSLATION_SONIOX_MODEL).toBe("stt-rt-v5");
+  });
+
   it("parses comma-separated fallback keys", () => {
     expect(parseSonioxFallbackApiKeys(" a, b ,, c ")).toEqual(["a", "b", "c"]);
     expect(parseSonioxFallbackApiKeys(undefined)).toEqual([]);

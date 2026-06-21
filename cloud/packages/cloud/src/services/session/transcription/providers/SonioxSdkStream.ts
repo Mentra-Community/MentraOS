@@ -964,7 +964,7 @@ export class SonioxSdkStream implements StreamInstance {
     const enableLanguageIdentification = !(disableLangIdParam === true || disableLangIdParam === "true");
 
     const sessionConfig: SttSessionConfig = {
-      model: this.config.model || "stt-rt-v4",
+      model: this.config.model || "stt-rt-v5",
       audio_format: "pcm_s16le",
       sample_rate: 16000,
       num_channels: 1,
