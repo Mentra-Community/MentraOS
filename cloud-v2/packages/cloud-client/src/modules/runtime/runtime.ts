@@ -30,6 +30,7 @@ import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
 import type { Camera, PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+import type { Maps, DirectionsRequest, DirectionsResult, LatLng, ReverseGeocodeResult } from "./maps";
 import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 import type { UdpAudio } from "./audio-udp";
 import type { RuntimeSnapshot } from "./status";
@@ -40,6 +41,17 @@ const UDP_LIVENESS_TIMEOUT_MS = 3_000;
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
 export type { PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+export type {
+  DirectionsRequest,
+  DirectionsResult,
+  Route,
+  RouteStep,
+  LatLng,
+  TravelMode,
+  ManeuverKind,
+  RouteAvoidances,
+  ReverseGeocodeResult,
+} from "./maps";
 export type { RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 export type { RuntimeAudioTransport } from "./audio-udp";
 export type { RuntimeStatus, RuntimeSnapshot } from "./status";
@@ -82,6 +94,10 @@ export interface RuntimeModule {
   tts: {
     speak(text: string, options?: RuntimeTtsSpeakOptions): Promise<RuntimeTtsSpeechSource>;
   };
+  maps: {
+    directions(req: DirectionsRequest): Promise<DirectionsResult>;
+    reverseGeocode(coord: LatLng): Promise<ReverseGeocodeResult>;
+  };
 
   onConnected(handler: () => void): () => void;
   onDisconnected(handler: (info: { reason: string }) => void): () => void;
@@ -99,6 +115,7 @@ export interface RuntimeDeps {
   subscriptions: Subscriptions;
   camera: Camera;
   tts: Tts;
+  maps: Maps;
   audio: UdpAudio;
   logger: Logger;
   /**
@@ -122,6 +139,7 @@ export class Runtime implements RuntimeModule {
   private readonly subscriptions: Subscriptions;
   private readonly camera: Camera;
   public readonly tts: Tts;
+  public readonly maps: Maps;
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
   private readonly forceRefreshToken: () => Promise<string>;
@@ -159,6 +177,7 @@ export class Runtime implements RuntimeModule {
     this.subscriptions = deps.subscriptions;
     this.camera = deps.camera;
     this.tts = deps.tts;
+    this.maps = deps.maps;
     this.audio = deps.audio;
     this.logger = deps.logger;
     this.forceRefreshToken = deps.forceRefreshToken;

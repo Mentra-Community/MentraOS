@@ -266,8 +266,8 @@ class MantleManager {
         setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
-        computeRoute: (payload) => navigationService.computeRoute(payload),
-        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
+        // Route compute + reverse geocoding now run in the v2 cloud maps service
+        // (cloud.runtime.maps); the device no longer calls Mapbox REST directly.
       },
       heading: {
         addListener: (l) => headingService.addListener(l),

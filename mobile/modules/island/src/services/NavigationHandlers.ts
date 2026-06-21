@@ -315,18 +315,20 @@ export class NavigationHandlers {
     requestId?: string,
   ): Promise<void> {
     try {
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.computeRoute(payload)
-        : {ok: false as const, error: "navigation adapter not configured"}
-      if (result.ok === false) {
+      // Computed in the v2 cloud (provider-abstracted maps service). The SDK
+      // payload shape ({origin, stops, mode, avoid, alternatives}) is the v2
+      // DirectionsRequest field-for-field, so it passes straight through. The
+      // direct-Mapbox path in NavigationService is deprecated.
+      const cloud = getRuntimeHooks().cloud
+      if (!cloud?.maps) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.INTERNAL,
-          message: result.error ?? "computeRoute failed",
+          message: "cloud maps unavailable",
         })
-      } else {
-        this.sendResult(packageName, requestId, true, result)
+        return
       }
+      const {routes} = await cloud.maps.directions(payload as never)
+      this.sendResult(packageName, requestId, true, {ok: true, routes})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -358,11 +360,18 @@ export class NavigationHandlers {
         })
         return
       }
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation?.reverseGeocodeRoad
-        ? await navigation.reverseGeocodeRoad({lat, lng})
-        : {ok: false as const, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, true, result)
+      // Resolved in the v2 cloud (provider-abstracted maps service). The
+      // direct-Mapbox geocoding path in NavigationService is deprecated.
+      const cloud = getRuntimeHooks().cloud
+      if (!cloud?.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const {road} = await cloud.maps.reverseGeocode({lat, lng})
+      this.sendResult(packageName, requestId, true, {ok: true, road})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation reverseGeocode error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {

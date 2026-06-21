@@ -313,8 +313,15 @@ class NavigationService {
   }
 
   /**
+   * @deprecated Route computation moved to the v2 cloud maps service
+   * (cloud.runtime.maps.directions), which holds the provider token
+   * server-side and caches results. The miniapp bridge now routes
+   * NAVIGATION_COMPUTE_ROUTE to NavigationHandlers -> cloud.maps; this direct
+   * Mapbox path is no longer reached from miniapps. Kept only as reference /
+   * for any non-bridge caller; do not add new callers.
+   *
    * Compute one or more routes without starting a trip. Implemented by
-   * calling Google's Routes API (REST) so we don't disturb the active
+   * calling Mapbox's Directions API (REST) so we don't disturb the active
    * Navigator. Returns `{ok: false}` plus an error string when the engine
    * can't produce a route — mirrors the SDK's ComputeRouteResult shape so
    * the host can pass it back to miniapps unchanged.
@@ -333,8 +340,14 @@ class NavigationService {
   }
 
   /**
+   * @deprecated Reverse geocoding moved to the v2 cloud maps service
+   * (cloud.runtime.maps.reverseGeocode). The miniapp bridge now routes
+   * NAVIGATION_REVERSE_GEOCODE to NavigationHandlers -> cloud.maps; this direct
+   * Mapbox path is no longer reached from miniapps. Kept only as reference; do
+   * not add new callers.
+   *
    * Reverse-geocode a coordinate into a short road/route name via
-   * Google's Geocoding REST API. Backs the SDK pivot engine's
+   * Mapbox's Geocoding REST API. Backs the SDK pivot engine's
    * last-resort fallback when a Routes-API instruction didn't carry a
    * parseable road. Returns `{ok: true, road: null}` when the
    * coordinate is genuinely off-grid (mid-park, water) — that's a
@@ -450,6 +463,11 @@ function mapboxToken(): string {
 }
 
 /**
+ * @deprecated Superseded by the v2 cloud maps service
+ * (cloud.runtime.maps.directions). This direct-to-Mapbox call from the device
+ * is no longer on the miniapp path; the token now lives server-side. Retained
+ * for reference only — do not add new callers.
+ *
  * Phone-side helper: hit the Mapbox Directions API directly. Lives here
  * (not in Kotlin) so it's platform-independent across the JS bridge.
  * Returns the SDK-shaped result with primary + alternates.
@@ -655,6 +673,11 @@ function mapboxManeuverToKind(type?: string, modifier?: string): string | undefi
 }
 
 /**
+ * @deprecated Superseded by the v2 cloud maps service
+ * (cloud.runtime.maps.reverseGeocode). This direct-to-Mapbox call from the
+ * device is no longer on the miniapp path; the token now lives server-side.
+ * Retained for reference only — do not add new callers.
+ *
  * Reverse-geocode a coordinate via the Mapbox Geocoding v6 API directly and
  * return the road/street name (e.g. "Octavia Blvd"). When no street is
  * present — the coordinate is genuinely off-grid (water, park interior) —
