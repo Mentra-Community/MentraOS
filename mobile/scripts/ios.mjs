@@ -9,26 +9,52 @@ await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 
 // Get connected iOS devices via devicectl
-const tmpFile = `/tmp/devicectl-${Date.now()}.json`
-await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
-const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
-await fs.remove(tmpFile)
+const listDevices = async () => {
+  const tmpFile = `/tmp/devicectl-${Date.now()}.json`
+  await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
+  const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
+  await fs.remove(tmpFile)
+  return json.result?.devices ?? []
+}
 
 const isIphone = (d) =>
   d.hardwareProperties?.deviceType === "iPhone" ||
   d.capabilities?.some((c) => c.name === "iPhone") ||
   d.deviceProperties?.marketingName?.includes("iPhone")
 
-const pairedIphones = json.result?.devices?.filter(
+let pairedIphones = (await listDevices()).filter(
   (d) =>
     isIphone(d) &&
     d.connectionProperties?.pairingState === "paired" &&
     d.connectionProperties?.tunnelState !== "unavailable",
-) ?? []
+)
 
-const connected = pairedIphones.find(
+let connected = pairedIphones.find(
   (d) => d.connectionProperties?.tunnelState === "connected",
 )
+
+// A newly plugged/unlocked iPhone can show as paired+wired but
+// tunnelState=disconnected until a CoreDevice command touches it. Warm the
+// tunnel once before failing, then re-read the list the build path uses.
+if (!connected && pairedIphones.length > 0) {
+  const candidate = pairedIphones.find((d) => d.connectionProperties?.transportType === "wired") ?? pairedIphones[0]
+  const candidateId = candidate.hardwareProperties?.udid ?? candidate.identifier
+  if (candidateId) {
+    console.log(`Warming iPhone tunnel for ${candidate.deviceProperties.name} (${candidateId})...`)
+    try {
+      await $`xcrun devicectl device info details --device ${candidateId} --timeout 15`
+    } catch (error) {
+      console.warn(`Could not warm iPhone tunnel: ${error}`)
+    }
+    pairedIphones = (await listDevices()).filter(
+      (d) =>
+        isIphone(d) &&
+        d.connectionProperties?.pairingState === "paired" &&
+        d.connectionProperties?.tunnelState !== "unavailable",
+    )
+    connected = pairedIphones.find((d) => d.connectionProperties?.tunnelState === "connected")
+  }
+}
 
 if (!connected) {
   if (pairedIphones.length > 0) {

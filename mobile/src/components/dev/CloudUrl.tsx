@@ -266,37 +266,6 @@ export default function CloudUrl() {
           />
         </View>
 
-        <View className="mt-3">
-          <Button
-            text="☆ Bookmark"
-            onPress={handleBookmark}
-            disabled={isSaving}
-            preset="alternate"
-            flexContainer={false}
-            flex
-          />
-        </View>
-
-        {/* Saved Cloud V2 bookmarks: tap a chip to fill both inputs at once. */}
-        {bookmarks.length > 0 && (
-          <View className="mt-3.5 mb-1">
-            <Text className="mb-2 text-xs font-semibold text-muted-foreground">My Cloud V2 URLs</Text>
-            <View className="flex-row flex-wrap gap-2">
-              {bookmarks.map((bookmark, index) => (
-                <TouchableOpacity
-                  key={`${bookmark.coreUrl}-${bookmark.runtimeUrl}-${index}`}
-                  className="rounded-lg border border-primary bg-background px-3 py-1.5"
-                  onPress={() => applyPreset(bookmark.coreUrl, bookmark.runtimeUrl)}
-                  onLongPress={() => handleDeleteBookmark(index)}
-                  activeOpacity={0.7}>
-                  <Text className="text-xs text-foreground">{bookmark.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text className="mt-1 text-[10px] italic text-muted-foreground">Tap to fill · Long-press to remove</Text>
-          </View>
-        )}
-
         {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
         <View className="mt-3 gap-3">
           <View className="flex-row gap-3">

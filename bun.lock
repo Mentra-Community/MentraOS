@@ -206,6 +206,24 @@
         "tailwindcss": "^4.2.4",
       },
     },
+    "miniapps/teleprompter": {
+      "name": "teleprompter-miniapp",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.511.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwind-merge": "^3.0.2",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
+      },
+    },
     "miniapps/translation": {
       "name": "local-translation",
       "dependencies": {
@@ -1572,6 +1590,8 @@
     "tailwind-merge": ["tailwind-merge@3.6.0", "", {}, "sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w=="],
 
     "tailwindcss": ["tailwindcss@4.3.0", "", {}, "sha512-y6nxMGB1nMW9R6k96e5gdIFzcfL/gTJRNaqGes1YvkLnPVXzWgbqFF2yLC0T8G774n24cx3Pe8XrKoniCOAH+Q=="],
+
+    "teleprompter-miniapp": ["teleprompter-miniapp@workspace:miniapps/teleprompter"],
 
     "thread-stream": ["thread-stream@3.2.0", "", { "dependencies": { "real-require": "^0.2.0" } }, "sha512-zLBvqpwr4Esa0kRjcrzGU6zL25lePWaCLMx0RQFrmteozIfeNdaMLpG5U7PeHzvlFkAWaRKA9/KVW4F60iB+qw=="],
 

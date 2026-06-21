@@ -20,6 +20,48 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+import {logE2EMetric} from "@/utils/e2eMetrics"
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const finiteNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined
+
+type ExternalStreamKeepAliveRequest = {
+  type: "keep_stream_alive"
+  streamId: string
+  ackId: string
+}
+
+const normalizeStreamVideoConfig = (value: unknown): StreamStartRequest["video"] | undefined => {
+  if (!isRecord(value)) return undefined
+  const config: NonNullable<StreamStartRequest["video"]> = {}
+  const width = finiteNumber(value.width)
+  const height = finiteNumber(value.height)
+  const bitrate = finiteNumber(value.bitrate)
+  const frameRate = finiteNumber(value.frameRate)
+  // Cloud SDK apps historically send frameRate; the local Bluetooth/miniapp SDKs
+  // expose fps. Keep the compatibility translation at this cloud boundary.
+  const fps = frameRate ?? finiteNumber(value.fps)
+  if (width !== undefined) config.width = width
+  if (height !== undefined) config.height = height
+  if (bitrate !== undefined) config.bitrate = bitrate
+  if (fps !== undefined) config.fps = fps
+  return Object.keys(config).length > 0 ? config : undefined
+}
+
+const normalizeStreamAudioConfig = (value: unknown): StreamStartRequest["audio"] | undefined => {
+  if (!isRecord(value)) return undefined
+  const config: NonNullable<StreamStartRequest["audio"]> = {}
+  const bitrate = finiteNumber(value.bitrate)
+  const sampleRate = finiteNumber(value.sampleRate)
+  if (bitrate !== undefined) config.bitrate = bitrate
+  if (sampleRate !== undefined) config.sampleRate = sampleRate
+  if (typeof value.echoCancellation === "boolean") config.echoCancellation = value.echoCancellation
+  if (typeof value.noiseSuppression === "boolean") config.noiseSuppression = value.noiseSuppression
+  return Object.keys(config).length > 0 ? config : undefined
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -96,10 +138,15 @@ class SocketComms {
     console.log("SOCKET: connectWebsocket()")
     this.setupListeners()
     const url = useSettingsStore.getState().getWsUrl()
+    const backendUrl = useSettingsStore.getState().getRestUrl()
     if (!url) {
       console.error(`SOCKET: Invalid server URL`)
       return
     }
+    logE2EMetric("backend_config", {
+      backend_url: backendUrl,
+      ws_url: url,
+    })
     await ws.connect(url, this.coreToken)
   }
 
@@ -476,7 +523,6 @@ class SocketComms {
     // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
     // per-utterance offline/online STT switching, so we never want to
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
-    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
     // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
@@ -804,8 +850,6 @@ class SocketComms {
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
-
-    // console.log(`SOCKET: msg: ${type}`)
 
     switch (type) {
       case "ping":

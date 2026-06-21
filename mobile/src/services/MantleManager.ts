@@ -861,6 +861,10 @@ class MantleManager {
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
           const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
+          const dashboardUrl = typeof event.dashboard_url === "string" ? event.dashboard_url : undefined
+          const expectedBehavior = dashboardUrl
+            ? `Captions tester runs should complete without a captions incident. Check live dashboard: ${dashboardUrl}.`
+            : "Captions tester runs should complete without a captions incident."
 
           const actualBehavior = JSON.stringify(
             {
@@ -885,7 +889,7 @@ class MantleManager {
                 triggerArea: "captions_tester",
                 triggerReason: "captions_incident_detected",
               },
-              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              expectedBehavior,
               actualBehavior,
               severityRating: 4,
               dedupeKey,
@@ -1109,30 +1113,6 @@ class MantleManager {
           }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("ota_update_available", (event) => {
-          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-            console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
-            return
-          }
-          console.log("📱 MANTLE: OTA update available from glasses:", event)
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            available: true,
-            versionCode: event.version_code ?? 0,
-            versionName: event.version_name ?? "",
-            updates: event.updates ?? [],
-            totalSize: event.total_size ?? 0,
-            cacheReady: event.cache_ready === true,
-          })
-          GlobalEventEmitter.emit("ota_update_available", {
-            versionCode: event.version_code,
-            versionName: event.version_name,
-            updates: event.updates,
-            totalSize: event.total_size,
-          })
         }),
       )
 
