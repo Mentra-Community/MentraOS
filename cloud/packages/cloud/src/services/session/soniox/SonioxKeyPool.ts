@@ -74,27 +74,26 @@ export function classifySonioxCredentialFailure(error: Error): SonioxCredentialF
   }
 
   if (
-    code === 402 ||
-    lower.includes("quota") ||
-    lower.includes("budget") ||
-    lower.includes("exhausted") ||
-    lower.includes("credit") ||
-    lower.includes("billing") ||
-    lower.includes("spend") ||
-    lower.includes("balance") ||
-    lower.includes("usage limit") ||
-    lower.includes("monthly limit")
-  ) {
-    return { kind: "quota", cooldownMs: QUOTA_COOLDOWN_MS };
-  }
-
-  if (
     code === 429 ||
     lower.includes("rate limit") ||
     lower.includes("rate_limit") ||
     lower.includes("too many requests")
   ) {
     return { kind: "rate_limit", cooldownMs: RATE_LIMIT_COOLDOWN_MS };
+  }
+
+  if (
+    code === 402 ||
+    /\bquota\b/.test(lower) ||
+    /\bbudget\b/.test(lower) ||
+    /\bcredit(?:s)?\b/.test(lower) ||
+    /\bbilling\b/.test(lower) ||
+    /\bspend(?:ing)?\b/.test(lower) ||
+    /\bbalance\b/.test(lower) ||
+    lower.includes("usage limit") ||
+    lower.includes("monthly limit")
+  ) {
+    return { kind: "quota", cooldownMs: QUOTA_COOLDOWN_MS };
   }
 
   return { kind: "transient", cooldownMs: TRANSIENT_COOLDOWN_MS };
@@ -176,9 +175,10 @@ export class SonioxKeyPool {
     return null;
   }
 
-  recordSuccess(credentialId: string): void {
+  recordSuccess(credentialId: string, now = Date.now()): void {
     const credential = this.findCredential(credentialId);
     if (!credential || credential.disabled) return;
+    if (credential.cooldownUntil > now) return;
     credential.cooldownUntil = 0;
     credential.failureKind = undefined;
     credential.lastFailureMessage = undefined;
@@ -196,7 +196,10 @@ export class SonioxKeyPool {
       credential.disabled = true;
       credential.cooldownUntil = Number.POSITIVE_INFINITY;
     } else {
-      credential.cooldownUntil = now + classification.cooldownMs;
+      credential.cooldownUntil = Math.max(
+        credential.cooldownUntil,
+        now + classification.cooldownMs,
+      );
     }
 
     return classification;
