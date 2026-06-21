@@ -233,6 +233,16 @@ export function createMapboxProvider(): MapsProvider {
       const exclude = mapboxExclude(req.avoid);
       if (exclude) params.set("exclude", exclude);
 
+      // Walking-only: bias Mapbox's routing toward walkways/footpaths so the
+      // route follows the SIDEWALK rather than the road centerline — but ONLY
+      // where OSM has the sidewalk mapped as a separate footway. Where it isn't
+      // mapped, Mapbox has nothing to bias toward and returns the road as
+      // before (no fake offset). `walkway_bias` is a walking-profile-only param;
+      // Mapbox rejects it on driving/cycling, so it's gated on the profile.
+      if (profile === "walking") {
+        params.set("walkway_bias", "1");
+      }
+
       const url = `${DIRECTIONS_BASE}/${profile}/${coords}?${params.toString()}`;
       const res = await fetch(url);
       if (!res.ok) {

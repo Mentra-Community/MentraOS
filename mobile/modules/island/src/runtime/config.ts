@@ -48,6 +48,16 @@ export interface CloudRuntimeTtsAdapter {
   speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
 }
 
+/**
+ * Runtime maps API: directions + reverse geocoding, computed in the v2 cloud
+ * (provider-abstracted, Mapbox today). The cloud holds the provider token; the
+ * device no longer calls Mapbox directly. Request/response — not a stream.
+ */
+export interface CloudRuntimeMapsAdapter {
+  directions: (req: DirectionsRequest) => Promise<DirectionsResult>
+  reverseGeocode: (coord: LatLng) => Promise<ReverseGeocodeResult>
+}
+
 export interface MiniappAuthToken {
   mentraUserId: string
   oemId?: string
