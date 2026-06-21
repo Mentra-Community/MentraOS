@@ -150,6 +150,15 @@ export function NavMap({
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MbMap | null>(null)
+  // Map-style readiness as STATE (not a ref) so the route/marker effects below
+  // re-run the moment the style is parsed and draw immediately. Set on the
+  // Mapbox `style.load` event, which fires EARLIER than the full `load` event —
+  // sources/layers (ensureRouteLayers) are valid once the style is parsed, so
+  // gating on style.load lets the polyline paint without waiting for every tile
+  // to download. This is what cuts the 8-9s "blank route on WebView reopen":
+  // on reopen the map rebuilds from scratch, and the route data (already in the
+  // store via the snapshot) was previously blocked behind the slow `load`.
+  const [mapLoaded, setMapLoaded] = useState(false)
   const mapLoadedRef = useRef(false)
   // "Me" marker is a Mapbox Marker with a custom DOM element. The inner
   // arrow div rotates via CSS; rotationAlignment:'map' keeps the marker
@@ -195,12 +204,22 @@ export function NavMap({
     })
     mapRef.current = map
 
-    map.on("load", () => {
+    // Mark the map ready as soon as the STYLE is parsed (style.load fires
+    // before the full `load`). Adding sources/layers is valid here, so the
+    // route polyline can paint immediately instead of waiting for every tile
+    // to finish downloading — this is the fix for the slow route paint on
+    // WebView reopen. `load` is kept as a backstop (covers the rare case where
+    // the style was already loaded before this handler attached).
+    const markLoaded = () => {
+      if (mapLoadedRef.current) return
       mapLoadedRef.current = true
       // Pre-create the route sources/layers (empty) so the route effect
       // can just setData without races on first paint.
       ensureRouteLayers(map)
-    })
+      setMapLoaded(true) // re-runs the route/marker effects to draw now
+    }
+    map.on("style.load", markLoaded)
+    map.on("load", markLoaded)
 
     // User drag breaks follow-mode. `originalEvent` is present only for
     // user-initiated moves (absent for our programmatic easeTo/panTo).
@@ -502,13 +521,23 @@ export function NavMap({
 
     const pastSrc = map.getSource("nav-route-past") as mapboxgl.GeoJSONSource | undefined
     const aheadSrc = map.getSource("nav-route-ahead") as mapboxgl.GeoJSONSource | undefined
+    const endSrc = map.getSource("nav-route-end") as mapboxgl.GeoJSONSource | undefined
     if (!pastSrc || !aheadSrc) return
 
     if (path.length < 2) {
       pastSrc.setData(emptyFC())
       aheadSrc.setData(emptyFC())
+      endSrc?.setData(emptyFC())
       return
     }
+
+    // Black circle at the GEOMETRIC end of the route line (its last point) —
+    // marks where the route terminates, independent of the destination pin.
+    const end = path[path.length - 1]
+    endSrc?.setData({
+      type: "FeatureCollection",
+      features: [{type: "Feature", geometry: {type: "Point", coordinates: [end.lng, end.lat]}, properties: {}}],
+    })
 
     let pastPath: LatLng[]
     let aheadPath: LatLng[]
@@ -550,7 +579,7 @@ export function NavMap({
 
     pastSrc.setData(pastPath.length >= 2 ? lineFeature(pastPath) : emptyFC())
     aheadSrc.setData(aheadPath.length >= 2 ? lineFeature(aheadPath) : emptyFC())
-  }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
+  }, [ready, mapLoaded, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
   // Dev: blue connector line from `me` → closest point on the route, with a
   // midpoint distance label. Uses the raw (unsmoothed) polyline.
@@ -621,7 +650,7 @@ export function NavMap({
     }
 
     return teardown
-  }, [ready, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine, unitSystem])
+  }, [ready, mapLoaded, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine, unitSystem])
 
   // Debug overlay: a red dot at each turn point + a hovering road-name
   // badge. Dots are a GeoJSON circle layer; badges are DOM-element markers.
@@ -717,7 +746,7 @@ export function NavMap({
       clearTimeout(refetchHandle)
       teardown()
     }
-  }, [ready, routePoints, previewTurns, devEnabled, showPivots])
+  }, [ready, mapLoaded, routePoints, previewTurns, devEnabled, showPivots])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
@@ -799,6 +828,25 @@ function ensureRouteLayers(map: MbMap): void {
   addLine("nav-route-past", "#999999", 6, 0.7)
   addLine("nav-route-ahead", "#000000", 6, 0.85)
   addLine("nav-offroute", "#1E88FF", 3, 0.95)
+  // Route-end marker — a larger black filled circle at the LAST point of the
+  // route polyline (the geometric end of the line), marking where the route
+  // terminates. Distinct from the teardrop destination pin (which sits at the
+  // chosen destination, possibly set back from the path). Added after the route
+  // lines so it draws on top of the line's end cap.
+  if (!map.getSource("nav-route-end")) map.addSource("nav-route-end", {type: "geojson", data: emptyFC()})
+  if (!map.getLayer("nav-route-end-layer")) {
+    map.addLayer({
+      id: "nav-route-end-layer",
+      type: "circle",
+      source: "nav-route-end",
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#000000",
+        "circle-stroke-color": "#FFFFFF",
+        "circle-stroke-width": 2,
+      },
+    })
+  }
   // Pivot dots — a circle layer.
   if (!map.getSource("nav-pivots")) map.addSource("nav-pivots", {type: "geojson", data: emptyFC()})
   if (!map.getLayer("nav-pivots-layer")) {

@@ -210,7 +210,7 @@ export function verbForManeuver(kind: string): string {
     case "SHARP_RIGHT":
       return kind === "SLIGHT_RIGHT" ? "Slight right" : kind === "SHARP_RIGHT" ? "Sharp right" : "Turn right"
     case "U_TURN":
-      return "Make a U-turn"
+      return "Turn around"
     case "CONTINUE":
     case "STRAIGHT":
       return "Continue"

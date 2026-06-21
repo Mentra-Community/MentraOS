@@ -56,6 +56,25 @@ export class NavigationController {
   // text even when unchanged (recovers from G2 EvenHub page teardowns).
   private lastHudAt = 0
   private lastMinimapPng: string | null = null
+  // Throttle for the minimap raster: the bitmap is the most expensive HUD
+  // element to render AND push, and GPS can fire many fixes per second (esp.
+  // simulated/fast movement). Rendering + sending on every fix wastes CPU and
+  // can flood the glasses' BLE link (the G2 can't usefully update faster than
+  // ~200-300ms). So we leading-edge throttle: render immediately, coalesce
+  // bursts within MINIMAP_MIN_INTERVAL_MS, and schedule ONE trailing render so
+  // the final position still lands after the burst settles.
+  private lastMinimapAt = 0
+  private minimapTrailingTimer: ReturnType<typeof setTimeout> | null = null
+  // Watchdog for a stuck "Starting…" HUD. The HUD leaves "Starting…" when a
+  // maneuver event (or a live pivot) arrives — but in the field the maneuver
+  // event sometimes never fires (the G2 tears down the EvenHub page mid-start,
+  // routes recompute back-to-back and reset the cursor, etc.), leaving the user
+  // stuck on "Starting…" with a perfectly good route on hand. This records when
+  // "Starting…" first showed; once it's been up past STARTING_WATCHDOG_MS while
+  // running with route steps available, refreshHUD falls back to the route's
+  // FIRST step so the HUD recovers instead of hanging. Reset whenever we leave
+  // the "Starting…" state.
+  private startingShownAt = 0
   // Glasses minimap bitmap — ON by default.
   private showMinimap = true
   // Last trip-stats string pushed to the bottom-left label, so we only re-send
@@ -1265,11 +1284,33 @@ export class NavigationController {
       }
     } else if (running) {
       // Running but no maneuver yet — the brief gap right after Start, before
-      // Mapbox emits the first step. Show a neutral "Starting…" with NO arrow
-      // (there's no turn/direction to point at yet) rather than "Arriving"
-      // (which wrongly implies we're about to reach the dest).
-      next = `Starting…`
+      // Mapbox emits the first step. Normally a neutral "Starting…" with NO
+      // arrow (there's no turn/direction to point at yet).
+      //
+      // WATCHDOG: the maneuver event that clears "Starting…" sometimes never
+      // arrives (G2 page teardown mid-start, back-to-back route recomputes
+      // resetting the cursor). If we've been stuck on "Starting…" past the
+      // threshold AND a computed route is on hand, recover by deriving the line
+      // from the route's first navigable step instead of hanging forever.
+      const startedAt = this.startingShownAt || Date.now()
+      if (this.startingShownAt === 0) this.startingShownAt = startedAt
+      const stuck = Date.now() - startedAt >= STARTING_WATCHDOG_MS
+      const firstStep = this.firstNavigableStep()
+      if (stuck && firstStep) {
+        const arrow = arrowFor(firstStep.maneuver, null)
+        const onto = isRealRoadName(firstStep.road)
+        const dist = firstStep.distanceMeters > 0 ? `In ${formatDistance(firstStep.distanceMeters, this.unitSystem)}` : null
+        next = [arrow, onto ? `Onto ${onto}` : null, dist].filter(Boolean).join("\n") || `Starting…`
+      } else {
+        next = `Starting…`
+      }
+    } else {
+      // Not running — make sure the watchdog clock resets for the next trip.
+      this.startingShownAt = 0
     }
+    // Leaving "Starting…" for any real maneuver/pivot frame clears the watchdog
+    // so the next stuck-start is timed fresh.
+    if (next !== "Starting…") this.startingShownAt = 0
 
     if (next == null) {
       // Nothing to display — wipe whatever frame was last on the
@@ -1320,6 +1361,21 @@ export class NavigationController {
     // block + trip stats) through showManeuver, which now spans the full canvas.
     // No separate stats container is drawn, so nothing can lag behind it.
     this.display.showManeuver(combined)
+  }
+
+  /**
+   * The first navigable step of the current route — the first turn the user
+   * should take. Skips the leading DEPART/CONTINUE/STRAIGHT "walk along this
+   * road" step and returns the first actual turn. Backs the "Starting…"
+   * watchdog so a stuck start can show a real instruction. Returns null when
+   * there's no route step list yet.
+   */
+  private firstNavigableStep(): {road: string | null; maneuver: string; distanceMeters: number} | null {
+    const steps = this.trip.routeSteps
+    if (!steps || steps.length === 0) return null
+    const skip = new Set(["DEPART", "CONTINUE", "STRAIGHT", "NAME_CHANGE"])
+    const turn = steps.find((s) => !skip.has((s.maneuver ?? "").toUpperCase()))
+    return turn ?? steps[0]
   }
 
   /**
@@ -1376,10 +1432,33 @@ export class NavigationController {
   // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
   private readonly FALLBACK_WALKING_M_PER_S = 1.4
 
+  // Minimum gap between minimap renders/pushes. Roughly the glasses' usable
+  // display-update rate; faster than this just burns CPU + BLE for frames the
+  // user can't perceive.
+  private readonly MINIMAP_MIN_INTERVAL_MS = 300
+
   private refreshMinimap(): void {
     if (this.largeMapShown) return // large map owns the screen; don't overdraw
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
+
+    // Leading-edge throttle: if we rendered recently, don't render now — instead
+    // schedule ONE trailing render for when the window elapses, so the final
+    // position after a burst of rapid GPS fixes still reaches the glasses. (A
+    // trailing render already pending is left as-is; it re-reads the latest
+    // coords/heading when it fires.)
+    const now = Date.now()
+    const sinceLast = now - this.lastMinimapAt
+    if (sinceLast < this.MINIMAP_MIN_INTERVAL_MS) {
+      if (this.minimapTrailingTimer == null) {
+        this.minimapTrailingTimer = setTimeout(() => {
+          this.minimapTrailingTimer = null
+          this.refreshMinimap()
+        }, this.MINIMAP_MIN_INTERVAL_MS - sinceLast)
+      }
+      return
+    }
+    this.lastMinimapAt = now
 
     const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
 
@@ -1617,28 +1696,58 @@ export class NavigationController {
   // rebuild-state fields are retained as harmless no-ops (the timer is
   // never armed now) to avoid churn across the many lifecycle call sites.
 
-  // ── Early arrival (≤7m of route remaining) ───────────────────────────
+  // ── Early arrival ────────────────────────────────────────────────────
 
-  // The Nav SDK fires `arrived` based on its own threshold (straight-
-  // line to the destination pin). We fire earlier when the user has
-  // walked nearly the entire route polyline — the grey trail has
-  // reached the pin. Uses along-route distance, not perpendicular, so a
-  // pin sitting a few meters off the walkable polyline still triggers.
+  // The Nav SDK fires `arrived` based on its own threshold (straight-line to
+  // the destination pin). We fire earlier on either of two signals:
   //
-  // Mirrors the SDK arrived handler's state mutation so downstream
-  // consumers (HUD, UI) see the same shape regardless of which trigger
-  // fired. Captures the side (left/right) of the pin relative to the
-  // final route segment *before* clearing routePoints so the HUD can
-  // render "on your left|right".
+  //   1. ALONG-ROUTE: the user has walked nearly the whole route polyline (the
+  //      grey trail reached the pin) — ≤ ARRIVAL_REMAINING_M of route left.
+  //
+  //   2. NEAR THE PIN: the straight-line distance to the destination pin is
+  //      small AND we are near the end of the route. This catches the common
+  //      case where the pin is a building entrance set BACK from the walkable
+  //      path: the user is right beside the destination (perpendicular to it)
+  //      with only a few meters of straight-line distance, but the route
+  //      polyline still continues, so the along-route check alone would not
+  //      fire. The "near the route end" gate is what keeps a route that merely
+  //      passes close to the pin mid-trip (e.g. loops back to the real
+  //      entrance) from arriving early.
+  //
+  // Mirrors the SDK arrived handler's state mutation so downstream consumers
+  // (HUD, UI) see the same shape regardless of which trigger fired. Captures
+  // the side (left/right) of the pin relative to the final route segment
+  // *before* clearing routePoints so the HUD can render "on your left|right".
   private maybeFireEarlyArrival(): void {
+    // ≤ this much route polyline remaining → arrived (trail reached the pin).
     const ARRIVAL_REMAINING_M = 7
+    // Straight-line distance to the pin that counts as "we're there".
+    const ARRIVAL_NEAR_PIN_M = 15
+    // Only consider the near-pin trigger once we're this close to the route's
+    // end, so a mid-trip pass beside the destination can't false-arrive.
+    const ARRIVAL_NEAR_END_M = 40
     if (!this.coords) return
     if (this.trip.status === "arrived" || !this.trip.running) return
     const route = this.trip.routePoints
-    const remaining = remainingRouteMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
-    if (remaining == null || remaining > ARRIVAL_REMAINING_M) return
+    const me = {lat: this.coords.lat, lng: this.coords.lng}
+    const remaining = remainingRouteMeters(me, route)
+    if (remaining == null) return
+
+    const dest = this.trip.activeDestination
+    const straightLineToPin = dest ? haversineMeters(me, dest) : null
+
+    const alongRouteArrived = remaining <= ARRIVAL_REMAINING_M
+    const nearPinArrived =
+      straightLineToPin != null &&
+      straightLineToPin <= ARRIVAL_NEAR_PIN_M &&
+      remaining <= ARRIVAL_NEAR_END_M
+    if (!alongRouteArrived && !nearPinArrived) return
+
     const side = sideOfFinalSegment(route, this.trip.activeDestination)
-    this.appendLog(`ARRIVED (early, ${remaining.toFixed(1)}m of route remaining)`)
+    const why = alongRouteArrived
+      ? `${remaining.toFixed(1)}m of route remaining`
+      : `${straightLineToPin?.toFixed(1)}m from pin, ${remaining.toFixed(1)}m route left`
+    this.appendLog(`ARRIVED (early, ${why})`)
     this.trip = {
       ...this.trip,
       status: "arrived",
@@ -1813,6 +1922,10 @@ export class NavigationController {
 
   private dispose(): void {
     this.cancelPendingRebuild()
+    if (this.minimapTrailingTimer != null) {
+      clearTimeout(this.minimapTrailingTimer)
+      this.minimapTrailingTimer = null
+    }
     try {
       this.navigation.stop()
     } catch {
@@ -1907,6 +2020,12 @@ function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachT
 // user returns. (The old separate TRIGGER_M rebuild threshold was removed when
 // reroute became native-owned — there's only on/off now.)
 const OFF_ROUTE_ADVISORY_M = 20
+
+// How long the HUD may sit on "Starting…" (running, no maneuver event yet)
+// before the watchdog derives the first instruction from the route's steps.
+// Long enough that a normal start (maneuver event lands within a second or two)
+// never trips it; short enough that a genuinely stuck start recovers quickly.
+const STARTING_WATCHDOG_MS = 6000
 
 /**
  * Strip the trailing arrival-side hint Google's Routes API appends to

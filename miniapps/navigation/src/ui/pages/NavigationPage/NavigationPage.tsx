@@ -642,7 +642,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // user's intent via broadcasts; status/maneuver/routePoints come back
   // via `nav:trip-state` / `nav:route` subscriptions installed in the
   // store. There is no local trip-state hydration to do here.
-  function handleStart() {
+  async function handleStart() {
     if (!destination) {
       append("ERROR: pick a destination first")
       return
@@ -653,6 +653,27 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         simulate ? ` (sim ${speedMultiplier}x)` : ""
       }`,
     )
+
+    // Resolve the destination name. A dropped pin starts with the placeholder
+    // "Dropped pin" (and `isGeocoding`) while its reverse-geocode is in flight;
+    // if the user taps Start before that lands, the placeholder would become the
+    // permanent trip name — that's the "You have arrived at Dropped pin" bug. So
+    // when the name is still the placeholder / unresolved, reverse-geocode the
+    // coordinate now (on demand) and use the real address. Falls back to the
+    // existing name if geocoding yields nothing.
+    let destinationName = destination.name || destination.address || undefined
+    const isPlaceholder = destination.isGeocoding || destinationName === "Dropped pin" || !destinationName
+    if (isPlaceholder) {
+      try {
+        const formatted = await reverseGeocode(destination.lat, destination.lng)
+        if (formatted) {
+          destinationName = formatted.split(",")[0]?.trim() || formatted
+        }
+      } catch {
+        /* keep the existing name on failure */
+      }
+    }
+
     mentra.send("nav:start", {
       stops: [{lat: destination.lat, lng: destination.lng}],
       mode: "walking",
@@ -660,7 +681,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       speedMultiplier,
       missedTurnRerouteMeters: 3,
       pivots: {radiusMeters: 14},
-      destinationName: destination.name || destination.address || undefined,
+      destinationName,
     })
   }
 
