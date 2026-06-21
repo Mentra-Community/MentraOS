@@ -189,6 +189,7 @@ export class SonioxSdkStream implements StreamInstance {
     public readonly logger: Logger,
     private readonly config: SonioxProviderConfig,
     client: SonioxNodeClient,
+    private readonly credentialId?: string,
   ) {
     this.endpointDebounceMs =
       config.endpointDebounceMs ?? SonioxSdkStream.DEFAULT_ENDPOINT_DEBOUNCE_MS;
@@ -854,6 +855,9 @@ export class SonioxSdkStream implements StreamInstance {
     this.metrics.consecutiveFailures++;
 
     this.provider.recordFailure(error);
+    if (this.credentialId) {
+      this.provider.recordCredentialFailure(this.credentialId, error);
+    }
 
     this.logger.error({ error, streamId: this.id, sessionState: this.session.state }, "Soniox SDK stream error");
 
