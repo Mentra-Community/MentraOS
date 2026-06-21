@@ -659,15 +659,6 @@ export async function createSonioxProvider(
   // The `disconnected` handler is named so the same function is wired onto every
   // session instance (original + each reconnect) and can be `off`-ed on close.
   const handleDisconnected = (reason: unknown) => {
-    const disconnectError =
-      reason instanceof Error
-        ? reason
-        : new Error(
-            typeof reason === "string" ? reason : JSON.stringify(reason),
-          );
-    if (!closed) {
-      recordCredentialFailure(activeCredential, disconnectError, "disconnected");
-    }
     console.log(
       `[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
     );
@@ -795,18 +786,17 @@ export async function createSonioxProvider(
         );
       }
 
-      wireSession(candidate.session);
-      activeCredential = candidate.credential;
       try {
         await candidate.session.connect();
         session = candidate.session;
+        activeCredential = candidate.credential;
+        wireSession(candidate.session);
         recordCredentialSuccess(candidate.credential, context);
         return;
       } catch (err) {
         const error = err as Error;
         lastError = error;
         recordCredentialFailure(candidate.credential, error, context);
-        unwireSession(candidate.session);
         try {
           await candidate.session.close();
         } catch {
