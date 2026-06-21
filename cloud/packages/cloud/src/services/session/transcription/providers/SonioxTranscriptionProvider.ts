@@ -15,7 +15,7 @@ import { SonioxNodeClient } from "@soniox/node";
 import { StreamType, getLanguageInfo, parseLanguageStream, TranscriptionData, SonioxToken } from "@mentra/sdk";
 
 import { SonioxSdkStream } from "./SonioxSdkStream";
-import { SonioxCredential, SonioxKeyPool } from "../../soniox/SonioxKeyPool";
+import { SonioxCredential, SonioxKeyPool, getSharedSonioxKeyPool } from "../../soniox/SonioxKeyPool";
 
 import {
   TranscriptionProvider,
@@ -94,7 +94,7 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
   ) {
     this.logger = parentLogger.child({ provider: this.name });
     this.useSdk = process.env.SONIOX_USE_SDK !== "false";
-    this.keyPool = new SonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
+    this.keyPool = getSharedSonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
 
     this.healthStatus = {
       isHealthy: true,

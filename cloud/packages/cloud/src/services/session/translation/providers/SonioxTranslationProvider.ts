@@ -11,7 +11,7 @@ import { TranslationData, StreamType } from "@mentra/sdk";
 import { MemoryOwnerStat } from "../../../metrics/memory-census";
 import { estimateArrayBufferBytes, estimateStringBytes, sumEstimatedBytes } from "../../../metrics/memory-estimate";
 import { ResourceTracker } from "../../../../utils/resource-tracker";
-import { SonioxCredential, SonioxKeyPool } from "../../soniox/SonioxKeyPool";
+import { SonioxCredential, SonioxKeyPool, getSharedSonioxKeyPool } from "../../soniox/SonioxKeyPool";
 import {
   TranslationProvider,
   TranslationProviderType,
@@ -1001,7 +1001,7 @@ export class SonioxTranslationProvider implements TranslationProvider {
     parentLogger: Logger,
   ) {
     this.logger = parentLogger.child({ provider: "soniox-translation" });
-    this.keyPool = new SonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
+    this.keyPool = getSharedSonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
   }
 
   async initialize(): Promise<void> {

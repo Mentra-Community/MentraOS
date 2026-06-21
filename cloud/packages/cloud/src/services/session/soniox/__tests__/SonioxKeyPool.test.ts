@@ -3,7 +3,9 @@ import { describe, expect, it } from "bun:test";
 import {
   SonioxKeyPool,
   classifySonioxCredentialFailure,
+  getSharedSonioxKeyPool,
   parseSonioxFallbackApiKeys,
+  resetSharedSonioxKeyPoolsForTests,
 } from "../SonioxKeyPool";
 
 describe("SonioxKeyPool", () => {
@@ -62,11 +64,25 @@ describe("SonioxKeyPool", () => {
     expect(availability?.available).toBe(false);
     expect(pool.selectCredential(new Set(), 10_000)?.role).toBe("fallback");
   });
+
+  it("shares cooldown state for the same configured credentials", () => {
+    resetSharedSonioxKeyPoolsForTests();
+    const first = getSharedSonioxKeyPool("primary", ["fallback"]);
+    const second = getSharedSonioxKeyPool("primary", ["fallback"]);
+
+    const primary = first.selectCredential(new Set(), 1000)!;
+    first.recordFailure(primary.id, new Error("Soniox error 402: Organization monthly budget exhausted"), 1000);
+
+    expect(second.selectCredential(new Set(), 1000)?.role).toBe("fallback");
+  });
 });
 
 describe("classifySonioxCredentialFailure", () => {
   it("classifies quota exhaustion separately from request rate limits", () => {
     expect(classifySonioxCredentialFailure(new Error("Monthly quota exceeded")).kind).toBe("quota");
+    expect(classifySonioxCredentialFailure(new Error("Soniox error 402: Organization monthly budget exhausted")).kind).toBe(
+      "quota",
+    );
     expect(classifySonioxCredentialFailure(new Error("Soniox error 429: rate limit")).kind).toBe("rate_limit");
   });
 
