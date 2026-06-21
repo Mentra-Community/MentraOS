@@ -10,7 +10,7 @@
  *   - Requires `SONIOX_API_KEY` env var.
  *   - Optional `SONIOX_FALLBACK_API_KEYS` is comma-separated and used when the
  *     primary key hits auth/quota/rate/concurrency errors.
- *   - Model defaults to `"stt-rt-v4"`; override via `SONIOX_MODEL`.
+ *   - Model defaults to `"stt-rt-v5"`; override via `SONIOX_MODEL`.
  *   - Audio format hardcoded to s16le, 16kHz, mono (matches our LC3 output).
  *
  * What this does NOT include (deferred from v1's SonioxSdkStream port):
@@ -44,7 +44,8 @@ import {
   parseSonioxFallbackApiKeys,
 } from "./soniox-key-pool";
 
-const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
+export const DEFAULT_SONIOX_MODEL = "stt-rt-v5";
+const SONIOX_MODEL = process.env.SONIOX_MODEL ?? DEFAULT_SONIOX_MODEL;
 function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
   return {
     checkIntervalMs: Number(process.env.SONIOX_GAP_CHECK_INTERVAL_MS ?? 1_000),

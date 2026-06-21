@@ -21,7 +21,7 @@ process.env.SONIOX_RECONNECT_MAX_MS = "4";
 process.env.SONIOX_RECONNECT_MAX_ATTEMPTS = "5";
 process.env.SONIOX_ENDPOINT_DEBOUNCE_MS = "1";
 
-import { createSonioxProvider } from "./soniox";
+import { DEFAULT_SONIOX_MODEL, createSonioxProvider } from "./soniox";
 import type { TranscriptEvent } from "./provider";
 
 // Minimal shape of a Soniox realtime token we care about in these tests.
@@ -180,6 +180,10 @@ async function makeProvider(): Promise<{
 }
 
 describe("SonioxProvider utterance lifecycle", () => {
+  test("defaults to the current Soniox real-time model", () => {
+    expect(DEFAULT_SONIOX_MODEL).toBe("stt-rt-v5");
+  });
+
   test("does not churn finals/utteranceIds when the rolling window's speaker flips mid-utterance", async () => {
     const { session, events, provider } = await makeProvider();
 
