@@ -75,7 +75,10 @@ export function classifySonioxCredentialFailure(
   }
 
   if (
+    code === 402 ||
     lower.includes("quota") ||
+    lower.includes("budget") ||
+    lower.includes("exhausted") ||
     lower.includes("credit") ||
     lower.includes("billing") ||
     lower.includes("spend") ||

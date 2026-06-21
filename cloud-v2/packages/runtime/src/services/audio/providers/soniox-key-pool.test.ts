@@ -75,6 +75,11 @@ describe("classifySonioxCredentialFailure", () => {
     expect(classifySonioxCredentialFailure(new Error("Monthly quota exceeded")).kind).toBe(
       "quota",
     );
+    expect(
+      classifySonioxCredentialFailure(
+        new Error("Soniox error 402: Organization monthly budget exhausted"),
+      ).kind,
+    ).toBe("quota");
     expect(classifySonioxCredentialFailure(new Error("Soniox error 429: rate limit")).kind).toBe(
       "rate_limit",
     );
