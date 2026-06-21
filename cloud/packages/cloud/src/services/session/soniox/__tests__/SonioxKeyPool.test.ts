@@ -82,6 +82,19 @@ describe("SonioxKeyPool", () => {
 
     expect(second.selectCredential(new Set(), 1000)?.role).toBe("fallback");
   });
+
+  it("does not let overlapping success clear active cooldown", () => {
+    const pool = new SonioxKeyPool("primary", ["fallback"]);
+    const primary = pool.selectCredential(new Set(), 1000)!;
+    pool.recordFailure(primary.id, new Error("Soniox error 402: Organization monthly budget exhausted"), 1000);
+
+    pool.recordSuccess(primary.id, 2000);
+
+    const availability = pool.describeAvailability(2000).find((item) => item.id === primary.id);
+    expect(availability?.failureKind).toBe("quota");
+    expect(availability?.available).toBe(false);
+    expect(pool.selectCredential(new Set(), 2000)?.role).toBe("fallback");
+  });
 });
 
 describe("classifySonioxCredentialFailure", () => {
@@ -90,7 +103,9 @@ describe("classifySonioxCredentialFailure", () => {
     expect(classifySonioxCredentialFailure(new Error("Soniox error 402: Organization monthly budget exhausted")).kind).toBe(
       "quota",
     );
-    expect(classifySonioxCredentialFailure(new Error("Soniox error 429: rate limit")).kind).toBe("rate_limit");
+    expect(classifySonioxCredentialFailure(new Error("Soniox error 429: rate limit exhausted")).kind).toBe(
+      "rate_limit",
+    );
   });
 
   it("treats concurrent stream errors as temporary capacity errors", () => {
