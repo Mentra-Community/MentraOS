@@ -1,13 +1,53 @@
 #!/usr/bin/env zx
 import {config} from "dotenv"
-import {writeFile} from "fs/promises"
+import {writeFile, readFile, chmod} from "fs/promises"
+import {homedir} from "os"
+import {join} from "path"
 import {generateBundledMiniapps} from "./generate-bundled-miniapps.mjs"
 import {clearAutolinkingCache} from "./clear-autolinking-cache.mjs"
+
+/**
+ * When the Mapbox Downloads:Read secret token (sk.…) is present in the
+ * environment — i.e. the build is running under `doppler run` (the opt-in easy
+ * path) — mirror it into ~/.netrc so iOS SPM can authenticate to api.mapbox.com
+ * and fetch the Nav SDK. Android's Gradle reads the same token straight from the
+ * environment (System.getenv), so it needs no file.
+ *
+ * No-op when the token is absent or still the .env dummy, so a developer using
+ * the manual fallback (their own ~/.gradle/gradle.properties + ~/.netrc) is left
+ * untouched.
+ */
+async function syncMapboxNetrc() {
+  const token = process.env.MAPBOX_DOWNLOADS_TOKEN
+  if (!token || !token.startsWith("sk.")) return // absent or dummy -> manual fallback
+
+  const netrcPath = join(homedir(), ".netrc")
+  let existing = ""
+  try {
+    existing = await readFile(netrcPath, "utf8")
+  } catch {
+    /* no ~/.netrc yet — we'll create it */
+  }
+
+  // Drop any prior api.mapbox.com machine block (3 lines) so we don't stack
+  // stale credentials on repeated runs, then append the current one.
+  const withoutOld = existing.replace(/machine api\.mapbox\.com\n(?:[ \t].*\n?){0,2}/g, "")
+  const block = `machine api.mapbox.com\n  login mapbox\n  password ${token}\n`
+  const next = `${withoutOld.replace(/\n*$/, "")}\n${block}`.replace(/^\n+/, "")
+
+  await writeFile(netrcPath, next)
+  await chmod(netrcPath, 0o600)
+  console.log("  ~/.netrc updated with Mapbox SPM credentials (from environment)")
+}
 
 export async function setBuildEnv() {
   // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
   // before any prebuild/bundle so newly-dropped bundles get shipped.
   await generateBundledMiniapps()
+
+  // If running under `doppler run`, mirror the Mapbox sk. token into ~/.netrc
+  // for iOS SPM. No-op otherwise (manual-setup developers untouched).
+  await syncMapboxNetrc()
 
   // Drop the Gradle autolinking cache — its invalidation doesn't track
   // bun.lock, so a stale packageName breaks the build (see the module docs).
@@ -46,8 +86,22 @@ export async function setBuildEnv() {
   // Load existing .env
   const existingEnv = config().parsed || {}
 
-  // Merge with build vars
-  const updatedEnv = {...existingEnv, ...buildVars}
+  // Mapbox tokens injected by the environment (i.e. `doppler run`) must win over
+  // the .env dummy values, so navigation works on the opt-in Doppler path. Only
+  // real tokens override — an absent or dummy env value leaves .env in charge so
+  // the manual-setup fallback is untouched.
+  const envOverrides = {}
+  const mapboxPk = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN
+  if (mapboxPk && mapboxPk.startsWith("pk.")) {
+    envOverrides.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = mapboxPk
+  }
+  const mapboxSk = process.env.MAPBOX_DOWNLOADS_TOKEN
+  if (mapboxSk && mapboxSk.startsWith("sk.")) {
+    envOverrides.MAPBOX_DOWNLOADS_TOKEN = mapboxSk
+  }
+
+  // Merge with build vars (env-injected real tokens take highest precedence).
+  const updatedEnv = {...existingEnv, ...buildVars, ...envOverrides}
 
   // write env to process.env:
   Object.entries(updatedEnv).forEach(([key, value]) => {

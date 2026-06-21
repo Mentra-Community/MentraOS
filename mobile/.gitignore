@@ -102,3 +102,8 @@ pnpm-lock.yaml
 
 .model-cache/
 scripts/stress-test/runs/
+
+# Local secret backups — never commit
+*.mapbox-bak
+.env.*-bak
+.env.bak
