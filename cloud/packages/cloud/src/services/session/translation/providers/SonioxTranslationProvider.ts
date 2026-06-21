@@ -11,6 +11,7 @@ import { TranslationData, StreamType } from "@mentra/sdk";
 import { MemoryOwnerStat } from "../../../metrics/memory-census";
 import { estimateArrayBufferBytes, estimateStringBytes, sumEstimatedBytes } from "../../../metrics/memory-estimate";
 import { ResourceTracker } from "../../../../utils/resource-tracker";
+import { SonioxCredential, SonioxKeyPool } from "../../soniox/SonioxKeyPool";
 import {
   TranslationProvider,
   TranslationProviderType,
@@ -54,7 +55,7 @@ interface SonioxToken {
 class SonioxTranslationStream implements TranslationStreamInstance {
   readonly id: string;
   readonly subscription: string;
-  readonly provider: TranslationProvider;
+  readonly provider: SonioxTranslationProvider;
   readonly logger: Logger;
   readonly sourceLanguage: string;
   readonly targetLanguage: string;
@@ -119,8 +120,9 @@ class SonioxTranslationStream implements TranslationStreamInstance {
 
   constructor(
     options: TranslationStreamOptions,
-    provider: TranslationProvider,
+    provider: SonioxTranslationProvider,
     private config: SonioxTranslationConfig,
+    private readonly credentialId?: string,
   ) {
     this.id = options.streamId;
     this.subscription = options.subscription;
@@ -406,9 +408,11 @@ class SonioxTranslationStream implements TranslationStreamInstance {
         break;
 
       case "error":
+        const errorCode = message.error_code ?? message.code;
+        const errorMessage = message.message || message.error_message || "Unknown error";
         this.handleError(
           new TranslationProviderError(
-            `Soniox error: ${message.message || "Unknown error"}`,
+            errorCode ? `Soniox error ${errorCode}: ${errorMessage}` : `Soniox error: ${errorMessage}`,
             TranslationProviderType.SONIOX,
           ),
         );
@@ -759,6 +763,9 @@ class SonioxTranslationStream implements TranslationStreamInstance {
     this.metrics.errorCount++;
     this.metrics.lastError = error;
     this.state = TranslationStreamState.ERROR;
+    if (this.credentialId) {
+      this.provider.recordCredentialFailure(this.credentialId, error);
+    }
     this.callbacks.onError?.(error);
   }
 
@@ -987,18 +994,20 @@ export class SonioxTranslationProvider implements TranslationProvider {
 
   // Get supported languages from the actual Soniox mappings
   private supportedLanguages = new Set(SonioxTranslationUtils.getSupportedLanguages());
+  private readonly keyPool: SonioxKeyPool;
 
   constructor(
     private config: SonioxTranslationConfig,
     parentLogger: Logger,
   ) {
     this.logger = parentLogger.child({ provider: "soniox-translation" });
+    this.keyPool = new SonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
   }
 
   async initialize(): Promise<void> {
     try {
       // Validate configuration
-      if (!this.config.apiKey) {
+      if (this.keyPool.size === 0) {
         throw new Error("Soniox translation provider requires API key");
       }
 
@@ -1007,7 +1016,13 @@ export class SonioxTranslationProvider implements TranslationProvider {
       }
 
       this.isInitialized = true;
-      this.logger.info("Soniox translation provider initialized");
+      this.logger.info(
+        {
+          credentialCount: this.keyPool.size,
+          hasFallbackCredentials: this.keyPool.hasFallbacks,
+        },
+        "Soniox translation provider initialized",
+      );
     } catch (error) {
       this.logger.error({ error }, "Failed to initialize Soniox translation provider");
       throw error;
@@ -1033,11 +1048,69 @@ export class SonioxTranslationProvider implements TranslationProvider {
       );
     }
 
-    const stream = new SonioxTranslationStream(options, this, this.config);
-    await stream.initialize();
+    const attempted = new Set<string>();
+    let lastError: Error | null = null;
 
-    this.recordSuccess();
-    return stream;
+    while (attempted.size < this.keyPool.size) {
+      const credential = this.keyPool.selectCredential(attempted);
+      if (!credential) break;
+      attempted.add(credential.id);
+
+      const stream = this.createStreamForCredential(options, credential);
+      try {
+        await stream.initialize();
+        this.keyPool.recordSuccess(credential.id);
+        this.recordSuccess();
+        return stream;
+      } catch (error) {
+        lastError = error as Error;
+        const classification = this.keyPool.recordFailure(credential.id, lastError);
+        this.logger.warn(
+          {
+            streamId: options.streamId,
+            credentialId: credential.id,
+            credentialRole: credential.role,
+            failureKind: classification?.kind,
+            error: lastError.message,
+            availableCredentials: this.keyPool.describeAvailability(),
+          },
+          "Soniox translation credential failed while creating stream; trying another credential if available",
+        );
+        await stream.close().catch((closeError) => {
+          this.logger.debug({ closeError, streamId: options.streamId }, "Ignoring failed Soniox translation stream cleanup error");
+        });
+      }
+    }
+
+    throw (
+      lastError ??
+      new Error(`No available Soniox translation credentials: ${JSON.stringify(this.keyPool.describeAvailability())}`)
+    );
+  }
+
+  recordCredentialFailure(credentialId: string, error: Error): void {
+    const classification = this.keyPool.recordFailure(credentialId, error);
+    this.logger.warn(
+      {
+        credentialId,
+        failureKind: classification?.kind,
+        error: error.message,
+        availableCredentials: this.keyPool.describeAvailability(),
+      },
+      "Recorded Soniox translation credential failure",
+    );
+  }
+
+  private createStreamForCredential(
+    options: TranslationStreamOptions,
+    credential: SonioxCredential,
+  ): SonioxTranslationStream {
+    const credentialConfig: SonioxTranslationConfig = {
+      ...this.config,
+      apiKey: credential.apiKey,
+    };
+
+    return new SonioxTranslationStream(options, this, credentialConfig, credential.id);
   }
 
   supportsLanguagePair(source: string, target: string): boolean {

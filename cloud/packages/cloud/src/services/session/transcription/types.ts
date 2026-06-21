@@ -12,6 +12,7 @@ dotenv.config();
 const isChinaDeployment = process.env.DEPLOYMENT_REGION === "china";
 // Environment variables for provider configuration
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
+export const SONIOX_FALLBACK_API_KEYS = process.env.SONIOX_FALLBACK_API_KEYS || "";
 export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
 export const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v4";
 export const ALIBABA_ENDPOINT = process.env.ALIBABA_ENDPOINT || "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
@@ -73,6 +74,7 @@ export interface TranscriptionConfig {
 
 export interface SonioxProviderConfig {
   apiKey: string;
+  fallbackApiKeys?: string[];
   endpoint: string;
   model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v4'
   maxConnections?: number;
@@ -360,6 +362,9 @@ export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
 
   soniox: {
     apiKey: SONIOX_API_KEY,
+    fallbackApiKeys: SONIOX_FALLBACK_API_KEYS.split(",")
+      .map((key) => key.trim())
+      .filter(Boolean),
     endpoint: SONIOX_ENDPOINT,
     model: SONIOX_MODEL,
     // 3000ms = Soniox's max. Higher = Soniox waits longer before
