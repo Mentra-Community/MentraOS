@@ -93,9 +93,6 @@ export class NavigationController {
   // clears, deferred renders, and largeMapShown toggles interleave and corrupt
   // the display ("swiped a couple times and everything broke").
   private largeMapTransitioning = false
-  // Handle for the in-flight transition's settle timer, so a teardown can
-  // cancel a pending render.
-  private largeMapTransitionTimer: ReturnType<typeof setTimeout> | null = null
   // Re-entrancy guard for nav:start. The Start button (and some upstream
   // flows) can dispatch nav:start twice in quick succession; the second
   // start()'s internal stop() tears down the sim/trip session the first one
@@ -562,11 +559,25 @@ export class NavigationController {
         this.lastOffRouteBucket = 0
         this.offRouteAdvisory = false
         this.offRouteAdvisoryDistanceM = null
+        // Clear any pivots left over from a previous trip. Without this, a new
+        // start with stale activePivot/upcomingPivot would make refreshHUD take
+        // a pivot branch and show the OLD trip's instruction instead of
+        // "Starting…" — the HUD must read "Starting…" until THIS trip's first
+        // real maneuver/pivot lands.
+        this.activePivot = null
+        this.upcomingPivot = null
         // Cancel any in-flight delayed rebuild — a fresh start
         // supersedes the old "are we still off-route?" timer.
         this.cancelPendingRebuild()
         this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
         this.ui.send("nav:trip-state", this.trip)
+        // Repaint the glasses HUD immediately so the left text flips from the
+        // idle "Welcome to Mentra Maps!" frame to "Starting…" the instant the
+        // user starts — instead of the welcome frame lingering until the next
+        // GPS tick / HUD pump (~1s). running is already true above, so refreshHUD
+        // takes the "Starting…" branch and showManeuver overwrites the welcome
+        // text in place.
+        this.refreshHUD()
         try {
           // start() resolves `{ok:false}` (it never throws) for
           // permission, GPS, REST, or native failures — on those the
@@ -1001,29 +1012,18 @@ export class NavigationController {
         // it and brings back the original HUD.
         if (!this.largeMapShown) {
           console.log(`[TOUCH] swipe → showing large route map`)
-          this.showLargeMap() // sets largeMapShown + transition lock, clears, draws
+          this.showLargeMap() // sets largeMapShown + transition lock, replaces, draws
         } else {
           console.log(`[TOUCH] swipe → dismissing large map → HUD`)
-          this.largeMapTransitioning = true
           this.largeMapShown = false
-          // Clear the big bitmap (this also purges any queued HUD text so it
-          // can't flash back), wait a short beat for the G2 container teardown,
-          // THEN repaint the main screen.
-          this.display.clear()
-          // Immediate top-left feedback while the HUD comes back.
-          this.display.showLoadingMessage("Loading main menu")
-          this.lastHudKey = "" // force a fresh HUD repaint (directions text box)
+          // Switch large map → HUD by REPLACING containers in place (no
+          // full-view clear()/teardown / settle delay). The HUD's maneuver text
+          // spans the FULL canvas, so repainting it overwrites the centered
+          // large-map bitmap; refreshHUD also re-pushes the top-right minimap.
+          // Reset the dedup so the repaint isn't swallowed, then repaint now.
+          this.lastHudKey = ""
           this.lastMinimapPng = null
-          this.largeMapTransitionTimer = setTimeout(() => {
-            this.largeMapTransitionTimer = null
-            this.lastHudKey = "" // re-force in case state changed during the wait
-            this.lastMinimapPng = null
-            // Blank the loading text, then let the HUD repaint write real
-            // maneuver text into the same top-left region.
-            this.display.clearLoadingMessage()
-            this.refreshHUD()
-            this.largeMapTransitioning = false // release the lock
-          }, this.LARGE_MAP_CLEAR_SETTLE_MS)
+          this.refreshHUD()
         }
       }),
     )
@@ -1037,20 +1037,20 @@ export class NavigationController {
    * `largeMapShown` and the big map lingers after the trip is over.
    */
   private exitLargeMap(): void {
-    // Cancel any in-flight transition (deferred render) and release the lock,
-    // so a trip ending mid-swipe doesn't leave a dangling render or a stuck
-    // lock that blocks future swipes.
-    if (this.largeMapTransitionTimer != null) {
-      clearTimeout(this.largeMapTransitionTimer)
-      this.largeMapTransitionTimer = null
-    }
+    // Release the swipe lock (transitions are synchronous now — no deferred
+    // render to cancel).
     this.largeMapTransitioning = false
     if (!this.largeMapShown) return
     this.largeMapShown = false
-    // Force fresh repaints when the HUD resumes.
+    // Erase the large map by overwriting its containers in place (no full-view
+    // clear()): blank the top-right minimap rect, and overwrite the full-canvas
+    // maneuver region with empty text (which covers the centered large map).
+    // The caller (trip arrived/stopped) then paints the end-state HUD via
+    // refreshHUD, which overwrites the same maneuver region.
     this.lastHudKey = ""
     this.lastMinimapPng = null
-    this.display.clear()
+    this.display.clearMinimap()
+    this.display.clearLoadingMessage() // blanks the full-canvas maneuver text region
   }
 
   /**
@@ -1061,14 +1061,19 @@ export class NavigationController {
   private showLargeMap(): void {
     this.largeMapShown = true
     this.largeMapTransitioning = true // lock out swipes until the render lands
-    // 1. Clear whatever's on the glasses (bitmaps + text containers). The HUD
-    //    pump is already gated off by `largeMapShown`, so nothing repaints
-    //    over us. Also drop the minimap/HUD dedup so swiping back down forces
-    //    a fresh repaint.
+    // Switch HUD → large map by REPLACING the specific containers in place, not
+    // a full-view clear(). The HUD pump is gated off by `largeMapShown`, so
+    // nothing repaints over us. We:
+    //   • erase the top-right minimap rect (clearMinimap overwrites it blank —
+    //     the large map is a different rect so it wouldn't cover the minimap),
+    //   • overwrite the full-canvas maneuver-text region with the loading line,
+    //   • then draw the large map into its own (centered) rect.
+    // No async full teardown, so no settle delay / race — the draws just
+    // overwrite their containers. Reset the dedup so swiping back down repaints.
     this.lastHudKey = ""
     this.lastMinimapPng = null
-    this.display.clear()
-    // Immediate top-left feedback while the map loads (cleared once it draws).
+    this.display.clearMinimap()
+    // Overwrites the maneuver text region; doubles as "loading" feedback.
     this.display.showLoadingMessage("Loading large map")
     if (!this.coords) {
       // No fix to render — release the lock so the view isn't stuck locked.
@@ -1077,24 +1082,12 @@ export class NavigationController {
     }
     const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
 
-    // 2. Render the large map AFTER a short beat so the G2 finishes tearing
-    //    down the old text + minimap containers first. clear() is async on the
-    //    glasses — drawing the big bitmap on the same tick races the teardown,
-    //    so the old HUD sometimes lingers UNDER/OVER the map (the "doesn't
-    //    clear / overlays everything" glitch). Waiting lets the clear land,
-    //    then the map draws onto an empty canvas. Guarded by `largeMapShown`
-    //    in case the user swiped back down during the wait. Releases the
-    //    transition lock when done.
-    this.largeMapTransitionTimer = setTimeout(() => {
-      this.largeMapTransitionTimer = null
-      if (this.largeMapShown && this.coords) {
-        // Map drew — clear the "Loading large map" text (top-left) so it
-        // doesn't linger over the rendered map.
-        this.display.clearLoadingMessage()
-        this.renderLargeMap({lat: this.coords.lat, lng: this.coords.lng})
-      }
-      this.largeMapTransitioning = false // release the lock
-    }, this.LARGE_MAP_CLEAR_SETTLE_MS)
+    // Render the large map now (its own centered rect). Blank the loading text
+    // first so it doesn't linger over the map. No settle delay needed: there's
+    // no full-view teardown to wait on — each push overwrites its container.
+    this.display.clearLoadingMessage()
+    this.renderLargeMap(me)
+    this.largeMapTransitioning = false // render landed; release the lock
 
     // 3. The minimap road cache only covers a tight radius around the user, so
     //    the far end of the route would have no background streets. Fetch roads
@@ -1349,17 +1342,15 @@ export class NavigationController {
     if (key === this.lastHudKey && nowHud - this.lastHudAt <= 3000) return
     this.lastHudAt = nowHud
 
-    // When leaving the idle "Welcome to Mentra Maps!" frame for live navigation,
-    // the welcome text container can linger. Clear first so the directions
-    // cleanly replace it.
-    if (this.lastHudKey.startsWith("Welcome to Mentra Maps") && running) {
-      this.display.clear()
-    }
     this.lastHudKey = key
 
     // Single full-canvas container: push the WHOLE combined frame (maneuver
-    // block + trip stats) through showManeuver, which now spans the full canvas.
-    // No separate stats container is drawn, so nothing can lag behind it.
+    // block + trip stats) through showManeuver, which spans the full canvas and
+    // REPLACES whatever text was there (incl. the "Welcome…" frame) in place. We
+    // deliberately do NOT clear() before this: showManeuver overwrites the same
+    // container, and clear() is an async full-view teardown that would race this
+    // draw (the "old frame lingers under the new one" glitch). clear() is
+    // reserved for genuine teardown (trip end / dispose), not routine updates.
     this.display.showManeuver(combined)
   }
 
@@ -1389,12 +1380,13 @@ export class NavigationController {
       remainingRouteMeters(me, this.trip.routePoints) ??
       undefined
     if (distM == null || distM < 0) return null
-    const distStr = formatDistance(distM, this.unitSystem)
+    // Glasses stats line shows ETA only — the total remaining distance was
+    // dropped to keep the left text compact (distM is still used as the ETA
+    // fallback when the SDK hasn't sent a remaining-time value).
     const etaS =
       this.trip.maneuver?.timeToDestinationSeconds ??
       distM / this.FALLBACK_WALKING_M_PER_S
-    const etaStr = etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
-    return etaStr ? `${distStr} · ${etaStr}` : distStr
+    return etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
   }
 
   /**
@@ -1421,13 +1413,6 @@ export class NavigationController {
   private readonly OSM_LARGE_MAP_W = 288
   private readonly OSM_LARGE_MAP_H = 140
   private readonly OSM_REFETCH_THRESHOLD_M = 120
-  // Beat to wait after clear() before drawing the large map / repainting the
-  // HUD. Doubles as how long the "Loading large map" / "Loading main menu"
-  // top-left message stays up: held a full 3s so the loading text is clearly
-  // readable before the map (or HUD) replaces it. Also gives the G2 ample
-  // time to finish tearing down the old containers (clear is async on the
-  // glasses) so the new content draws onto an empty canvas.
-  private readonly LARGE_MAP_CLEAR_SETTLE_MS = 3000
   // Walking speed for the ETA fallback when the SDK hasn't sent a remaining-time
   // value yet. Mirrors the WebView running drawer's FALLBACK_WALKING_M_PER_S.
   private readonly FALLBACK_WALKING_M_PER_S = 1.4

@@ -7,7 +7,12 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
-import {borderTestImageBase64} from "../lib/bmp"
+import {borderTestImageBase64, encodeBmpBase64} from "../lib/bmp"
+
+// A solid-white 100×100 bitmap — pushed to the minimap rect to ERASE the
+// minimap in place (the G2 reuses the same-rect container, overwriting it)
+// instead of a full-view clear(). White blends into the map background.
+const BLANK_MINIMAP_BMP = encodeBmpBase64(new Uint8Array(100 * 100).fill(255), 100, 100)
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
@@ -61,6 +66,19 @@ export class DisplayManager {
     // receives them in a fixed sequence ≥200ms apart (no cross-pipeline race).
     this.enqueue("minimap", () =>
       this.session.display.showBitmapView(base64Bmp, {x: 576 - 100, y: 0, width: 100, height: 100}),
+    )
+  }
+
+  /**
+   * Erase the minimap bitmap IN PLACE by overwriting its rect with a blank
+   * white tile — same container the live minimap uses, so the G2 reuses it
+   * (no full-view clear(), no async teardown race). Used when switching to the
+   * large map: the large map is a different rect, so it wouldn't otherwise
+   * overwrite the top-right minimap, which would linger.
+   */
+  clearMinimap(): void {
+    this.safeCall(() =>
+      this.session.display.showBitmapView(BLANK_MINIMAP_BMP, {x: 576 - 100, y: 0, width: 100, height: 100}),
     )
   }
 
