@@ -325,7 +325,6 @@ final class NavigationManager: NSObject {
 
       // Try every origin source we have, freshest first.
       let origin = self.lastReportedCoord
-        ?? self.keepAliveLocation?.location?.coordinate
         ?? CLLocationManager().location?.coordinate
 
       if let origin {
