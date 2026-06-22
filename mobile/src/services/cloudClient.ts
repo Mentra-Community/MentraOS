@@ -129,7 +129,7 @@ async function getLocalDevRuntimeToken(opts?: {forceRefresh?: boolean}): Promise
   const base = new URL(runtimeUrl())
   base.port = String(LOCAL_AUTH_PORT)
   base.pathname = "/api/dev/runtime-token"
-  base.search = new URLSearchParams({userId: "local-phone-user", oemId: "mentra"}).toString()
+  base.search = new URLSearchParams({userId: "local-phone-user", tenantId: "mentra"}).toString()
   const url = base.toString()
   const res = await fetch(url)
   if (!res.ok) {
@@ -354,7 +354,7 @@ export const cloudClient = {
     const identity = c.auth.identity
     return {
       mentraUserId: identity.mentraUserId,
-      oemId: identity.oemId,
+      tenantId: identity.tenantId,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }

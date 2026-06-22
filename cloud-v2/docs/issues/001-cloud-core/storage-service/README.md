@@ -1,6 +1,6 @@
 # Storage Service
 
-**Status:** Implemented as local provider first; R2/S3 providers next.
+**Status:** Implemented with local and R2/S3-compatible providers.
 
 Cloud Core owns one internal storage abstraction for durable objects such as
 miniapp release bundles, manifests, icons, screenshots, and promotional media.
@@ -13,9 +13,11 @@ Source:
 
 - `packages/core/src/services/storage/storage.service.ts`
 - `packages/core/src/services/storage/providers/local-storage.provider.ts`
+- `packages/core/src/services/storage/providers/s3-storage.provider.ts`
 
-The first provider is intentionally local so the Console2/CLI/Core loop works
-end-to-end in development without a cloud bucket.
+The local provider keeps the Console2/CLI/Core loop working end-to-end without a
+cloud bucket. The R2/S3 provider uses Bun's native S3 client so Core does not
+need a separate provider SDK dependency.
 
 ```ts
 interface StorageProvider {
@@ -40,9 +42,27 @@ interface StoredObject {
 Environment:
 
 ```txt
-CLOUD_CORE_STORAGE_PROVIDER=local
-CLOUD_CORE_LOCAL_STORAGE_DIR=.cloud-v2-storage/core
+CLOUD_STORAGE_PROVIDER=local
+CLOUD_STORAGE_LOCAL_DIR=.cloud-v2-storage/core
 ```
+
+R2/S3-compatible environment:
+
+```txt
+CLOUD_STORAGE_PROVIDER=r2
+CLOUD_STORAGE_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+CLOUD_STORAGE_S3_BUCKET=mentra-cloud-v2-dev
+CLOUD_STORAGE_S3_ACCESS_KEY_ID=...
+CLOUD_STORAGE_S3_SECRET_ACCESS_KEY=...
+CLOUD_STORAGE_S3_REGION=auto
+```
+
+For local/debug/dev/staging, use the shared non-production R2 credentials with
+environment-specific buckets. Production must use separate credentials and a
+separate bucket.
+
+The older `CLOUD_CORE_STORAGE_*` names are accepted as aliases during the
+service rename transition, but new configs should use `CLOUD_STORAGE_*`.
 
 ## Design rules
 
@@ -56,7 +76,7 @@ CLOUD_CORE_LOCAL_STORAGE_DIR=.cloud-v2-storage/core
 
 ## Next provider work
 
-The R2/S3 provider should add:
+Presigned URL support should add:
 
 - presigned upload URL creation for large release bundles and promotional media
 - presigned download URL creation for mobile install/update

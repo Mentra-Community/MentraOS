@@ -8,7 +8,7 @@ const EnterpriseOrgSchema = new Schema(
     enterpriseOrgId: { type: String, required: true, unique: true },
     ownerUserId: { type: String, required: true, index: true },
     workosOrgId: { type: String, default: null },
-    oemId: { type: String, required: true, unique: true },
+    tenantId: { type: String, required: true, unique: true },
     displayName: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
     status: { type: String, enum: ENTERPRISE_ORG_STATUSES, default: "active", index: true },

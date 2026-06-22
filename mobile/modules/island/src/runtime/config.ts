@@ -42,6 +42,7 @@ export interface CloudRuntimeTtsAdapter {
 
 export interface MiniappAuthToken {
   mentraUserId: string
+  tenantId?: string
   oemId?: string
   token: string
   expiresAt: number

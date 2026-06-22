@@ -32,7 +32,12 @@ async function downloadVerifiedBundle(entry: PreinstalledMiniappRegistryEntry): 
   const target = new File(downloadDir, safeName)
   if (target.exists) target.delete()
 
-  const output = await File.downloadFileAsync(entry.bundleUrl, downloadDir)
+  let output: File
+  try {
+    output = await File.downloadFileAsync(entry.bundleUrl, target, {idempotent: true})
+  } catch (error) {
+    throw new Error(`bundle download failed: ${(error as Error)?.message ?? error}`)
+  }
   const bytes = await output.bytes()
   const actualSha = await sha256Hex(bytes)
   if (actualSha !== entry.bundleSha256.toLowerCase()) {

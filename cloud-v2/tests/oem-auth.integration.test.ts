@@ -99,7 +99,7 @@ beforeEach(async () => {
   // which is portal-auth-gated and not implemented yet; for tests we
   // shortcut by inserting the record directly.
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: toPemWrap(oemKeypair.publicKeyBody, "PUBLIC KEY"),
@@ -112,8 +112,8 @@ describe("OEM auth — token exchange", () => {
   test("happy path: mint → exchange → tokens", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-1" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-1" },
     });
 
     const res = await exchange(jwt);
@@ -132,8 +132,8 @@ describe("OEM auth — token exchange", () => {
 
     // User row was created on first sight.
     const user = await UserModel.findOne({
-      oemId: TEST_OEM_ID,
-      oemUserId: "alice-1",
+      tenantId: TEST_OEM_ID,
+      tenantUserId: "alice-1",
     }).lean();
     expect(user).not.toBeNull();
     expect(user?.mentraUserId).toMatch(/^mu_/);
@@ -142,8 +142,8 @@ describe("OEM auth — token exchange", () => {
   test("replay: same JWT exchanged twice → second rejected", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-2" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-2" },
     });
     const first = await exchange(jwt);
     expect(first.status).toBe(200);
@@ -158,8 +158,8 @@ describe("OEM auth — token exchange", () => {
   test("wrong audience → invalid_grant", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-3", audience: "not-mentra" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-3", audience: "not-mentra" },
     });
     const res = await exchange(jwt);
     expect(res.status).toBe(400);
@@ -171,10 +171,10 @@ describe("OEM auth — token exchange", () => {
   test("expired JWT → invalid_grant", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
+      tenantId: TEST_OEM_ID,
       // Negative ttlSec mints an exp in the past. Bigger negative than the
       // 5-min clock skew tolerance so the rejection is unambiguous.
-      options: { oemUserId: "alice-4", ttlSec: -60 * 10 },
+      options: { tenantUserId: "alice-4", ttlSec: -60 * 10 },
     });
     const res = await exchange(jwt);
     expect(res.status).toBe(400);
@@ -186,8 +186,8 @@ describe("OEM auth — token exchange", () => {
   test("unknown OEM → unauthorized_client", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: "not-registered-with-mentra",
-      options: { oemUserId: "alice-5" },
+      tenantId: "not-registered-with-mentra",
+      options: { tenantUserId: "alice-5" },
     });
     const res = await exchange(jwt);
     expect(res.status).toBe(401);
@@ -198,13 +198,13 @@ describe("OEM auth — token exchange", () => {
 
   test("disabled OEM → unauthorized_client", async () => {
     await OemModel.updateOne(
-      { oemId: TEST_OEM_ID },
+      { tenantId: TEST_OEM_ID },
       { $set: { disabled: true } },
     );
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-6" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-6" },
     });
     const res = await exchange(jwt);
     expect(res.status).toBe(401);
@@ -226,8 +226,8 @@ describe("OEM auth — refresh", () => {
   test("happy path: exchange → refresh → new tokens, rotated", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-7" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-7" },
     });
     const exchangeRes = await exchange(jwt);
     const { refresh_token: rt1, access_token: at1 } =
@@ -249,8 +249,8 @@ describe("OEM auth — refresh", () => {
   test("reuse: old refresh token after rotation → invalid_grant", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-8" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-8" },
     });
     const { refresh_token: rt1 } = (await (await exchange(jwt)).json()) as {
       refresh_token: string;
@@ -269,15 +269,15 @@ describe("OEM auth — refresh", () => {
   test("refresh after OEM disabled → unauthorized_client", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
-      oemId: TEST_OEM_ID,
-      options: { oemUserId: "alice-9" },
+      tenantId: TEST_OEM_ID,
+      options: { tenantUserId: "alice-9" },
     });
     const { refresh_token: rt } = (await (await exchange(jwt)).json()) as {
       refresh_token: string;
     };
 
     await OemModel.updateOne(
-      { oemId: TEST_OEM_ID },
+      { tenantId: TEST_OEM_ID },
       { $set: { disabled: true } },
     );
 

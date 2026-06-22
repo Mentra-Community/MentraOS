@@ -13,7 +13,7 @@ const enterprise = new EnterpriseService();
 
 const upsertOrgSchema = z.object({
   displayName: z.string().min(1),
-  oemId: z.string().min(1),
+  tenantId: z.string().min(1),
 });
 
 const upsertTrustedIssuerSchema = z.object({

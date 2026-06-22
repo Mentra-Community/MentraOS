@@ -57,6 +57,20 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   // Per-request context (reqId, logger) for everything under /api/*.
   app.use("/api/*", requestContext);
 
+  // Minimum-client-version gate. Device-called, unauthenticated: the mobile
+  // app hits this on boot (RestComms.getMinimumClientVersion) before login and
+  // refuses to proceed if it can't reach it. Versions are config-driven and
+  // default to "0.0.0" so any build passes unless an operator pins a floor.
+  app.get("/api/client/min-version", (c) =>
+    c.json({
+      success: true,
+      data: {
+        required: process.env.CLOUD_CLIENT_MIN_VERSION ?? "0.0.0",
+        recommended: process.env.CLOUD_CLIENT_RECOMMENDED_VERSION ?? "0.0.0",
+      },
+    }),
+  );
+
   // Audience mounts. Device-called auth lives under /api/client/*.
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/miniapps", clientMiniapps);

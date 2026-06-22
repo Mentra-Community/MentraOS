@@ -49,12 +49,12 @@ TrustedIssuer
 ```
 
 `TrustedIssuer.issuer` is the exact JWT `iss` value and should be a standards-
-aligned HTTPS issuer URL, not a custom `oemId/env` string.
+aligned HTTPS issuer URL, not a custom `tenantId/env` string.
 
 The portal itself is a small web app with surfaces for:
 
 - Login (handled by WorkOS AuthKit)
-- Account info (the enterprise org's `oemId`, display name, etc.)
+- Account info (the enterprise org's `tenantId`, display name, etc.)
 - Trusted issuer / JWK Set URL management
 - Token exchange test tool
 - Team management (invite admins, role assignment)

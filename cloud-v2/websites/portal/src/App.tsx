@@ -9,7 +9,7 @@ import mentraLogo from "./assets/mentra-logo.svg";
 
 type EnterpriseOrg = {
   id: string;
-  oemId: string;
+  tenantId: string;
   name: string;
   slug: string;
   status: "active" | "disabled" | "pending";
@@ -231,7 +231,7 @@ function ApprovalPending({ org }: { org: EnterpriseOrg }) {
           <p className="mt-2 leading-7 text-[#68746d]">
             {org.name} has been created, but issuer and JWKS management unlocks only after a Mentra admin approves the enterprise account.
           </p>
-          <div className="mt-5 rounded-[18px] bg-[#f5f7f4] p-4 font-mono text-sm text-[#4f5d54]">{org.oemId}</div>
+          <div className="mt-5 rounded-[18px] bg-[#f5f7f4] p-4 font-mono text-sm text-[#4f5d54]">{org.tenantId}</div>
         </div>
       </div>
     </section>
@@ -246,7 +246,7 @@ function EnterpriseOverview({ org, issuers }: { org: EnterpriseOrg; issuers: Tru
         <h2 className="mt-2 text-4xl font-bold tracking-[-0.04em]">{org.name}</h2>
         <p className="mt-3 max-w-2xl leading-7 text-[#68746d]">Configure sandbox and production issuers so your runtime can verify exchange tokens.</p>
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <Metric label="OEM id" value={org.oemId} />
+          <Metric label="Tenant ID" value={org.tenantId} />
           <Metric label="Trusted issuers" value={String(issuers.length)} />
         </div>
       </section>
@@ -294,11 +294,11 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: PortalUser; onSaved: () => Promise<void> }) {
   const [displayName, setDisplayName] = useState(org?.name ?? suggestedOrgName(user.email));
-  const [oemId, setOemId] = useState(org?.oemId ?? suggestedOemId(user.email));
+  const [tenantId, setTenantId] = useState(org?.tenantId ?? suggestedTenantId(user.email));
   const saveOrg = useMutation({
     mutationFn: () => api<{ org: EnterpriseOrg }>("/api/portal/org", {
       method: "PUT",
-      body: { displayName, oemId },
+      body: { displayName, tenantId },
     }),
     onSuccess: onSaved,
   });
@@ -306,10 +306,10 @@ function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: Por
   useEffect(() => {
     if (!org) return;
     setDisplayName(org.name);
-    setOemId(org.oemId);
+    setTenantId(org.tenantId);
   }, [org]);
 
-  const canSave = displayName.trim().length > 1 && oemId.trim().length > 2 && !saveOrg.isPending;
+  const canSave = displayName.trim().length > 1 && tenantId.trim().length > 2 && !saveOrg.isPending;
 
   return (
     <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_10px_28px_-24px_rgba(20,21,27,0.42)]">
@@ -318,7 +318,7 @@ function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: Por
           <div>
             <h2 className="text-xl font-bold">{org ? "Enterprise org" : "Create enterprise org"}</h2>
             <p className="mt-1 text-sm leading-6 text-[#68746d]">
-              This org owns the OEM id that is embedded in trusted exchange tokens.
+              This org owns the Tenant ID that is embedded in trusted exchange tokens.
             </p>
           </div>
           {org ? (
@@ -336,17 +336,17 @@ function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: Por
         <Field label="Organization name">
           <Input value={displayName} onChange={event => setDisplayName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="Acme Optical" />
         </Field>
-        <Field label="OEM id">
+        <Field label="Tenant ID">
           <Input
-            value={oemId}
-            onChange={event => setOemId(event.target.value.toLowerCase().replace(/\s+/g, ""))}
+            value={tenantId}
+            onChange={event => setTenantId(event.target.value.toLowerCase().replace(/\s+/g, ""))}
             className="h-12 rounded-[12px] bg-white font-mono"
             placeholder="acme"
             disabled={Boolean(org)}
           />
         </Field>
         <div className="rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d]">
-          <span className="font-semibold text-[#111318]">Issuer lookup:</span> tokens must include this OEM id so the runtime can find the right issuer configuration.
+          <span className="font-semibold text-[#111318]">Issuer lookup:</span> your tokens must carry this id as the <span className="font-mono">tenantId</span> claim (plus an <span className="font-mono">env</span> claim) so the runtime can find the right issuer configuration.
         </div>
         {saveOrg.isError ? <ErrorText error={saveOrg.error} /> : null}
         <Button className="h-12 w-full rounded-full bg-[#111217] text-white hover:bg-[#25262c]" disabled={!canSave}>
@@ -398,8 +398,9 @@ function IssuerForm({ disabled, onSaved }: { disabled: boolean; onSaved: () => P
         <Field label="Environment">
           <Input value={environmentName} onChange={event => setEnvironmentName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="sandbox" disabled={disabled} />
         </Field>
-        <Field label="Subject claim">
+        <Field label="Subject claim (optional)">
           <Input value={subjectClaim} onChange={event => setSubjectClaim(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="sub" disabled={disabled} />
+          <p className="mt-1 text-xs leading-5 text-[#8a8d85]">Which claim holds the user id. Defaults to <span className="font-mono">sub</span> — only change it if your IdP puts the id elsewhere.</p>
         </Field>
         <Field label="Issuer URL">
           <Input value={issuer} onChange={event => setIssuer(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com" disabled={disabled} />
@@ -443,7 +444,7 @@ function IssuerList({ issuers, loading, onChanged }: { issuers: TrustedIssuer[];
         <div className="flex min-h-[220px] flex-col items-center justify-center p-6 text-center">
           <Fingerprint className="size-10 text-[#087d50]" />
           <h3 className="mt-4 text-lg font-bold">No issuers yet</h3>
-          <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">Create an enterprise org, then add the sandbox or production issuer your auth backend uses in JWT `iss`.</p>
+          <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">Create an enterprise org, then register the sandbox or production issuer your auth backend signs with. Tokens route by <span className="font-mono">tenantId</span> + <span className="font-mono">env</span>; the issuer URL is validated against the token's <span className="font-mono">iss</span>.</p>
         </div>
       ) : (
         <div className="divide-y divide-[#eceeeb]">
@@ -484,13 +485,14 @@ function ReferencePanel({ org }: { org: EnterpriseOrg | null }) {
         <h2 className="text-xl font-bold">Token exchange contract</h2>
       </div>
       <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
-        These are the claims your exchange token must carry before the runtime mints a runtime session token.
+        These are the claims your exchange token must carry. We route on <span className="font-mono text-white/80">tenantId</span> + <span className="font-mono text-white/80">env</span> to find your issuer config; <span className="font-mono text-white/80">iss</span> stays a real URL and is validated against what you registered.
       </p>
       <div className="mt-4 grid gap-2 rounded-[18px] bg-black/30 p-4 font-mono text-sm leading-7 text-[#d9f8e7] sm:grid-cols-2">
-        <div><span className="text-white/45">iss</span> = trusted issuer URL</div>
+        <div><span className="text-white/45">tenantId</span> = {org?.tenantId ?? "create-org-first"}</div>
+        <div><span className="text-white/45">env</span> = sandbox | prod | ...</div>
+        <div><span className="text-white/45">iss</span> = trusted issuer URL (pinned)</div>
         <div><span className="text-white/45">aud</span> = cloud-runtime</div>
-        <div><span className="text-white/45">sub</span> = subjectClaim</div>
-        <div><span className="text-white/45">oemId</span> = {org?.oemId ?? "create-org-first"}</div>
+        <div><span className="text-white/45">sub</span> = your user id (or subjectClaim)</div>
       </div>
     </section>
   );
@@ -607,7 +609,7 @@ function suggestedOrgName(email: string): string {
   return domain ? `${domain[0].toUpperCase()}${domain.slice(1)} Enterprise` : "Acme Enterprise";
 }
 
-function suggestedOemId(email: string): string {
+function suggestedTenantId(email: string): string {
   return (email.split("@")[1]?.split(".")[0] ?? "acme").toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 

@@ -111,10 +111,11 @@ function redirectToWorkos(c: AppContext, provider: string) {
     deleteCookie(c, RETURN_TO_COOKIE, { path: "/api/console/auth" });
   }
 
+  const config = workosConfig();
   const url = workos().userManagement.getAuthorizationUrl({
     provider,
-    clientId: workosConfig().clientId,
-    redirectUri: workosConfig().redirectUri,
+    clientId: config.clientId,
+    redirectUri: redirectUriForRequest(c),
     loginHint: c.req.query("login_hint"),
     state,
   });
@@ -1078,6 +1079,12 @@ function normalizeUrl(value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+function redirectUriForRequest(c: AppContext): string {
+  const publicOrigin = safeAllowedOrigin(c.req.header("x-mentra-public-origin"));
+  if (publicOrigin) return `${publicOrigin}/api/console/auth/callback`;
+  return workosConfig().redirectUri;
+}
+
 function safeReturnTo(value: string | undefined): string | null {
   if (!value) return null;
   let url: URL;
@@ -1088,6 +1095,27 @@ function safeReturnTo(value: string | undefined): string | null {
   }
   if (!["http:", "https:"].includes(url.protocol)) return null;
 
+  const allowedOrigins = allowedConsoleOrigins();
+  const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (!isLocalhost && !allowedOrigins.has(url.origin)) return null;
+
+  url.hash = "";
+  return url.toString();
+}
+
+function safeAllowedOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return null;
+  return allowedConsoleOrigins().has(url.origin) ? url.origin : null;
+}
+
+function allowedConsoleOrigins(): Set<string> {
   const allowedUrls = [
     process.env.CONSOLE2_URL,
     process.env.ADMIN_URL,
@@ -1096,14 +1124,9 @@ function safeReturnTo(value: string | undefined): string | null {
     "http://localhost:5174",
     "http://localhost:5175",
   ].filter((candidate): candidate is string => Boolean(candidate));
-  const allowedOrigins = new Set(
+  return new Set(
     allowedUrls.map(candidate => new URL(candidate).origin),
   );
-  const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if (!isLocalhost && !allowedOrigins.has(url.origin)) return null;
-
-  url.hash = "";
-  return url.toString();
 }
 
 function shouldUseSecureCookies(): boolean {

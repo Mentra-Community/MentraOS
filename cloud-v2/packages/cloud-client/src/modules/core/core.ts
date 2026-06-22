@@ -82,7 +82,7 @@ export interface PreinstalledMiniappRegistryEntry {
   channel: string;
   minMobileVersion?: string;
   maxMobileVersion?: string;
-  oemId?: string;
+  tenantId?: string;
 }
 
 export interface PreinstalledMiniappRegistry {

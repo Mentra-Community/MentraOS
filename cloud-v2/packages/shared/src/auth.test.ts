@@ -37,7 +37,7 @@ describe("runtime token verification", () => {
         issuer: "test-runtime",
         publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
         userIdClaim: "sub",
-        oemIdClaim: "oem_id",
+        tenantIdClaim: "tenant_id",
       },
     ]);
 
@@ -45,14 +45,14 @@ describe("runtime token verification", () => {
       privateKey: keypair.privateKey,
       issuer: "test-runtime",
       subject: "user-1",
-      oemId: "oem-1",
+      tenantId: "oem-1",
       jti: "runtime-jti",
       expiresInSeconds: 60,
     });
 
     await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "user-1",
-      oemId: "oem-1",
+      tenantId: "oem-1",
       sessionId: "runtime_runtime-jti",
       jti: "runtime-jti",
     });
@@ -66,7 +66,7 @@ describe("runtime token verification", () => {
         issuer: "test-runtime",
         publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
         userIdClaim: "sub",
-        fixedOemId: "oem-1",
+        fixedTenantId: "oem-1",
       },
     ]);
 
@@ -75,7 +75,7 @@ describe("runtime token verification", () => {
       issuer: "test-runtime",
       audience: "cloud-core",
       subject: "user-1",
-      oemId: "oem-1",
+      tenantId: "oem-1",
       expiresInSeconds: 60,
     });
 

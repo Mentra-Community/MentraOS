@@ -52,7 +52,7 @@ app.post("/exchange", postExchange);
 app.post("/refresh", postRefresh);
 
 // miniapp-token requires a verified access token, so it sits behind userAuth,
-// which populates `c.var.user` (mentraUserId + oemId) from the Bearer token.
+// which populates `c.var.user` (mentraUserId + tenantId) from the Bearer token.
 app.post("/runtime-token", userAuth, postRuntimeToken);
 app.post("/miniapp-token", userAuth, postMiniappToken);
 
@@ -118,7 +118,7 @@ async function postMiniappToken(c: AppContext) {
 
   const { token, expiresAt } = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
-    oemId: user.oemId,
+    tenantId: user.tenantId,
     packageName,
   });
 
@@ -133,7 +133,7 @@ async function postRuntimeToken(c: AppContext) {
 
   const { token, expiresAt } = await issueRuntimeToken({
     mentraUserId: user.mentraUserId,
-    oemId: user.oemId,
+    tenantId: user.tenantId,
   });
 
   return c.json({

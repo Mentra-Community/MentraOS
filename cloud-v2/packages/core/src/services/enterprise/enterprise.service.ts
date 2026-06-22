@@ -9,7 +9,7 @@ export interface EnterpriseUserIdentity {
 
 export interface UpsertEnterpriseOrgInput {
   displayName: string;
-  oemId: string;
+  tenantId: string;
 }
 
 export interface UpsertTrustedIssuerInput {
@@ -30,16 +30,16 @@ export class EnterpriseService {
 
   async upsertPrimaryOrg(user: EnterpriseUserIdentity, input: UpsertEnterpriseOrgInput) {
     const displayName = normalizeDisplayName(input.displayName);
-    const oemId = normalizeOemId(input.oemId);
+    const tenantId = normalizeTenantId(input.tenantId);
     const slug = slugify(displayName);
     const existing = await EnterpriseOrgModel.findOne({ ownerUserId: user.id }).sort({ createdAt: 1 });
 
     if (!existing) {
-      await assertOemIdAvailable(oemId);
+      await assertTenantIdAvailable(tenantId);
       const created = await EnterpriseOrgModel.create({
         enterpriseOrgId: `ent_${ulid()}`,
         ownerUserId: user.id,
-        oemId,
+        tenantId,
         displayName,
         slug: await uniqueSlug(slug),
         status: "active",
@@ -48,13 +48,13 @@ export class EnterpriseService {
     }
 
     existing.displayName = displayName;
-    if (existing.oemId !== oemId) {
+    if (existing.tenantId !== tenantId) {
       const issuerCount = await TrustedIssuerModel.countDocuments({ enterpriseOrgId: existing.enterpriseOrgId });
       if (issuerCount > 0) {
-        throw new EnterpriseServiceError("oem_id_locked", "OEM id cannot change after trusted issuers are created", 409);
+        throw new EnterpriseServiceError("tenant_id_locked", "Tenant ID cannot change after trusted issuers are created", 409);
       }
-      await assertOemIdAvailable(oemId);
-      existing.oemId = oemId;
+      await assertTenantIdAvailable(tenantId);
+      existing.tenantId = tenantId;
     }
     await existing.save();
     return serializeEnterpriseOrg(existing.toObject());
@@ -75,11 +75,10 @@ export class EnterpriseService {
     const jwksUrl = normalizeHttpsUrl(input.jwksUrl, "JWKS URL");
     const subjectClaim = normalizeSubjectClaim(input.subjectClaim);
 
-    const existingIssuer = await TrustedIssuerModel.findOne({ issuer });
-    if (existingIssuer && existingIssuer.enterpriseOrgId !== org.id) {
-      throw new EnterpriseServiceError("issuer_taken", "issuer is already trusted by another enterprise org", 409);
-    }
-
+    // Lookup/uniqueness is scoped to (enterpriseOrgId, environmentName): one
+    // trusted issuer per env per org. The same `issuer` URL may be reused across
+    // envs/orgs because token exchange keys on the minted (tenantId, env) claims and
+    // only pins `iss` at verify time, so it is no longer globally unique.
     const existingEnvironment = await TrustedIssuerModel.findOne({
       enterpriseOrgId: org.id,
       environmentName,
@@ -90,9 +89,6 @@ export class EnterpriseService {
       enterpriseOrgId: org.id,
       createdBy: user.id,
     });
-    if (target.issuer !== issuer && existingIssuer) {
-      throw new EnterpriseServiceError("issuer_taken", "issuer is already trusted by another enterprise org", 409);
-    }
 
     target.environmentName = environmentName;
     target.issuer = issuer;
@@ -133,9 +129,9 @@ export class EnterpriseServiceError extends Error {
   }
 }
 
-async function assertOemIdAvailable(oemId: string): Promise<void> {
-  const existing = await EnterpriseOrgModel.findOne({ oemId }).lean();
-  if (existing) throw new EnterpriseServiceError("oem_id_taken", "OEM id is already registered", 409);
+async function assertTenantIdAvailable(tenantId: string): Promise<void> {
+  const existing = await EnterpriseOrgModel.findOne({ tenantId }).lean();
+  if (existing) throw new EnterpriseServiceError("tenant_id_taken", "Tenant ID is already registered", 409);
 }
 
 async function uniqueSlug(base: string): Promise<string> {
@@ -155,10 +151,10 @@ function normalizeDisplayName(value: string): string {
   return normalized;
 }
 
-function normalizeOemId(value: string): string {
+function normalizeTenantId(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!/^[a-z][a-z0-9_-]{2,62}$/.test(normalized)) {
-    throw new EnterpriseServiceError("invalid_oem_id", "OEM id must be 3-63 lowercase letters, numbers, dashes, or underscores", 400);
+    throw new EnterpriseServiceError("invalid_tenant_id", "Tenant ID must be 3-63 lowercase letters, numbers, dashes, or underscores", 400);
   }
   return normalized;
 }
@@ -202,7 +198,7 @@ function serializeEnterpriseOrg(org: EnterpriseOrg & { createdAt?: Date; updated
     id: org.enterpriseOrgId,
     ownerUserId: org.ownerUserId,
     workosOrgId: org.workosOrgId ?? null,
-    oemId: org.oemId,
+    tenantId: org.tenantId,
     name: org.displayName,
     slug: org.slug,
     status: org.status,

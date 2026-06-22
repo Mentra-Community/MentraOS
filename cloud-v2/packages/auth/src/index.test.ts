@@ -47,7 +47,7 @@ describe("@mentra/auth miniapp auth", () => {
     const verified = await auth.verifyAuthHeader(`Bearer ${token}`);
 
     expect(verified.mentraUserId).toBe("user_123");
-    expect(verified.oemId).toBe("test-oem");
+    expect(verified.tenantId).toBe("test-oem");
     expect(verified.packageName).toBe(TEST_PACKAGE);
     expect(verified.tokenId).toBe("token_123");
   });
@@ -154,7 +154,7 @@ async function mintMiniappToken(
   opts: { expirationTime?: string | number; issuer?: string } = {},
 ): Promise<string> {
   const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
-  return new jose.SignJWT({ oemId: "test-oem" })
+  return new jose.SignJWT({ tenantId: "test-oem" })
     .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1" })
     .setIssuer(opts.issuer ?? TEST_ISSUER)
     .setAudience(audience)

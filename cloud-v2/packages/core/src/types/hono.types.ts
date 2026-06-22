@@ -20,20 +20,20 @@ export interface AppVariables {
 
   /** OEM identity from a verified machine-to-machine OEM token. */
   oem?: {
-    oemId: string;
+    tenantId: string;
   };
 
   /** OEM portal user (browser session, WorkOS-issued). */
   oemAdmin?: {
     workosUserId: string;
-    oemId: string;
+    tenantId: string;
     role: "owner" | "admin" | "viewer";
   };
 
   /** End user (mobile client), identified via Mentra-issued access token. */
   user?: {
     mentraUserId: string;
-    oemId: string;
+    tenantId: string;
     sessionId: string;
   };
 

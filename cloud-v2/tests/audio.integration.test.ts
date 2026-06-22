@@ -121,7 +121,7 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
 
   // Wait for index sync so the seen-jti replay index actually fires.
@@ -166,7 +166,7 @@ beforeEach(async () => {
   if (ownerKeys.length > 0) await redis.del(...ownerKeys);
   // Seed the TEST OEM record so core trusts JWTs signed by it.
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -583,12 +583,12 @@ describe("audio e2e", () => {
 
 // === Helpers ===
 
-function newClient(oemUserId: string): TestClient {
+function newClient(tenantUserId: string): TestClient {
   return new TestClient({
     testOemUrl: testOemHandle.url,
     coreUrl: coreHandle.url,
     audioWsUrl: audioHandle.wsUrl,
-    oemUserId,
+    tenantUserId,
   });
 }
 

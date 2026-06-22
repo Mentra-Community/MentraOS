@@ -226,7 +226,7 @@ interface ClientMiniappRegistryEntry {
   channel: string
   minMobileVersion?: string
   maxMobileVersion?: string
-  oemId?: string
+  tenantId?: string
 }
 ```
 
@@ -254,7 +254,7 @@ interface PreinstalledRegistry {
   id: string
   name: string
   environment: "debug" | "dev" | "staging" | "prod"
-  oemId?: string
+  tenantId?: string
   status: "draft" | "active" | "archived"
   activeRevisionId?: string
 }
@@ -296,7 +296,7 @@ internal builds. This is a first slice; role-based internal admin permissions
 are tracked in issue 015.
 
 The client registry lookup prefers an OEM-specific active registry and falls
-back to the default registry (`oemId: null`) for the same environment.
+back to the default registry (`tenantId: null`) for the same environment.
 
 Implemented admin UI:
 

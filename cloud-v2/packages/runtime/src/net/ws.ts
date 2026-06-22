@@ -103,7 +103,7 @@ export interface WsData {
   audioSessionId: string;
   /** From the verified access token. */
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   /** The auth-session id (from the access token's `session_id` claim). */
   authSessionId: string;
   /**
@@ -364,7 +364,7 @@ export async function tryWsUpgrade(
   const encryptionKeyB64 = crypto.randomBytes(32).toString("base64");
   const tagRecord = {
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     audioSessionId,
     authSessionId: verified.sessionId,
     podId,
@@ -388,7 +388,7 @@ export async function tryWsUpgrade(
     sessionTag,
     audioSessionId,
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     authSessionId: verified.sessionId,
     // 32-byte secretbox key for this session. Stored in Redis with the reserved
     // sessionTag so any ingress pod can decrypt UDP frames. Sent to the client

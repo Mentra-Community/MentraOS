@@ -64,7 +64,7 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
   await Promise.all([
     OemModel.syncIndexes(),
@@ -89,7 +89,7 @@ beforeEach(async () => {
     RevokedJtiModel.deleteMany({}),
   ]);
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -112,7 +112,7 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
     const claims = decodeJwtClaims(token);
     expect(claims.aud).toBe(TEST_PACKAGE);
     expect(claims.sub).toBe(mentraUserId);
-    expect(claims.oemId).toBe(TEST_OEM_ID);
+    expect(claims.tenantId).toBe(TEST_OEM_ID);
   });
 
   test("caches per packageName: a second call returns the same token", async () => {
@@ -130,11 +130,11 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
 
 // === Helpers ===
 
-async function newCloud(oemUserId: string): Promise<CloudClient> {
+async function newCloud(tenantUserId: string): Promise<CloudClient> {
   const mintRes = await fetch(`${testOemHandle.url}/test-oem/mint-jwt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ oemUserId }),
+    body: JSON.stringify({ tenantUserId }),
   });
   if (!mintRes.ok) throw new Error(`mint-jwt failed: ${mintRes.status}`);
   const { jwt } = (await mintRes.json()) as { jwt: string };

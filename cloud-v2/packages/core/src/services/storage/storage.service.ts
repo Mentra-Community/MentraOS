@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { LocalStorageProvider } from "./providers/local-storage.provider";
+import { createS3StorageProvider } from "./providers/s3-storage.provider";
 
 export interface PutObjectInput {
   key: string;
@@ -37,13 +38,19 @@ export class StorageService {
 }
 
 export function createStorageService(): StorageService {
-  const provider = process.env.CLOUD_CORE_STORAGE_PROVIDER ?? "local";
+  const provider = process.env.CLOUD_STORAGE_PROVIDER ?? process.env.CLOUD_CORE_STORAGE_PROVIDER ?? "local";
+  if (provider === "r2" || provider === "s3") {
+    return new StorageService(createS3StorageProvider());
+  }
   if (provider !== "local") {
-    throw new Error(`unsupported CLOUD_CORE_STORAGE_PROVIDER: ${provider}`);
+    throw new Error(`unsupported CLOUD_STORAGE_PROVIDER: ${provider}`);
   }
   return new StorageService(
     new LocalStorageProvider({
-      rootDir: process.env.CLOUD_CORE_LOCAL_STORAGE_DIR ?? ".cloud-v2-storage/core",
+      rootDir:
+        process.env.CLOUD_STORAGE_LOCAL_DIR ??
+        process.env.CLOUD_CORE_LOCAL_STORAGE_DIR ??
+        ".cloud-v2-storage/core",
     }),
   );
 }

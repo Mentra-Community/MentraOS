@@ -61,7 +61,7 @@ export interface TestClientOptions {
   /** Where cloud-audio's WS endpoint runs. e.g. `ws://localhost:3001/ws/session`. */
   audioWsUrl: string;
   /** OEM's user identifier — passed as `sub` in the OEM JWT. */
-  oemUserId: string;
+  tenantUserId: string;
   /** Audio codec advertised in `connection.init`. Default `"lc3"`. */
   codec?: "lc3" | "pcm";
   /** Sample rate advertised in `connection.init`. Default `16000`. */
@@ -397,7 +397,7 @@ export class TestClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        oemUserId: this.opts.oemUserId,
+        tenantUserId: this.opts.tenantUserId,
         extraClaims: this.opts.extraClaims,
       }),
     });

@@ -31,14 +31,17 @@ separate.
 - Use WorkOS/AuthKit for enterprise admin login and org membership.
 - Model enterprise orgs separately from developer orgs.
 - Let admins register multiple trusted issuer environments.
-- Use standards-aligned JWT issuer semantics: `iss` is an exact HTTPS issuer URL.
+- Route token exchange on the minted `tenantId` + `env` claims, while keeping `iss`
+  a real HTTPS issuer URL that is validated (pinned) at signature time.
 - Let Core exchange OEM subject tokens into Cloud Core / Cloud Runtime tokens.
 - Leave runtime-hosting controls as a later optional layer.
 
 ## Non-goals
 
 - Do not merge enterprise orgs and developer orgs into one all-purpose org.
-- Do not make `iss` a custom `oemId/env` string.
+- Do not make `iss` itself a custom `tenantId/env` string. `iss` stays a standard
+  HTTPS issuer URL; routing uses **separate** `tenantId` + `env` claims so one
+  issuer URL can serve multiple environments and orgs.
 - Do not require an OEM to self-host runtime just to use OEM auth.
 - Do not build billing/contract management in MVP.
 
@@ -49,7 +52,7 @@ interface EnterpriseOrg {
   id: string
   ownerUserId: string
   workosOrgId?: string | null
-  oemId: string
+  tenantId: string
   name: string
   slug: string
   status: "active" | "disabled"
@@ -77,11 +80,14 @@ interface TrustedIssuer {
 }
 ```
 
-`EnterpriseOrg.oemId` is our stable internal/customer identifier. It is not the
-JWT issuer.
+`EnterpriseOrg.tenantId` is our stable internal/customer identifier. It is the value
+the enterprise puts in the token's `tenantId` claim — the token-exchange lookup key.
+It is not the JWT issuer.
 
-`TrustedIssuer.issuer` is the exact JWT `iss` value and should follow the
-OIDC-style shape:
+`TrustedIssuer.issuer` is the exact JWT `iss` value. It is **validated** (pinned)
+at signature time, not used as the lookup key, so it is **not** globally unique —
+the same issuer URL may serve multiple environments and multiple orgs. It should
+still follow the OIDC-style shape:
 
 ```txt
 https://auth.acme.com
@@ -91,23 +97,38 @@ https://auth.acme.com/sandbox
 
 No query string or fragment.
 
+## JWT Claim Contract
+
+Enterprise subject tokens must carry:
+
+```txt
+tenantId  -> EnterpriseOrg.tenantId (the id shown in the portal) — the lookup key
+env    -> a registered TrustedIssuer.environmentName (e.g. sandbox, prod)
+iss    -> the exact registered TrustedIssuer.issuer URL (validated, not the key)
+aud    -> cloud-core or mentra
+sub    -> the user id (or whichever claim `subjectClaim` names)
+exp, iat, jti
+```
+
 ## Token Exchange Lookup
 
 ```txt
 decode JWT without trusting it
-  -> read iss
-  -> lookup TrustedIssuer by exact issuer URL
-  -> require the linked EnterpriseOrg to be active
-  -> verify signature using jwksUrl
+  -> read tenantId + env claims
+  -> lookup EnterpriseOrg whose tenantId == the tenantId claim; require it to be active
+  -> lookup TrustedIssuer by (enterpriseOrgId, environmentName == env); require enabled
+  -> verify signature using jwksUrl, pinning iss == TrustedIssuer.issuer
   -> verify aud=cloud-core or mentra
   -> read subjectClaim, usually sub
-  -> map (enterpriseOrg.oemId, trustedIssuer.environmentName, subject) to user
+  -> map (enterpriseOrg.tenantId, trustedIssuer.environmentName, subject) to user
   -> mint normalized cloud-core/cloud-runtime tokens
 ```
 
-The current implementation preserves compatibility with the older static OEM
-table. Core first attempts exact `TrustedIssuer.issuer` lookup for HTTPS issuer
-URLs, then falls back to the existing `OemModel` path for legacy/test OEM IDs.
+A token carrying `tenantId` is unambiguously an enterprise token: a lookup miss is a
+hard `unauthorized_client`, not a fall-through. Tokens **without** a `tenantId`
+claim take the legacy path — Core keys on `iss` (which a legacy OEM sets to its own
+tenant id) against the older static `OemModel` table — preserving compatibility for
+legacy/test OEM IDs.
 
 ## Implemented Core API
 
@@ -144,7 +165,7 @@ bun run dev:portal   # http://localhost:5175
 ## User Stories
 
 1. An enterprise admin signs in with company SSO.
-2. An admin sees their `oemId`.
+2. An admin sees their `tenantId`.
 3. An admin registers `https://sandbox-auth.acme.com` as a sandbox trusted
    issuer with a JWKS URL.
 4. An admin validates that Cloud Core can fetch the JWKS and verify a sample JWT.
@@ -173,7 +194,7 @@ issuer and still use Mentra-hosted runtime.
 ## Open Decisions
 
 - `environmentName` is unique per EnterpriseOrg in the first implementation.
-- Whether `oemId` is chosen by the customer, assigned by Mentra, or both with
+- Whether `tenantId` is chosen by the customer, assigned by Mentra, or both with
   approval.
 - Exact WorkOS role mapping.
 - Whether portal and Console2 share one WorkOS project or separate projects.
@@ -189,5 +210,5 @@ bun test tests/enterprise-portal.integration.test.ts
 ```
 
 The integration test creates an enterprise org, adds prod and sandbox trusted
-issuers, disables one issuer, verifies issuer listing, confirms the OEM id is
+issuers, disables one issuer, verifies issuer listing, confirms the tenant id is
 locked after issuers exist, and rejects non-HTTPS issuer URLs.

@@ -8,7 +8,7 @@ const DEFAULT_CONTEXT_KEY = "mentraAuth";
 
 export interface VerifiedMentraAuth {
   mentraUserId: string;
-  oemId?: string;
+  tenantId?: string;
   packageName: string;
   tokenId?: string;
   expiresAt?: number;
@@ -128,7 +128,7 @@ export class MentraAuth {
 
     return {
       mentraUserId: subject,
-      oemId: stringClaim(payload.oemId),
+      tenantId: stringClaim(payload.tenantId),
       packageName: this.packageName,
       tokenId: stringClaim(payload.jti),
       expiresAt: typeof payload.exp === "number" ? payload.exp : undefined,

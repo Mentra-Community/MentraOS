@@ -7,7 +7,7 @@ const PreinstalledRegistrySchema = new Schema(
   {
     name: { type: String, required: true },
     environment: { type: String, enum: PREINSTALLED_REGISTRY_ENVIRONMENTS, required: true, index: true },
-    oemId: { type: String, default: null, index: true },
+    tenantId: { type: String, default: null, index: true },
     status: { type: String, enum: PREINSTALLED_REGISTRY_STATUSES, default: "draft", index: true },
     activeRevisionId: { type: String, default: null },
     createdBy: { type: String, required: true },
@@ -17,7 +17,7 @@ const PreinstalledRegistrySchema = new Schema(
 );
 
 PreinstalledRegistrySchema.index(
-  { environment: 1, oemId: 1, name: 1 },
+  { environment: 1, tenantId: 1, name: 1 },
   { unique: true },
 );
 

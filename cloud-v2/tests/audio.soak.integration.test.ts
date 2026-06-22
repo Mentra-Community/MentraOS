@@ -102,7 +102,7 @@ beforeAll(async () => {
 
   testOemHandle = await startTestOem({
     port: TEST_OEM_PORT,
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
   });
   coreHandle = await startCore({ port: CORE_PORT });
   await connectRedis(process.env.REDIS_URL!);
@@ -147,7 +147,7 @@ beforeEach(async () => {
     RevokedJtiModel.deleteMany({}),
   ]);
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -174,7 +174,7 @@ describe("audio soak", () => {
             testOemUrl: testOemHandle.url,
             coreUrl: coreHandle.url,
             audioWsUrl: pod.wsUrl,
-            oemUserId: `soak-user-${i}`,
+            tenantUserId: `soak-user-${i}`,
             connectTimeoutMs: 15_000,
           });
           clients.push(client);

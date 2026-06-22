@@ -27,7 +27,6 @@
  *   - Local Mongo + Redis: `bun run setup:test`
  *   - For real transcripts: SONIOX_API_KEY in env
  *     (run via `doppler run --config dev -- bun scripts/dev-stack.ts`).
- *   - For deterministic fake transcripts: AUDIO_PROVIDER=mock
  *
  * On boot it runs a one-shot self-check of the full external flow (incl.
  * `?token=` query auth) and logs PASS/FAIL, then keeps serving.
@@ -35,9 +34,8 @@
 
 import crypto from "node:crypto";
 import { Buffer } from "node:buffer";
-import os from "node:os";
 import { startCore } from "../packages/core/src/index";
-import { startRuntime } from "../packages/runtime/src/index";
+import { resolveUdpAdvertisedHost, startRuntime } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { signRuntimeToken } from "../packages/shared/src/auth";
@@ -84,13 +82,13 @@ const stripPem = (p: string) =>
       issuer: "cloud-core",
       publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
       userIdClaim: "sub",
-      oemIdClaim: "oem_id",
+      tenantIdClaim: "tenant_id",
     },
     {
       issuer: "local-dev-runtime",
       publicKeyEnv: "LOCAL_RUNTIME_AUTH_PUBLIC_KEY",
       userIdClaim: "sub",
-      oemIdClaim: "oem_id",
+      tenantIdClaim: "tenant_id",
     },
   ]);
   process.env.REFRESH_TOKEN_PEPPER ??= "dev-stack-pepper";
@@ -108,17 +106,14 @@ resetSigningKeyCache();
 const provider = process.env.AUDIO_PROVIDER ?? "soniox";
 if (provider !== "soniox" && provider !== "mock") {
   console.error(`[dev-stack] unknown AUDIO_PROVIDER: ${provider}`);
-  console.error("[dev-stack] expected AUDIO_PROVIDER=soniox or AUDIO_PROVIDER=mock");
+  console.error("[dev-stack] expected AUDIO_PROVIDER=soniox");
   process.exit(1);
 }
 
 if (provider === "soniox" && !process.env.SONIOX_API_KEY) {
   console.error("[dev-stack] SONIOX_API_KEY is required for real local captions.");
   console.error(
-    "[dev-stack] Run via Doppler or export SONIOX_API_KEY before starting dev-stack.",
-  );
-  console.error(
-    "[dev-stack] For deterministic fake transcripts, explicitly run AUDIO_PROVIDER=mock bun scripts/dev-stack.ts.",
+    "[dev-stack] Run `bun run dev` from cloud-v2, or run dev-stack through Doppler with cloud-v2/dev access.",
   );
   process.exit(1);
 }
@@ -128,7 +123,7 @@ if (provider === "soniox" && !process.env.SONIOX_API_KEY) {
 process.env.AUDIO_PROVIDER = provider;
 console.log("[dev-stack] booting test-oem, core, runtime…");
 
-const testOem = await startTestOem({ port: PORT_TEST_OEM, oemId: OEM_ID });
+const testOem = await startTestOem({ port: PORT_TEST_OEM, tenantId: OEM_ID });
 const core = await startCore({ port: PORT_CORE });
 const localAuth = startLocalAuthIssuer(PORT_LOCAL_AUTH);
 const runtime = await startRuntime({
@@ -140,9 +135,9 @@ const runtime = await startRuntime({
 });
 
 // Seed the OEM record so core trusts the test-oem's signing key on exchange.
-await OemModel.deleteMany({ oemId: testOem.oemId });
+await OemModel.deleteMany({ tenantId: testOem.tenantId });
 await OemModel.create({
-  oemId: testOem.oemId,
+  tenantId: testOem.tenantId,
   displayName: "Local Dev OEM",
   publicKeyMode: "static",
   publicKey: `-----BEGIN PUBLIC KEY-----\n${testOem.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -156,7 +151,7 @@ console.log(`  auth     : ${localAuth.url}`);
 console.log(`  runtime WS : ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session`);
 console.log(`  runtime UDP: ${ADVERTISE_HOST}:${PORT_RUNTIME_UDP}`);
 console.log(`  provider : ${provider}`);
-console.log(`  oemId    : ${testOem.oemId}`);
+console.log(`  tenantId    : ${testOem.tenantId}`);
 if (!process.env.DEV_UDP_ADVERTISE_HOST) {
   console.log("  udp host : auto-detected; override with DEV_UDP_ADVERTISE_HOST if needed");
 }
@@ -184,38 +179,24 @@ await new Promise<never>(() => {});
  * so defaulting to 127.0.0.1 makes Cloud V2 fall back to WebSocket audio.
  */
 function resolveAdvertiseHost(): string {
-  const explicit = process.env.DEV_UDP_ADVERTISE_HOST;
+  const explicit = process.env.DEV_UDP_ADVERTISE_HOST?.trim();
   if (explicit && explicit !== "auto") return explicit;
 
-  const candidates = Object.entries(os.networkInterfaces()).flatMap(([name, addrs]) =>
-    (addrs ?? [])
-      .filter((addr) => addr.family === "IPv4" && !addr.internal)
-      .map((addr) => ({name, address: addr.address, score: scoreInterface(name, addr.address)})),
-  );
-
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates[0]?.address ?? "127.0.0.1";
-}
-
-function scoreInterface(name: string, address: string): number {
-  let score = 0;
-  if (isPrivateIpv4(address)) score += 100;
-  if (name === "en0" || name === "en1") score += 50;
-  if (/^(bridge|docker|vboxnet|vmnet|awdl|llw|utun)/.test(name)) score -= 100;
-  if (address.startsWith("169.254.")) score -= 50;
-  return score;
-}
-
-function isPrivateIpv4(address: string): boolean {
-  const [a, b] = address.split(".").map((part) => Number(part));
-  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  const resolved = resolveUdpAdvertisedHost({
+    env: {
+      ...process.env,
+      AUDIO_UDP_ADVERTISED_HOST: undefined,
+      AUDIO_UDP_AUTO_DETECT_LAN: "true",
+    },
+  });
+  return resolved.host;
 }
 
 /** Mint a local-dev runtime token, bypassing Core to exercise runtime-only auth. */
-async function mintRuntimeToken(oemUserId: string): Promise<string> {
+async function mintRuntimeToken(tenantUserId: string): Promise<string> {
   const res = await fetch(
     `${localAuth.url}/api/dev/runtime-token?` +
-      new URLSearchParams({ userId: oemUserId, oemId: "dev-local-oem" }),
+      new URLSearchParams({ userId: tenantUserId, tenantId: "dev-local-oem" }),
   );
   if (!res.ok) throw new Error(`dev runtime-token failed: ${res.status}`);
   const { access_token } = (await res.json()) as { access_token: string };
@@ -312,12 +293,12 @@ function startLocalAuthIssuer(port: number): { url: string; stop(): void } {
       }
 
       const userId = url.searchParams.get("userId") || "local-dev-user";
-      const oemId = url.searchParams.get("oemId") || "dev-local-oem";
+      const tenantId = url.searchParams.get("tenantId") || "dev-local-oem";
       const token = await signRuntimeToken({
         privateKey: process.env.LOCAL_RUNTIME_AUTH_PRIVATE_KEY!,
         issuer: "local-dev-runtime",
         subject: userId,
-        oemId,
+        tenantId,
         jti: crypto.randomUUID(),
         expiresInSeconds: 15 * 60,
         kid: "local-dev-runtime-1",

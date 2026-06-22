@@ -114,7 +114,7 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
 
   // Connect this test process to Redis too — we use it for setup/teardown
@@ -166,7 +166,7 @@ beforeEach(async () => {
     RevokedJtiModel.deleteMany({}),
   ]);
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -311,7 +311,7 @@ describe("audio multi-pod e2e", () => {
         testOemUrl: testOemHandle.url,
         coreUrl: coreHandle.url,
         audioWsUrl: podB.wsUrl,
-        oemUserId: "alice-exclusive",
+        tenantUserId: "alice-exclusive",
         connectTimeoutMs: 15_000,
       });
 
@@ -368,7 +368,7 @@ describe("audio multi-pod e2e", () => {
       testOemUrl: testOemHandle.url,
       coreUrl: coreHandle.url,
       audioWsUrl: podB.wsUrl,
-      oemUserId: "alice-deadpod",
+      tenantUserId: "alice-deadpod",
       connectTimeoutMs: 15_000,
     });
     await clientB.connect();
@@ -446,12 +446,12 @@ describe("audio multi-pod e2e", () => {
 
 // === Helpers ===
 
-function newClient(pod: PodHandle, oemUserId: string): TestClient {
+function newClient(pod: PodHandle, tenantUserId: string): TestClient {
   return new TestClient({
     testOemUrl: testOemHandle.url,
     coreUrl: coreHandle.url,
     audioWsUrl: pod.wsUrl,
-    oemUserId,
+    tenantUserId,
   });
 }
 

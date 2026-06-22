@@ -201,7 +201,7 @@ In Mentra's DB:
 
 ```
 oems (already in 001)
-  - oemId                       (stable, used in 001's auth path)
+  - tenantId                       (stable, used in 001's auth path)
   - workosOrgId                  (link to WorkOS org)
   - displayName
   - createdAt
@@ -210,7 +210,7 @@ oems (already in 001)
 portalAuditLog                  (new for the portal)
   - timestamp
   - workosUserId (member who took the action)
-  - oemId
+  - tenantId
   - action (e.g., "rotated public key", "revoked session", "invited member")
   - details (JSON blob)
 ```

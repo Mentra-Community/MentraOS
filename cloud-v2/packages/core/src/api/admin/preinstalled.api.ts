@@ -27,7 +27,7 @@ const miniapps = new MiniAppService();
 const ensureRegistrySchema = z.object({
   environment: z.enum(PREINSTALLED_REGISTRY_ENVIRONMENTS),
   name: z.string().min(1).optional(),
-  oemId: z.string().min(1).nullable().optional(),
+  tenantId: z.string().min(1).nullable().optional(),
 });
 
 const createRevisionSchema = z.object({

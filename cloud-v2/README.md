@@ -30,15 +30,18 @@ cloud-v2/
 
 Prerequisites:
 - Bun >= 1.3.0 (`curl -fsSL https://bun.sh/install | bash`) — 1.2.x has a node:tls bug that breaks MongoDB Atlas's SNI handshake (the production image pins 1.3.x for the same reason)
-- Docker (for local Redis)
-- Doppler CLI (for secrets; once configured)
+- Docker (for local Mongo + Redis)
+- Doppler CLI with access to the `cloud-v2` project / `dev` config
 
 ```sh
+cd cloud-v2
 bun install            # install dependencies (workspace-aware)
-bun run setup          # one-time pre-flight (Redis container, schema migrations)
-bun run dev:core       # run core in watch mode
-bun run dev:audio      # run audio in watch mode (in another terminal)
+bun run dev            # preflight, local Mongo/Redis, Core + Runtime + Test OEM
 ```
+
+If `bun run dev` cannot start, it prints the next command or access request
+needed. The direct package commands (`dev:core`, `dev:runtime`, `dev:proxy`) are
+for package-level debugging after you know which service you are isolating.
 
 Iteration: save a file, Bun restarts the affected package in well under a second.
 

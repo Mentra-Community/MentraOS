@@ -33,7 +33,7 @@ async function loadRegistry(c: AppContext) {
   if (!user) throw new InvalidRequest("authenticated user missing");
   return registryService.clientRegistry({
     environment: c.req.query("environment"),
-    oemId: user.oemId,
+    tenantId: user.tenantId,
     baseUrl: new URL(c.req.url).origin,
   });
 }

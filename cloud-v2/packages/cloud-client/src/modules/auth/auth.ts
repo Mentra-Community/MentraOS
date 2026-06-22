@@ -14,8 +14,10 @@
  *  - Exchange, refresh, and each per-miniapp mint are single-flighted, so a
  *    reconnect storm cannot fire a burst of competing requests (and a rotated
  *    refresh token cannot be invalidated out from under a concurrent caller).
- *  - If a refresh fails, `onExpired` fires once and the host re-authenticates;
- *    we do not retry forever against a dead refresh token.
+ *  - If a refresh fails and the host can fetch a fresh subject token on demand,
+ *    we clear the dead refresh token and exchange once. If no fresh subject is
+ *    available (or exchange also fails), `onExpired` fires once and the host
+ *    re-authenticates. We do not retry forever against a dead refresh token.
  *
  * Security: the access token is never written to storage, never given to a
  * miniapp, and no token is ever logged.
@@ -55,7 +57,7 @@ export interface AuthModule {
   getMiniappToken(packageName: string, opts?: { minTtlMs?: number }): Promise<{ token: string; expiresAt: number }>;
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
-  readonly identity: { mentraUserId: string; oemId: string };
+  readonly identity: { mentraUserId: string; tenantId: string };
   // refresh failed; the host must send the user back through login
   onExpired(handler: () => void): () => void;
 }
@@ -257,14 +259,14 @@ export class Auth implements AuthModule {
    * every call, so the client need not). Throws if no Core access token has been
    * obtained yet, since Core identity is meaningless before the first exchange.
    */
-  get identity(): { mentraUserId: string; oemId: string } {
+  get identity(): { mentraUserId: string; tenantId: string } {
     this.requireCoreConfig();
     const current = this.store.current();
     if (!current) {
       throw new AuthExpiredError("Core identity is unavailable before first Core sign-in");
     }
     const claims = decodeClaims(current.accessToken);
-    return { mentraUserId: claims.sub, oemId: claims.oem_id };
+    return { mentraUserId: claims.sub, tenantId: claims.tenant_id };
   }
 
   /**
@@ -310,7 +312,19 @@ export class Auth implements AuthModule {
   private async obtainAccessToken(): Promise<string> {
     const refreshToken = await this.store.refreshToken();
     if (refreshToken) {
-      return this.refresh(refreshToken);
+      try {
+        return await this.refresh(refreshToken, { deferExpired: this.canExchangeFreshSubject() });
+      } catch (err) {
+        if (this.canExchangeFreshSubject()) {
+          this.logger.info("refresh failed; exchanging fresh subject token");
+          try {
+            return await this.exchange();
+          } catch {
+            this.fireExpired();
+          }
+        }
+        throw err;
+      }
     }
     return this.exchange();
   }
@@ -361,11 +375,13 @@ export class Auth implements AuthModule {
    * Refresh near expiry: trade the stored refresh token for a new access token
    * and a rotated refresh token, saving both.
    *
-   * On failure (the refresh token is dead or revoked) we clear stored state and
-   * fire `onExpired` once, then surface an `AuthExpiredError`. We do not retry:
-   * a dead refresh token will not heal on its own, and retrying would loop.
+   * On failure (the refresh token is dead or revoked) we clear stored state.
+   * The caller either falls back to one fresh subject-token exchange (for
+   * on-demand subject-token configs) or fires `onExpired` once and surfaces an
+   * `AuthExpiredError`. We do not retry refresh forever: a dead refresh token
+   * will not heal on its own, and retrying would loop.
    */
-  private async refresh(refreshToken: string): Promise<string> {
+  private async refresh(refreshToken: string, opts?: { deferExpired?: boolean }): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -376,9 +392,11 @@ export class Auth implements AuthModule {
       tokens = await this.postForm(REFRESH_PATH, body, "refresh");
     } catch {
       // The refresh token is unusable: drop it so we do not keep presenting a
-      // known-bad token, notify the host once, and stop.
+      // known-bad token.
       await this.store.clear();
-      this.fireExpired();
+      if (!opts?.deferExpired) {
+        this.fireExpired();
+      }
       throw new AuthExpiredError("token refresh failed; re-auth required");
     }
 
@@ -389,6 +407,10 @@ export class Auth implements AuthModule {
     this.expiredFired = false;
     this.logger.debug("refreshed access token");
     return tokens.access_token;
+  }
+
+  private canExchangeFreshSubject(): boolean {
+    return !!this.coreConfig && "getSubjectToken" in this.coreConfig;
   }
 
   /**

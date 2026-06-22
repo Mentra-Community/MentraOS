@@ -52,7 +52,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await Promise.all([
     EnterpriseOrgModel.deleteMany({ ownerUserId: user.id }),
-    EnterpriseOrgModel.deleteMany({ oemId: /^acme/ }),
+    EnterpriseOrgModel.deleteMany({ tenantId: /^acme/ }),
     TrustedIssuerModel.deleteMany({ issuer: /^https:\/\/auth\.acme\.example/ }),
   ]);
 });
@@ -61,9 +61,9 @@ describe("enterprise portal service", () => {
   test("creates an enterprise org and trusted issuer environments", async () => {
     const org = await enterprise.upsertPrimaryOrg(user, {
       displayName: "Acme Glass",
-      oemId: "acme",
+      tenantId: "acme",
     });
-    expect(org.oemId).toBe("acme");
+    expect(org.tenantId).toBe("acme");
     expect(org.status).toBe("active");
 
     const prod = await enterprise.upsertTrustedIssuer(user, {
@@ -104,7 +104,7 @@ describe("enterprise portal service", () => {
   test("locks OEM id after an issuer exists", async () => {
     await enterprise.upsertPrimaryOrg(user, {
       displayName: "Acme Glass",
-      oemId: "acme",
+      tenantId: "acme",
     });
     await enterprise.upsertTrustedIssuer(user, {
       environmentName: "prod",
@@ -115,15 +115,42 @@ describe("enterprise portal service", () => {
     await expect(
       enterprise.upsertPrimaryOrg(user, {
         displayName: "Acme Glass",
-        oemId: "acme-renamed",
+        tenantId: "acme-renamed",
       }),
     ).rejects.toThrow(EnterpriseServiceError);
+  });
+
+  test("allows the same issuer URL across environments", async () => {
+    // Lookup keys on the minted (tenantId, env) claims and only pins iss at verify
+    // time, so `issuer` is no longer globally unique. One IdP issuer URL must be
+    // registrable for multiple environments of the same org.
+    await enterprise.upsertPrimaryOrg(user, { displayName: "Acme Glass", tenantId: "acme" });
+    const sharedIssuer = "https://auth.acme.example/shared";
+    const sharedJwks = "https://auth.acme.example/shared/.well-known/jwks.json";
+
+    const prod = await enterprise.upsertTrustedIssuer(user, {
+      environmentName: "prod",
+      issuer: sharedIssuer,
+      jwksUrl: sharedJwks,
+    });
+    const sandbox = await enterprise.upsertTrustedIssuer(user, {
+      environmentName: "sandbox",
+      issuer: sharedIssuer,
+      jwksUrl: sharedJwks,
+    });
+
+    expect(prod.issuer).toBe(sharedIssuer);
+    expect(sandbox.issuer).toBe(sharedIssuer);
+    expect(prod.id).not.toBe(sandbox.id);
+
+    const listed = await enterprise.listTrustedIssuers(user);
+    expect(listed.issuers.map(issuer => issuer.environmentName)).toEqual(["prod", "sandbox"]);
   });
 
   test("rejects non-https issuers", async () => {
     await enterprise.upsertPrimaryOrg(user, {
       displayName: "Acme Glass",
-      oemId: "acme",
+      tenantId: "acme",
     });
 
     await expect(

@@ -35,7 +35,7 @@ export interface CreateRegistryRevisionInput {
 
 export interface ClientRegistryOptions {
   environment?: string | null;
-  oemId?: string | null;
+  tenantId?: string | null;
   baseUrl: string;
 }
 
@@ -52,13 +52,13 @@ export class PreinstalledRegistryService {
   async ensureRegistry(admin: AdminIdentity, input: {
     environment: PreinstalledRegistryEnvironment;
     name?: string;
-    oemId?: string | null;
+    tenantId?: string | null;
   }) {
     const name = input.name?.trim() || DEFAULT_REGISTRY_NAME;
     const existing = await PreinstalledRegistryModel.findOne({
       environment: input.environment,
       name,
-      oemId: input.oemId ?? null,
+      tenantId: input.tenantId ?? null,
       status: { $ne: "archived" },
     }).lean();
     if (existing) return serializeRegistry(existing);
@@ -66,7 +66,7 @@ export class PreinstalledRegistryService {
     const created = await PreinstalledRegistryModel.create({
       name,
       environment: input.environment,
-      oemId: input.oemId ?? null,
+      tenantId: input.tenantId ?? null,
       status: "draft",
       createdBy: admin.adminId,
     });
@@ -162,11 +162,11 @@ export class PreinstalledRegistryService {
       environment,
       name: DEFAULT_REGISTRY_NAME,
       status: "active",
-      oemId: opts.oemId
-        ? { $in: [opts.oemId, null] }
+      tenantId: opts.tenantId
+        ? { $in: [opts.tenantId, null] }
         : null,
     })
-      .sort({ oemId: -1 })
+      .sort({ tenantId: -1 })
       .lean();
     if (!registry?.activeRevisionId) {
       return { generatedAt: new Date().toISOString(), entries: [] };
@@ -205,7 +205,7 @@ export class PreinstalledRegistryService {
           channel: registry.environment,
           minMobileVersion: entry.minMobileVersion ?? undefined,
           maxMobileVersion: entry.maxMobileVersion ?? undefined,
-          oemId: registry.oemId ?? undefined,
+          tenantId: registry.tenantId ?? undefined,
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
@@ -276,7 +276,7 @@ function serializeRegistry(registry: PreinstalledRegistry & { _id: unknown; crea
     id: String(registry._id),
     name: registry.name,
     environment: registry.environment,
-    oemId: registry.oemId ?? null,
+    tenantId: registry.tenantId ?? null,
     status: registry.status,
     activeRevisionId: registry.activeRevisionId ?? null,
     createdAt: registry.createdAt?.toISOString() ?? null,
