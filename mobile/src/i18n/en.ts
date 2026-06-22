@@ -140,6 +140,19 @@ const en = {
       "Your glasses are connected to the app, but the bluetooth audio device is not connected.",
     powerOn: "Power on",
     poweredOn: "Continue",
+    livePairingModeTitle: "Ready to pair",
+    livePairingModeSubtitle: "New glasses pair automatically when powered on.",
+    livePairingModeInfo:
+      "If nothing appears in the next step, hold the power and camera buttons together for 10 seconds until the LED flashes and the glasses read out a code.",
+    noGlassesFound: "No glasses found",
+    noGlassesFoundHint: "Make sure you held both buttons for 10 seconds, then try again.",
+    tryAgain: "Try Again",
+    wipeMediaTitle: "Delete previous owner media?",
+    wipeMediaMessage:
+      "To use these glasses, the previous owner's photos and videos must be deleted. Delete and continue?",
+    wipeMediaConfirm: "Delete and continue",
+    pairingCancelledTitle: "Pairing cancelled",
+    pairingCancelledMessage: "The glasses still belong to their previous owner.",
   },
   pairingGuide: {
     mentraLivePreorder: "Get Mentra Live and experience computer vision on your smart glasses.",
