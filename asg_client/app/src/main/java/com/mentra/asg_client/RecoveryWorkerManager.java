@@ -12,13 +12,22 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
+import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONObject;
 
 /** Deploys and starts the {@code com.mentra.recovery} sidecar (recovery worker APK). */
 public class RecoveryWorkerManager {
@@ -61,6 +70,16 @@ public class RecoveryWorkerManager {
     private void ensureRecoveryWorker() {
         try {
             purgeLegacyUpdaterIfNeeded();
+
+            // Remote update is the highest-priority path: if the OTA manifest lists a newer
+            // recovery worker, download and install it before anything else. This allows the
+            // sidecar to be updated without shipping a new ASG build and without any user
+            // approval (OEM silent install, same mechanism as the bundled-asset path).
+            // On success PackageInstallReceiver will launch the worker after the install.
+            if (fetchAndApplyRemoteUpdate()) {
+                return;
+            }
+
             int currentVersion = getInstalledVersion(RECOVERY_PACKAGE);
             if (!isRecoveryAssetBundled()) {
                 if (currentVersion != -1) {
@@ -79,6 +98,162 @@ public class RecoveryWorkerManager {
         } catch (Exception e) {
             Log.e(TAG, "Failed to ensure recovery worker", e);
             launchRecoveryWorker();
+        }
+    }
+
+    /**
+     * Fetches the OTA manifest and installs the recovery worker from the network if a newer
+     * versionCode than what is installed is listed under {@code apps["com.mentra.recovery"]}.
+     *
+     * <p>The APK is always downloaded fresh and SHA-256 verified before the OEM install broadcast
+     * is sent, so no stale-file risk exists. Returns {@code true} when an install was dispatched;
+     * the caller should exit — {@link PackageInstallReceiver} will launch the sidecar after the
+     * install completes. Returns {@code false} on any failure so the caller falls back to the
+     * bundled-asset path.
+     */
+    private boolean fetchAndApplyRemoteUpdate() {
+        int installedVersion = getInstalledVersion(RECOVERY_PACKAGE);
+        try {
+            JSONObject manifest = fetchManifest();
+            if (manifest == null) return false;
+
+            JSONObject apps = manifest.optJSONObject("apps");
+            if (apps == null || !apps.has(OtaConstants.RECOVERY_WORKER_PACKAGE)) return false;
+
+            JSONObject info = apps.getJSONObject(OtaConstants.RECOVERY_WORKER_PACKAGE);
+            int remoteVersionCode = info.optInt("versionCode", -1);
+            String apkUrl = info.optString("apkUrl", "");
+            String sha256 = info.optString("sha256", "");
+
+            if (remoteVersionCode <= 0 || apkUrl.isEmpty() || sha256.isEmpty()) {
+                Log.d(TAG, "Remote recovery worker manifest entry incomplete; skipping");
+                return false;
+            }
+            if (remoteVersionCode <= installedVersion) {
+                Log.d(TAG, "Recovery worker up to date (installed=" + installedVersion
+                        + ", remote=" + remoteVersionCode + ")");
+                return false;
+            }
+
+            Log.i(TAG, "Remote recovery worker v" + remoteVersionCode
+                    + " > installed v" + installedVersion + "; downloading");
+
+            File updateApk = new File(OtaConstants.RECOVERY_WORKER_UPDATE_APK_PATH);
+            deleteQuietly(updateApk);
+
+            File parentDir = updateApk.getParentFile();
+            if (parentDir != null && !parentDir.exists()) parentDir.mkdirs();
+
+            if (!downloadToFile(apkUrl, updateApk)) {
+                deleteQuietly(updateApk);
+                return false;
+            }
+            if (!verifySha256(updateApk, sha256)) {
+                Log.e(TAG, "Recovery worker APK SHA-256 mismatch; aborting update");
+                deleteQuietly(updateApk);
+                return false;
+            }
+
+            Intent install = new Intent("com.xy.xsetting.action");
+            install.setPackage("com.android.systemui");
+            install.putExtra("cmd", "install");
+            install.putExtra("pkpath", updateApk.getAbsolutePath());
+            context.sendBroadcast(install);
+            Log.i(TAG, "Remote recovery worker v" + remoteVersionCode + " install dispatched");
+            return true;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Remote recovery worker update check failed", e);
+            return false;
+        }
+    }
+
+    private JSONObject fetchManifest() {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(OtaConstants.VERSION_JSON_URL).openConnection();
+            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
+            conn.setRequestMethod("GET");
+            conn.connect();
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                Log.e(TAG, "Manifest fetch HTTP " + code);
+                return null;
+            }
+            StringBuilder body = new StringBuilder();
+            try (InputStream is = conn.getInputStream();
+                    BufferedReader reader =
+                            new BufferedReader(
+                                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) body.append(line);
+            }
+            return new JSONObject(body.toString());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to fetch OTA manifest for recovery worker check", e);
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private boolean downloadToFile(String apkUrl, File target) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(apkUrl).openConnection();
+            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
+            conn.setRequestMethod("GET");
+            conn.connect();
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                Log.e(TAG, "Recovery worker APK download HTTP " + code);
+                return false;
+            }
+            try (InputStream is = conn.getInputStream();
+                    FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = is.read(buffer)) != -1) fos.write(buffer, 0, read);
+                fos.flush();
+            }
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to download recovery worker APK", e);
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private boolean verifySha256(File file, String expectedHex) {
+        if (expectedHex == null || expectedHex.isEmpty()) {
+            Log.e(TAG, "No SHA-256 provided for recovery worker APK — rejecting");
+            return false;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            int read;
+            try (FileInputStream is = new FileInputStream(file)) {
+                while ((read = is.read(buffer)) > 0) digest.update(buffer, 0, read);
+            }
+            byte[] hashBytes = digest.digest();
+            StringBuilder sb = new StringBuilder(hashBytes.length * 2);
+            for (byte b : hashBytes) sb.append(String.format("%02x", b));
+            boolean match = sb.toString().equalsIgnoreCase(expectedHex);
+            Log.d(TAG, "Recovery worker SHA-256 " + (match ? "verified" : "MISMATCH"));
+            return match;
+        } catch (Exception e) {
+            Log.e(TAG, "Recovery worker SHA-256 check error", e);
+            return false;
+        }
+    }
+
+    private void deleteQuietly(File file) {
+        if (file != null && file.exists() && !file.delete()) {
+            Log.w(TAG, "Could not delete " + file.getAbsolutePath());
         }
     }
 

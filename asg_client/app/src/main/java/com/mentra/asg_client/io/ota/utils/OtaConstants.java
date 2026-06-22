@@ -59,6 +59,12 @@ public class OtaConstants {
     public static final int CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to establish connection
     public static final int READ_TIMEOUT_MS = 20000;     // 20 seconds to receive data (stall / dead WiFi fail faster)
 
+    // Recovery worker sidecar update (network-fetched, bypasses ASG bundled-asset path)
+    public static final String RECOVERY_WORKER_PACKAGE = "com.mentra.recovery";
+    public static final String RECOVERY_WORKER_UPDATE_APK_FILENAME = "recovery_worker_update.apk";
+    public static final String RECOVERY_WORKER_UPDATE_APK_PATH =
+            BASE_DIR + "/" + RECOVERY_WORKER_UPDATE_APK_FILENAME;
+
     // Recovery worker cross-app signals
     public static final String ASG_PACKAGE = "com.mentra.asg_client";
     public static final String RECOVERY_PACKAGE = "com.mentra.recovery";

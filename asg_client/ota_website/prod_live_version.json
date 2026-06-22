@@ -1,5 +1,11 @@
 {
   "apps": {
+    "com.mentra.recovery": {
+      "versionCode": 0,
+      "versionName": "0.0",
+      "apkUrl": "",
+      "sha256": ""
+    },
     "com.mentra.asg_client": {
       "versionCode": 38,
       "versionName": "38.0",
