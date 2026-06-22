@@ -1,7 +1,8 @@
 package com.mentra.bluetoothsdk.camera
 
-import kotlin.test.Test
-import kotlin.test.assertNull
+import com.mentra.bluetoothsdk.PhotoRequest
+import org.junit.Assert.assertNull
+import org.junit.Test
 
 class PhotoRequestTest {
     @Test
