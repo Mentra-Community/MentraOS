@@ -38,6 +38,7 @@ class MentraBluetoothSdk private constructor(
     private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
     private val oneShotLock = Any()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
+    private var pendingWipeMedia: PendingResponse<WipeMediaResultEvent>? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
@@ -764,6 +765,37 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    fun wipeMediaForPairing(): WipeMediaResultEvent {
+        val pending = PendingResponse<WipeMediaResultEvent>("wipe media for pairing")
+        synchronized(oneShotLock) {
+            if (pendingWipeMedia != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A wipe media request is already waiting for a glasses response.",
+                )
+            }
+            pendingWipeMedia = pending
+        }
+        try {
+            deviceManager.sendWipeMediaForPairing()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWipeMedia === pending) {
+                    pendingWipeMedia = null
+                }
+            }
+        }
+    }
+
+    fun finalizePairingTransfer() {
+        deviceManager.sendPairingFinalize()
+    }
+
+    fun abortPairingTransfer() {
+        deviceManager.sendPairingAbort()
+    }
+
     fun startStream(request: StreamRequest): StreamStatusEvent =
         startStream(request, startSdkKeepAlive = true)
 
@@ -1307,6 +1339,14 @@ class MentraBluetoothSdk private constructor(
                     pendingGalleryStatus?.resolve(event)
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
+            }
+            "pairing_info" -> dispatchToListeners { it.onRawEvent(eventName, data) }
+            "wipe_media_result" -> {
+                val event = WipeMediaResultEvent(data["success"] as? Boolean ?: false, data)
+                synchronized(oneShotLock) {
+                    pendingWipeMedia?.resolve(event)
+                }
+                dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
