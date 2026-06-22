@@ -126,9 +126,22 @@ public class AudioRecorder {
         }
 
         mAudioRecord = record;
-        mRecording = true;
 
         record.startRecording();
+
+        // Verify the native layer actually accepted the start. AudioRecord.startRecording() is
+        // void and swallows HAL/AudioFlinger errors; getRecordingState() is the only reliable
+        // way to detect a silent failure (e.g. mic resource conflict with I2S audio path).
+        if (record.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(TAG, "AudioRecord.startRecording() failed — native layer rejected the request "
+                    + "(recordingState=" + record.getRecordingState() + "). "
+                    + "Possible cause: microphone held by another process or I2S audio path.");
+            record.release();
+            mAudioRecord = null;
+            return false;
+        }
+
+        mRecording = true;
         Log.i(TAG, "Audio capture started — " + SAMPLE_RATE_HZ + " Hz, " + bufferBytes + "B buffer");
 
         mRecorderHandler.post(this::readLoop);
