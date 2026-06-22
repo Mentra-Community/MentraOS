@@ -1,18 +1,21 @@
 import {useRoute} from "@react-navigation/native"
 import {waitForGlassesReady, BluetoothSdk} from "@mentra/island"
-import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/island"
+import type {PairFailureEvent, GlassesNotReadyEvent, PairingInfoEvent} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {Button} from "@/components/ignite"
 import {Header} from "@/components/ignite/Header"
 import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
+import {translate} from "@/i18n"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
+import showAlert from "@/utils/AlertUtils"
 
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
@@ -24,6 +27,11 @@ export default function GlassesPairingLoadingScreen() {
   const hasNavigatedRef = useRef(false)
   const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
+  const pairingInfoRef = useRef<boolean | null>(null)
+  const [pairingResolved, setPairingResolved] = useState(false)
+  const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
+  const wipePromptShownRef = useRef(false)
+  const isMentraLive = deviceModel === DeviceTypes.LIVE
 
   useEffect(() => {
     let sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
@@ -34,11 +42,80 @@ export default function GlassesPairingLoadingScreen() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!isMentraLive) {
+      return
+    }
+
+    const sub = BluetoothSdk.addListener("pairing_info", (event: PairingInfoEvent) => {
+      pairingInfoRef.current = event.had_previous_bond
+      setPairingInfoReceived(true)
+      if (!event.had_previous_bond) {
+        setPairingResolved(true)
+      }
+    })
+
+    return () => {
+      sub.remove()
+    }
+  }, [isMentraLive])
+
   focusEffectPreventBack()
 
   const handleGoBack = useCallback(() => {
     goBack()
   }, [goBack])
+
+  const abortPairingTransfer = useCallback(async () => {
+    try {
+      await BluetoothSdk.abortPairingTransfer()
+    } catch (error) {
+      console.error("Failed to abort pairing transfer:", error)
+    }
+    await BluetoothSdk.disconnect()
+    BluetoothSdk.forget()
+    replace("/pairing/prep", {deviceModel})
+    showAlert(translate("pairing:pairingCancelledTitle"), translate("pairing:pairingCancelledMessage"), [
+      {text: translate("common:ok")},
+    ])
+  }, [deviceModel, replace])
+
+  const confirmMediaWipe = useCallback(async () => {
+    try {
+      const result = await BluetoothSdk.wipeMediaForPairing()
+      if (!result.success) {
+        throw new Error("wipe_media_failed")
+      }
+      await BluetoothSdk.finalizePairingTransfer()
+      setPairingResolved(true)
+    } catch (error) {
+      console.error("Failed to wipe media during pairing:", error)
+      await abortPairingTransfer()
+    }
+  }, [abortPairingTransfer])
+
+  const promptMediaWipe = useCallback(() => {
+    if (wipePromptShownRef.current) {
+      return
+    }
+    wipePromptShownRef.current = true
+
+    showAlert(translate("pairing:wipeMediaTitle"), translate("pairing:wipeMediaMessage"), [
+      {
+        text: translate("common:cancel"),
+        style: "destructive",
+        onPress: () => {
+          void abortPairingTransfer()
+        },
+      },
+      {
+        text: translate("pairing:wipeMediaConfirm"),
+        onPress: () => {
+          void confirmMediaWipe()
+        },
+      },
+    ])
+  }, [abortPairingTransfer, confirmMediaWipe])
 
   const handlePairFailure = useCallback(
     (error: string) => {
@@ -75,7 +152,6 @@ export default function GlassesPairingLoadingScreen() {
       timeoutMs: 35_000,
       signal: controller.signal,
     }).then((ready) => {
-      // Booted in time (or the screen unmounted) — nothing to report.
       if (ready || controller.signal.aborted || hasSubmittedTimeoutIncidentRef.current) {
         return
       }
@@ -112,13 +188,28 @@ export default function GlassesPairingLoadingScreen() {
   }, [deviceModel, deviceName])
 
   useEffect(() => {
-    if (!glassesFullyBooted) return
-    if (hasNavigatedRef.current) return
+    if (!glassesFullyBooted) {
+      return
+    }
+    if (hasNavigatedRef.current) {
+      return
+    }
+
+    if (isMentraLive) {
+      if (!pairingInfoReceived) {
+        return
+      }
+      if (pairingInfoRef.current === true && !pairingResolved) {
+        promptMediaWipe()
+        return
+      }
+    }
+
     hasNavigatedRef.current = true
     setTimeout(() => {
       replace("/pairing/success", {deviceModel: deviceModel})
     }, 1000)
-  }, [glassesFullyBooted, replace, deviceModel])
+  }, [glassesFullyBooted, replace, deviceModel, isMentraLive, pairingInfoReceived, pairingResolved, promptMediaWipe])
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
