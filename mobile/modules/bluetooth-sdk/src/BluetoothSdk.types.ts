@@ -586,6 +586,14 @@ export type PairFailureEvent = {
   error: string
 }
 
+export type PairingInfoEvent = {
+  had_previous_bond: boolean
+}
+
+export type WipeMediaResultEvent = {
+  success: boolean
+}
+
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
   deviceName: string
@@ -880,6 +888,8 @@ export type BluetoothSdkEventMap = {
   rgb_led_control_response: RgbLedControlResponseEvent
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
+  pairing_info: PairingInfoEvent
+  wipe_media_result: WipeMediaResultEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -988,6 +998,10 @@ export interface BluetoothSdkPublicModule {
   checkForOtaUpdate(): Promise<boolean>
   /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
   startOtaUpdate(): Promise<OtaStartAckEvent>
+
+  wipeMediaForPairing(): Promise<WipeMediaResultEvent>
+  finalizePairingTransfer(): Promise<void>
+  abortPairingTransfer(): Promise<void>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
