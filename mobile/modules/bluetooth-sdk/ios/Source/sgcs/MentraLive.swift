@@ -4426,39 +4426,16 @@ extension MentraLive {
     /**
      * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication
      * Format: ## + command_type + length(2bytes) + data + $$
-     * Uses little-endian byte order for length field
+     * The BES command parser expects the 2-byte length field in big-endian order.
      */
     private func packDataToK900(_ data: Data?, cmdType: UInt8) -> Data? {
-        guard let data else { return nil }
-
-        let dataLength = data.count
-
-        // Command structure: ## + type + length(2 bytes) + data + $$
-        var result = Data(capacity: dataLength + 7) // 2(start) + 1(type) + 2(length) + data + 2(end)
-
-        // Start code ##
-        result.append(contentsOf: K900ProtocolUtils.CMD_START_CODE)
-
-        // Command type
-        result.append(cmdType)
-
-        // Length (2 bytes, little-endian for phone-to-device)
-        result.append(UInt8(dataLength & 0xFF)) // LSB first
-        result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB second
-
-        // Copy the data
-        result.append(data)
-
-        // End code $$
-        result.append(contentsOf: K900ProtocolUtils.CMD_END_CODE)
-
-        return result
+        packDataCommand(data, cmdType: cmdType)
     }
 
     /**
      * Pack a JSON string for phone-to-K900 device communication
      * 1. Wrap with C-field: {"C": jsonData}
-     * 2. Then pack with BES2700 protocol using little-endian: ## + type + length + {"C": jsonData} + $$
+     * 2. Then pack with BES2700 protocol: ## + type + length + {"C": jsonData} + $$
      */
     private func packJson(_ jsonData: String?, wakeUp: Bool = false) -> Data? {
         guard let jsonData else { return nil }
@@ -4474,7 +4451,7 @@ extension MentraLive {
             let jsonData = try JSONSerialization.data(withJSONObject: wrapper)
             guard let wrappedJson = String(data: jsonData, encoding: .utf8) else { return nil }
 
-            // Then pack with BES2700 protocol format using little-endian
+            // Then pack with BES2700 protocol format.
             let jsonBytes = wrappedJson.data(using: .utf8)!
             return packDataToK900(jsonBytes, cmdType: K900ProtocolUtils.CMD_TYPE_STRING)
 

@@ -120,49 +120,21 @@ public class K900ProtocolUtils {
     }
 
     /**
-     * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication
-     * Format: ## + command_type + length(2bytes) + data + $$
-     * Uses little-endian byte order for length field
+     * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication.
+     * The BES command parser expects the 2-byte length field in big-endian order.
      *
      * @param data The raw data to pack
      * @param cmdType The command type (use CMD_TYPE_STRING for JSON)
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataToK900(byte[] data, byte cmdType) {
-        if (data == null) {
-            return null;
-        }
-
-        int dataLength = data.length;
-
-        // Command structure: ## + type + length(2 bytes) + data + $$
-        byte[] result = new byte[dataLength + 7]; // 2(start) + 1(type) + 2(length) + data + 2(end)
-
-        // Start code ##
-        result[0] = CMD_START_CODE[0]; // #
-        result[1] = CMD_START_CODE[1]; // #
-
-        // Command type
-        result[2] = cmdType;
-
-        // Length (2 bytes, little-endian for phone-to-device)
-        result[3] = (byte) (dataLength & 0xFF);        // LSB first
-        result[4] = (byte) ((dataLength >> 8) & 0xFF); // MSB second
-
-        // Copy the data
-        System.arraycopy(data, 0, result, 5, dataLength);
-
-        // End code $$
-        result[5 + dataLength] = CMD_END_CODE[0]; // $
-        result[6 + dataLength] = CMD_END_CODE[1]; // $
-
-        return result;
+        return packDataCommand(data, cmdType);
     }
 
     /**
      * Pack a JSON string for phone-to-K900 device communication
      * 1. Wrap with C-field: {"C": jsonData}
-     * 2. Then pack with BES2700 protocol using little-endian: ## + type + length + {"C": jsonData} + $$
+     * 2. Then pack with BES2700 protocol: ## + type + length + {"C": jsonData} + $$
      *
      * @param jsonData The JSON string to pack
      * @return Byte array with packed data according to protocol format
@@ -183,7 +155,7 @@ public class K900ProtocolUtils {
             // Convert to string
             String wrappedJson = wrapper.toString();
 
-            // Then pack with BES2700 protocol format using little-endian
+            // Then pack with BES2700 protocol format.
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
             return packDataToK900(jsonBytes, CMD_TYPE_STRING);
 
