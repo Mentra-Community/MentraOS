@@ -133,6 +133,20 @@ public class Bridge private constructor() {
             sendTypedMessage("pair_failure", data as Map<String, Any>)
         }
 
+        @JvmStatic
+        fun sendPairingInfo(hadPreviousBond: Boolean) {
+            val data = HashMap<String, Any>()
+            data["had_previous_bond"] = hadPreviousBond
+            sendTypedMessage("pairing_info", data as Map<String, Any>)
+        }
+
+        @JvmStatic
+        fun sendWipeMediaResult(success: Boolean) {
+            val data = HashMap<String, Any>()
+            data["success"] = success
+            sendTypedMessage("wipe_media_result", data as Map<String, Any>)
+        }
+
         /** Send audio connected event - matches iOS implementation for platform parity */
         @JvmStatic
         fun sendAudioConnected(deviceName: String) {
