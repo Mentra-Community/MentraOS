@@ -22,6 +22,7 @@ import android.util.Base64
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import java.io.ByteArrayOutputStream
@@ -1365,19 +1366,7 @@ class Nimo : SGCManager() {
 
     // ---------- SGCManager: Camera & Media (no camera) ----------
 
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    ) {
+    override fun requestPhoto(request: PhotoRequest) {
         Bridge.log("NIMO: requestPhoto - not supported (no camera)")
     }
 
@@ -1393,7 +1382,7 @@ class Nimo : SGCManager() {
         Bridge.log("NIMO: sendStreamKeepAlive - not supported")
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
         Bridge.log("NIMO: startVideoRecording - not supported")
     }
 
@@ -1404,7 +1393,6 @@ class Nimo : SGCManager() {
     override fun sendButtonPhotoSettings() {}
     override fun sendButtonVideoRecordingSettings() {}
     override fun sendButtonMaxRecordingTime() {}
-    override fun sendButtonCameraLedSetting() {}
     override fun sendCameraFovSetting() {}
 
     // ---------- SGCManager: Network (no WiFi) ----------
