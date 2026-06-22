@@ -31,6 +31,7 @@ import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import org.json.JSONObject;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
@@ -506,11 +507,40 @@ public class CameraNeoService extends LifecycleService {
             Long exposureTimeNs,
             Integer iso,
             PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(
+                context,
+                filePath,
+                size,
+                enableLed,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                PhotoCaptureSettings.EMPTY,
+                callback);
+    }
+
+    public static void enqueuePhotoRequest(
+            Context context,
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
             QueuedPhotoRequest request =
                     new QueuedPhotoRequest(
-                            filePath, size, enableLed, isFromSdk, exposureTimeNs, iso, callback);
+                            filePath,
+                            size,
+                            enableLed,
+                            isFromSdk,
+                            exposureTimeNs,
+                            iso,
+                            captureSettings,
+                            callback);
             QueuedPhotoRequestQueue.getInstance().offer(request);
 
             Log.d(
@@ -521,6 +551,23 @@ public class CameraNeoService extends LifecycleService {
                             + QueuedPhotoRequestQueue.getInstance().size()
                             + " | Service active: "
                             + (sInstance != null));
+            Log.i(
+                    TAG,
+                    "SCAN_PARAMS enqueued requestId="
+                            + request.requestId
+                            + " isFromSdk="
+                            + isFromSdk
+                            + " size="
+                            + size
+                            + " exposureTimeNs="
+                            + exposureTimeNs
+                            + " iso="
+                            + iso
+                            + " captureTuning={"
+                            + (captureSettings != null
+                                    ? captureSettings.describeForLog()
+                                    : "null")
+                            + "}");
 
             // Check current service state and act accordingly
             boolean cameraReady =

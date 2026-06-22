@@ -167,7 +167,8 @@ public class StreamCommandHandler implements ICommandHandler {
             stopAllServices();
 
             String streamId = data.optString("streamId", "");
-            boolean flash = data.optBoolean("flash", true);
+            // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
+            boolean flash = true;
             boolean sound = data.optBoolean("sound", true);
 
             // Parse video/audio config (supports full and compact keys)

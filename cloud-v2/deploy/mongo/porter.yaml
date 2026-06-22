@@ -1,0 +1,25 @@
+# MongoDB for cloud-v2 dev/staging.
+#
+# In-cluster MongoDB running as a Porter app. Cluster-internal DNS makes it
+# reachable from cloud-v2 services as `mongodb://cloud-v2-mongo:27017`.
+#
+# NOT production-grade — single-pod, no replica set, ephemeral storage by
+# default. For prod we'll migrate to MongoDB Atlas (managed) and update
+# MONGO_URL in the cloud-v2-prod env group.
+#
+# Apply via: `porter apply -f deploy/mongo/porter.yaml`
+
+version: v2
+name: cloud-v2-mongo
+
+image:
+  repository: mongo
+  tag: "7"
+
+services:
+  - name: mongo
+    type: worker
+    port: 27017
+    cpuCores: 0.5
+    ramMegabytes: 1024
+    terminationGracePeriodSeconds: 30

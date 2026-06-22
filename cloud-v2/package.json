@@ -1,0 +1,27 @@
+{
+  "name": "cloud-v2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / runtime / proxy).",
+  "workspaces": ["packages/*", "test/*"],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "setup": "bun scripts/setup.ts",
+    "setup:test": "bun scripts/setup.ts --test",
+    "test:down": "docker compose -f docker-compose.test.yml down",
+    "dev:core": "doppler run -- bun --watch packages/core/src/index.ts",
+    "dev:runtime": "doppler run -- bun --watch packages/runtime/src/index.ts",
+    "dev:audio": "bun run dev:runtime",
+    "dev:proxy": "doppler run -- bun --watch packages/proxy/src/index.ts",
+    "dev:test-oem": "doppler run -- bun --watch test/test-oem/src/index.ts",
+    "fault:e2e": "bun scripts/audio-fault-e2e.ts",
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

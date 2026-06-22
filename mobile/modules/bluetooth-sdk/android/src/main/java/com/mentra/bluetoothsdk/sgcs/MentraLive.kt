@@ -31,7 +31,9 @@ import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
@@ -733,8 +735,7 @@ class MentraLive : SGCManager() {
             }
             // Drop cached version fields from the previous BLE session so the next version_info
             // repopulates RN. Otherwise a stale build (e.g. 38) can remain while ASG is still 36,
-            // and the phone-side OTA check will disagree with glasses' PackageManager +
-            // ota_update_available.
+            // and the phone-side OTA manifest check will compare against the wrong build.
             DeviceStore.apply("glasses", "buildNumber", "")
             DeviceStore.apply("glasses", "appVersion", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
@@ -3039,47 +3040,6 @@ class MentraLive : SGCManager() {
                                 (if (success) "SUCCESS" else "FAILED")
                 )
             }
-            "ota_update_available" -> {
-                // Process OTA update available notification from glasses (background mode)
-                Bridge.log("LIVE: 📱 Received ota_update_available from glasses")
-                Bridge.log("LIVE: 📱 OTA update available: " + json.toString())
-                try {
-                    val otaVersionCode = json.optLong("version_code", 0)
-                    val otaVersionName = json.optString("version_name", "")
-                    val otaTotalSize = json.optLong("total_size", 0)
-
-                    // Parse updates array
-                    val updates: MutableList<String> = ArrayList()
-                    if (json.has("updates")) {
-                        val updatesArray = json.getJSONArray("updates")
-                        for (i in 0 until updatesArray.length()) {
-                            updates.add(updatesArray.getString(i))
-                        }
-                    }
-
-                    Bridge.log(
-                            "LIVE: 📱 OTA available - version: " +
-                                    otaVersionName +
-                                    " (" +
-                                    otaVersionCode +
-                                    "), updates: " +
-                                    updates +
-                                    ", size: " +
-                                    otaTotalSize +
-                                    " bytes"
-                    )
-
-                    // Send to React Native
-                    Bridge.sendOtaUpdateAvailable(
-                            otaVersionCode,
-                            otaVersionName,
-                            updates,
-                            otaTotalSize
-                    )
-                } catch (e: JSONException) {
-                    Log.e(TAG, "Error parsing ota_update_available", e)
-                }
-            }
             "ota_start_ack" -> {
                 // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
                 Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
@@ -4658,7 +4618,7 @@ class MentraLive : SGCManager() {
      * When [otaVersionUrl] is non-null it is sent as the `ota_version_url` field so the glasses
      * download from that manifest; asg_client's OtaCommandHandler reads and validates that field
      * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
-     * their prefetched/default version manifest.
+     * their default version manifest.
      */
     fun sendOtaStart(otaVersionUrl: String? = null) {
         try {
@@ -4687,18 +4647,6 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: 📱 Sending ota_query_status command to glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating ota_query_status command", e)
-        }
-    }
-
-    fun sendOtaRetryVersionCheck() {
-        try {
-            val json = JSONObject()
-            json.put("type", "ota_retry_version_check")
-            json.put("timestamp", System.currentTimeMillis())
-            sendJson(json, true)
-            Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-        } catch (e: JSONException) {
-            Log.e(TAG, "⏰ Error creating ota_retry_version_check command", e)
         }
     }
 
@@ -5201,19 +5149,17 @@ class MentraLive : SGCManager() {
         }
     }
 
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?
-    ) {
+    override fun requestPhoto(request: PhotoRequest) {
+        val requestId = request.requestId
+        val appId = request.appId
+        val size = request.size.value
+        val webhookUrl = request.webhookUrl
+        val authToken = request.authToken
+        val compress = request.compress.value
+        val save = request.save
+        val sound = request.sound
+        val exposureTimeNs = request.exposureTimeNs
+        val iso = request.iso
         val hasAuthToken = authToken != null && !authToken.isEmpty()
         Bridge.log(
                 "LIVE: Requesting photo: " +
@@ -5228,8 +5174,6 @@ class MentraLive : SGCManager() {
                         (if (hasAuthToken) "***" else "none") +
                         ", compress=" +
                         compress +
-                        ", flash=" +
-                        flash +
                         ", save=" +
                         save +
                         ", sound=" +
@@ -5237,7 +5181,11 @@ class MentraLive : SGCManager() {
                         ", exposureTimeNs=" +
                         exposureTimeNs +
                         ", iso=" +
-                        iso
+                        iso +
+                        ", aeDivisor=" +
+                        request.aeExposureDivisor +
+                        ", isoCap=" +
+                        request.isoCap
         )
         Bridge.log(
                 "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" +
@@ -5265,7 +5213,6 @@ class MentraLive : SGCManager() {
             } else {
                 json.put("compress", "none")
             }
-            json.put("flash", flash)
             json.put("save", save)
             json.put("sound", sound)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
@@ -5282,6 +5229,7 @@ class MentraLive : SGCManager() {
                 Bridge.log("LIVE: Using manual ISO for photo request " + requestId + ": ISO " + iso)
                 json.put("iso", iso)
             }
+            PhotoRequest.appendScanFields(json, request)
 
             // Always generate BLE ID for potential fallback
             val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
@@ -5994,14 +5942,80 @@ class MentraLive : SGCManager() {
     }
 
     fun sendButtonPhotoSettings(requestId: String?, size: String?) {
-        // Send photo size settings to glasses
+        sendButtonPhotoSettings(
+            requestId,
+            size,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+        )
+    }
+
+    fun sendButtonPhotoSettings(
+        requestId: String?,
+        size: String?,
+        mfnr: Boolean?,
+        zsl: Boolean?,
+        noiseReduction: Boolean?,
+        edgeEnhancement: Boolean?,
+        ispDigitalGain: Int?,
+        ispAnalogGain: String?,
+        aeExposureDivisor: Int?,
+        isoCap: Int?,
+        compress: String?,
+        sound: Boolean?,
+        resetCaptureTuning: Boolean,
+    ) {
         val command = JSONObject()
         try {
             command.put("type", "button_photo_setting")
             if (requestId != null && !requestId.isEmpty()) {
                 command.put("request_id", requestId)
             }
-            command.put("size", size)
+            if (size != null) {
+                command.put("size", size)
+            }
+            if (mfnr != null) {
+                command.put("mfnr", mfnr)
+            }
+            if (zsl != null) {
+                command.put("zsl", zsl)
+            }
+            if (noiseReduction != null) {
+                command.put("noiseReduction", noiseReduction)
+            }
+            if (edgeEnhancement != null) {
+                command.put("edgeEnhancement", edgeEnhancement)
+            }
+            if (ispDigitalGain != null) {
+                command.put("ispDigitalGain", ispDigitalGain)
+            }
+            if (!ispAnalogGain.isNullOrEmpty()) {
+                command.put("ispAnalogGain", ispAnalogGain)
+            }
+            if (aeExposureDivisor != null && aeExposureDivisor > 1) {
+                command.put("aeExposureDivisor", aeExposureDivisor)
+            }
+            if (isoCap != null && isoCap > 0) {
+                command.put("isoCap", isoCap)
+            }
+            if (!compress.isNullOrEmpty()) {
+                command.put("compress", compress)
+            }
+            if (sound != null) {
+                command.put("sound", sound)
+            }
+            if (resetCaptureTuning) {
+                command.put("resetCaptureTuning", true)
+            }
             sendJson(command, true)
         } catch (e: Exception) {
             Log.e(TAG, "Error sending button photo settings", e)
@@ -6072,25 +6086,6 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: ✅ [SETTINGS_SYNC] Video settings transmitted via BLE")
         } catch (e: JSONException) {
             Log.e(TAG, "❌ [SETTINGS_SYNC] Error sending button video recording settings", e)
-        }
-    }
-
-    fun sendButtonCameraLedSetting(enabled: Boolean) {
-        sendButtonCameraLedSetting(null, enabled)
-    }
-
-    fun sendButtonCameraLedSetting(requestId: String?, enabled: Boolean) {
-        // Send LED setting to glasses
-        val command = JSONObject()
-        try {
-            command.put("type", "button_camera_led")
-            if (requestId != null && !requestId.isEmpty()) {
-                command.put("request_id", requestId)
-            }
-            command.put("enabled", enabled)
-            sendJson(command, true)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending button camera LED setting", e)
         }
     }
 
@@ -8004,9 +7999,6 @@ class MentraLive : SGCManager() {
         // Send button photo settings
         sendButtonPhotoSettings()
 
-        // Send button camera LED setting
-        sendButtonCameraLedSetting()
-
         // Send camera FOV setting (K900 / Mentra Live)
         sendCameraFovSetting()
 
@@ -8056,16 +8048,23 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /** Send button photo settings to glasses */
+    /** Send button photo settings to glasses, replaying all stored scan-tuning fields. */
     override fun sendButtonPhotoSettings() {
-        val size = DeviceStore.get("bluetooth", "button_photo_size") as String?
-        sendButtonPhotoSettings(null, size)
-    }
-
-    /** Send button camera LED setting to glasses */
-    override fun sendButtonCameraLedSetting() {
-        val enabled = DeviceStore.get("bluetooth", "button_camera_led") as Boolean
-        sendButtonCameraLedSetting(null, enabled)
+        val size = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size") as String?
+        val mfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?
+        val zsl = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?
+        val noiseReduction = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction") as Boolean?
+        val edgeEnhancement = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement") as Boolean?
+        val ispDigitalGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain") as Int?
+        val ispAnalogGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_analog_gain") as String?
+        val aeExposureDivisor = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_ae_exposure_divisor") as Int?
+        val isoCap = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap") as Int?
+        val compress = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress") as String?
+        val sound = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound") as Boolean?
+        sendButtonPhotoSettings(
+            null, size, mfnr, zsl, noiseReduction, edgeEnhancement,
+            ispDigitalGain, ispAnalogGain, aeExposureDivisor, isoCap, compress, sound, false,
+        )
     }
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
@@ -8146,17 +8145,15 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
-        startVideoRecording(requestId, save, flash, sound, 0, 0, 0, 0) // Use defaults
+        startVideoRecording(requestId, save, sound, 0, 0, 0, 0) // Use defaults
     }
 
     /**
      * Start video recording with optional resolution settings
      * @param requestId Request ID for tracking
      * @param save Whether to save the video
-     * @param flash Whether to enable privacy flash LED
      * @param sound Whether to enable start/stop sounds
      * @param width Video width (0 for default)
      * @param height Video height (0 for default)
@@ -8166,7 +8163,6 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean,
             width: Int,
             height: Int,
@@ -8178,8 +8174,6 @@ class MentraLive : SGCManager() {
                         requestId +
                         ", save=" +
                         save +
-                        ", flash=" +
-                        flash +
                         ", sound=" +
                         sound +
                         ", resolution=" +
@@ -8203,7 +8197,6 @@ class MentraLive : SGCManager() {
             json.put("type", "start_video_recording")
             json.put("requestId", requestId)
             json.put("save", save)
-            json.put("flash", flash)
             json.put("sound", sound)
 
             // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.

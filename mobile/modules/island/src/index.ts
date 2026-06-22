@@ -10,6 +10,7 @@ export {
   registerDevApp,
   unregisterDevApp,
   getDevAppRecords,
+  getDevAppSourcePackage,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
 } from "./services/AppRegistry"
@@ -61,6 +62,28 @@ export {
   type DownloadStatus as OfflineModelDownloadStatus,
   type DownloadStage as OfflineModelDownloadStage,
 } from "./services/OfflineSpeechModelService"
+export {
+  isGlassesConnected,
+  isGlassesReady,
+  isGlassesLinkLayerBusy,
+  waitForGlassesReady,
+  type GlassesConnectionStatus,
+  type WaitForGlassesReadyOptions,
+} from "./services/GlassesReadiness"
+export {
+  decideReconnect,
+  decideConnectButtonAction,
+  type ReconnectDecision,
+  type ReconnectDecisionInput,
+  type ConnectButtonAction,
+} from "./services/ConnectionCoordinator"
+
+// Bluetooth SDK internal compatibility passthrough. The island package uses the
+// declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK
+// build output directly. Prefer an island facade when one exists; this remains
+// an internal escape hatch for app-only compatibility needs.
+export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
+export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
 
 // Runtime config (host-injected adapters)
 export {
@@ -69,6 +92,10 @@ export {
   ISLAND_SETTINGS_KEYS,
   type RuntimeHooks,
   type SocketCommsAdapter,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
+  type MiniappAuthAdapter,
+  type MiniappAuthToken,
   type AudioPlaybackAdapter,
   type AudioPlayRequest,
   type SettingsAccessor,
@@ -122,6 +149,7 @@ export {
   type MiniappSafeArea,
 } from "./utils/miniappGlobals"
 export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
+export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {storage, printDirectory} from "./utils/storage"

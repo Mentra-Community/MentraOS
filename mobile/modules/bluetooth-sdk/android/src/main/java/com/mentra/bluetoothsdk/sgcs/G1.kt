@@ -59,6 +59,7 @@ import java.util.HashSet
 // Mentra
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils
 
@@ -1567,7 +1568,7 @@ class G1 : SGCManager() {
 
     }
 
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?, iso: Int?) {
+    override fun requestPhoto(request: PhotoRequest) {
 
     }
 
@@ -1583,7 +1584,7 @@ class G1 : SGCManager() {
 
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
 
     }
 
@@ -1596,10 +1597,6 @@ class G1 : SGCManager() {
     }
 
     override fun sendButtonVideoRecordingSettings() {
-
-    }
-
-    override fun sendButtonCameraLedSetting() {
 
     }
 

@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.controllers
 
+import com.mentra.bluetoothsdk.PhotoRequest
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -861,12 +862,8 @@ class R1 : ControllerManager() {
     override fun setMicEnabled(enabled: Boolean) {}
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> = list
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
-    override fun requestPhoto(
-        requestId: String, appId: String, size: String?, webhookUrl: String?,
-        authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean,
-        exposureTimeNs: Long?, iso: Int?,
-    ) {}
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {}
+    override fun requestPhoto(request: PhotoRequest) {}
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {}
     override fun stopVideoRecording(requestId: String) {}
     override fun startStream(message: Map<String, Any>) {}
     override fun stopStream() {}
@@ -874,7 +871,6 @@ class R1 : ControllerManager() {
     override fun sendButtonPhotoSettings() {}
     override fun sendButtonVideoRecordingSettings() {}
     override fun sendButtonMaxRecordingTime() {}
-    override fun sendButtonCameraLedSetting() {}
     override fun setBrightness(level: Int, autoMode: Boolean) {}
     override fun clearDisplay() {}
     override fun sendTextWall(text: String) {}

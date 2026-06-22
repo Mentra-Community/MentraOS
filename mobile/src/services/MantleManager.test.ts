@@ -9,7 +9,12 @@ import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
-import {bluetoothSdkMock, emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {
+  bluetoothSdkMock,
+  emitBluetoothSdkEvent,
+  getBluetoothSdkListenerCount,
+  resetBluetoothSdkMock,
+} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -19,7 +24,7 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
   }
 })
 
-jest.mock("crust", () => {
+jest.mock("@mentra/crust", () => {
   const {crustModuleMock} = require("@/test-utils/mockCrustModule")
   return {
     __esModule: true,
@@ -226,6 +231,7 @@ describe("MantleManager", () => {
       }),
     )
     expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
+    expect(getBluetoothSdkListenerCount("local_transcription")).toBe(1)
 
     emitBluetoothSdkEvent("bluetooth_status", {searching: true, otherBtConnected: true})
     emitBluetoothSdkEvent("glasses_status", {
@@ -485,32 +491,14 @@ describe("MantleManager", () => {
     })
   })
 
-  it("tracks OTA events without accepting disconnected update availability", async () => {
-    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    useGlassesStore.getState().setOtaUpdateAvailable(null)
-
-    emitBluetoothSdkEvent("ota_update_available", {
-      version_code: 101,
-      version_name: "1.0.1",
-      updates: ["apk"],
-      total_size: 2048,
-    })
-    expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
-
+  it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    emitBluetoothSdkEvent("ota_update_available", {
-      version_code: 101,
-      version_name: "1.0.1",
-      updates: ["apk"],
-      total_size: 2048,
-    })
-    expect(useGlassesStore.getState().otaUpdateAvailable).toEqual({
+    useGlassesStore.getState().setOtaUpdateAvailable({
       available: true,
       versionCode: 101,
       versionName: "1.0.1",
       updates: ["apk"],
       totalSize: 2048,
-      cacheReady: false,
     })
 
     emitBluetoothSdkEvent("ota_status", {

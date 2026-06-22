@@ -9,6 +9,15 @@ import type {NavManeuver, Pivot} from "@mentra/miniapp"
 export type Coords = {lat: number; lng: number; accuracy?: number; ts: number}
 export type LatLng = {lat: number; lng: number}
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
+
+/**
+ * Distance unit preference. "metric" → m / km, "imperial" → ft / mi.
+ * A real user preference (not a dev toggle): persisted in background
+ * storage and mirrored to the UI via the snapshot so every distance
+ * string — on the map, in drawers, and on the glasses HUD — renders in
+ * the chosen system. Defaults to "metric".
+ */
+export type UnitSystem = "metric" | "imperial"
 export type LogEntry = {id: number; ts: number; line: string}
 
 export type PlaceSuggestion = {placeId: string; mainText: string; secondaryText?: string}
@@ -105,6 +114,12 @@ export type DevSettings = {
    * Gough St"). The distance suffix ("in 198 m") is preserved.
    */
   useRawInstructions: boolean
+  /**
+   * Dev toggle for the swipe-up large map (WIP). When OFF (default), swipe
+   * gestures do nothing — the large map feature is disabled. When ON, swiping
+   * toggles the full-screen route map on/off as usual.
+   */
+  largeMapEnabled: boolean
 }
 
 export type NavSnapshot = {
@@ -115,4 +130,6 @@ export type NavSnapshot = {
   upcomingPivot: Pivot | null
   log: LogEntry[]
   devSettings: DevSettings
+  /** User's distance-unit preference. Defaults to "metric". */
+  unitSystem: UnitSystem
 }

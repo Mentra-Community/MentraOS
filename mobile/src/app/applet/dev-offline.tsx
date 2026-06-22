@@ -74,7 +74,7 @@ export default function DevMiniappOfflineScreen() {
   const displayName = resolvedName ?? packageName ?? "Dev mini app"
 
   return (
-    <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["bottom"]} extraAndroidInsets>
       <View className="flex-1 items-center justify-between">
         <View className="flex-1 items-center justify-center">
           {resolvedIconUrl ? (

@@ -150,7 +150,21 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
-        run: cp .env.example .env
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…) from the secret. set-build-env.mjs forces
+        # .env values into process.env, so the file — not a shell env var — is the
+        # source of truth for EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN. app.config.ts bakes
+        # it into the Android manifest (com.mapbox.token) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            # Replace the whole line so the ci-dummy value can't leak through.
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
 
       - name: Fix React Native symlinks
         working-directory: ./mobile
@@ -168,6 +182,15 @@ jobs:
           # gh CLI inside release-android.mjs uploads the APK to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo for the Nav SDK (com.mapbox.navigationcore). Build-time
+          # only — never in the APK. Passed under BOTH env names: our repo block
+          # reads MAPBOX_DOWNLOADS_TOKEN; the @rnmapbox/maps-generated allprojects
+          # repo block (applies to :mentra-crust too) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN — without it that repo is added
+          # unauthenticated → "Could not find navigationcore".
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         # release-android.mjs handles: prebuild → gradle assemble/bundle →
         # GH release upload (v{X.Y}/_Beta_N.apk) → Play internal track upload
         # (if google-play-key.json is at ~/.mentra/credentials/).
@@ -306,7 +329,39 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
-        run: cp .env.example .env
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into Info.plist
+        # (MBXAccessToken) for the Nav SDK. See the Android job for why the .env
+        # file (not a shell env var) is the source of truth.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
+          fi
+
+      - name: Configure Mapbox SPM credentials (~/.netrc)
+        # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
+        # api.mapbox.com at pod install / SPM resolve time. SPM authenticates via
+        # ~/.netrc with the Downloads:Read secret token (sk.…). Build-time only —
+        # never written into the IPA.
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "::error::MAPBOX_DOWNLOADS_TOKEN secret not set — SPM cannot fetch the Mapbox Nav SDK; iOS build will fail."
+            exit 1
+          fi
+          # Remove any prior api.mapbox.com entry so re-runs on the persistent
+          # self-hosted runner don't stack duplicate machine lines.
+          if [ -f "$HOME/.netrc" ]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
 
       - name: Ensure iOS platform is installed
         run: xcodebuild -downloadPlatform iOS || true
@@ -880,7 +935,7 @@ jobs:
         if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
           BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
           VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
         run: |

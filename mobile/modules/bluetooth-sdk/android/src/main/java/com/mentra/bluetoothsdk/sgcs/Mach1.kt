@@ -15,6 +15,7 @@ import androidx.lifecycle.Observer
 // Mentra
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils
@@ -166,7 +167,7 @@ class Mach1 : SGCManager() {
         return list
     }
 
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?, iso: Int?) {
+    override fun requestPhoto(request: PhotoRequest) {
 
     }
 
@@ -182,7 +183,7 @@ class Mach1 : SGCManager() {
 
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
 
     }
 
@@ -199,10 +200,6 @@ class Mach1 : SGCManager() {
     }
 
     override fun sendButtonMaxRecordingTime() {
-
-    }
-
-    override fun sendButtonCameraLedSetting() {
 
     }
 

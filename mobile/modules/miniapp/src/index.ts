@@ -17,12 +17,15 @@ installDevReloadListenerIfDevMode()
 
 export {MiniappSession, NotConnectedError} from "./session"
 export type {
+  AuthUpdatePayload,
   ConnectAckPayload,
   GlassesCapabilities,
+  MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
+export type {AuthFetchOptions, AuthModule} from "./modules/auth"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"
@@ -31,6 +34,8 @@ export {getMentraOSGlobals} from "./globals"
 export type {MentraOSGlobals, MiniappCapsuleMenuRect, MiniappColorScheme, MiniappSafeAreaInsets} from "./globals"
 
 export {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
+export {CLOUD_STATUS_STREAM} from "./modules/cloud"
+export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
 // Hardware requirement types — re-exported from @mentra/types so miniapp
 // authors can type their miniapp.json manifest without pulling in the types
@@ -62,6 +67,14 @@ export type {
   TextWall,
   ViewType,
 } from "./modules/display"
+export {CanvasOperation} from "./modules/canvas"
+export type {
+  BaseOptions as CanvasBaseOptions,
+  Box as CanvasBox,
+  BitmapOptions as CanvasBitmapOptions,
+  ClearOptions as CanvasClearOptions,
+  TextOptions as CanvasTextOptions,
+} from "./modules/canvas"
 export type {
   AccelData,
   AudioChunkData,
@@ -93,6 +106,7 @@ export type {
   VideoRecordingStarted,
 } from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
+export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {
   ManagedStreamResult,
@@ -111,6 +125,7 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
+export type {CanvasManager} from "./modules/canvas"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"
@@ -131,6 +146,8 @@ export type {
   NavManeuver,
   NavOffRoute,
   NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
   NavRerouting,
   NavRoute,
   NavState,

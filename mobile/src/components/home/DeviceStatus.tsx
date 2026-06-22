@@ -1,5 +1,5 @@
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk, {GlassesNotReadyEvent} from "@mentra/bluetooth-sdk-internal"
+import type {GlassesNotReadyEvent} from "@mentra/island"
 import {useState, useEffect, type ReactNode} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
@@ -7,6 +7,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {decideConnectButtonAction, BluetoothSdk} from "@mentra/island"
 import {isGlassesConnected, isGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -137,7 +138,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const handleConnectOrDisconnect = async () => {
-    if (searching || nativeLinkBusy) {
+    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy: searching || nativeLinkBusy})
+    if (action === "cancel") {
       await BluetoothSdk.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()

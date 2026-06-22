@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, TravelMode} from "@mentra/miniapp"
 import {useRpc} from "@mentra/miniapp/ui"
 
@@ -11,7 +11,8 @@ import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
-import {isDev} from "@/ui/lib/env"
+import {useToast} from "@/ui/components/Toast/Toast"
+import {appVersion, isDev} from "@/ui/lib/env"
 import {toggleDevOverride, useDevOverride} from "@/ui/lib/devOverride"
 import {SimulationControls} from "@/ui/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/ui/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
@@ -199,15 +200,34 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
   const computeRoute = useRpc<Channels, "nav:compute-route">("nav:compute-route")
 
+  // Show a "Rerouting" toast when Mapbox decides to reroute. The native
+  // engine flips trip.status to "rerouting" (via its RerouteStateObserver),
+  // which arrives here through nav:trip-state. We fire the toast only on the
+  // TRANSITION into rerouting (tracked via a ref) so it doesn't re-toast on
+  // every render while the status stays "rerouting".
+  const toast = useToast()
+  const wasReroutingRef = useRef(false)
+  useEffect(() => {
+    const isRerouting = status === "rerouting"
+    if (isRerouting && !wasReroutingRef.current) {
+      toast("Rerouting")
+    }
+    wasReroutingRef.current = isRerouting
+  }, [status, toast])
+
   // ---- page-local UI state -------------------------------------------------
   const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
+  // Local refetch trigger — bumped when the preview drawer's star toggles
+  // a save, so `savedPlaces` reflects the change without round-tripping
+  // through App's savedPlacesVersion.
+  const [localSavedVersion, setLocalSavedVersion] = useState(0)
 
   // Hydrate saved places so the map can drop home / work / starred
   // markers behind whatever destination is selected. Refetched on
   // savedPlacesVersion change (AddPlacePage onSave bumps it after a
-  // successful `storage:add-saved`).
+  // successful `storage:add-saved`) or on a local star toggle.
   useEffect(() => {
     let cancelled = false
     mentra
@@ -223,15 +243,33 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     return () => {
       cancelled = true
     }
-  }, [savedPlacesVersion])
+  }, [savedPlacesVersion, localSavedVersion])
+
+  // Star toggle from the preview drawer: persist via storage RPC, then
+  // refetch. Returns the new saved-state so the drawer can update its
+  // icon optimistically.
+  const handleToggleSaved = async (place: PlaceDetails, shouldSave: boolean) => {
+    try {
+      if (shouldSave) {
+        await mentra.request("storage:add-saved", {...place})
+      } else {
+        await mentra.request("storage:remove-saved", {placeId: place.placeId})
+      }
+    } finally {
+      setLocalSavedVersion((v) => v + 1)
+    }
+  }
 
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  // Dynamic bitmap-size test inputs (dev panel).
+  const [bmpWidth, setBmpWidth] = useState("200")
+  const [bmpHeight, setBmpHeight] = useState("88")
   const [rawMapOpen, setRawMapOpen] = useState(false)
   const [showPivots, setShowPivots] = useState(false)
   const [showOffRouteLine, setShowOffRouteLine] = useState(false)
-  const [showMinimap, setShowMinimap] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(true)
   const [devTab, setDevTab] = useState<"nav" | "display">("nav")
 
   // Swallow every long-press-derived `contextmenu` event app-wide
@@ -249,22 +287,38 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
   const [useRawInstructions, setUseRawInstructions] = useState(true)
+  const [largeMapEnabled, setLargeMapEnabled] = useState(false)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   // Sticky off-route banner. The upstream `offRouteAt` flag only lives
   // for the ~100ms gap between the SDK's `off_route` event and the
   // controller flipping status to "rerouting" — too short to read.
-  // Latch it for OFF_ROUTE_STICKY_MS on the rising edge so the user
-  // sees the recalculating notice (plus spinner) even after the
-  // controller has moved on to actually rebuilding the route.
-  const OFF_ROUTE_STICKY_MS = 5_000
+  // Latch it on the rising edge so the user sees the recalculating notice
+  // (plus spinner) while the route is being rebuilt.
+  //
+  // Dismissal is driven by route progress, NOT just a fixed timer: Mapbox
+  // emits `off_route` on EVERY tick while you're off the path, so
+  // `offRouteAt` keeps changing and a `[offRouteAt]`-keyed timeout would
+  // restart forever — leaving the banner stuck. So we clear it the moment
+  // the trip is back to live navigation (a fresh route was fetched), with
+  // a max-duration safety timer as a backstop in case that signal is
+  // missed.
+  const OFF_ROUTE_STICKY_MS = 8_000
   const [offRouteSticky, setOffRouteSticky] = useState(false)
   useEffect(() => {
     if (offRouteAt == null) return
     setOffRouteSticky(true)
+    // Backstop only — normal dismissal comes from the status effect below.
     const t = setTimeout(() => setOffRouteSticky(false), OFF_ROUTE_STICKY_MS)
     return () => clearTimeout(t)
   }, [offRouteAt])
+  // Clear the banner as soon as navigation resumes on a fresh route. The
+  // reroute lifecycle is: navigating → (off_route) → rerouting →
+  // navigating. Once we're back to "navigating" the new route is in hand,
+  // so the recalculating notice has served its purpose.
+  useEffect(() => {
+    if (status === "navigating") setOffRouteSticky(false)
+  }, [status])
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   // Dev-only: turn points along the previewed route, used to draw red
@@ -588,7 +642,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // user's intent via broadcasts; status/maneuver/routePoints come back
   // via `nav:trip-state` / `nav:route` subscriptions installed in the
   // store. There is no local trip-state hydration to do here.
-  function handleStart() {
+  async function handleStart() {
     if (!destination) {
       append("ERROR: pick a destination first")
       return
@@ -599,6 +653,27 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         simulate ? ` (sim ${speedMultiplier}x)` : ""
       }`,
     )
+
+    // Resolve the destination name. A dropped pin starts with the placeholder
+    // "Dropped pin" (and `isGeocoding`) while its reverse-geocode is in flight;
+    // if the user taps Start before that lands, the placeholder would become the
+    // permanent trip name — that's the "You have arrived at Dropped pin" bug. So
+    // when the name is still the placeholder / unresolved, reverse-geocode the
+    // coordinate now (on demand) and use the real address. Falls back to the
+    // existing name if geocoding yields nothing.
+    let destinationName = destination.name || destination.address || undefined
+    const isPlaceholder = destination.isGeocoding || destinationName === "Dropped pin" || !destinationName
+    if (isPlaceholder) {
+      try {
+        const formatted = await reverseGeocode(destination.lat, destination.lng)
+        if (formatted) {
+          destinationName = formatted.split(",")[0]?.trim() || formatted
+        }
+      } catch {
+        /* keep the existing name on failure */
+      }
+    }
+
     mentra.send("nav:start", {
       stops: [{lat: destination.lat, lng: destination.lng}],
       mode: "walking",
@@ -606,7 +681,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       speedMultiplier,
       missedTurnRerouteMeters: 3,
       pivots: {radiusMeters: 14},
-      destinationName: destination.name || destination.address || undefined,
+      destinationName,
     })
   }
 
@@ -624,6 +699,13 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   function handleDeviate() {
     append("deviate → +50m off-route")
     mentra.send("nav:deviate", {})
+  }
+
+  // Dev: snap the map back to the device's real current location. Handy
+  // after a simulated trip leaves the puck parked at the sim destination.
+  function handleResetLocation() {
+    append("reset → my location")
+    mentra.send("nav:reset-location", {})
   }
 
   // Cancel the current trip and immediately re-start it to the same
@@ -662,18 +744,31 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // existing preview drawer takes care of the rest. No-op during a live
   // trip (the parent gates this via the prop) so a mid-walk tap can't
   // accidentally swap destinations.
-  function handleMapPoiTap(placeId: string) {
+  function handleMapPoiTap(name: string, coord: LatLng) {
     if (running) return
-    append(`POI tap → resolving ${placeId}`)
-    mentra
-      .request("places:details", {placeId})
-      .then((place) => {
-        setDestination(place)
-        append(`POI → ${place.name || place.address || placeId}`)
-      })
-      .catch((err) => {
-        append(`POI lookup failed: ${err instanceof Error ? err.message : String(err)}`)
-      })
+    append(`POI tap → ${name}`)
+    const pinId = `poi-pin-${Date.now()}`
+    // Pin the landmark immediately using its NAME as the label, with a
+    // geocoding skeleton for the address. The Mapbox POI feature only gives
+    // us a name + coords — no place ID — so we reverse-geocode the POI's
+    // coordinates to fill in the real street address (not raw lat/lng).
+    const pin: PlaceDetails = {
+      placeId: pinId,
+      lat: coord.lat,
+      lng: coord.lng,
+      name,
+      address: "",
+      isGeocoding: true,
+    }
+    setDestination(pin)
+    const finalize = (next: Partial<PlaceDetails>) => {
+      setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev))
+    }
+    void reverseGeocode(coord.lat, coord.lng).then((formatted) => {
+      // Keep the POI's own name as the label; use the geocoded string as the
+      // full address (fall back to coords only if geocoding returns nothing).
+      finalize({address: formatted || `${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)}`})
+    })
   }
 
   function handleMapLongPress(coord: LatLng) {
@@ -773,6 +868,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // reason as long-press) and on a live trip (avoid swapping
           // destinations mid-walk).
           onPlaceTap={isSearching || running ? undefined : handleMapPoiTap}
+          onOpenSettings={() => push({name: "settings"})}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -841,6 +937,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 heading={heading}
                 maneuver={maneuver}
                 routePoints={routePoints}
+                routeSteps={routeSteps}
                 status={status}
               />
             </div>
@@ -897,6 +994,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   speedMultiplier={speedMultiplier}
                   routeDistanceMeters={previewRouteSummary?.distanceMeters ?? null}
                   routeDurationSeconds={previewRouteSummary?.durationSeconds ?? null}
+                  saved={!!devDestination && savedPlaces.some((p) => p.placeId === devDestination.placeId)}
+                  onToggleSaved={handleToggleSaved}
                   onStart={handleStart}
                   onClose={() => setDestination(null)}
                 />
@@ -907,6 +1006,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 me={me}
                 routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
                 routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
+                routePoints={running ? routePoints : null}
                 onStop={handleStop}
                 onClose={() => setDestination(null)}
               />
@@ -921,7 +1021,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         />
 
         {devEnabled && !isSearching ? (
-          <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
+          <FloatingDevPanel title="Navigation Dev" version={appVersion} storageKey="NavigationPage:dev">
             <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A]">
               {(
                 [
@@ -967,11 +1067,124 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-neutral-700 shrink-0">Test bitmap (W×H)</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      value={bmpWidth}
+                      onChange={(e) => setBmpWidth(e.target.value)}
+                      placeholder="W"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <span className="text-[11px] text-neutral-400">×</span>
+                    <input
+                      type="number"
+                      value={bmpHeight}
+                      onChange={(e) => setBmpHeight(e.target.value)}
+                      placeholder="H"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const size = parseInt(bmpWidth, 10)
+                        const height = parseInt(bmpHeight, 10)
+                        if (!Number.isFinite(size) || !Number.isFinite(height)) return
+                        mentra.request("test:show-bitmap-size", {size, height})
+                      }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white shrink-0">
+                      Send
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">OSM road map (Hayes Valley)</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      console.log("[OSM-MAP] 🖱️  Draw button clicked")
+                      const res = await mentra.request("test:show-osm-map", undefined)
+                      console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                    }}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Draw
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Explore map (pan)</span>
+                  <div className="flex flex-col items-center gap-1">
+                    {(
+                      [
+                        [null, "up", null],
+                        ["left", null, "right"],
+                        [null, "down", null],
+                      ] as const
+                    ).map((row, ri) => (
+                      <div key={ri} className="flex gap-1">
+                        {row.map((dir, ci) =>
+                          dir ? (
+                            <button
+                              key={ci}
+                              type="button"
+                              onClick={async () => {
+                                console.log(`[OSM-MAP] 🖱️  pan ${dir}`)
+                                const res = await mentra.request("test:pan-osm-map", {dir})
+                                console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                              }}
+                              className="w-7 h-7 rounded-lg font-bold bg-red-600 text-white flex items-center justify-center">
+                              {dir === "up" ? "↑" : dir === "down" ? "↓" : dir === "left" ? "←" : "→"}
+                            </button>
+                          ) : (
+                            <span key={ci} className="w-7 h-7" />
+                          ),
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap 200×100</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:show-bitmap-size", {size: 200, height: 100})}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Send
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Large map (center)</span>
+                  <div className="flex gap-1.5">
+                    {[200, 270].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={async () => {
+                          const res = await mentra.request("test:show-large-map", {size})
+                          console.log(`[LARGE-MAP] ${size}:`, res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                        }}
+                        className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>
                   <button
                     type="button"
                     onClick={() => mentra.request("test:count-1-to-10", undefined)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Start
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">
+                    Both boxes 100→0 (sync test)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:count-both-boxes", undefined)}
                     className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
                     Start
                   </button>
@@ -1021,6 +1234,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={handleRebuildRoute}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white disabled:opacity-40">
                 Rebuild
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Reset to my location</span>
+              <button
+                type="button"
+                onClick={handleResetLocation}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-emerald-600 text-white">
+                Reset
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -1192,6 +1414,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                 }`}>
                 {useRawInstructions ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium text-neutral-700">Large map (swipe) — WIP</span>
+                <span className="text-[11px] text-neutral-500">Swipe up/down to toggle full-screen map</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !largeMapEnabled
+                  setLargeMapEnabled(next)
+                  mentra.send("nav:set-dev-settings", {largeMapEnabled: next})
+                  append(`large-map → ${next ? "on" : "off"}`)
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  largeMapEnabled ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {largeMapEnabled ? "ON" : "OFF"}
               </button>
             </div>
             <LiveLog log={log} running={running} status={status} maneuver={maneuver} />

@@ -52,10 +52,12 @@ interface BoundWebView {
 /**
  * NOTE: the WebView ↔ host heartbeat was removed when the lifecycle
  * inversion landed. The current model is **at most one WebView at a
- * time, always foreground, spawn-cold-per-open** (same shape as the
- * cloud-WebView miniapps). User navigation closes it explicitly;
- * `onContentProcessDidTerminate` catches OS-level crashes; there's no
- * scenario where we'd silently leak a wedged WebView.
+ * time, foreground UI with an always-on background JSContext** (same
+ * shape as the cloud-WebView miniapps). User navigation closes it
+ * explicitly and `onContentProcessDidTerminate` catches OS-level
+ * crashes, but the host may still re-announce UI_OPEN for an already
+ * mounted WebView after app resume/dev respawn so the background can
+ * push a fresh authoritative snapshot.
  */
 
 export class MentraUIRouter {
@@ -99,15 +101,11 @@ export class MentraUIRouter {
   }
 
   /**
-   * Re-announce the already-mounted WebView to a freshly (re)spawned
-   * background JSContext. The dev background hot-reload tears down and
-   * respawns the JSContext (mentraJsBootstrap.onRespawnBackground) without
-   * reloading the WebView, so the new background `MiniappSession` starts
-   * with `ui.bound=false` and never receives a `UI_OPEN` — the WebView's
-   * `mentra.ready()` latches and won't re-fire. Until that's fixed the
-   * new session drops every RPC reply (UIModule.sendRpcReply bails when
-   * unbound), so every `mentra.request(...)` aborts. Re-emitting UI_OPEN
-   * here flips `ui.bound` back to true so replies flow again.
+   * Re-announce the already-mounted WebView to the background JSContext.
+   * This covers dev background hot-reload, app resume, and thawed WebViews
+   * whose injected UI_SEND frames may have been missed while the host was
+   * suspended. Re-emitting UI_OPEN flips `ui.bound` back to true if needed
+   * and lets background code push a fresh snapshot via session.ui.onOpen.
    *
    * No-op if no WebView is currently bound for the package.
    */

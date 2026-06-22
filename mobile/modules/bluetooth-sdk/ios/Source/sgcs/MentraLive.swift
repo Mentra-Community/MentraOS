@@ -1614,18 +1614,15 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    func requestPhoto(
-        _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
-    ) {
+    func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound) iso=\(iso.map { String($0) } ?? "auto")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
             "type": "take_photo",
-            "requestId": requestId,
-            "appId": appId,
+            "requestId": request.requestId,
+            "appId": request.appId,
         ]
 
         // Always generate BLE ID for potential fallback
@@ -1634,15 +1631,15 @@ class MentraLive: NSObject, SGCManager {
         json["bleImgId"] = bleImgId
         json["transferMethod"] = "auto"
 
-        if let webhookUrl, !webhookUrl.isEmpty {
+        if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
             json["webhookUrl"] = webhookUrl
 
             var transfer = BlePhotoTransfer(
-                bleImgId: bleImgId, requestId: requestId, webhookUrl: webhookUrl
+                bleImgId: bleImgId, requestId: request.requestId, webhookUrl: webhookUrl
             )
 
             // Store authToken for BLE transfer if provided
-            if let authToken, !authToken.isEmpty {
+            if let authToken = request.authToken, !authToken.isEmpty {
                 transfer.authToken = authToken
             }
 
@@ -1650,32 +1647,27 @@ class MentraLive: NSObject, SGCManager {
         }
 
         // Add authToken to JSON if provided
-        if let authToken, !authToken.isEmpty {
+        if let authToken = request.authToken, !authToken.isEmpty {
             json["authToken"] = authToken
         }
 
-        // propagate size (default to medium if invalid)
-        if let size, ["small", "medium", "large", "full"].contains(size) {
-            json["size"] = size
-        } else {
-            json["size"] = "medium"
-        }
+        let allowedSizes = ["low", "medium", "high", "max"]
+        let size = request.size.rawValue
+        json["size"] = allowedSizes.contains(size) ? size : "medium"
 
-        // Add compress parameter
-        json["compress"] = compress ?? "none"
+        json["compress"] = request.compress?.rawValue ?? "none"
+        json["save"] = request.save
+        json["sound"] = request.sound
 
-        json["flash"] = flash
-        json["save"] = save
-        json["sound"] = sound
-
-        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
-            Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
+        if let e = request.exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            Bridge.log("LIVE: Using manual exposure time for photo request \(request.requestId): \(Int64(e)) ns")
             json["exposureTimeNs"] = Int64(e)
         }
-        if let iso, iso > 0 {
-            Bridge.log("LIVE: Using manual ISO for photo request \(requestId): ISO \(iso)")
+        if let iso = request.iso, iso > 0 {
+            Bridge.log("LIVE: Using manual ISO for photo request \(request.requestId): ISO \(iso)")
             json["iso"] = iso
         }
+        request.appendScanFields(to: &json)
 
         Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
@@ -2291,32 +2283,6 @@ class MentraLive: NSObject, SGCManager {
             // Send to React Native via Bridge
             Bridge.sendMtkUpdateComplete(message: updateMessage, timestamp: timestamp)
 
-        case "ota_update_available":
-            // Process OTA update available notification from glasses (background mode)
-            Bridge.log("📱 Received ota_update_available from glasses")
-
-            let versionCode = json["version_code"] as? Int64 ?? 0
-            let versionName = json["version_name"] as? String ?? ""
-            let totalSize = json["total_size"] as? Int64 ?? 0
-
-            // Parse updates array
-            var updates: [String] = []
-            if let updatesArray = json["updates"] as? [String] {
-                updates = updatesArray
-            }
-
-            Bridge.log(
-                "📱 OTA available - version: \(versionName) (\(versionCode)), updates: \(updates), size: \(totalSize) bytes"
-            )
-
-            // Send to React Native
-            Bridge.sendOtaUpdateAvailable(
-                versionCode: versionCode,
-                versionName: versionName,
-                updates: updates,
-                totalSize: totalSize
-            )
-
         case "ota_start_ack":
             // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
@@ -2906,17 +2872,6 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "ota_query_status",
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-        ]
-
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendOtaRetryVersionCheck() {
-        Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-
-        let json: [String: Any] = [
-            "type": "ota_retry_version_check",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
 
@@ -5092,9 +5047,6 @@ extension MentraLive {
         // Send button photo settings
         sendButtonPhotoSettings()
 
-        // Send button camera LED setting
-        sendButtonCameraLedSetting()
-
         // Send camera FOV setting (K900 / Mentra Live)
         sendCameraFovSetting()
 
@@ -5204,12 +5156,75 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
-        let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as! String
-        sendButtonPhotoSettings(requestId: nil, size: size)
+        let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
+            rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
+        }
+        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
+        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
+        let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
+        let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
+        let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
+        let ispAnalogGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_analog_gain") as? String
+        let aeExposureDivisor = DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor") as? Int
+        let isoCap = DeviceStore.shared.get("bluetooth", "button_photo_iso_cap") as? Int
+        let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
+        let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
+
+        let settings = PhotoCaptureDefaults(
+            size: size,
+            mfnr: mfnr,
+            zsl: zsl,
+            noiseReduction: noiseReduction,
+            edgeEnhancement: edgeEnhancement,
+            ispDigitalGain: ispDigitalGain,
+            ispAnalogGain: ispAnalogGain,
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            compress: compressStr,
+            sound: sound,
+            resetCaptureTuning: false
+        )
+
+        sendButtonPhotoSettings(requestId: nil, settings: settings)
     }
 
     func sendButtonPhotoSettings(requestId: String?, size: String) {
-        Bridge.log("Sending button photo setting: \(size)")
+        sendButtonPhotoSettings(requestId: requestId, settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size)))
+    }
+
+    func sendButtonPhotoSettings(requestId: String?, settings: PhotoCaptureDefaults) {
+        var details = settings.size.map { "size=\($0.rawValue)" } ?? "size=unchanged"
+        if let mfnr = settings.mfnr {
+            details += ", mfnr=\(mfnr)"
+        }
+        if let zsl = settings.zsl {
+            details += ", zsl=\(zsl)"
+        }
+        if let noiseReduction = settings.noiseReduction {
+            details += ", noiseReduction=\(noiseReduction)"
+        }
+        if let edgeEnhancement = settings.edgeEnhancement {
+            details += ", edgeEnhancement=\(edgeEnhancement)"
+        }
+        if let ispDigitalGain = settings.ispDigitalGain {
+            details += ", ispDigitalGain=\(ispDigitalGain)"
+        }
+        if let ispAnalogGain = settings.ispAnalogGain {
+            details += ", ispAnalogGain=\(ispAnalogGain)"
+        }
+        if let aeExposureDivisor = settings.aeExposureDivisor {
+            details += ", aeExposureDivisor=\(aeExposureDivisor)"
+        }
+        if let isoCap = settings.isoCap {
+            details += ", isoCap=\(isoCap)"
+        }
+        if let compress = settings.compress {
+            details += ", compress=\(compress)"
+        }
+        if let sound = settings.sound {
+            details += ", sound=\(sound)"
+        }
+        Bridge.log("Sending button photo setting: \(details)")
 
         guard connectionState == ConnTypes.CONNECTED else {
             Bridge.log("Cannot send button photo settings - not connected")
@@ -5218,33 +5233,45 @@ extension MentraLive {
 
         var json: [String: Any] = [
             "type": "button_photo_setting",
-            "size": size,
         ]
+        if let size = settings.size {
+            json["size"] = size.rawValue
+        }
         if let requestId, !requestId.isEmpty {
             json["request_id"] = requestId
         }
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendButtonCameraLedSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "button_camera_led") as! Bool
-        sendButtonCameraLedSetting(requestId: nil, enabled: enabled)
-    }
-
-    func sendButtonCameraLedSetting(requestId: String?, enabled: Bool) {
-        Bridge.log("Sending button camera LED setting: \(enabled)")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot send button camera LED setting - not connected")
-            return
+        if let mfnr = settings.mfnr {
+            json["mfnr"] = mfnr
         }
-
-        var json: [String: Any] = [
-            "type": "button_camera_led",
-            "enabled": enabled,
-        ]
-        if let requestId, !requestId.isEmpty {
-            json["request_id"] = requestId
+        if let zsl = settings.zsl {
+            json["zsl"] = zsl
+        }
+        if let noiseReduction = settings.noiseReduction {
+            json["noiseReduction"] = noiseReduction
+        }
+        if let edgeEnhancement = settings.edgeEnhancement {
+            json["edgeEnhancement"] = edgeEnhancement
+        }
+        if let ispDigitalGain = settings.ispDigitalGain {
+            json["ispDigitalGain"] = ispDigitalGain
+        }
+        if let ispAnalogGain = settings.ispAnalogGain, !ispAnalogGain.isEmpty {
+            json["ispAnalogGain"] = ispAnalogGain
+        }
+        if let aeExposureDivisor = settings.aeExposureDivisor, aeExposureDivisor > 1 {
+            json["aeExposureDivisor"] = aeExposureDivisor
+        }
+        if let isoCap = settings.isoCap, isoCap > 0 {
+            json["isoCap"] = isoCap
+        }
+        if let compress = settings.compress, !compress.isEmpty {
+            json["compress"] = compress
+        }
+        if let sound = settings.sound {
+            json["sound"] = sound
+        }
+        if settings.resetCaptureTuning == true {
+            json["resetCaptureTuning"] = true
         }
         sendJson(json, wakeUp: true)
     }
@@ -5277,9 +5304,9 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool) {
         startVideoRecording(
-            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0,
+            requestId: requestId, save: save, sound: sound, width: 0, height: 0, fps: 0,
             maxRecordingTimeMinutes: 0
         )
     }
@@ -5291,11 +5318,11 @@ extension MentraLive {
     }
 
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        requestId: String, save: Bool, sound: Bool, width: Int, height: Int, fps: Int,
         maxRecordingTimeMinutes: Int
     ) {
         Bridge.log(
-            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
+            "Starting video recording on glasses: requestId=\(requestId), save=\(save), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5307,10 +5334,8 @@ extension MentraLive {
             "type": "start_video_recording",
             "requestId": requestId,
             "save": save,
-            "flash": flash,
             "sound": sound,
         ]
-
         // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.
         if maxRecordingTimeMinutes > 0 {
             json["maxRecordingTimeMinutes"] = maxRecordingTimeMinutes

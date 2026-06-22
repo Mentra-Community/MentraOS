@@ -18,14 +18,11 @@ protocol ControllerManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(
-        _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
-    )
+    func requestPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -33,7 +30,6 @@ protocol ControllerManager {
     func sendButtonPhotoSettings()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
-    func sendButtonCameraLedSetting()
 
     // MARK: - Display Control
 

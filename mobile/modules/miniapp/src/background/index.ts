@@ -51,6 +51,7 @@ export {
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
+export type {CanvasManager} from "../modules/canvas"
 export type {
   CameraFovPreset,
   CameraFovRequest,
@@ -59,6 +60,12 @@ export type {
   CameraRoiPosition,
   SetCameraFovOptions,
 } from "../modules/camera"
+export type {
+  CloudClientAudioTransport,
+  CloudClientConnectionStatus,
+  CloudClientStatus,
+  CloudModule,
+} from "../modules/cloud"
 export type {DashboardAPI} from "../modules/dashboard"
 export type {GlassesModule} from "../modules/glasses"
 export type {HeadingModule} from "../modules/heading"
@@ -116,13 +123,16 @@ export type {
 export type {TranscriptionConfig} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
+  AuthUpdatePayload,
   MiniappVisibility,
   PermissionType,
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  MiniappAuthState,
   MiniappRequestError,
 } from "../session"
+export type {AuthFetchOptions, AuthModule} from "../modules/auth"
 export type {MiniappColorScheme} from "../globals"
 // Navigation — exported as a single block since the types reference each other.
 export type {

@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.PhotoRequest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -27,13 +28,16 @@ import java.io.ByteArrayOutputStream
 import java.util.TimeZone
 import java.util.UUID
 import java.util.regex.Pattern
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 // ---------- G2 Protocol Constants ----------
 
@@ -1299,11 +1303,10 @@ class G2 : SGCManager() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var heartbeatRunnable: Runnable? = null
     private var devSettingsHeartbeatRunnable: Runnable? = null
-    private var evenHubQueueRunnable: Runnable? = null
-    private var pendingTextMsg: ByteArray? = null
-    private var lastEvenHubMsg: ByteArray? = null
-    private var lastEvenHubResendsRemaining: Int = 0
+    /** How many redundant resends each text update gets (text has no ACK). The reconcile loop sets a
+     * container's [TextContainer.pendingSends] to `1 + EVEN_HUB_RESEND_COUNT` on change. */
     private val EVEN_HUB_RESEND_COUNT: Int = 1
+    /** ~100ms idle-tick interval for the reconcile loop (text resends, image retries while idle). */
     private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
@@ -1311,6 +1314,23 @@ class G2 : SGCManager() {
     private var textContainerID: Int = 1
     private var imageSessionCounter: Int = 0
     private var heartbeatCounter: Int = 0
+
+    // Image-send ACK/retry: the glasses ACK EACH fragment with an ImgResCmd carrying MapSessionId
+    // (field 3), MapFragmentIndex (field 6) and ErrorCode (field 8; 4=success, 5=failed). One
+    // MapSessionId identifies the WHOLE image transfer (constant across its fragments) — the
+    // glasses key their reassembly buffer on it — so each fragment reuses the same session id with
+    // an incrementing MapFragmentIndex. We correlate a fragment's ACK by the (session,
+    // fragmentIndex) pair; sendImageData() awaits it before sending the next fragment. Only one
+    // transfer is ever outstanding (the reconcile loop is the sole sender of images), so a single
+    // slot suffices.
+    // @Volatile: written on the main thread (in sendImageData) but read/completed on the BLE
+    // callback thread (in correlateImageAck) so the ACK is never delayed behind a backed-up main
+    // queue. CompletableDeferred.complete() is itself thread-safe.
+    @Volatile private var pendingImgAckSession: Int? = null
+    @Volatile private var pendingImgAckFragment: Int? = null
+    @Volatile private var pendingImgAck: CompletableDeferred<Boolean>? = null
+    private val IMG_ACK_TIMEOUT_MS = 2000L // matches Dart host
+    private val IMG_MAX_ATTEMPTS = 3
     private var authStarted: Boolean = false
     private var leftAuthenticated: Boolean = false
     private var rightAuthenticated: Boolean = false
@@ -1327,12 +1347,24 @@ class G2 : SGCManager() {
     private var lastGestureCtrlTimestamp: Long? = null
 
     /**
-     * Serializes all display mutations (text/bitmap/clear/rebuild). Each public display entry point
-     * launches on [displayScope] and runs its body under [displayMutex] so page shutdown/create and
-     * fragment sends can never interleave with another update on the glasses.
+     * Owns every display mutation. Each public display entry point launches on this single-threaded
+     * Main scope and only mutates container state (content / bmpData / dirty flags), never sends
+     * directly. The [displayReconcileJob] background loop — also on this scope — is the sole sender,
+     * so exactly one image transfer is ever in flight by construction (no lock needed; matches the
+     * iOS reconcile design that replaced DisplayMutex).
      */
     private val displayScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private val displayMutex = Mutex()
+    /** Background loop that owns ALL display sends (text + images): each pass pushes dirty text
+     * containers, then dirty image containers one at a time. Display ops just mark containers dirty
+     * and signal [displayDirtySignal]. */
+    private var displayReconcileJob: Job? = null
+    /** ~100ms ticker that nudges the reconcile loop while idle, so text resends and image retries
+     * still happen with no new mutations. Just sends into [displayDirtySignal]. */
+    private var displayTickJob: Job? = null
+    /** Wakes the reconcile loop the instant a container is marked dirty, instead of waiting out the
+     * idle tick. CONFLATED (1-deep, newest-wins) so a burst of mutations coalesces into one wake —
+     * the Kotlin analogue of iOS's `AsyncStream(bufferingPolicy: .bufferingNewest(1))`. */
+    private var displayDirtySignal: Channel<Unit>? = null
 
     /** A tracked image container on the current page. Keyed by its rect for reuse. */
     private data class ImgContainer(
@@ -1344,7 +1376,11 @@ class G2 : SGCManager() {
             // The converted BMP cached so the container can be re-sent on a page rebuild.
             // NOTE: this ByteArray makes the auto-generated equals/hashCode unreliable, but the
             // class is only ever compared via matches()/id, so that is never relied upon.
-            var bmpData: ByteArray
+            var bmpData: ByteArray,
+            // Set true when bmpData changes and the new pixels haven't been pushed yet. The reconcile
+            // loop is the sole sender; it clears this once the exact bytes it sent still match the
+            // container. Lets every display op be a pure state mutation (no DisplayMutex needed).
+            var dirty: Boolean = false
     ) {
         val name: String
             get() = "img-$id"
@@ -1364,7 +1400,11 @@ class G2 : SGCManager() {
             val borderWidth: Int,
             val borderColor: Int,
             val borderRadius: Int,
-            val paddingLength: Int
+            val paddingLength: Int,
+            // Remaining sends the reconcile loop owes this container. Text has no ACK, so each content
+            // change schedules `1 + EVEN_HUB_RESEND_COUNT` sends (the update + a redundant resend on a
+            // later tick) as a delivery hedge; the loop sends once and decrements per tick until 0.
+            var pendingSends: Int = 0
     ) {
         val name: String
             get() = "text-$id"
@@ -1442,6 +1482,16 @@ class G2 : SGCManager() {
     // Matches the 8 ms G1.java uses for its bitmap chunk loop (ANDROID_CHUNK_DELAY_MS).
     private val BLE_PACKET_GAP_MS = 8L
 
+    // Dedicated single-thread executor for pacing BLE packet bursts. We must NOT spread the burst
+    // across [mainHandler]: the incoming image ACK is also delivered on the main thread, and a long
+    // run of postDelayed writes (plus heartbeats and the text-queue tick) can push ACK processing
+    // past IMG_ACK_TIMEOUT_MS — the glasses appear to "stop responding" even though the ACK arrived.
+    // Pacing here keeps the main looper free so ACKs are processed promptly.
+    private val bleWriteExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "G2-ble-write").apply { isDaemon = true }
+            }
+
     @Suppress("deprecation")
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
         if (right) {
@@ -1476,13 +1526,22 @@ class G2 : SGCManager() {
             writeOnePacket(packets[0], left, right)
             return
         }
-        // Multi-packet bursts (bitmaps, large protobufs): write the first packet immediately,
-        // then schedule the rest with BLE_PACKET_GAP_MS spacing so the Android BLE stack can
-        // actually drain each write before the next one is queued.
-        writeOnePacket(packets[0], left, right)
-        for (i in 1 until packets.size) {
-            val packet = packets[i]
-            mainHandler.postDelayed({ writeOnePacket(packet, left, right) }, BLE_PACKET_GAP_MS * i)
+        // Multi-packet bursts (bitmaps, large protobufs): pace the whole burst on a dedicated
+        // write thread with a blocking gap between packets, so the Android BLE stack can drain each
+        // write before the next is queued WITHOUT occupying the main looper (which also carries the
+        // image ACK and would otherwise starve it under load — see [bleWriteExecutor]).
+        bleWriteExecutor.execute {
+            for (i in packets.indices) {
+                writeOnePacket(packets[i], left, right)
+                if (i < packets.size - 1) {
+                    try {
+                        Thread.sleep(BLE_PACKET_GAP_MS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return@execute
+                    }
+                }
+            }
         }
     }
 
@@ -1493,7 +1552,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets, left = true, right = true)
+        sendToGlasses(packets)
     }
 
     private fun sendDevSettingsCommand(
@@ -1767,16 +1826,27 @@ class G2 : SGCManager() {
         devSettingsHeartbeatRunnable = dsRunnable
         mainHandler.postDelayed(dsRunnable, 5000)
 
-        // EvenHub text command queue: drain the most recent pending updateText every 100ms
-        val queueRunnable =
-                object : Runnable {
-                    override fun run() {
-                        drainEvenHubQueue()
-                        mainHandler.postDelayed(this, EVEN_HUB_QUEUE_TICK_MS)
+        // Display reconcile loop: push any dirty text containers (one send each, with a redundant
+        // resend), then any dirty image containers one at a time. Single sender, so a sendImageData
+        // never overlaps another and can't clobber the pending image ACK — the invariant displayMutex
+        // used to enforce. The loop wakes on each channel element: mutations send one immediately
+        // (instant reaction), and a ~100ms ticker sends one when idle so periodic work (text resends,
+        // image retries) still runs. The CONFLATED buffer coalesces bursts into a single wake.
+        val signal = Channel<Unit>(Channel.CONFLATED)
+        displayDirtySignal = signal
+        displayTickJob =
+                displayScope.launch {
+                    while (isActive) {
+                        delay(EVEN_HUB_QUEUE_TICK_MS)
+                        signal.trySend(Unit)
                     }
                 }
-        evenHubQueueRunnable = queueRunnable
-        mainHandler.postDelayed(queueRunnable, EVEN_HUB_QUEUE_TICK_MS)
+        displayReconcileJob =
+                displayScope.launch {
+                    for (sig in signal) {
+                        reconcileDisplay()
+                    }
+                }
     }
 
     private fun stopHeartbeats() {
@@ -1784,11 +1854,19 @@ class G2 : SGCManager() {
         heartbeatRunnable = null
         devSettingsHeartbeatRunnable?.let { mainHandler.removeCallbacks(it) }
         devSettingsHeartbeatRunnable = null
-        evenHubQueueRunnable?.let { mainHandler.removeCallbacks(it) }
-        evenHubQueueRunnable = null
-        pendingTextMsg = null
-        lastEvenHubMsg = null
-        lastEvenHubResendsRemaining = 0
+        displayTickJob?.cancel()
+        displayTickJob = null
+        displayReconcileJob?.cancel()
+        displayReconcileJob = null
+        displayDirtySignal?.close()
+        displayDirtySignal = null
+    }
+
+    /** Wake the reconcile loop now (a container was just marked dirty / had sends scheduled). Cheap
+     * and idempotent: coalesced by the conflated channel, so a burst of mutations wakes at most once
+     * extra. */
+    private fun signalDisplayDirty() {
+        displayDirtySignal?.trySend(Unit)
     }
 
     private fun sendEvenHubHeartbeat() {
@@ -1840,27 +1918,47 @@ class G2 : SGCManager() {
 
     override fun sendText(text: String) {
         displayScope.launch {
-            displayMutex.withLock {
-                sendText2(text)
-            }
+            sendText2(text)
         }
     }
 
     override fun sendTextWall(text: String) {
         displayScope.launch {
-            displayMutex.withLock {
-                sendText2(
-                        text,
-                        x = defaultTextX,
-                        y = defaultTextY,
-                        width = defaultTextWidth,
-                        height = defaultTextHeight,
-                        borderWidth = defaultTextBorderWidth,
-                        borderColor = defaultTextBorderColor,
-                        borderRadius = defaultTextBorderRadius,
-                        paddingLength = defaultTextPaddingLength
-                )
-            }
+            sendText2(
+                    text,
+                    x = defaultTextX,
+                    y = defaultTextY,
+                    width = defaultTextWidth,
+                    height = defaultTextHeight,
+                    borderWidth = defaultTextBorderWidth,
+                    borderColor = defaultTextBorderColor,
+                    borderRadius = defaultTextBorderRadius,
+                    paddingLength = defaultTextPaddingLength
+            )
+        }
+    }
+
+    override fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int
+    ) {
+        displayScope.launch {
+            sendText2(
+                    text,
+                    x = x,
+                    y = y,
+                    width = width,
+                    height = height,
+                    borderWidth = borderWidth,
+                    borderColor = defaultTextBorderColor,
+                    borderRadius = borderRadius,
+                    paddingLength = defaultTextPaddingLength
+            )
         }
     }
 
@@ -1894,7 +1992,9 @@ class G2 : SGCManager() {
         val rPaddingLength = defaultTextPaddingLength
         val content = if (text.isEmpty()) " " else text
 
-        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        // Pure state mutation: update the container's content and schedule its sends; the reconcile
+        // loop does the actual updateText writes. Reuse an existing container if the rect matches
+        // exactly; otherwise add a new one.
         val container: TextContainer
         val existingIndex =
                 textContainers.indexOfFirst {
@@ -1911,21 +2011,15 @@ class G2 : SGCManager() {
                 }
         if (existingIndex >= 0) {
             textContainers[existingIndex].content = content
+            textContainers[existingIndex].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+            signalDisplayDirty()
             container = textContainers[existingIndex]
             Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
+            // A brand-new page needs its structure built first; pendingSends stays set so the loop
+            // pushes the content once the page exists.
             if (!pageCreated) {
                 rebuildPage()
-                return
             }
-            // update the text container:
-            val msg =
-            EvenHubProto.updateTextMessage(
-                    containerID = container.id,
-                    contentOffset = 0,
-                    contentLength = container.content.toByteArray(Charsets.UTF_8).size,
-                    content = container.content
-            )
-            queueEvenHubCommand(msg)
             return
         }
         container =
@@ -1941,6 +2035,13 @@ class G2 : SGCManager() {
                         rPaddingLength
                 )
         Bridge.log("G2: sendText() - added text container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+        // New container changes page structure: rebuild it (the rebuild embeds initial content), then
+        // schedule sends so the loop refreshes it.
+        val newIndex = textContainers.indexOfFirst { it.id == container.id }
+        if (newIndex >= 0) {
+            textContainers[newIndex].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+        }
+        signalDisplayDirty()
         rebuildPage()
     }
 
@@ -1954,17 +2055,20 @@ class G2 : SGCManager() {
     override fun clearDisplay() {
         Bridge.log("G2: clearDisplay()")
         displayScope.launch {
-            displayMutex.withLock {
-                // reset the content of all text containers to empty:
-                for (i in textContainers.indices) {
-                    textContainers[i].content = " "
-                }
-                for (i in imageContainers.indices) {
-                    imageContainers[i].bmpData = ByteArray(0)
-                }
-                // shutdown the page and then recreate the containers without the content.
-                rebuildPage()
+            // reset the content of all text containers to empty:
+            for (i in textContainers.indices) {
+                textContainers[i].content = " "
+                // The rebuild below re-embeds this blank content via createPageWithContainers, so no
+                // separate updateText send is needed — drop any scheduled sends.
+                textContainers[i].pendingSends = 0
             }
+            for (i in imageContainers.indices) {
+                // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
+                imageContainers[i].bmpData = ByteArray(0)
+                imageContainers[i].dirty = false
+            }
+            // shutdown the page and then recreate the containers without the content.
+            rebuildPage()
         }
     }
 
@@ -2011,31 +2115,34 @@ class G2 : SGCManager() {
                             return false
                         }
 
-        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        // Pure state mutation: update the target container's bytes and mark it dirty. The reconcile
+        // loop is the sole sender, so two displayBitmap calls can never overlap a sendImageData and
+        // clobber the single-slot image ACK — no lock needed. Reuse an existing container if the rect
+        // matches exactly; otherwise add a new one.
         val container: ImgContainer
         val existingIndex = imageContainers.indexOfFirst { it.matches(rx, ry, rw, rh) }
         if (existingIndex >= 0) {
             imageContainers[existingIndex].bmpData = bmpData
+            imageContainers[existingIndex].dirty = true
+            signalDisplayDirty()
             container = imageContainers[existingIndex]
             Bridge.log("G2: displayBitmap() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
-            displayScope.launch {
-                displayMutex.withLock {
-                    if (!pageCreated) {
-                        rebuildPage()
-                    } else {
-                        sendImageData(container.id, container.name, container.bmpData)
-                    }
-                }
+            // A brand-new page needs its structure built before the loop can push pixels; the dirty
+            // flag stays set so the reconcile loop sends the image once the page exists.
+            if (!pageCreated) {
+                displayScope.launch { rebuildPage() }
             }
             return true
         } else {
             container = addImageContainer(rx, ry, rw, rh, bmpData)
-            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
-            displayScope.launch {
-                displayMutex.withLock {
-                    rebuildPage()
-                }
+            val newIndex = imageContainers.indexOfFirst { it.id == container.id }
+            if (newIndex >= 0) {
+                imageContainers[newIndex].dirty = true
             }
+            signalDisplayDirty()
+            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+            // New container changes page structure: rebuild it, then the loop sends the pixels.
+            displayScope.launch { rebuildPage() }
         }
 
         return true
@@ -2106,58 +2213,109 @@ class G2 : SGCManager() {
      * Shutdown and rebuild everything, re-sending all data to the glasses.
      *
      * Suspends until the rebuild (shutdown → create → image/text re-send) has been issued, so
-     * callers no longer race a detached coroutine. Always invoke from within [displayMutex].
+     * callers no longer race a detached coroutine. Always invoke on [displayScope].
      */
     private suspend fun rebuildPage() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        rebuildState()
+        // we will automatically rebuild state when we detect the glasses shutdown:
+        // delay(300) // 300ms to settle
+        // rebuildState()
     }
 
     /**
-     * Re-creates the containers and sends all images and text again to the glasses.
+     * Re-creates the containers and re-sends all images to the glasses.
      *
      * Runs inline (suspending) rather than launching a detached coroutine, so the page is fully
-     * rebuilt before the caller continues. Always invoke from within [displayMutex].
+     * rebuilt before the caller continues. Always invoke on [displayScope].
      */
     private suspend fun rebuildState() {
         Bridge.log("G2: rebuildState()")
-        // recreate the containers:
+        // recreate the containers (sets pageCreated = true; embeds text content directly):
         createPageWithContainers()
-        
         delay(300) // 300ms to settle
 
-        // go through each image container and send the data:
-        for (container in imageContainers) {
-            sendImageData(container.id, container.name, container.bmpData)
-            delay(300) // 300ms between containers
+        // Mark every image container dirty and let the reconcile loop re-send them, one at a time.
+        // Doing the sends here directly is what used to race a concurrent displayBitmap and clobber
+        // the image ACK; routing through the dirty flag keeps a single sender (the reconcile loop).
+        // Text needs no resend here: createPageWithContainers already embeds each container's content.
+        for (i in imageContainers.indices) {
+            if (imageContainers[i].bmpData.isNotEmpty()) {
+                Bridge.log(
+                        "G2: rebuildState() - marking container ${imageContainers[i].id} dirty (${imageContainers[i].bmpData.size} bytes)"
+                )
+                imageContainers[i].dirty = true
+            }
         }
-
-        // go through each text container and re-send its content, otherwise text stays blank after a
-        // disabled because text containers are initialized with their content:
-        // for (container in textContainers) {
-        //     val textMsg =
-        //             EvenHubProto.updateTextMessage(
-        //                     containerID = container.id,
-        //                     contentOffset = 0,
-        //                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
-        //                     content = container.content
-        //             )
-        //     sendEvenHubCommand(textMsg)
-        //     delay(100)
-        // }
+        signalDisplayDirty()
 
         delay(300) // 300ms to settle
         restartMicIfAlreadyEnabled()
     }
 
     /**
+     * Push pending display state to the glasses: dirty text containers first (one updateText each,
+     * with a redundant resend per [TextContainer.pendingSends]), then dirty image containers one at a
+     * time. This awaits each [sendImageData] in turn, so image sends never overlap and the single
+     * image-ACK slot is never clobbered. A failed image send leaves the container dirty for the next
+     * cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
+     */
+    private suspend fun reconcileDisplay() {
+        if (!pageCreated) return
+
+        // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
+        for (i in textContainers.indices) {
+            if (textContainers[i].pendingSends <= 0) continue
+            val container = textContainers[i]
+            val msg =
+                    EvenHubProto.updateTextMessage(
+                            containerID = container.id,
+                            contentOffset = 0,
+                            contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+                            content = container.content
+                    )
+            sendEvenHubCommand(msg)
+            textContainers[i].pendingSends -= 1
+        }
+
+        // Images: ACK-gated, exactly one in flight. Cap iterations defensively so a container that
+        // keeps being re-dirtied mid-send can't spin this pass forever (next tick picks it up).
+        var guardCount = 0
+        while (pageCreated && guardCount < imageContainerIDPool.size) {
+            val i = imageContainers.indexOfFirst { it.dirty }
+            if (i < 0) break
+            guardCount += 1
+            val container = imageContainers[i]
+            val sentBytes = container.bmpData
+            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
+            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            if (sentBytes.isEmpty()) {
+                imageContainers[i].dirty = false
+                continue
+            }
+            sendImageData(container.id, container.name, sentBytes)
+            // Re-find by id: the list may have shifted (eviction) during the await.
+            val j = imageContainers.indexOfFirst { it.id == container.id }
+            if (j >= 0 && imageContainers[j].bmpData.contentEquals(sentBytes)) {
+                imageContainers[j].dirty = false
+            }
+        }
+    }
+
+    /**
      * Send a bitmap to an image container as fragmented updateImageRawData packets.
      *
-     * Suspends until every fragment has been sent, mirroring iOS `sendImageData` (which awaits
-     * 200ms after every fragment, including the last). Callers therefore get the same serialized
-     * timing window: the 300ms settle in [rebuildState] only runs once all fragments are out.
+     * One MapSessionId identifies the whole image transfer (constant across its fragments); the
+     * glasses ACK EACH fragment with an ImgResCmd ErrorCode (4=success, 5=failed). Each fragment is
+     * gated on its own ACK — correlated by (session, fragmentIndex) — before the next is sent, so
+     * the ACK itself paces the transfer (no fixed inter-fragment delay). A `failed` ACK OR no ACK
+     * within [IMG_ACK_TIMEOUT_MS] abandons the attempt and re-sends the entire image (fresh session
+     * id) up to [IMG_MAX_ATTEMPTS] times. On exhausting all attempts it logs a warning and returns
+     * (best-effort — callers are unaffected).
+     *
+     * Suspends until the image is acknowledged (or all attempts fail), so the 300ms settle in
+     * [rebuildState] only runs once the transfer has fully resolved.
      */
     private suspend fun sendImageData(
             containerID: Int,
@@ -2165,36 +2323,79 @@ class G2 : SGCManager() {
             bmpData: ByteArray
     ) {
         val fragmentSize = 4096
-        imageSessionCounter++
-        val sessionId = imageSessionCounter
         val totalSize = bmpData.size
-        var fragmentIndex = 0
-        var offset = 0
-
-        Bridge.log("G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes")
-
-        while (offset < bmpData.size) {
-            val end = minOf(offset + fragmentSize, bmpData.size)
-            val fragment = bmpData.copyOfRange(offset, end)
-
-            val msg =
-                    EvenHubProto.updateImageRawDataMessage(
-                            containerID = containerID,
-                            containerName = containerName,
-                            mapSessionId = sessionId,
-                            mapTotalSize = totalSize,
-                            compressMode = 0,
-                            mapFragmentIndex = fragmentIndex,
-                            mapFragmentPacketSize = fragment.size,
-                            mapRawData = fragment
-                    )
-            sendEvenHubCommand(msg)
-            Bridge.log("G2: sendImageData($containerName) - sent fragment $fragmentIndex")
-
-            fragmentIndex++
-            offset = end
-            delay(200) // 200ms between fragments (and after the last, matching iOS)
+        val fragmentCount = (bmpData.size + fragmentSize - 1) / fragmentSize
+        
+        // skip if the image is empty:
+        if (bmpData.size == 0) {
+            return
         }
+
+        // Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
+
+        for (attempt in 1..IMG_MAX_ATTEMPTS) {
+            // One session id per WHOLE image transfer (per attempt). The glasses key their
+            // reassembly buffer on MapSessionId, so every fragment reuses it with an incrementing
+            // MapFragmentIndex. A retry uses a fresh session so a stale ACK from a prior attempt
+            // can't match.
+            imageSessionCounter = (imageSessionCounter + 1) % 256
+            val sessionId = imageSessionCounter
+
+            var fragmentIndex = 0
+            var offset = 0
+            var transferOk = true
+            // if (attempt > 1) {
+            //     Bridge.log("G2: sendImageData($containerName) - attempt $attempt starting")
+            // }
+            while (offset < bmpData.size) {
+                val end = minOf(offset + fragmentSize, bmpData.size)
+                val fragment = bmpData.copyOfRange(offset, end)
+
+                val ack = CompletableDeferred<Boolean>()
+                pendingImgAckSession = sessionId
+                pendingImgAckFragment = fragmentIndex
+                pendingImgAck = ack
+
+                Bridge.log("G2: img_sen: session=$sessionId fragment=$fragmentIndex")
+
+                val msg =
+                        EvenHubProto.updateImageRawDataMessage(
+                                containerID = containerID,
+                                containerName = containerName,
+                                mapSessionId = sessionId,
+                                mapTotalSize = totalSize,
+                                compressMode = 0,
+                                mapFragmentIndex = fragmentIndex,
+                                mapFragmentPacketSize = fragment.size,
+                                mapRawData = fragment
+                        )
+                sendEvenHubCommand(msg)
+
+                // Gate on THIS fragment's ACK before sending the next (the ACK provides pacing).
+                // null=timeout, false=img_failed → abandon the attempt and retry the whole image.
+                val ok = withTimeoutOrNull(IMG_ACK_TIMEOUT_MS) { ack.await() }
+                if (pendingImgAck === ack) {
+                    pendingImgAck = null
+                    pendingImgAckSession = null
+                    pendingImgAckFragment = null
+                }
+                if (ok != true) {
+                    val reason = if (ok == null) "timeout" else "img_failed"
+                    // Bridge.log("G2: sendImageData($containerName) - attempt $attempt fragment $fragmentIndex failed ($reason)")
+                    transferOk = false
+                    break
+                }
+                fragmentIndex++
+                offset = end
+            }
+
+            if (transferOk) {
+                // Bridge.log("G2: img_sen: container=$containerName - success=true")
+                return
+            }
+        }
+
+        Bridge.log("G2: img_sen: sendImageData($containerName) - failed after $IMG_MAX_ATTEMPTS attempts")
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -2429,28 +2630,6 @@ class G2 : SGCManager() {
         pageCreated = true
     }
 
-    @Synchronized
-    private fun queueEvenHubCommand(payload: ByteArray) {
-        pendingTextMsg = payload
-    }
-
-    @Synchronized
-    private fun drainEvenHubQueue() {
-        val msg = pendingTextMsg
-        pendingTextMsg = null
-        val toSend: ByteArray? = if (msg != null) {
-            lastEvenHubMsg = msg
-            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
-            msg
-        } else if (lastEvenHubResendsRemaining > 0 && lastEvenHubMsg != null) {
-            lastEvenHubResendsRemaining -= 1
-            lastEvenHubMsg
-        } else {
-            null
-        }
-        toSend?.let { sendEvenHubCommand(it) }
-    }
-
     // ---------- Bitmap Conversion ----------
 
     private fun convertToG2Bmp(
@@ -2476,9 +2655,9 @@ class G2 : SGCManager() {
         val offsetX = (containerWidth - scaledW) / 2
         val offsetY = (containerHeight - scaledH) / 2
 
-        Bridge.log(
-                "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
-        )
+        // Bridge.log(
+        //         "G2: convertToG2Bmp - input ${srcWidth}x${srcHeight} → scaled ${scaledW}x${scaledH} in ${containerWidth}x${containerHeight}"
+        // )
 
         // Render to container-sized bitmap with black background
         val destBitmap =
@@ -2640,19 +2819,7 @@ class G2 : SGCManager() {
     }
 
     // Camera & Media - G2 has no camera
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    ) {
+    override fun requestPhoto(request: PhotoRequest) {
         Bridge.log("G2: requestPhoto - not supported (no camera)")
     }
 
@@ -2671,7 +2838,6 @@ class G2 : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
         Bridge.log("G2: startVideoRecording - not supported")
@@ -2692,10 +2858,6 @@ class G2 : SGCManager() {
 
     override fun sendButtonMaxRecordingTime() {
         Bridge.log("G2: sendButtonMaxRecordingTime")
-    }
-
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("G2: sendButtonCameraLedSetting")
     }
 
     override fun sendCameraFovSetting() {
@@ -2735,6 +2897,7 @@ class G2 : SGCManager() {
     override fun disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        clearDisplay()
         cancelPairingTimeout()
         stopScan()
         stopHeartbeats()
@@ -2852,23 +3015,20 @@ class G2 : SGCManager() {
     suspend fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
         Bridge.log("G2: setImuEnabled($enabled, frq=$reportFrq)")
 
-        displayMutex.withLock {
-            // IMU requires an active EvenHub page (same prerequisite as the mic). Await the
-            // rebuild so the control packet is sent only after the page actually exists — page
-            // creation is async with variable delays, so a fixed wait could send too early and
-            // reporting would never start.
-            if (enabled && !pageCreated) {
-                rebuildState()
-            }
-
-            val msg =
-                    EvenHubProto.imuControlMessage(
-                            enable = enabled,
-                            reportFrq = reportFrq,
-                            magicRandom = sendManager.nextMagicRandom()
-                    )
-            sendEvenHubCommand(msg)
+        // IMU requires an active EvenHub page (same prerequisite as the mic). Await the rebuild so
+        // the control packet is sent only after the page actually exists — page creation is async
+        // with variable delays, so a fixed wait could send too early and reporting would never start.
+        if (enabled && !pageCreated) {
+            rebuildState()
         }
+
+        val msg =
+                EvenHubProto.imuControlMessage(
+                        enable = enabled,
+                        reportFrq = reportFrq,
+                        magicRandom = sendManager.nextMagicRandom()
+                )
+        sendEvenHubCommand(msg)
     }
 
     fun reconnectController() {
@@ -2957,9 +3117,6 @@ class G2 : SGCManager() {
     }
 
     override fun sendShutdown() {
-        // Send the EvenHub shutdown synchronously before tearing down BLE. clearDisplay() is now
-        // fire-and-forget (it serializes on displayScope), so calling it here would let disconnect()
-        // close the GATT before the deferred shutdown packet was ever written.
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -3412,7 +3569,15 @@ class G2 : SGCManager() {
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
                     G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
-                    G2BLE.CHAR_NOTIFY -> mainHandler.post { handleNotifyData(data, sourceKey) }
+                    G2BLE.CHAR_NOTIFY -> {
+                        // Correlate an in-flight image ACK INLINE on the BLE callback thread, before
+                        // posting the rest of the handling to the (potentially backed-up) main
+                        // queue. This guarantees the ACK that sendImageData() is awaiting resolves
+                        // promptly even while the main looper is busy draining a packet burst /
+                        // heartbeats — the cause of the intermittent "glasses stopped responding".
+                        correlateImageAck(data, sourceKey)
+                        mainHandler.post { handleNotifyData(data, sourceKey) }
+                    }
                 }
             }
 
@@ -3464,11 +3629,65 @@ class G2 : SGCManager() {
 
     // ---------- Incoming Data Handling ----------
 
+    /**
+     * Resolve an in-flight image-fragment ACK directly from a raw notify packet, on the BLE
+     * callback thread. This runs BEFORE [handleNotifyData] is posted to [mainHandler] so the ACK
+     * that [sendImageData] is awaiting completes promptly even when the main looper is saturated by
+     * a packet burst, heartbeats, or the text-queue tick — the root cause of the intermittent
+     * "glasses stop responding to image sends".
+     *
+     * Deliberately a read-only, SINGLE-PACKET parse: it does NOT touch the stateful [receiveManager]
+     * (that stays exclusively on the main thread). An ImgResCmd always fits in one BLE packet, so a
+     * multi-packet frame (totalPackets > 1) is not an image ACK and is left entirely to the
+     * main-thread path. Completing an already-completed CompletableDeferred is a no-op, so the
+     * duplicate L/R ACK and the residual main-thread correlation are both harmless.
+     */
+    private fun correlateImageAck(rawData: ByteArray, @Suppress("UNUSED_PARAMETER") sourceKey: String) {
+        // Fast path: only proceed if a transfer is actually outstanding.
+        val ack = pendingImgAck ?: return
+        if (rawData.size < 8) return
+        if (rawData[0] != G2BLE.HEADER_BYTE) return
+
+        val payloadLen = rawData[3].toInt() and 0xFF
+        val expectedLen = payloadLen + 8
+        if (rawData.size < expectedLen) return
+
+        val totalPackets = rawData[4].toInt() and 0xFF
+        val serialNum = rawData[5].toInt() and 0xFF
+        val serviceId = rawData[6]
+        val status = rawData[7].toInt() and 0xFF
+        val resultCode = (status shr 1) and 0x0F
+        if (resultCode != 0) return
+        if (serviceId != ServiceID.EVEN_HUB.value) return
+        // Single complete packet only (ImgResCmd never spans packets); else defer to main thread.
+        if (totalPackets != 1 || serialNum != 1) return
+
+        // Last packet carries a 2-byte CRC trailer; strip it from the payload.
+        val payloadEnd = 8 + payloadLen - 2
+        if (payloadEnd < 8 || payloadEnd > rawData.size) return
+        val payload = rawData.copyOfRange(8, payloadEnd)
+
+        val fields = ProtobufReader(payload).parseFields()
+        val resData = fields[6] as? ByteArray ?: return // field 6 = ImgResCmd
+        val resFields = ProtobufReader(resData).parseFields()
+        val errorCode = resFields[8] as? Int ?: return
+        val ackSession = resFields[3] as? Int ?: return
+        val ackFragment = (resFields[6] as? Int) ?: 0
+        Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
+        if (ackSession == pendingImgAckSession && ackFragment == pendingImgAckFragment) {
+            ack.complete(errorCode == 4)
+        }
+    }
+
     private fun handleNotifyData(data: ByteArray, sourceKey: String) {
         val result = receiveManager.handlePacket(data, sourceKey) ?: return
 
         val serviceId = result.first
         val payload = result.second
+        
+
+        // print raw log, first 32 bytes:
+        // Bridge.log("G2: handleNotifyData() - serviceId=$serviceId, payload=${payload.take(32).joinToString("") { String.format("%02X", it) }}")
 
         when (serviceId) {
             ServiceID.EVEN_HUB.value -> handleEvenHubResponse(payload)
@@ -3558,7 +3777,12 @@ class G2 : SGCManager() {
         val fields = reader.parseFields()
 
         // print raw payload:
-        Bridge.log("G2: EvenHub response payload: ${payload.joinToString("") { String.format("%02X", it) }}")
+        val payloadStr = payload.joinToString("") { String.format("%02X", it) }
+        if (payloadStr.contains("080C7A02100C")) {
+            // heartbeat response
+            return
+        }
+        Bridge.log("G2: res: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
@@ -3606,8 +3830,10 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
-            // Dedup only the non-critical logging path (img-success/error chatter), which L and R
-            // both deliver. Page-state resets above are intentionally outside this window.
+            // NOTE: the per-fragment image ACK is correlated inline on the BLE callback thread in
+            // correlateImageAck() (called before this runs is posted to the main looper) so it is
+            // never delayed behind a saturated main queue. Nothing to do here for ImgResCmd.
+
             val timestamp = System.currentTimeMillis()
             val lastResponse = lastEvenHubResponseTimestamp
             if (lastResponse != null && timestamp - lastResponse < 100) {
@@ -3640,19 +3866,20 @@ class G2 : SGCManager() {
                 }
             }
 
-            for (resField in listOf(4, 6, 8, 10)) {
-                val resData = fields[resField] as? ByteArray ?: continue
-                val resReader = ProtobufReader(resData)
-                val resFields = resReader.parseFields()
-                (resFields[8] as? Int)?.let { errorCode ->
-                    // ImgResCmd has ErrorCode in field 8
-                    if (errorCode == 4) {
-                        Bridge.log("G2: img_success")
-                    } else {
-                        Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
-                    }
-                }
-            }
+            // for (resField in listOf(4, 6, 8, 10)) {
+            //     val resData = fields[resField] as? ByteArray ?: continue
+            //     val resReader = ProtobufReader(resData)
+            //     val resFields = resReader.parseFields()
+            //     (resFields[8] as? Int)?.let { errorCode ->
+            //         // ImgResCmd ErrorCode in field 8 (the sendImageData ACK is completed above,
+            //         // before the dedup window — this is just the deduped logging path).
+            //         if (errorCode == 4) {
+            //             Bridge.log("G2: img_success")
+            //         } else {
+            //             Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+            //         }
+            //     }
+            // }
         }
     }
 
@@ -3778,13 +4005,23 @@ class G2 : SGCManager() {
                 }
             }
 
-            // System exit: glasses killed our EvenHub page (user opened menu or another app)
-            // Reset page state and re-create the page to reclaim EvenHub focus
+            // System exit: glasses killed our EvenHub page (e.g. the firmware's
+            // "End this feature? Yes/No" screen, or another app taking focus). The page
+            // is gone, so re-create it to reclaim EvenHub focus — otherwise the next
+            // sendText reuses a container on a page that no longer exists and nothing
+            // renders. rebuildState() recreates the page, re-pushes current text + image
+            // content through the reconcile loop, and re-arms the mic if it should be on
+            // (the firmware also kills the mic on system exit). We intentionally do NOT
+            // clear glasses/micEnabled first: that flag is the intended state, and
+            // rebuildState relies on it to know whether to re-send the mic-enable command
+            // (mirrors the dashboard-shutdown recovery path).
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
+                Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                // Firmware kills the mic on system exit; re-arm it if it should be on
-                DeviceStore.apply("glasses", "micEnabled", false)
-                DeviceManager.getInstance().updateMicState()
+                displayScope.launch {
+                    rebuildState()
+                    DeviceManager.getInstance().sendCurrentState()
+                }
             }
             return
         }
@@ -3962,7 +4199,7 @@ class G2 : SGCManager() {
                 // DeviceManager's authoritative current view so the glasses match the phone
                 // (not just the last-cached G2 containers) after returning from the dashboard.
                 displayScope.launch {
-                    displayMutex.withLock { rebuildState() }
+                    rebuildState()
                     DeviceManager.getInstance().sendCurrentState()
                     // set the mic back on if it should be on — only after the rebuild
                     // completes, matching iOS (which awaits rebuildState before restartMic).
@@ -3981,7 +4218,7 @@ class G2 : SGCManager() {
                     // DeviceManager's authoritative current view so the glasses match the phone
                     // (not just the last-cached G2 containers) after returning from the dashboard.
                     displayScope.launch {
-                        displayMutex.withLock { rebuildState() }
+                        rebuildState()
                         // set the mic back on if it should be on
                         val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
                         if (micEnabled) {

@@ -26,7 +26,7 @@ export const evenRealitiesG2: Capabilities = {
     canDisplayBitmap: true,
     resolution: { width: 640, height: 200 },
     fieldOfView: { horizontal: 25 },
-    maxTextLines: 5,
+    maxTextLines: 8,
     adjustBrightness: true,
   },
 

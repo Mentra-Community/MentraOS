@@ -49,6 +49,7 @@ class PhoneMic private constructor(private val context: Context) {
         private const val FOCUS_REGAIN_DELAY_MS = 500L
         private const val SAMSUNG_MIC_TEST_DELAY_MS = 500L
         private const val MIC_SWITCH_DELAY_MS = 300L // Time for DeviceManager to switch mics
+        private const val AUDIO_SOURCE_HOTWORD = 1999
     }
 
     // Audio recording components
@@ -185,7 +186,42 @@ class PhoneMic private constructor(private val context: Context) {
     }
 
     fun isRecordingWithMode(mode: String): Boolean {
-        return isRecording.get() && currentMicMode == mode
+        if (!isRecording.get()) {
+            return false
+        }
+
+        val record = audioRecord
+        val activelyRecording =
+                try {
+                    record?.recordingState == AudioRecord.RECORDSTATE_RECORDING
+                } catch (e: Exception) {
+                    Bridge.log("MIC: Failed to read AudioRecord state: ${e.message}")
+                    false
+                }
+
+        if (!activelyRecording) {
+            Bridge.log("MIC: Stale recording state detected, cleaning up")
+            cleanUpRecording()
+            abandonAudioFocus()
+            currentMicMode = ""
+            return false
+        }
+
+        return currentMicMode == mode
+    }
+
+    fun hasBlockingMicInterruption(): Boolean {
+        val callActive =
+                isPhoneCallActive ||
+                        try {
+                            (telephonyManager?.callState ?: TelephonyManager.CALL_STATE_IDLE) !=
+                                    TelephonyManager.CALL_STATE_IDLE
+                        } catch (e: Exception) {
+                            Bridge.log("MIC: Failed to read telephony call state: ${e.message}")
+                            true
+                        }
+
+        return callActive || isExternalAudioActive
     }
 
     /**
@@ -544,7 +580,23 @@ class PhoneMic private constructor(private val context: Context) {
         audioRecord?.let { ourAudioSessionIds.add(it.audioSessionId) }
 
         // Start recording
-        audioRecord?.startRecording()
+        val record = audioRecord ?: return false
+        try {
+            record.startRecording()
+        } catch (e: Exception) {
+            Bridge.log("MIC: AudioRecord.startRecording() failed: ${e.message}")
+            audioRecord?.release()
+            audioRecord = null
+            return false
+        }
+
+        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Bridge.log("MIC: AudioRecord did not enter recording state")
+            record.release()
+            audioRecord = null
+            return false
+        }
+
         isRecording.set(true)
 
         // Start recording thread
@@ -577,15 +629,22 @@ class PhoneMic private constructor(private val context: Context) {
 
                     val audioBuffer = ShortArray(bufferSize / 2)
 
+                    var unexpectedStopReason: String? = null
+
                     while (isRecording.get()) {
                         // Capture local reference to avoid use-after-free if cleanUpRecording()
                         // releases the AudioRecord while we're in read()
-                        val record = audioRecord ?: break
+                        val record = audioRecord
+                        if (record == null) {
+                            unexpectedStopReason = "AudioRecord missing"
+                            break
+                        }
 
                         val readResult = try {
                             record.read(audioBuffer, 0, audioBuffer.size)
                         } catch (e: Exception) {
                             Bridge.log("MIC: AudioRecord.read() exception: ${e.message}")
+                            unexpectedStopReason = "AudioRecord.read() exception: ${e.message}"
                             break
                         }
 
@@ -603,7 +662,14 @@ class PhoneMic private constructor(private val context: Context) {
                         } else if (readResult < 0) {
                             // AudioRecord error (ERROR, ERROR_INVALID_OPERATION, ERROR_BAD_VALUE, ERROR_DEAD_OBJECT)
                             Bridge.log("MIC: AudioRecord.read() returned error: $readResult")
+                            unexpectedStopReason = "AudioRecord.read() error: $readResult"
                             break
+                        }
+                    }
+
+                    unexpectedStopReason?.let { reason ->
+                        if (isRecording.get()) {
+                            mainHandler.post { handleUnexpectedRecordingStop(reason) }
                         }
                     }
                 }
@@ -611,6 +677,25 @@ class PhoneMic private constructor(private val context: Context) {
                             name = "AudioRecordingThread"
                             start()
                         }
+    }
+
+    private fun handleUnexpectedRecordingStop(reason: String) {
+        if (!isRecording.compareAndSet(true, false)) {
+            return
+        }
+
+        Bridge.log("MIC: Recording stopped unexpectedly: $reason")
+        cleanUpRecording()
+        abandonAudioFocus()
+
+        if (audioManager.isBluetoothScoOn) {
+            audioManager.stopBluetoothSco()
+            audioManager.isBluetoothScoOn = false
+        }
+
+        audioManager.mode = AudioManager.MODE_NORMAL
+        currentMicMode = ""
+        notifyDeviceManager("recording_stopped", getAvailableInputDevices().values.toList())
     }
 
     private fun cleanUpRecording() {
@@ -778,7 +863,8 @@ class PhoneMic private constructor(private val context: Context) {
                             // Filter out our own recordings
                             val otherAppRecordings =
                                     configs.filter { config ->
-                                        !ourAudioSessionIds.contains(config.clientAudioSessionId)
+                                        !ourAudioSessionIds.contains(config.clientAudioSessionId) &&
+                                                config.clientAudioSource != AUDIO_SOURCE_HOTWORD
                                     }
 
                             val wasExternalActive = isExternalAudioActive

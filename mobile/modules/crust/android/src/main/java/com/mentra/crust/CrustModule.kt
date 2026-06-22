@@ -643,7 +643,7 @@ class CrustModule : Module() {
       val activity = appContext.currentActivity
         ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
       val simulate = (options?.get("simulate") as? Boolean) ?: false
-      val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 5f
+      val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 1f
       val mode = (options?.get("mode") as? String) ?: "driving"
 
       // Prefer the v2 `stops` array when present. Fall back to lat/lng for
@@ -683,6 +683,7 @@ class CrustModule : Module() {
               "currentSpeedMps" to payload.currentSpeedMps,
               "speedLimitMps" to payload.speedLimitMps,
               "routeHeadingDeg" to payload.routeHeadingDeg,
+              "instruction" to payload.instruction,
             ),
           )
         }

@@ -1,6 +1,6 @@
 {
   "name": "@mentra/bluetooth-sdk",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "SDK for communicating with smart glasses",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -12,6 +12,11 @@
       "react-native": "./src/index.ts",
       "default": "./build/index.js"
     },
+    "./internal": {
+      "types": "./build/_internal.d.ts",
+      "react-native": "./src/_internal.ts",
+      "default": "./build/_internal.js"
+    },
     "./react": {
       "types": "./build/react/index.d.ts",
       "react-native": "./src/react/index.ts",
@@ -21,6 +26,11 @@
       "types": "./build/photo-receiver/index.d.ts",
       "react-native": "./src/photo-receiver/index.ts",
       "default": "./build/photo-receiver/index.js"
+    },
+    "./debug": {
+      "types": "./build/debug.d.ts",
+      "react-native": "./src/debug.ts",
+      "default": "./build/debug.js"
     },
     "./_private/*": null,
     "./build/*": null,
