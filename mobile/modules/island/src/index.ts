@@ -83,7 +83,7 @@ export {
 // build output directly. Prefer an island facade when one exists; this remains
 // an internal escape hatch for app-only compatibility needs.
 export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
-export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
+export type {PairFailureEvent, GlassesNotReadyEvent, PairingInfoEvent, WipeMediaResultEvent} from "@mentra/bluetooth-sdk/internal"
 
 // Runtime config (host-injected adapters)
 export {
