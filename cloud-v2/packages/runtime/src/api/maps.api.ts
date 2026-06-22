@@ -5,8 +5,10 @@
  * plain client-initiated request/response — no WebSocket push — so the cloud
  * holds the provider token and the (miniapp) caller never sees it.
  *
- *   POST /api/maps/directions       -> { routes }
- *   POST /api/maps/reverse-geocode  -> { road }
+ *   POST /api/maps/directions          -> { routes }
+ *   POST /api/maps/reverse-geocode     -> { road, address }
+ *   POST /api/maps/place-autocomplete  -> { suggestions }
+ *   POST /api/maps/place-details       -> { placeId, name, address, lat, lng }
  *
  * Authenticated with the same per-user Bearer runtime token as the rest of the
  * runtime REST surface.
@@ -30,6 +32,8 @@ import {
 } from "@mentra/cloud-shared";
 import {
   directionsRequestSchema,
+  placeAutocompleteRequestSchema,
+  placeDetailsRequestSchema,
   reverseGeocodeRequestSchema,
 } from "../protocol/maps";
 import * as maps from "../services/maps/maps.service";
@@ -105,5 +109,57 @@ mapsApi.post("/reverse-geocode", async (c) => {
   } catch (err) {
     logger.error({ message: err instanceof Error ? err.message : String(err) }, "reverse geocode failed");
     return c.json({ error: "reverse geocode failed" }, 502);
+  }
+});
+
+mapsApi.post("/place-autocomplete", async (c) => {
+  const auth = await authUser(c);
+  if ("error" in auth) return auth.error;
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const parsed = placeAutocompleteRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid place-autocomplete request", issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await maps.placeAutocomplete(
+      parsed.data.query,
+      parsed.data.near,
+      parsed.data.sessionToken,
+    );
+    return c.json(result, 200);
+  } catch (err) {
+    logger.error({ message: err instanceof Error ? err.message : String(err) }, "place autocomplete failed");
+    return c.json({ error: "place autocomplete failed" }, 502);
+  }
+});
+
+mapsApi.post("/place-details", async (c) => {
+  const auth = await authUser(c);
+  if ("error" in auth) return auth.error;
+
+  let body: unknown = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const parsed = placeDetailsRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "invalid place-details request", issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await maps.placeDetails(parsed.data.placeId, parsed.data.sessionToken);
+    return c.json(result, 200);
+  } catch (err) {
+    logger.error({ message: err instanceof Error ? err.message : String(err) }, "place details failed");
+    return c.json({ error: "place details failed" }, 502);
   }
 });

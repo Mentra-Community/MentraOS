@@ -209,10 +209,9 @@ export class NavigationController {
     this.display = new DisplayManager(session)
     this.navigation = new NavigationManager(session)
     this.storage = new SimpleStorageManager(session)
-    // session.userId carries the logged-in user when a real session backs the
-    // miniapp; PlacesManager forwards it to the proxy as X-User-Email (with a
-    // placeholder fallback when it's empty).
-    this.places = new PlacesManager(session.userId)
+    // Place search routes through the SDK → host → v2 cloud maps (Mapbox Search
+    // Box). No Worker, no provider key in this bundle.
+    this.places = new PlacesManager(session)
   }
 
   start(): void {
@@ -503,9 +502,12 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
 
     this.unsubs.push(
-      this.ui.handle("places:autocomplete", ({query, near}, ctx) => this.places.autocomplete(query, near, ctx?.signal)),
+      this.ui.handle("places:autocomplete", ({query, near}) => this.places.autocomplete(query, near)),
     )
-    this.unsubs.push(this.ui.handle("places:details", ({placeId}, ctx) => this.places.details(placeId, ctx?.signal)))
+    this.unsubs.push(this.ui.handle("places:details", ({placeId}) => this.places.details(placeId)))
+    this.unsubs.push(
+      this.ui.handle("places:reverse-geocode", ({lat, lng}) => this.navigation.reverseGeocode({lat, lng})),
+    )
 
     this.unsubs.push(this.ui.handle("storage:list-saved", () => this.storage.getAllSavedPlaces()))
     this.unsubs.push(this.ui.handle("storage:add-saved", (p) => this.storage.addSavedPlace(p)))

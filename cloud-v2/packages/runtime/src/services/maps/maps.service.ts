@@ -30,6 +30,9 @@ import type {
   DirectionsRequest,
   DirectionsResult,
   LatLng,
+  PlaceAutocompleteResult,
+  PlaceDetailsResult,
+  PlaceSuggestion,
   ReverseGeocodeResult,
   Route,
 } from "../../protocol/maps";
@@ -73,26 +76,45 @@ const ROUTE_CACHE_MAX_ENTRIES = 500;
 const GEOCODE_CACHE_TTL_MS = 24 * 60 * 60_000;
 const GEOCODE_CACHE_MAX_ENTRIES = 5_000;
 
+// Autocomplete is type-ahead: the same prefix recurs constantly as the user
+// backspaces/retypes, but results go stale fast and are session-scoped. A short
+// TTL coalesces the burst (and in-flight-dedups concurrent keystrokes) without
+// serving yesterday's suggestions. `placeDetails` is a one-shot pick — not
+// cached (a retrieve closes the billing session; replaying it buys nothing).
+const AUTOCOMPLETE_CACHE_TTL_MS = 60_000;
+const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 1_000;
+
 interface CacheEntry<T> {
   expiresAt: number;
   promise: Promise<T>;
+  /**
+   * True until the promise settles. A still-pending entry is reused even past
+   * its TTL, so a slow upstream request never gets a duplicate in-flight call
+   * issued alongside it (in-flight dedup independent of the cache window).
+   */
+  pending: boolean;
 }
 
 const routeCache = new Map<string, CacheEntry<Route[]>>();
-const geocodeCache = new Map<string, CacheEntry<{ road: string | null }>>();
+const geocodeCache = new Map<string, CacheEntry<ReverseGeocodeResult>>();
+const autocompleteCache = new Map<string, CacheEntry<PlaceSuggestion[]>>();
 
 /** Test hook: drop all cached entries. */
 export function clearMapsCaches(): void {
   routeCache.clear();
   geocodeCache.clear();
+  autocompleteCache.clear();
 }
 
 /**
  * Return the cached promise for `key`, or create one via `fn`. The promise is
  * stored BEFORE it settles, so concurrent identical calls coalesce onto one
- * upstream request (in-flight dedup). A promise that REJECTS is evicted on
- * settle, so a failure is never served from cache (and the rejection still
- * propagates to every waiter, matching `fn`'s own throw-on-failure contract).
+ * upstream request (in-flight dedup). An entry is reused when it is still
+ * unexpired OR still PENDING — so a slow upstream request outliving its TTL
+ * never gets a duplicate in-flight call issued alongside it (which would be
+ * duplicate billed traffic under slow responses / retry storms). A promise that
+ * REJECTS is evicted on settle, so a failure is never served from cache (and the
+ * rejection still propagates to every waiter, matching `fn`'s throw-on-failure).
  */
 function cachedUpstream<T>(
   cache: Map<string, CacheEntry<T>>,
@@ -103,22 +125,31 @@ function cachedUpstream<T>(
 ): Promise<T> {
   const now = Date.now();
   const existing = cache.get(key);
-  if (existing && existing.expiresAt > now) {
+  if (existing && (existing.pending || existing.expiresAt > now)) {
     return existing.promise;
   }
 
-  const promise = fn().catch((err: unknown) => {
-    // Evict on failure so one upstream blip can't pin an error for the whole
-    // TTL. Guard: only drop the entry if it is still the one we created (a
-    // concurrent refresh may already have replaced it). Re-throw so waiters see
-    // the real error rather than a cached success.
-    if (cache.get(key)?.promise === promise) {
-      cache.delete(key);
-    }
-    throw err;
-  });
+  const entry: CacheEntry<T> = { expiresAt: now + ttlMs, promise: undefined as never, pending: true };
+  const promise = fn().then(
+    (value) => {
+      entry.pending = false;
+      return value;
+    },
+    (err: unknown) => {
+      entry.pending = false;
+      // Evict on failure so one upstream blip can't pin an error for the whole
+      // TTL. Guard: only drop the entry if it is still the one we created (a
+      // concurrent refresh may already have replaced it). Re-throw so waiters
+      // see the real error rather than a cached success.
+      if (cache.get(key) === entry) {
+        cache.delete(key);
+      }
+      throw err;
+    },
+  );
+  entry.promise = promise;
 
-  cache.set(key, { expiresAt: now + ttlMs, promise });
+  cache.set(key, entry);
 
   // FIFO bound (Map preserves insertion order). At these caps and TTLs a true
   // LRU buys nothing.
@@ -157,7 +188,11 @@ export async function directions(req: DirectionsRequest): Promise<DirectionsResu
   return { routes };
 }
 
-/** Resolve a coordinate to a road name (null when none found nearby). */
+/**
+ * Resolve a coordinate to a short road name + full formatted address (each null
+ * when none found nearby). Both are derived from one upstream lookup and cached
+ * together under the same key.
+ */
 export async function reverseGeocode(coord: LatLng): Promise<ReverseGeocodeResult> {
   // ~1 m grid: step midpoints recur exactly on recompute, and probes within a
   // meter of each other are the same road by any standard.
@@ -169,4 +204,45 @@ export async function reverseGeocode(coord: LatLng): Promise<ReverseGeocodeResul
     GEOCODE_CACHE_MAX_ENTRIES,
     () => getMapsProvider().reverseGeocode(coord),
   );
+}
+
+/**
+ * Type-ahead place search. Cached briefly per (query, near, session) so a burst
+ * of keystrokes / backspaces over the same prefix coalesces onto one upstream
+ * call. An empty query short-circuits to no suggestions without a cache entry or
+ * an upstream call.
+ */
+export async function placeAutocomplete(
+  query: string,
+  near: LatLng | undefined,
+  sessionToken: string,
+): Promise<PlaceAutocompleteResult> {
+  if (!query.trim()) return { suggestions: [] };
+  // Session token is part of the key: results are session-scoped, and two users
+  // typing the same prefix must not share a suggestion list / billing session.
+  const key = JSON.stringify({
+    q: query.trim().toLowerCase(),
+    near: near ? { lat: near.lat.toFixed(3), lng: near.lng.toFixed(3) } : null,
+    session: sessionToken,
+  });
+  const suggestions = await cachedUpstream(
+    autocompleteCache,
+    key,
+    AUTOCOMPLETE_CACHE_TTL_MS,
+    AUTOCOMPLETE_CACHE_MAX_ENTRIES,
+    () => getMapsProvider().placeAutocomplete(query, near, sessionToken),
+  );
+  return { suggestions };
+}
+
+/**
+ * Resolve a suggestion (`placeId` + the autocomplete's `sessionToken`) to a full
+ * place with coordinates. Not cached: a pick is one-shot and the retrieve closes
+ * the provider's billing session.
+ */
+export async function placeDetails(
+  placeId: string,
+  sessionToken: string,
+): Promise<PlaceDetailsResult> {
+  return getMapsProvider().placeDetails(placeId, sessionToken);
 }

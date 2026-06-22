@@ -59,10 +59,19 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
-  /** Reverse-geocode a coordinate to a road name. Backs the engine's
-   *  fallback for pivots whose Routes-API instruction didn't include a
-   *  parseable road. Host calls Google's Geocoding REST API. */
+  /** Reverse-geocode a coordinate to a short road name + full formatted
+   *  address. `road` backs the engine's fallback for pivots whose Routes-API
+   *  instruction didn't include a parseable road; `address` backs UI labels for
+   *  dropped pins / POI taps. Resolved in the v2 cloud maps service (Mapbox
+   *  today) via the host bridge — the miniapp never holds a maps token. */
   NAVIGATION_REVERSE_GEOCODE = "miniapp_navigation_reverse_geocode",
+  /** Type-ahead place search (autocomplete). Resolved in the v2 cloud maps
+   *  service (Mapbox Search Box today) via the host bridge — the miniapp never
+   *  holds a maps token. Pairs with NAVIGATION_PLACE_DETAILS via a sessionToken. */
+  NAVIGATION_PLACE_AUTOCOMPLETE = "miniapp_navigation_place_autocomplete",
+  /** Resolve an autocomplete suggestion (placeId + sessionToken) to coordinates,
+   *  in the v2 cloud maps service via the host bridge. */
+  NAVIGATION_PLACE_DETAILS = "miniapp_navigation_place_details",
   /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
   NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 

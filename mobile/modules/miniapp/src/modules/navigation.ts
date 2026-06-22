@@ -134,6 +134,25 @@ export type NavStep = {
   distanceMeters: number
 }
 
+/** One type-ahead place suggestion from `placeAutocomplete`. */
+export type NavPlaceSuggestion = {
+  /** Opaque id to feed into `placeDetails`. */
+  placeId: string
+  /** Primary line, e.g. "Blue Bottle Coffee". */
+  mainText: string
+  /** Secondary line, e.g. "66 Mint St, San Francisco". Empty when none. */
+  secondaryText: string
+}
+
+/** A place resolved from a suggestion via `placeDetails` — has coordinates to route to. */
+export type NavPlaceDetails = {
+  placeId: string
+  name: string
+  address: string
+  lat: number
+  lng: number
+}
+
 export type NavigationDev = {
   deviate(offsetMeters?: number): void
   setWrongSidewalkOffset(enabled: boolean): void
@@ -404,20 +423,80 @@ export class NavigationModule {
   }
 
   /**
-   * Reverse-geocode a coordinate into a road name. Backs the pivot engine's fallback. `road` is
-   * null when none found near the coordinate; `ok: false` is an actual failure.
+   * Reverse-geocode a coordinate into a short road name (`road`) and a full
+   * formatted street address (`address`, e.g. "369 Hayes Street, San Francisco,
+   * California 94102"). `road` backs the pivot engine's fallback; `address`
+   * backs UI labels for dropped pins / POI taps. Each is null when none of that
+   * kind is found near the coordinate; `ok: false` is an actual failure.
+   *
+   * Resolved entirely in the v2 cloud maps service (provider-abstracted, Mapbox
+   * today) via the host bridge — the miniapp never holds a maps token or calls a
+   * provider directly.
    */
-  reverseGeocodeRoad(coord: LatLng): Promise<{ok: boolean; road?: string | null; error?: string}> {
+  reverseGeocodeRoad(
+    coord: LatLng,
+  ): Promise<{ok: boolean; road?: string | null; address?: string | null; error?: string}> {
     if (!this.hasPermission) {
       return Promise.resolve({
         ok: false,
         error: "LOCATION permission not declared in miniapp.json (required for reverseGeocodeRoad).",
       })
     }
-    return this.session.sendRequest<{ok: boolean; road?: string | null; error?: string}>({
+    return this.session.sendRequest<{
+      ok: boolean
+      road?: string | null
+      address?: string | null
+      error?: string
+    }>({
       type: MiniappRequestType.NAVIGATION_REVERSE_GEOCODE,
       lat: coord.lat,
       lng: coord.lng,
+    })
+  }
+
+  /**
+   * Type-ahead place search. Returns lightweight suggestions for `query`,
+   * optionally biased toward `near`. Resolved in the v2 cloud maps service
+   * (Mapbox Search Box today) via the host bridge — no maps token in the
+   * miniapp. `sessionToken` should be a stable per-search-box-opening string,
+   * reused on the following `placeDetails` call, then rotated after a pick, so
+   * the keystrokes + the final retrieve bill as one search session.
+   *
+   * Does NOT require LOCATION permission — it's a text search; `near` is only a
+   * ranking bias. Resolves `{ok, suggestions}`; `ok: false` is an actual failure.
+   */
+  placeAutocomplete(opts: {
+    query: string
+    near?: LatLng
+    sessionToken: string
+  }): Promise<{ok: boolean; suggestions?: NavPlaceSuggestion[]; error?: string}> {
+    return this.session.sendRequest<{
+      ok: boolean
+      suggestions?: NavPlaceSuggestion[]
+      error?: string
+    }>({
+      type: MiniappRequestType.NAVIGATION_PLACE_AUTOCOMPLETE,
+      query: opts.query,
+      near: opts.near ?? null,
+      sessionToken: opts.sessionToken,
+    })
+  }
+
+  /**
+   * Resolve a suggestion's `placeId` (from `placeAutocomplete`) to a full place
+   * with coordinates. Pass the SAME `sessionToken` used for the autocomplete so
+   * the provider closes the billing session. Resolved in the v2 cloud maps
+   * service via the host bridge. Resolves `{ok, place}`; `ok: false` is a
+   * failure (including an unresolvable id).
+   */
+  placeDetails(opts: {
+    placeId: string
+    sessionToken: string
+  }): Promise<{ok: boolean; place?: NavPlaceDetails; error?: string}> {
+    return this.session.sendRequest<{ok: boolean; place?: NavPlaceDetails; error?: string}>({
+      type: MiniappRequestType.NAVIGATION_PLACE_DETAILS,
+      placeId: opts.placeId,
+      sessionToken: opts.sessionToken,
     })
   }
 

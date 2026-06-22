@@ -17,6 +17,8 @@ import { describe, test, expect, afterEach } from "bun:test";
 import {
   directions,
   reverseGeocode,
+  placeAutocomplete,
+  placeDetails,
   resetMapsProvider,
   clearMapsCaches,
 } from "./maps.service";
@@ -65,11 +67,22 @@ function mapboxDirectionsBody() {
   };
 }
 
-/** A minimal Mapbox reverse-geocode response carrying a street name. */
-function mapboxGeocodeBody(road: string | null) {
+/**
+ * A minimal Mapbox reverse-geocode response carrying a street name + full
+ * address. When `road` is null, returns no features (the off-grid case).
+ */
+function mapboxGeocodeBody(road: string | null, fullAddress?: string) {
   return {
     features: road
-      ? [{ properties: { name: road, context: { street: { name: road } } } }]
+      ? [
+          {
+            properties: {
+              name: road,
+              full_address: fullAddress ?? `123 ${road}, San Francisco, California`,
+              context: { street: { name: road } },
+            },
+          },
+        ]
       : [],
   };
 }
@@ -166,22 +179,24 @@ describe("maps.service directions", () => {
 });
 
 describe("maps.service reverseGeocode", () => {
-  test("returns the resolved road name", async () => {
+  test("returns the resolved road name + full address", async () => {
     process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
-    stubFetch(mapboxGeocodeBody("Market St"));
+    stubFetch(mapboxGeocodeBody("Market St", "1 Market St, San Francisco, California 94105"));
 
     const result = await reverseGeocode({ lat: 37.7749, lng: -122.4194 });
 
     expect(result.road).toBe("Market St");
+    expect(result.address).toBe("1 Market St, San Francisco, California 94105");
   });
 
-  test("returns { road: null } when nothing is found nearby", async () => {
+  test("returns { road: null, address: null } when nothing is found nearby", async () => {
     process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
     stubFetch(mapboxGeocodeBody(null));
 
     const result = await reverseGeocode({ lat: 0, lng: 0 });
 
     expect(result.road).toBeNull();
+    expect(result.address).toBeNull();
   });
 
   test("coordinates within ~1 m share a cache entry (one fetch)", async () => {
@@ -193,5 +208,95 @@ describe("maps.service reverseGeocode", () => {
     await reverseGeocode({ lat: 37.774902, lng: -122.419402 });
 
     expect(fetchStub.calls()).toBe(1);
+  });
+});
+
+/** A minimal Mapbox Search Box /suggest response. */
+function mapboxSuggestBody(name: string) {
+  return {
+    suggestions: [
+      { mapbox_id: "abc123", name, place_formatted: `${name}, San Francisco` },
+      // A suggestion without a mapbox_id must be dropped (un-retrievable).
+      { name: "no id place", place_formatted: "somewhere" },
+    ],
+  };
+}
+
+/** A minimal Mapbox Search Box /retrieve FeatureCollection. */
+function mapboxRetrieveBody() {
+  return {
+    features: [
+      {
+        geometry: { coordinates: [-122.4194, 37.7749] },
+        properties: {
+          mapbox_id: "abc123",
+          name: "Blue Bottle Coffee",
+          full_address: "66 Mint St, San Francisco, California 94103",
+        },
+      },
+    ],
+  };
+}
+
+describe("maps.service placeAutocomplete", () => {
+  test("returns normalized suggestions, dropping ones with no id", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    stubFetch(mapboxSuggestBody("Blue Bottle Coffee"));
+
+    const result = await placeAutocomplete("blue bottle", undefined, "sess-1");
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]).toEqual({
+      placeId: "abc123",
+      mainText: "Blue Bottle Coffee",
+      secondaryText: "Blue Bottle Coffee, San Francisco",
+    });
+  });
+
+  test("an empty query short-circuits with no upstream call", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    const fetchStub = stubFetch(mapboxSuggestBody("x"));
+
+    const result = await placeAutocomplete("   ", undefined, "sess-1");
+
+    expect(result.suggestions).toEqual([]);
+    expect(fetchStub.calls()).toBe(0);
+  });
+
+  test("identical (query, session) coalesces onto one upstream call", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    const fetchStub = stubFetch(mapboxSuggestBody("Blue Bottle Coffee"));
+
+    await placeAutocomplete("blue bottle", undefined, "sess-1");
+    await placeAutocomplete("Blue Bottle", undefined, "sess-1"); // case-insensitive key
+
+    expect(fetchStub.calls()).toBe(1);
+  });
+});
+
+describe("maps.service placeDetails", () => {
+  test("resolves a suggestion to coordinates + address", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    stubFetch(mapboxRetrieveBody());
+
+    const place = await placeDetails("abc123", "sess-1");
+
+    expect(place).toEqual({
+      placeId: "abc123",
+      name: "Blue Bottle Coffee",
+      address: "66 Mint St, San Francisco, California 94103",
+      lat: 37.7749,
+      lng: -122.4194,
+    });
+  });
+
+  test("is not cached: a second identical call re-hits upstream", async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = "pk.test";
+    const fetchStub = stubFetch(mapboxRetrieveBody());
+
+    await placeDetails("abc123", "sess-1");
+    await placeDetails("abc123", "sess-1");
+
+    expect(fetchStub.calls()).toBe(2);
   });
 });

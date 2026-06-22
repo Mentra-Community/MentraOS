@@ -64,6 +64,13 @@ export interface Channels {
 
   "places:autocomplete": Rpc<{query: string; near?: {lat: number; lng: number}}, PlaceSuggestion[]>
   "places:details": Rpc<{placeId: string}, PlaceDetails>
+  /**
+   * Reverse-geocode a coordinate to a road name + full address. Proxies through
+   * the background's SDK session into the v2 cloud maps service (auth + cache +
+   * rate-limit point) — the WebView never calls a maps provider directly. Each
+   * field is null when none of that kind is found near the coordinate.
+   */
+  "places:reverse-geocode": Rpc<{lat: number; lng: number}, {road: string | null; address: string | null}>
 
   "storage:list-saved": Rpc<void, SavedPlace[]>
   "storage:add-saved": Rpc<SavedPlace, void>

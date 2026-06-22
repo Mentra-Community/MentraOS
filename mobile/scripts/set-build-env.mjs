@@ -86,18 +86,21 @@ export async function setBuildEnv() {
   // Load existing .env
   const existingEnv = config().parsed || {}
 
-  // Mapbox tokens injected by the environment (i.e. `doppler run`) must win over
-  // the .env dummy values, so navigation works on the opt-in Doppler path. Only
-  // real tokens override — an absent or dummy env value leaves .env in charge so
-  // the manual-setup fallback is untouched.
+  // The Mapbox public access token (pk.…) injected by the environment (i.e.
+  // `doppler run`) must win over the .env dummy value, so navigation works on the
+  // opt-in Doppler path. Only a real token overrides — an absent or dummy env
+  // value leaves .env in charge so the manual-setup fallback is untouched.
+  //
+  // NOTE: the Downloads:Read secret (MAPBOX_DOWNLOADS_TOKEN, sk.…) is
+  // deliberately NOT merged here. It is a build-time-only credential that must
+  // stay in process.env / ~/.netrc only — writing it into .env (and printing it
+  // in the loop below) would persist and log a real secret. `syncMapboxNetrc`
+  // already mirrors it to ~/.netrc for iOS SPM, and Android reads it from the
+  // environment directly.
   const envOverrides = {}
   const mapboxPk = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN
   if (mapboxPk && mapboxPk.startsWith("pk.")) {
     envOverrides.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = mapboxPk
-  }
-  const mapboxSk = process.env.MAPBOX_DOWNLOADS_TOKEN
-  if (mapboxSk && mapboxSk.startsWith("sk.")) {
-    envOverrides.MAPBOX_DOWNLOADS_TOKEN = mapboxSk
   }
 
   // Merge with build vars (env-injected real tokens take highest precedence).

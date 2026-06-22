@@ -15,6 +15,8 @@ import type {
   DirectionsRequest,
   DirectionsResult,
   LatLng,
+  PlaceAutocompleteResult,
+  PlaceDetailsResult,
   ReverseGeocodeResult,
 } from "@mentra/cloud-runtime/protocol";
 
@@ -28,10 +30,15 @@ export type {
   ManeuverKind,
   RouteAvoidances,
   ReverseGeocodeResult,
+  PlaceSuggestion,
+  PlaceAutocompleteResult,
+  PlaceDetailsResult,
 } from "@mentra/cloud-runtime/protocol";
 
 const DIRECTIONS_PATH = "/api/maps/directions";
 const REVERSE_GEOCODE_PATH = "/api/maps/reverse-geocode";
+const PLACE_AUTOCOMPLETE_PATH = "/api/maps/place-autocomplete";
+const PLACE_DETAILS_PATH = "/api/maps/place-details";
 
 export interface MapsDeps {
   http: HttpClient;
@@ -51,9 +58,34 @@ export class Maps {
     return this.http.post<DirectionsResult>(DIRECTIONS_PATH, req, { idempotent: true });
   }
 
-  /** Resolve a coordinate to a road name (`road` is null when none found nearby). */
+  /**
+   * Resolve a coordinate to a short road name (`road`) + full formatted address
+   * (`address`). Each is null when none of that kind is found near the coord.
+   */
   reverseGeocode(coord: LatLng): Promise<ReverseGeocodeResult> {
     return this.http.post<ReverseGeocodeResult>(REVERSE_GEOCODE_PATH, coord, {
+      idempotent: true,
+    });
+  }
+
+  /**
+   * Type-ahead place search. `sessionToken` groups the keystrokes with the
+   * following `placeDetails` pick into one billed search session.
+   */
+  placeAutocomplete(req: {
+    query: string;
+    near?: LatLng;
+    sessionToken: string;
+  }): Promise<PlaceAutocompleteResult> {
+    // Idempotent: autocomplete is a pure read, safe to retry on a transient blip.
+    return this.http.post<PlaceAutocompleteResult>(PLACE_AUTOCOMPLETE_PATH, req, {
+      idempotent: true,
+    });
+  }
+
+  /** Resolve an autocomplete suggestion (`placeId` + same `sessionToken`) to coordinates. */
+  placeDetails(req: { placeId: string; sessionToken: string }): Promise<PlaceDetailsResult> {
+    return this.http.post<PlaceDetailsResult>(PLACE_DETAILS_PATH, req, {
       idempotent: true,
     });
   }

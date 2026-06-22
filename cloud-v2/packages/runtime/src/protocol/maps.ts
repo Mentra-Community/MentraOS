@@ -108,11 +108,73 @@ export const reverseGeocodeRequestSchema = latLngSchema;
 export type ReverseGeocodeRequest = z.infer<typeof reverseGeocodeRequestSchema>;
 
 /**
- * The REST response for `POST /api/maps/reverse-geocode`. `road` is null when no
- * road was found near the coordinate; that is a successful empty answer, not an
- * error (an actual failure is a non-2xx response).
+ * The REST response for `POST /api/maps/reverse-geocode`.
+ *
+ * - `road`    — short street name (e.g. "Hayes Street"). Backs the pivot
+ *   engine's road-name fallback.
+ * - `address` — full formatted street address with house number + locality
+ *   (e.g. "369 Hayes Street, San Francisco, California 94102"). Backs the
+ *   navigation miniapp's dropped-pin / POI-tap labels.
+ *
+ * Either field is null when nothing of that kind was found near the coordinate;
+ * that is a successful empty answer, not an error (an actual failure is a
+ * non-2xx response).
  */
 export const reverseGeocodeResultSchema = z.object({
   road: z.string().nullable(),
+  address: z.string().nullable(),
 });
 export type ReverseGeocodeResult = z.infer<typeof reverseGeocodeResultSchema>;
+
+// --- Place search (autocomplete + details) ----------------------------------
+//
+// A two-step "type-ahead then pick" flow, provider-neutral like the rest of this
+// file. `placeAutocomplete` lists lightweight suggestions as the user types;
+// `placeDetails` resolves the chosen suggestion to coordinates. A `sessionToken`
+// threads BOTH calls so the provider can bill the keystrokes + the final detail
+// fetch as ONE search session (Mapbox Search Box and Google Places both work
+// this way). Callers create one token per "search box opening" and rotate it
+// after a pick.
+
+export const placeAutocompleteRequestSchema = z.object({
+  /** The user's partial query. Empty/whitespace yields no suggestions. */
+  query: z.string(),
+  /** Optional location bias — rank results near this coordinate. */
+  near: latLngSchema.optional(),
+  /** Opaque per-search-session token; the same value should go on `placeDetails`. */
+  sessionToken: z.string(),
+});
+export type PlaceAutocompleteRequest = z.infer<typeof placeAutocompleteRequestSchema>;
+
+/** One type-ahead suggestion. `placeId` is fed back into `placeDetails`. */
+export const placeSuggestionSchema = z.object({
+  placeId: z.string(),
+  /** Primary line, e.g. "Blue Bottle Coffee". */
+  mainText: z.string(),
+  /** Secondary line, e.g. "66 Mint St, San Francisco". Empty when none. */
+  secondaryText: z.string(),
+});
+export type PlaceSuggestion = z.infer<typeof placeSuggestionSchema>;
+
+export const placeAutocompleteResultSchema = z.object({
+  suggestions: z.array(placeSuggestionSchema),
+});
+export type PlaceAutocompleteResult = z.infer<typeof placeAutocompleteResultSchema>;
+
+export const placeDetailsRequestSchema = z.object({
+  /** A `placeId` returned by a prior `placeAutocomplete` suggestion. */
+  placeId: z.string(),
+  /** The same session token used for the autocomplete that produced this id. */
+  sessionToken: z.string(),
+});
+export type PlaceDetailsRequest = z.infer<typeof placeDetailsRequestSchema>;
+
+/** The resolved place: a name, formatted address, and coordinates to route to. */
+export const placeDetailsResultSchema = z.object({
+  placeId: z.string(),
+  name: z.string(),
+  address: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+});
+export type PlaceDetailsResult = z.infer<typeof placeDetailsResultSchema>;

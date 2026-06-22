@@ -339,11 +339,11 @@ export class NavigationHandlers {
   }
 
   /**
-   * Reverse-geocode a coordinate into a road name. Backs the SDK
-   * pivot engine's last-resort fallback when the Routes API
-   * instruction didn't carry a parseable road. Always resolves with
-   * `{ok, road?}` — a missing road is `{ok: true, road: null}`, not
-   * an error.
+   * Reverse-geocode a coordinate into a short road name + full formatted
+   * address. Backs the SDK pivot engine's road-name fallback (`road`) and the
+   * navigation miniapp's dropped-pin / POI-tap labels (`address`). Always
+   * resolves with `{ok, road?, address?}` — a missing road/address is
+   * `{ok: true, road: null, address: null}`, not an error.
    */
   async handleReverseGeocode(
     packageName: string,
@@ -370,8 +370,8 @@ export class NavigationHandlers {
         })
         return
       }
-      const {road} = await cloud.maps.reverseGeocode({lat, lng})
-      this.sendResult(packageName, requestId, true, {ok: true, road})
+      const {road, address} = await cloud.maps.reverseGeocode({lat, lng})
+      this.sendResult(packageName, requestId, true, {ok: true, road, address})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation reverseGeocode error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -379,5 +379,88 @@ export class NavigationHandlers {
         message: err instanceof Error ? err.message : "navigation reverseGeocode error",
       })
     }
+  }
+
+  /**
+   * Type-ahead place search. Proxies to the v2 cloud maps service (Mapbox
+   * Search Box today). Resolves `{ok: true, suggestions}` — an empty query or no
+   * matches is `{ok: true, suggestions: []}`, not an error.
+   */
+  async handlePlaceAutocomplete(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const query = typeof payload.query === "string" ? payload.query : ""
+      const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
+      const near = this.parseNear(payload.near)
+
+      const cloud = getRuntimeHooks().cloud
+      if (!cloud?.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const {suggestions} = await cloud.maps.placeAutocomplete({query, near, sessionToken})
+      this.sendResult(packageName, requestId, true, {ok: true, suggestions})
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation placeAutocomplete error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation placeAutocomplete error",
+      })
+    }
+  }
+
+  /**
+   * Resolve a suggestion (`placeId` + `sessionToken`) to a full place with
+   * coordinates, via the v2 cloud maps service. Resolves `{ok: true, place}`.
+   */
+  async handlePlaceDetails(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const placeId = typeof payload.placeId === "string" ? payload.placeId : ""
+      const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
+      if (!placeId) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "placeId required",
+        })
+        return
+      }
+
+      const cloud = getRuntimeHooks().cloud
+      if (!cloud?.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const place = await cloud.maps.placeDetails({placeId, sessionToken})
+      this.sendResult(packageName, requestId, true, {ok: true, place})
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation placeDetails error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation placeDetails error",
+      })
+    }
+  }
+
+  /** Coerce an inbound `near` payload to a {lat,lng}, or undefined when absent/invalid. */
+  private parseNear(raw: unknown): {lat: number; lng: number} | undefined {
+    if (!raw || typeof raw !== "object") return undefined
+    const obj = raw as Record<string, unknown>
+    const lat = Number(obj.lat)
+    const lng = Number(obj.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined
+    return {lat, lng}
   }
 }

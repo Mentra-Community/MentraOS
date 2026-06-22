@@ -17,6 +17,8 @@ import type {
   DirectionsRequest,
   LatLng,
   ManeuverKind,
+  PlaceDetailsResult,
+  PlaceSuggestion,
   Route,
   RouteStep,
   RouteAvoidances,
@@ -28,6 +30,8 @@ const logger = createLogger("maps").child({ service: "mapbox.maps.provider" });
 
 const DIRECTIONS_BASE = "https://api.mapbox.com/directions/v5/mapbox";
 const GEOCODE_REVERSE_URL = "https://api.mapbox.com/search/geocode/v6/reverse";
+const SEARCHBOX_SUGGEST_URL = "https://api.mapbox.com/search/searchbox/v1/suggest";
+const SEARCHBOX_RETRIEVE_URL = "https://api.mapbox.com/search/searchbox/v1/retrieve";
 
 /** Read + validate the token at call time (not module load) so tests/boot can set it late. */
 function getToken(): string {
@@ -254,13 +258,18 @@ export function createMapboxProvider(): MapsProvider {
       return (data.routes ?? []).map(toNeutralRoute);
     },
 
-    async reverseGeocode(coord: LatLng): Promise<{ road: string | null }> {
+    async reverseGeocode(
+      coord: LatLng,
+    ): Promise<{ road: string | null; address: string | null }> {
       const token = getToken();
       const params = new URLSearchParams({
         access_token: token,
         longitude: String(coord.lng),
         latitude: String(coord.lat),
-        types: "address,street",
+        // `address` first so the top feature carries the house number (and thus
+        // `full_address`); `street`/`place` keep us returning SOMETHING for a
+        // coord with no exact street address.
+        types: "address,street,place",
         limit: "1",
       });
       const url = `${GEOCODE_REVERSE_URL}?${params.toString()}`;
@@ -274,13 +283,109 @@ export function createMapboxProvider(): MapsProvider {
         features?: Array<{
           properties?: {
             name?: string;
+            full_address?: string;
+            place_formatted?: string;
             context?: { street?: { name?: string } };
           };
         }>;
       };
       const feature = data.features?.[0]?.properties;
+      // Short road name for the pivot fallback…
       const road = feature?.context?.street?.name ?? feature?.name ?? null;
-      return { road: road ?? null };
+      // …and the full formatted address for dropped-pin / POI labels. Prefer
+      // `full_address` (carries the house number), fall back to `name` then
+      // `place_formatted`.
+      const address =
+        feature?.full_address ?? feature?.name ?? feature?.place_formatted ?? null;
+      return { road: road ?? null, address: address ?? null };
+    },
+
+    async placeAutocomplete(
+      query: string,
+      near: LatLng | undefined,
+      sessionToken: string,
+    ): Promise<PlaceSuggestion[]> {
+      // An empty query is a no-op, not an upstream call — Search Box would 422.
+      if (!query.trim()) return [];
+      const token = getToken();
+      const params = new URLSearchParams({
+        q: query,
+        access_token: token,
+        session_token: sessionToken,
+        // POIs + addresses + places — the things a user navigates to.
+        types: "poi,address,place,street",
+        limit: "10",
+      });
+      // Bias toward the user's location when we have it (Mapbox wants lng,lat).
+      if (near) params.set("proximity", `${near.lng},${near.lat}`);
+
+      const url = `${SEARCHBOX_SUGGEST_URL}?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        logger.error({ status: res.status, body }, "mapbox searchbox suggest failed");
+        throw new Error(`mapbox place autocomplete failed: ${res.status}`);
+      }
+      const data = (await res.json()) as {
+        suggestions?: Array<{
+          mapbox_id?: string;
+          name?: string;
+          place_formatted?: string;
+          full_address?: string;
+        }>;
+      };
+      return (data.suggestions ?? [])
+        // Only suggestions we can later retrieve (need a mapbox_id) are useful.
+        .filter((s): s is { mapbox_id: string } & typeof s => !!s.mapbox_id)
+        .map((s) => ({
+          placeId: s.mapbox_id,
+          mainText: s.name ?? "",
+          secondaryText: s.place_formatted ?? s.full_address ?? "",
+        }));
+    },
+
+    async placeDetails(
+      placeId: string,
+      sessionToken: string,
+    ): Promise<PlaceDetailsResult> {
+      const token = getToken();
+      const params = new URLSearchParams({
+        access_token: token,
+        session_token: sessionToken,
+      });
+      const url = `${SEARCHBOX_RETRIEVE_URL}/${encodeURIComponent(placeId)}?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        logger.error({ status: res.status, body }, "mapbox searchbox retrieve failed");
+        throw new Error(`mapbox place details failed: ${res.status}`);
+      }
+      // Retrieve returns a GeoJSON FeatureCollection; the picked place is the
+      // first feature. Coordinates are [lng, lat].
+      const data = (await res.json()) as {
+        features?: Array<{
+          geometry?: { coordinates?: [number, number] };
+          properties?: {
+            mapbox_id?: string;
+            name?: string;
+            full_address?: string;
+            place_formatted?: string;
+          };
+        }>;
+      };
+      const feature = data.features?.[0];
+      const coords = feature?.geometry?.coordinates;
+      if (!coords || coords.length < 2) {
+        throw new Error("mapbox place details: no coordinates in response");
+      }
+      const props = feature?.properties;
+      return {
+        placeId: props?.mapbox_id ?? placeId,
+        name: props?.name ?? "",
+        address: props?.full_address ?? props?.place_formatted ?? "",
+        lat: coords[1],
+        lng: coords[0],
+      };
     },
   };
 }

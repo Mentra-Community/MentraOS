@@ -16,6 +16,8 @@ import type {
   DirectionsRequest,
   DirectionsResult,
   LatLng,
+  PlaceAutocompleteResult,
+  PlaceDetailsResult,
   ReverseGeocodeResult,
   TranscriptionData,
   TranslationData,
@@ -56,6 +58,12 @@ export interface CloudRuntimeTtsAdapter {
 export interface CloudRuntimeMapsAdapter {
   directions: (req: DirectionsRequest) => Promise<DirectionsResult>
   reverseGeocode: (coord: LatLng) => Promise<ReverseGeocodeResult>
+  placeAutocomplete: (req: {
+    query: string
+    near?: LatLng
+    sessionToken: string
+  }) => Promise<PlaceAutocompleteResult>
+  placeDetails: (req: {placeId: string; sessionToken: string}) => Promise<PlaceDetailsResult>
 }
 
 export interface MiniappAuthToken {
