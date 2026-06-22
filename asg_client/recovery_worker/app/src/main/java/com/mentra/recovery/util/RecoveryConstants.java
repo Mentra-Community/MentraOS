@@ -25,17 +25,6 @@ public final class RecoveryConstants {
   public static final String ACTION_INSTALL_COMPLETED = "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
   public static final String ACTION_TELEMETRY = "com.mentra.recovery.ACTION_TELEMETRY";
 
-  /**
-   * Sent by the recovery worker to ASG before a remediation-triggered ASG install begins, and
-   * after it completes (or fails). Mirrors the ASG → recovery worker
-   * {@link #ACTION_INSTALL_IN_PROGRESS} / {@link #ACTION_INSTALL_COMPLETED} pair in the reverse
-   * direction so both sides know when the other is mid-install and can defer their own pipeline.
-   */
-  public static final String ACTION_REMEDIATION_INSTALL_IN_PROGRESS =
-      "com.mentra.recovery.ACTION_REMEDIATION_INSTALL_IN_PROGRESS";
-  public static final String ACTION_REMEDIATION_INSTALL_COMPLETED =
-      "com.mentra.recovery.ACTION_REMEDIATION_INSTALL_COMPLETED";
-
   public static final String STATE_PREFS = "mentra_recovery_state";
   public static final String KEY_STATE = "state";
   public static final String KEY_REASON = "reason";

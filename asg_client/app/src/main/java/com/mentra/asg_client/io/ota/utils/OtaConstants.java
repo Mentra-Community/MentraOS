@@ -67,19 +67,6 @@ public class OtaConstants {
 
     // Recovery worker cross-app signals
     public static final String ASG_PACKAGE = "com.mentra.asg_client";
-    /** Permission required on senders of signals that originate from the recovery worker. */
-    public static final String ASG_TELEMETRY_PERMISSION =
-            "com.mentra.asg_client.permission.RECOVERY_TELEMETRY";
-
-    /**
-     * Sent by the recovery worker to ASG before / after a remediation-triggered ASG install.
-     * Mirrors the ASG → recovery worker RECOVERY_INSTALL_IN_PROGRESS pair in reverse so OtaHelper
-     * can gate its own install path when the recovery worker is already installing ASG.
-     */
-    public static final String ACTION_REMEDIATION_INSTALL_IN_PROGRESS =
-            "com.mentra.recovery.ACTION_REMEDIATION_INSTALL_IN_PROGRESS";
-    public static final String ACTION_REMEDIATION_INSTALL_COMPLETED =
-            "com.mentra.recovery.ACTION_REMEDIATION_INSTALL_COMPLETED";
     public static final String RECOVERY_PACKAGE = "com.mentra.recovery";
     public static final String RECOVERY_INSTALL_IN_PROGRESS =
             "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";

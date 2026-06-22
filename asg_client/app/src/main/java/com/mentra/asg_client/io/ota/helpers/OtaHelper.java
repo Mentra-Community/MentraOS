@@ -85,37 +85,6 @@ public class OtaHelper {
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
     private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
 
-    /**
-     * Monotonic deadline (from {@link android.os.SystemClock#elapsedRealtime()}) after which the
-     * remediation-install pause auto-expires. Zero means not paused. Uses the same self-expiry
-     * pattern as {@code InstallPauseNotifier} in the recovery worker so a missing
-     * {@code ACTION_REMEDIATION_INSTALL_COMPLETED} (e.g. OEM installer killed ASG mid-install)
-     * cannot block the OTA pipeline indefinitely.
-     */
-    private static volatile long remediationInstallDeadlineMs = 0L;
-
-    /** True while the recovery worker sidecar is performing a remediation install of this APK. */
-    public static boolean isRemediationInstallInProgress() {
-        long deadline = remediationInstallDeadlineMs;
-        if (deadline == 0L) return false;
-        if (android.os.SystemClock.elapsedRealtime() >= deadline) {
-            remediationInstallDeadlineMs = 0L;
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * Called by {@code OtaService}'s receiver when the recovery worker signals it is about to
-     * install (or has finished installing) ASG via the remediation path.
-     */
-    public static void setRemediationInstallInProgress(boolean inProgress) {
-        remediationInstallDeadlineMs =
-                inProgress
-                        ? android.os.SystemClock.elapsedRealtime() + OtaConstants.UPDATE_TIMEOUT_MS
-                        : 0L;
-        Log.i(OtaConstants.TAG, "Remediation install in progress: " + inProgress);
-    }
     private Handler handler;
     private Context context;
     private final BesOtaRegistry besOtaRegistry;
@@ -466,16 +435,6 @@ public class OtaHelper {
             return;
         }
 
-        // Defer if the recovery worker sidecar is currently installing ASG via remediation.
-        // Starting a parallel OTA pipeline now could race the sidecar's install broadcast.
-        // The phone's retry logic will re-send ota_start once remediation is complete and ASG
-        // restarts at the new version, at which point isRemediationInstallInProgress() returns false.
-        if (isRemediationInstallInProgress()) {
-            Log.w(TAG, "📱 Remediation install in progress — deferring phone-initiated OTA");
-            sendOtaStatus();
-            return;
-        }
-
         // Acquire wakelock to prevent CPU sleep during OTA download/install
         WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
         Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
@@ -566,6 +525,16 @@ public class OtaHelper {
                 Log.i(TAG, "OTA execution mode -> phone-started install");
                 stage[0] = "process_updates";
                 if (json.has("apps")) {
+                    // If the installed ASG version is in the remediation range, the recovery
+                    // worker sidecar owns the ASG update for this device. Remove ASG from the
+                    // apps map so the normal OTA loop skips it; the recovery worker will install
+                    // it autonomously. Once installed, the version exceeds maxVersionCode and
+                    // normal OTA resumes ownership on the next ota_start.
+                    if (isAsgDeferredToRemediation(json, context)) {
+                        json.getJSONObject("apps").remove("com.mentra.asg_client");
+                        Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
+                                + "com.mentra.asg_client; recovery worker will handle it");
+                    }
                     processAppsSequentially(json, context);
                 } else {
                     Log.d(TAG, "Using legacy version.json format");
@@ -865,6 +834,32 @@ public class OtaHelper {
         } catch (PackageManager.NameNotFoundException e) {
             Log.d(TAG, packageName + " not installed");
             return 0;
+        }
+    }
+
+    /**
+     * Returns {@code true} when the installed ASG version falls within the remediation range
+     * declared in the manifest's {@code remediation} block, meaning the recovery worker sidecar
+     * owns the ASG update for this device.
+     *
+     * <p>When this returns true, the normal OTA loop removes {@code com.mentra.asg_client} from
+     * the apps map so it is not downloaded or installed by the phone-triggered OTA path.
+     * Once the recovery worker installs the target version, {@code installedVersion} exceeds
+     * {@code maxVersionCode} and this method returns {@code false}, handing ownership back to
+     * the normal OTA path automatically.
+     */
+    private boolean isAsgDeferredToRemediation(JSONObject rootJson, Context context) {
+        try {
+            JSONObject remediation = rootJson.optJSONObject("remediation");
+            if (remediation == null) return false;
+            if (!remediation.optBoolean("enabled", false)) return false;
+            long maxVersionCode = remediation.optLong("maxVersionCode", -1);
+            if (maxVersionCode < 0) return false;
+            long installed = getInstalledVersion("com.mentra.asg_client", context);
+            return installed <= maxVersionCode;
+        } catch (Exception e) {
+            Log.w(TAG, "Could not evaluate remediation block; proceeding with normal OTA", e);
+            return false;
         }
     }
 
@@ -1393,16 +1388,6 @@ public class OtaHelper {
      */
     public static boolean installApk(Context context, String apkPath) {
         try {
-            // Second line of defence: abort if the recovery worker sidecar is already installing
-            // ASG (the early gate in startOtaFromPhone covers most cases; this catches any race
-            // where a download was already in flight when remediation started).
-            if (isRemediationInstallInProgress()) {
-                Log.w(TAG, "Remediation install in progress — aborting ASG OTA installApk to avoid race");
-                isUpdating = false;
-                sendUpdateCompletedBroadcast(context);
-                return false;
-            }
-
             Log.d(TAG, "Starting installation process for APK at: " + apkPath);
 
             EventBus.getDefault().post(new InstallationProgressEvent(InstallationProgressEvent.InstallationStatus.STARTED, apkPath));
