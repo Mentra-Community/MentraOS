@@ -242,6 +242,7 @@ export default function PairingPrepScreen() {
         name: "pairing_mode_tutorial",
         type: "image",
         source: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
+        transition: false,
         title: translate("pairing:livePairingModeTitle"),
         subtitle: translate("pairing:livePairingModeSubtitle"),
         info: translate("pairing:livePairingModeInfo"),
