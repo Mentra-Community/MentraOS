@@ -42,7 +42,7 @@ import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCEN
 import {useNavigationStore} from "@/stores/navigation"
 import {hapticBuzz} from "@/utils/utils"
 import CrustModule from "@mentra/crust"
-import { SETTINGS, useSetting } from "@/stores/settings"
+import {SETTINGS, useSetting} from "@/stores/settings"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -62,7 +62,7 @@ const SWITCHER_COMMIT_VELOCITY = -500
 // How far the overlay shrinks while the bottom swipe-up follows the finger.
 const SWIPE_UP_SCALE_TO = 0.5
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 400 : 500
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 250 : 300
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
@@ -86,7 +86,9 @@ export default function Compositor() {
   // revealed once the fade-in/zoom-in completes, so it doesn't pop in while the
   // overlay is still growing into place.
   const [capsuleVisible, setCapsuleVisible] = useState(false)
-  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(
+    SETTINGS.ios_app_switcher_bottom_swipe.key,
+  )
   useEffect(() => {
     if (foregroundApp) {
       setRenderedApp(foregroundApp)
@@ -211,11 +213,11 @@ export default function Compositor() {
     })
     .onUpdate((e) => {
       let ty = Math.min(0, e.translationY)
-      ty = Math.max(ty, -screenHeight/4)
+      ty = Math.max(ty, -screenHeight / 4)
       // swipeTranslateY.value = interpolate(ty, [0, screenHeight * 0.5], [0, ty*0.8], Extrapolation.CLAMP)
       let translateY = ty - (fadeScale.value * screenHeight) / 2 + screenHeight / 2
       // console.log("translateY", translateY, -screenHeight/4)
-      swipeTranslateY.value = Math.max(-screenHeight/2, translateY)
+      swipeTranslateY.value = Math.max(-screenHeight / 2, translateY)
       // Shrink toward the center following the finger.
       fadeScale.value = interpolate(-ty, [0, screenHeight * 0.3], [1, 0.5], Extrapolation.CLAMP)
       // Reveal the switcher behind us, capped below 1 until release (matching
@@ -300,19 +302,24 @@ export default function Compositor() {
           }), // normal zoom-in
         )
       } else {
-        fadeOpacity.value = 0
         // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
         // opacity fade so the app surface grows into place.
-        fadeScale.value = FADE_IN_SCALE_FROM
-        fadeOpacity.value = 0.5
-        fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
-        fadeScale.value = withDelay(
-          FADE_IN_DELAY_MS,
-          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
-            // Reveal the capsule only after the open animation completes.
-            if (finished) runOnJS(setCapsuleVisible)(true)
-          }),
-        )
+        fadeScale.value = 0
+        fadeOpacity.value = 1
+        // fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+        // fadeScale.value = withDelay(
+        //   500,
+        //   withTiming(1, {duration: 100}, (finished) => {
+        //     // Reveal the capsule only after the open animation completes.
+        //     if (finished) runOnJS(setCapsuleVisible)(true)
+        //   }),
+        // )
+
+        fadeOpacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
+        fadeScale.value = withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
+          // Reveal the capsule only after the open animation completes.
+          if (finished) runOnJS(setCapsuleVisible)(true)
+        })
       }
     } else {
       // only animate out if we didn't swipe to exit:
