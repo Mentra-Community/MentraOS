@@ -48,6 +48,7 @@ interface RuntimeIssuerConfig {
   publicKeyEnv?: string;
   userIdClaim?: string;
   tenantIdClaim?: string;
+  legacyTenantIdClaim?: string;
   fixedTenantId?: string;
   algorithms?: string[];
 }
@@ -155,7 +156,12 @@ export async function verifyRuntimeToken(
 
   const userIdClaim = issuer.userIdClaim ?? "sub";
   const userId = stringClaim(payload[userIdClaim]);
-  const tenantId = issuer.fixedTenantId ?? stringClaim(payload[issuer.tenantIdClaim ?? "tenant_id"]);
+  const tenantId =
+    issuer.fixedTenantId ??
+    stringClaim(payload[issuer.tenantIdClaim ?? "tenant_id"]) ??
+    (issuer.legacyTenantIdClaim
+      ? stringClaim(payload[issuer.legacyTenantIdClaim])
+      : undefined);
   const jti = stringClaim(payload.jti) ?? cryptoRandomId();
   const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`;
 
@@ -238,8 +244,10 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
   const issuer = stringClaim(obj.issuer);
   if (!issuer) throw new Error("issuer config missing issuer");
 
-  const tenantIdClaim = stringClaim(obj.tenantIdClaim);
-  const fixedTenantId = stringClaim(obj.fixedTenantId);
+  const legacyTenantIdClaim = stringClaim(obj.oemIdClaim);
+  const legacyFixedTenantId = stringClaim(obj.fixedOemId);
+  const tenantIdClaim = stringClaim(obj.tenantIdClaim) ?? (legacyTenantIdClaim ? "tenant_id" : undefined);
+  const fixedTenantId = stringClaim(obj.fixedTenantId) ?? legacyFixedTenantId;
   if (!tenantIdClaim && !fixedTenantId) {
     throw new Error(`issuer ${issuer} must set tenantIdClaim or fixedTenantId`);
   }
@@ -258,6 +266,7 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
     publicKeyEnv: stringClaim(obj.publicKeyEnv),
     userIdClaim: stringClaim(obj.userIdClaim),
     tenantIdClaim,
+    legacyTenantIdClaim,
     fixedTenantId,
     algorithms,
   };
