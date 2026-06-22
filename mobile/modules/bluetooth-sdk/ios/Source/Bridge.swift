@@ -87,6 +87,14 @@ class Bridge {
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
+    static func sendPairingInfo(hadPreviousBond: Bool) {
+        Bridge.sendTypedMessage("pairing_info", body: ["had_previous_bond": hadPreviousBond])
+    }
+
+    static func sendWipeMediaResult(success: Bool) {
+        Bridge.sendTypedMessage("wipe_media_result", body: ["success": success])
+    }
+
     @MainActor
     static func sendMicPcm(_ data: Data) {
         Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data))
