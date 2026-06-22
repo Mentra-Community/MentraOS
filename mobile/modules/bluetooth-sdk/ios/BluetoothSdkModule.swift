@@ -44,6 +44,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "settings_ack",
             "version_info",
             "pair_failure",
+            "pairing_info",
+            "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -352,6 +354,22 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("queryGalleryStatus") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.queryGalleryStatus().values
+        }
+
+        AsyncFunction("wipeMediaForPairing") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            let result = try await sdk.wipeMediaForPairing()
+            return ["success": result.success]
+        }
+
+        AsyncFunction("finalizePairingTransfer") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            sdk.finalizePairingTransfer()
+        }
+
+        AsyncFunction("abortPairingTransfer") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            sdk.abortPairingTransfer()
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
