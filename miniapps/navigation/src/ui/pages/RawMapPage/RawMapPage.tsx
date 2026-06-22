@@ -1,40 +1,42 @@
 /**
- * RawMapPage — dev-only full-screen viewer that renders a bare
- * `google.maps.Map` inside an iframe (WebView → React → iframe → map).
- * The iframe has its own document, its own head, and no exposure to
- * the surrounding React tree or Tailwind globals — useful for ruling
- * out interference from our own code while debugging gesture bugs.
+ * RawMapPage — dev-only full-screen viewer that renders a bare Mapbox GL JS
+ * map inside an iframe (WebView → React → iframe → map). The iframe has its
+ * own document, its own head, and no exposure to the surrounding React tree
+ * or Tailwind globals — useful for ruling out interference from our own
+ * code while debugging gesture bugs.
  *
- * The API key is read from the same build-time env var the parent
- * uses, injected into the inline HTML.
+ * The iframe can't reuse the parent's bundled `mapbox-gl` module (separate
+ * window), so it loads GL JS from the CDN. The token is read from the same
+ * MapboxManager the parent uses, injected into the inline HTML.
  */
 
 import {useEffect, useRef, useState} from "react"
 
-import {getGoogleMaps} from "@/ui/lib/googleMaps"
+import {getMapbox} from "@/ui/lib/mapbox"
 
-function buildIframeHtml(apiKey: string): string {
+function buildIframeHtml(token: string): string {
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.25.0/mapbox-gl.css" rel="stylesheet" />
     <style>
       html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; }
     </style>
   </head>
   <body>
     <div id="map"></div>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.25.0/mapbox-gl.js"></script>
     <script>
-      function initMap() {
-        new google.maps.Map(document.getElementById("map"), {
-          zoom: 15,
-          center: {lat: 37.7956, lng: -122.3933},
-        });
-      }
+      mapboxgl.accessToken = ${JSON.stringify(token)};
+      new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/streets-v12",
+        center: [-122.3933, 37.7956],
+        zoom: 15,
+      });
     </script>
-    <script async defer
-      src="https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&callback=initMap"></script>
   </body>
 </html>`
 }
@@ -44,14 +46,13 @@ export function RawMapPage({onClose}: {onClose: () => void}) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
 
   useEffect(() => {
-    // Reuse the parent's GoogleMapsManager only to grab the resolved
-    // API key — we don't want the parent's loaded SDK leaking into the
-    // iframe's window. Each iframe loads its own copy.
-    getGoogleMaps()
+    // Reuse the parent's MapboxManager only to grab the resolved token —
+    // the iframe loads its own copy of GL JS from the CDN.
+    getMapbox()
       .whenReady()
       .then(() => {
-        const key = getGoogleMaps().apiKey
-        setSrcDoc(buildIframeHtml(key))
+        const token = getMapbox().apiKey
+        setSrcDoc(buildIframeHtml(token))
       })
       .catch(() => setSrcDoc(buildIframeHtml("")))
   }, [])
@@ -62,7 +63,7 @@ export function RawMapPage({onClose}: {onClose: () => void}) {
         <iframe
           ref={iframeRef}
           srcDoc={srcDoc}
-          title="Raw Google Map"
+          title="Raw Mapbox Map"
           className="absolute inset-0 w-full h-full border-0"
         />
       ) : (

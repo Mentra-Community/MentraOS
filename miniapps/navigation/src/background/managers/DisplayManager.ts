@@ -7,10 +7,25 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
-import {borderTestImageBase64} from "../lib/bmp"
+import {borderTestImageBase64, encodeBmpBase64} from "../lib/bmp"
+
+// A solid-white 100×100 bitmap — pushed to the minimap rect to ERASE the
+// minimap in place (the G2 reuses the same-rect container, overwriting it)
+// instead of a full-view clear(). White blends into the map background.
+const BLANK_MINIMAP_BMP = encodeBmpBase64(new Uint8Array(100 * 100).fill(255), 100, 100)
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
+
+  // ── Display sends ────────────────────────────────────────────────────
+  // Sends are INSTANT — each show fires immediately, no spacing/throttle.
+  // (We previously serialized text through a 200ms queue, but that's removed:
+  // `enqueue` now just fires the thunk right away. The `box` key is kept in
+  // the signature only so call sites read clearly and so a future throttle
+  // could be reintroduced without touching them.)
+  private enqueue(_box: string, fn: () => void): void {
+    this.safeCall(fn)
+  }
 
   /**
    * Single line filling the glasses display.
@@ -18,7 +33,7 @@ export class DisplayManager {
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
-    this.safeCall(() =>
+    this.enqueue("wall", () =>
       this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined),
     )
   }
@@ -46,7 +61,25 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-100, y: 0, width: 100, height: 100}))
+    // Minimap goes through the SAME queue as the text boxes, keyed "minimap".
+    // refreshHUD enqueues minimap → maneuver → stats in that order, so the G2
+    // receives them in a fixed sequence ≥200ms apart (no cross-pipeline race).
+    this.enqueue("minimap", () =>
+      this.session.display.showBitmapView(base64Bmp, {x: 576 - 100, y: 0, width: 100, height: 100}),
+    )
+  }
+
+  /**
+   * Erase the minimap bitmap IN PLACE by overwriting its rect with a blank
+   * white tile — same container the live minimap uses, so the G2 reuses it
+   * (no full-view clear(), no async teardown race). Used when switching to the
+   * large map: the large map is a different rect, so it wouldn't otherwise
+   * overwrite the top-right minimap, which would linger.
+   */
+  clearMinimap(): void {
+    this.safeCall(() =>
+      this.session.display.showBitmapView(BLANK_MINIMAP_BMP, {x: 576 - 100, y: 0, width: 100, height: 100}),
+    )
   }
 
   /**
@@ -85,17 +118,41 @@ export class DisplayManager {
   // The G2's single full-screen (576×288) text wall only fits ~5 lines. To get
   // more usable vertical text we split into two stacked positioned-text
   // containers: maneuver/directions on top, trip stats below.
-  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 190}
-  private static readonly STATS_REGION = {x: 0, y: 195, width: 576, height: 93}
+  // SINGLE-CONTAINER HUD: the whole frame (maneuver block + trip stats) is now
+  // crammed into THIS one container, spanning the full canvas so all the lines
+  // fit. There is no longer a separate stats box below it.
+  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 288}
+  // Kept only so showTripStats()/showManeuver() signatures still resolve; the
+  // single-container HUD routes everything through showManeuver now. Same rect
+  // as MANEUVER_REGION so a stray stats push can't land in a different spot.
+  private static readonly STATS_REGION = {x: 0, y: 0, width: 576, height: 288}
 
   /**
    * Maneuver / direction text in the TOP region of the canvas (its own G2 text
    * container), leaving the bottom region free for the stats container.
    */
   showManeuver(text: string): void {
-    this.safeCall(() =>
+    // Queued under "maneuver" — drains after "minimap", before "stats".
+    this.enqueue("maneuver", () =>
       this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}),
     )
+  }
+
+  /**
+   * Transition status text in the TOP-LEFT maneuver region, shown IMMEDIATELY
+   * (bypasses the 200ms text queue) — used for "Loading large map" / "Loading
+   * main menu" while a swipe transition settles, so the user sees feedback in
+   * the gap rather than a blank/stale screen. Bypasses the queue because it
+   * must appear right at the swipe, before any HUD text, and the transition
+   * clear() has just purged the queue anyway.
+   */
+  showLoadingMessage(text: string): void {
+    this.safeCall(() => this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}))
+  }
+
+  /** Blank the top-left loading message (overwrite its region with empty text). */
+  clearLoadingMessage(): void {
+    this.safeCall(() => this.session.display.showTextAt("", {...DisplayManager.MANEUVER_REGION}))
   }
 
   /**
@@ -103,7 +160,8 @@ export class DisplayManager {
    * container stacked under the maneuver box.
    */
   showTripStats(text: string): void {
-    this.safeCall(() =>
+    // Queued under "stats" — drains last, after "minimap" and "maneuver".
+    this.enqueue("stats", () =>
       this.session.display.showTextAt(text, {...DisplayManager.STATS_REGION}),
     )
   }

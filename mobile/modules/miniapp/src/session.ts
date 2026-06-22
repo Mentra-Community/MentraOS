@@ -134,9 +134,20 @@ interface PendingRequest {
   requestId: string
   resolve: (value: unknown) => void
   reject: (error: MiniappRequestError) => void
+  /** Timeout handle; cleared when the response (or a transport failure) settles the request. */
+  timer?: ReturnType<typeof setTimeout>
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
+
+// Hard ceiling on how long a single bridge request waits for the host's
+// REQUEST_RESULT. Without it, a host that never responds (a hung cloud call, a
+// GPS fix that never arrives, a native handler that stalls) leaves the request
+// promise pending FOREVER — which is what stalled navigation at "Starting…"
+// (the controller's `starting` guard never reset because start() never settled).
+// 60s is generous: it covers a slow route computation while still guaranteeing
+// the promise eventually rejects so callers can roll back / surface an error.
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 
 type SessionEmitterEvents = {
   ready: () => void
@@ -458,10 +469,23 @@ export class MiniappSession {
     const requestId = makeRequestId()
     const envelope: MiniappEnvelope = {payload, requestId}
     return new Promise<TResult>((resolve, reject) => {
+      // Reject (and drop) the request if the host never sends a REQUEST_RESULT,
+      // so the promise can't hang forever. The REQUEST_RESULT / failAllPending
+      // paths clear this timer before settling.
+      const timer = setTimeout(() => {
+        const pending = this.pendingRequests.get(requestId)
+        if (!pending) return
+        this.pendingRequests.delete(requestId)
+        pending.reject({
+          code: MiniappErrorCode.ACTION_TIMEOUT,
+          message: "Request timed out waiting for a response from the host",
+        })
+      }, DEFAULT_REQUEST_TIMEOUT_MS)
       this.pendingRequests.set(requestId, {
         requestId,
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       })
       this.enqueueOrSend(serializeEnvelope(envelope))
     })
@@ -659,6 +683,7 @@ export class MiniappSession {
         const pending = this.pendingRequests.get(requestId)
         if (!pending) return
         this.pendingRequests.delete(requestId)
+        if (pending.timer) clearTimeout(pending.timer)
         if (payload.ok === false) {
           const err = (payload.error as MiniappRequestError | undefined) ?? {
             code: MiniappErrorCode.INTERNAL,
@@ -701,6 +726,7 @@ export class MiniappSession {
 
   private failAllPending(error: MiniappRequestError): void {
     for (const pending of this.pendingRequests.values()) {
+      if (pending.timer) clearTimeout(pending.timer)
       pending.reject(error)
     }
     this.pendingRequests.clear()

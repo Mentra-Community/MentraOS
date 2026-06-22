@@ -5,6 +5,7 @@
  * It mounts each service's routes plus the shared health app:
  *   - /api/audio/*  -> audio.api (subscriptions)
  *   - /api/camera/* -> camera.api (managed photo + stream, later)
+ *   - /api/maps/*   -> maps.api (directions + reverse geocoding)
  *   - /api/tts/*    -> tts.api (streaming speech synthesis)
  *   - /healthz, /readyz, ... -> the shared health app
  *
@@ -17,6 +18,7 @@ import { Hono } from "hono";
 import { createHealthApp, type ReadinessCheck } from "@mentra/cloud-shared";
 import { audioApi } from "./audio.api";
 import { cameraApi } from "./camera.api";
+import { mapsApi } from "./maps.api";
 import { ttsApi } from "./tts.api";
 
 export interface CreateApiAppOptions {
@@ -30,6 +32,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
 
   app.route("/api/audio", audioApi);
   app.route("/api/camera", cameraApi);
+  app.route("/api/maps", mapsApi);
   app.route("/api/tts", ttsApi);
 
   // Health/readiness routes (/healthz, /readyz). Mounted at the root so its

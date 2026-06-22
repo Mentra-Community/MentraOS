@@ -58,22 +58,25 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
   const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
 
-  // Google Navigation SDK API key (iOS) — required for the iOS Nav SDK to
-  // boot. This is the on-device SDK key (lock it to the iOS bundle ID in
-  // GCP); it is NOT used for the Routes/Geocoding web calls, which go
-  // through the cloud. Fail loudly in CI/EAS so a release build never ships
-  // without it; warn (don't fail) in local-dev so contributors who don't
-  // touch nav can still build.
-  const googleNavApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_IOS ?? ""
-  if (!googleNavApiKey) {
+  // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on BOTH
+  // platforms now (iOS migrated off Google Nav to match Android). Injected as:
+  //   • Android: AndroidManifest meta-data `com.mapbox.token` (read by
+  //     NavigationManager.kt → MapboxOptions.accessToken).
+  //   • iOS: Info.plist `MBXAccessToken` (read by the Mapbox iOS SDK at boot).
+  // Public token, safe to ship; the secret Downloads:Read token (sk.…) is
+  // build-time-only and lives in ~/.gradle/gradle.properties (Android) / the
+  // CocoaPods netrc (iOS), never here. Fail loudly in CI/EAS, warn in local
+  // dev. See issues/mapbox-navigation-migration.md.
+  const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+  if (!mapboxAccessToken) {
     const isCiOrEas =
       process.env.CI === "true" ||
       process.env.CI === "1" ||
       process.env.EAS_BUILD === "true" ||
       process.env.NODE_ENV === "production"
     const msg =
-      "EXPO_PUBLIC_GOOGLE_NAV_API_KEY_IOS is not set. iOS navigation will fail at runtime — " +
-      "set it in mobile/.env (see mobile/.env.example) before building."
+      "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Navigation (iOS + Android) will fail at " +
+      "runtime — set it in mobile/.env (see mobile/.env.example) before building."
     if (isCiOrEas) {
       throw new Error(msg)
     }
@@ -195,7 +198,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
-        GOOGLE_NAV_API_KEY: googleNavApiKey,
+        // Mapbox Navigation SDK v3 (iOS) reads its public access token from
+        // Info.plist under `MBXAccessToken` at boot. Replaces the old
+        // GOOGLE_NAV_API_KEY now that iOS nav is Mapbox (matching Android,
+        // which injects the same pk.… token as AndroidManifest meta-data).
+        // Public token, safe to ship.
+        MBXAccessToken: mapboxAccessToken,
       },
       config: {
         usesNonExemptEncryption: false,
@@ -209,6 +217,20 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
       "./plugins/android.ts",
+      // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
+      // ONLY supported v3 install path; CocoaPods can't resolve it). The
+      // mapbox-navigation-ios package transitively brings MapboxMaps,
+      // MapboxCommon, MapboxCoreMaps, and Turf, so SPM is the SOLE Mapbox
+      // provider. We intentionally do NOT use @rnmapbox/maps — its CocoaPods
+      // copies of those same frameworks collided with SPM's at the build-graph
+      // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
+      // pk. token is injected into Info.plist as MBXAccessToken (above); the
+      // secret Downloads:Read token is read from ~/.netrc at build time.
+      "./plugins/mapbox-nav-ios.ts",
+      // Crust is a CocoaPods target; SPM products linked to the app project
+      // aren't visible to it. This links the Mapbox products into the Crust
+      // pod target (via Podfile post_install) so its Swift can import them.
+      "./plugins/mapbox-nav-crust-link.ts",
       [
         "./modules/bluetooth-sdk/app.plugin.js",
         {

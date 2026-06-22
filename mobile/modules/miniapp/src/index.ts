@@ -146,6 +146,8 @@ export type {
   NavManeuver,
   NavOffRoute,
   NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
   NavRerouting,
   NavRoute,
   NavState,

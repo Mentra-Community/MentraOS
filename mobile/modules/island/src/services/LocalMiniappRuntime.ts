@@ -867,6 +867,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_REVERSE_GEOCODE:
         this.navigationHandlers.handleReverseGeocode(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_PLACE_AUTOCOMPLETE:
+        this.navigationHandlers.handlePlaceAutocomplete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_PLACE_DETAILS:
+        this.navigationHandlers.handlePlaceDetails(packageName, payload, requestId)
+        break
       case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
         this.navigationHandlers.handleRequestPermission(packageName, requestId)
         break
