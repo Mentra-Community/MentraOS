@@ -1553,6 +1553,18 @@ class DeviceManager {
         sgc?.requestVersionInfo()
     }
 
+    fun sendWipeMediaForPairing() {
+        (sgc as? MentraLive)?.sendWipeMedia()
+    }
+
+    fun sendPairingFinalize() {
+        (sgc as? MentraLive)?.sendPairingFinalize()
+    }
+
+    fun sendPairingAbort() {
+        (sgc as? MentraLive)?.sendPairingAbort()
+    }
+
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */
     fun sendShutdown() {
         Bridge.log("MAN: 🔌 Sending shutdown command to glasses")
