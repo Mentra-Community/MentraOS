@@ -73,6 +73,21 @@ A release is a specific version and bundle. Release statuses may include:
 The previous published release may remain live while a newer release is in
 review or rejected.
 
+### Console Environment vs Miniapp Channels
+
+The console hostname selects the MentraOS backend environment. There should not
+be an in-app environment switcher for normal developer use:
+
+- `console2.dev.mentraglass.com` uses the dev backend/data.
+- `console2.staging.mentraglass.com` uses the staging backend/data.
+- `console2.mentraglass.com` uses the production backend/data.
+
+This is separate from a developer's own release workflow. A developer using the
+production console may still publish a beta/tester channel for their miniapp,
+share that release with selected users, and later promote it to the production
+channel. That beta channel is app release state, not a MentraOS infrastructure
+environment.
+
 ### CLI Relationship
 
 The CLI is the primary way to:
@@ -123,6 +138,12 @@ creation flow as web forms in v1.
   uploader, bundle size/hash, and manifest summary.
 - As a developer, I can distinguish the currently published release from a newer
   release that is in review.
+- As a developer, I can publish or share a release to a beta/tester channel
+  without replacing the production channel.
+- As a developer, I can promote a beta release to the production channel after
+  validation.
+- As a developer, I can tell the difference between MentraOS backend
+  environments and my miniapp's release channels.
 
 ### CLI Access
 
@@ -194,6 +215,10 @@ Empty state should point the developer to CLI creation.
 The detail page should emphasize package identity and release state. Release
 rows should be aligned and easy to compare.
 
+Release rows should show channel separately from review status. For example, a
+release may be accepted and live on a beta channel while another accepted release
+is still the production channel.
+
 ### CLI and API Keys
 
 This page should explain two access modes:
@@ -212,6 +237,7 @@ API key creation belongs in the console.
 - Public store marketing pages.
 - Enterprise/OEM issuer management.
 - Internal review queue or preinstall registry controls.
+- In-app switching between MentraOS infrastructure environments.
 
 ## Designer Questions
 
@@ -221,3 +247,5 @@ API key creation belongs in the console.
   documentation?
 - What is the ideal empty state for an org with no miniapps?
 - How should multiple orgs be selected without making the sidebar feel crowded?
+- How should beta/tester channels be shown without implying a MentraOS
+  environment switcher?
