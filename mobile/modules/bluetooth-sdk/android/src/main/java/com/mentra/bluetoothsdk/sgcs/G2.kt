@@ -2085,7 +2085,10 @@ class G2 : SGCManager() {
                 imageContainers[i].dirty = false
             }
             // shutdown the page and then recreate the containers without the content.
-            rebuildPage()
+            displayScope.launch {
+                rebuildPage()
+                rebuildState()
+            }
         }
     }
 
@@ -2237,7 +2240,7 @@ class G2 : SGCManager() {
         sendEvenHubCommand(msg)
         pageCreated = false
         // we will automatically rebuild state when we detect the glasses shutdown:
-        // delay(300) // 300ms to settle
+        delay(300) // 300ms to settle
         // rebuildState()
     }
 
@@ -3806,7 +3809,7 @@ class G2 : SGCManager() {
 
         // print raw payload:
         val payloadStr = payload.joinToString("") { String.format("%02X", it) }
-        if (payloadStr.contains("080C7A02100C")) {
+        if (payloadStr.contains("080C7A02100C") || payloadStr.contains("080652020808")) {
             // heartbeat response
             return
         }

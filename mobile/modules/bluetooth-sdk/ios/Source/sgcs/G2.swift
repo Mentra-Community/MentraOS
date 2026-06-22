@@ -2169,6 +2169,7 @@ class G2: NSObject, SGCManager {
         // shutdown the page and then recreate the containers without the content:
         Task {
             await rebuildPage()
+            await rebuildState()
             // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
             // createPageWithContainers()
         }
@@ -2186,7 +2187,7 @@ class G2: NSObject, SGCManager {
         let fragmentSize = 4096
         let totalSize = Int32(bmpData.count)
         let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
-        
+
         // skip if the image is empty:
         if bmpData.count == 0 {
             return
@@ -2444,6 +2445,7 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        try? await Task.sleep(nanoseconds: 300_000_000)// 300ms to settle
         // we will automatically rebuild state when we detect the glasses shutdown:
         // await rebuildState()
     }
@@ -3675,7 +3677,7 @@ class G2: NSObject, SGCManager {
         // Parse evenhub_main_msg_ctx: field 1 = Cmd (varint), field 13 = DevEvent (submessage)
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
-        
+
 
         let payloadStr = "\(payload.map { String(format: "%02X", $0) }.joined())"
         if payloadStr.contains("080C7A02100C") {
@@ -3684,7 +3686,7 @@ class G2: NSObject, SGCManager {
         }
 
         // Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
-        
+
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
                 "G2: EvenHub response - no cmd field, \(payload.count) bytes: \(payload.map { String(format: "%02X", $0) }.joined())"
