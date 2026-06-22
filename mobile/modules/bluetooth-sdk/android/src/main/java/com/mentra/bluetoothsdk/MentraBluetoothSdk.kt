@@ -769,7 +769,7 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<WipeMediaResultEvent>("wipe media for pairing")
         synchronized(oneShotLock) {
             if (pendingWipeMedia != null) {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     "request_in_flight",
                     "A wipe media request is already waiting for a glasses response.",
                 )
