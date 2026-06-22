@@ -832,13 +832,23 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral, rssi: NSNumber? = nil) {
+    func handleDiscoveredPeripheral(
+        _ peripheral: CBPeripheral,
+        advertisementData: [String: Any] = [:],
+        rssi: NSNumber? = nil
+    ) {
         guard let name = peripheral.name else { return }
 
         // Check for compatible device names
         if name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
             || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
         {
+            let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
+            let isReconnectTarget = savedDeviceName != nil && savedDeviceName == name
+            if !isReconnectTarget && !isPairingDiscoverable(advertisementData) {
+                return
+            }
+
             let glassType = name == "Xy_A" ? "Standard" : "K900"
             Bridge.log("Found compatible \(glassType) glasses device: \(name)")
 
@@ -862,10 +872,10 @@ extension MentraLive: CBCentralManagerDelegate {
 
     nonisolated func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral,
-        advertisementData _: [String: Any], rssi: NSNumber
+        advertisementData: [String: Any], rssi: NSNumber
     ) {
         DispatchQueue.main.async { [weak self] in
-            self?.handleDiscoveredPeripheral(peripheral, rssi: rssi)
+            self?.handleDiscoveredPeripheral(peripheral, advertisementData: advertisementData, rssi: rssi)
         }
     }
 
@@ -1202,6 +1212,18 @@ class MentraLive: NSObject, SGCManager {
     // to avoid overloading the MCU. Set to false to allow simultaneous A2DP + LC3 mic.
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
+    private let mentraManufacturerId: UInt16 = 0xB822
+    private let advManufPairingFlagOffset = 5
+    private let advPairingDiscoverable: UInt8 = 0x01
+
+    private func isPairingDiscoverable(_ advertisementData: [String: Any]) -> Bool {
+        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufData.count > advManufPairingFlagOffset
+        else {
+            return false
+        }
+        return manufData[advManufPairingFlagOffset] == advPairingDiscoverable
+    }
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
@@ -2248,6 +2270,12 @@ class MentraLive: NSObject, SGCManager {
         case "pong":
             Bridge.log("LIVE: Received pong response - connection healthy")
 
+        case "pairing_info":
+            Bridge.sendPairingInfo(hadPreviousBond: json["had_previous_bond"] as? Bool ?? false)
+
+        case "wipe_media_result":
+            Bridge.sendWipeMediaResult(success: json["success"] as? Bool ?? false)
+
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":
             // Handle IMU-related responses
@@ -2877,6 +2905,19 @@ class MentraLive: NSObject, SGCManager {
 
         sendJson(json, wakeUp: true)
     }
+
+    func sendWipeMedia() {
+        sendJson(["type": "wipe_media"], wakeUp: true)
+    }
+
+    func sendPairingFinalize() {
+        sendJson(["type": "pairing_finalize"], wakeUp: true)
+    }
+
+    func sendPairingAbort() {
+        sendJson(["type": "pairing_abort"], wakeUp: true)
+    }
+
 
     func keepAwake() {
         Bridge.log("LIVE: 📱 Sending keep_awake command to glasses")
