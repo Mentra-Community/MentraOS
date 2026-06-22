@@ -35,7 +35,6 @@ public class OtaService extends Service {
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
 
-
     // Delay before rebooting to apply a staged MTK-only update. Gives the BLE
     // ota_status "complete" message time to reach the phone before we drop the
     // connection, so the phone settles on its "complete" UI rather than a bare
