@@ -112,6 +112,11 @@ data class RgbLedControlResponseEvent(
     val errorCode: String? get() = stringValue(values, "errorCode")
 }
 
+data class WipeMediaResultEvent(
+    val success: Boolean,
+    val values: Map<String, Any>,
+)
+
 interface MentraBluetoothSdkListener {
     fun onStateChanged(state: MentraBluetoothState) {}
     fun onGlassesChanged(glasses: GlassesRuntimeState) {}
