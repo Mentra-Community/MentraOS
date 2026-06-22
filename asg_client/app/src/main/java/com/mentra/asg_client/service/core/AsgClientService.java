@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
+import com.mentra.asg_client.audio.AudioRecorder;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
@@ -201,6 +202,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Apply saved camera FOV on start (K900) so last user choice survives reboot
             applySavedCameraFovOnStart();
+
+            // Schedule a 30-second test recording that starts 10 seconds after service init.
+            scheduleStartupTestRecording();
 
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
@@ -1014,6 +1018,39 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // ---------------------------------------------
     // Helper Methods
     // ---------------------------------------------
+
+    /**
+     * Schedules a 30-second test recording that begins 10 seconds after service startup.
+     * Uses the AudioRecorder already owned by the CommandProcessor so only one AudioRecord
+     * instance ever holds the microphone at a time.
+     */
+    private void scheduleStartupTestRecording() {
+        final long START_DELAY_MS = 10_000L;
+        final long RECORD_DURATION_MS = 30_000L;
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.i(TAG, "Startup test recording: starting now");
+
+            if (commandProcessor == null) {
+                Log.w(TAG, "Startup test recording: commandProcessor not ready, aborting");
+                return;
+            }
+
+            AudioRecorder recorder = commandProcessor.getAudioRecorder();
+            boolean started = recorder.start();
+            if (!started) {
+                Log.e(TAG, "Startup test recording: AudioRecorder.start() failed");
+                return;
+            }
+
+            Log.i(TAG, "Startup test recording: recording for " + (RECORD_DURATION_MS / 1000) + "s");
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                recorder.stop();
+                Log.i(TAG, "Startup test recording: stopped after " + (RECORD_DURATION_MS / 1000) + "s");
+            }, RECORD_DURATION_MS);
+
+        }, START_DELAY_MS);
+    }
 
     private void onWifiConnected() {
         Log.i(TAG, "🌐 Connected to WiFi network");
