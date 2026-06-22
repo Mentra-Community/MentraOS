@@ -2,7 +2,7 @@
 
 The normal release path is the GitHub Actions workflow documented in
 `RELEASING_CI.md`. It publishes these public Android artifacts when
-`mobile/modules/bluetooth-sdk/package.json` changes on `dev`:
+`mobile/modules/bluetooth-sdk/package.json` changes on `staging`:
 
 - `com.mentraglass:bluetooth-sdk`
 - `com.mentraglass:lc3Lib`
@@ -28,6 +28,19 @@ That is the layout used for Maven Central releases. In a fresh
 checkout where `mobile/android` is not present yet, run
 `cd mobile && cp .env.example .env && bun expo prebuild --platform android`
 after installing dependencies.
+
+For a local Android compile check without publishing, run this from the
+MentraOS repo root:
+
+```bash
+./scripts/check-android-compile.sh bluetooth-sdk
+```
+
+The script prepares `mobile/android` when needed and uses the generated Gradle
+wrapper with `-PmentraPublicSdk=true`. Do not run `gradle` directly from
+`mobile/modules/bluetooth-sdk/android`; that directory is included as a module
+by the Expo Android project and does not carry its own wrapper or Android Gradle
+plugin classpath.
 
 The public SDK publication uses `-PmentraPublicSdk=true`. Leave this property
 off for normal MentraOS Android app builds so the app keeps the optional local

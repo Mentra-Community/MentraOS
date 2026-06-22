@@ -6,14 +6,14 @@ console.log('Running postinstall...');
 // is no longer needed and re-introduced duplicate react/react-native copies.
 
 await $({ stdio: 'inherit', cwd: 'modules/bluetooth-sdk' })`bun run prepare`;
-// jspolyfill emits assets/startup.js and mirrors it into the gitignored
-// crust/ios/Resources/startup.js that crust's pod globs for MentraJSRuntime.bundle.
-// We invoke its build here (not via workspace `prepare`) because bun skips cached
-// workspace prepares on no-change installs, which would leave the mirror missing.
 // crust declares @mentra/jspolyfill as a dep so this runs before crust.
 await $({ stdio: 'inherit', cwd: 'modules/jspolyfill' })`bun run build`;
 await $({ stdio: 'inherit', cwd: 'modules/crust' })`bun run prepare`;
 await $({ stdio: 'inherit', cwd: 'modules/miniapp' })`bun run prepare`;
+// Island compiles source imported from ../cloud-v2/packages/*. TypeScript
+// resolves those files' dependencies from cloud-v2/, not mobile/, so provision
+// the cloud-v2 workspace deps before the isolated Expo module build.
+await $({ stdio: 'inherit', cwd: '../cloud-v2' })`bun install --frozen-lockfile --ignore-scripts`;
 // island depends on bluetooth-sdk + miniapp build outputs, so its prepare
 // (renamed to build:module) runs here instead of being auto-triggered by bun
 // install in parallel with its workspace deps.

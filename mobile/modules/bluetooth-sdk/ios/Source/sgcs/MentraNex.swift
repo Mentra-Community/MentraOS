@@ -51,10 +51,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
 
     func startStream(_: [String: Any]) {}
 
@@ -62,7 +59,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -71,8 +68,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime() {}
-
-    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 

@@ -20,6 +20,9 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./proto
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
+import {CanvasManager} from "./modules/canvas"
+import {AuthModule} from "./modules/auth"
+import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type UnsubscribeFn} from "./modules/events"
@@ -75,6 +78,24 @@ export interface ConnectAckPayload {
    * declaration-only; OS-grant state is not modeled.
    */
   permissions?: PermissionRecord
+  /** Miniapp-scoped backend auth. Never a Core or runtime token. */
+  auth?: MiniappAuthState
+}
+
+export interface MiniappAuthState {
+  mentraUserId: string
+  oemId?: string
+  token: string
+  expiresAt: number
+}
+
+export interface AuthUpdatePayload {
+  type: MiniappResponseType.AUTH_UPDATE
+  auth?: MiniappAuthState
+}
+
+interface AuthRefreshResult {
+  auth?: MiniappAuthState
 }
 
 /**
@@ -134,9 +155,12 @@ type SessionEmitterEvents = {
   colorScheme: (scheme: MiniappColorScheme) => void
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
+  auth: (auth: MiniappAuthState) => void
 }
 
 export class MiniappSession {
+  public readonly auth: AuthModule
+  public readonly canvas: CanvasManager
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -149,6 +173,7 @@ export class MiniappSession {
   public readonly events: EventManager
   public readonly speaker: SpeakerModule
   public readonly camera: CameraModule
+  public readonly cloud: CloudModule
   public readonly dashboard: DashboardAPI
   public readonly glasses: GlassesModule
   public readonly heading: HeadingModule
@@ -197,6 +222,14 @@ export class MiniappSession {
   private readonly transport: Transport
   private readonly connectTimeoutMs: number
   private readonly emitter = new EventEmitter<SessionEmitterEvents>()
+  private authState: MiniappAuthState | null = null
+  private readonly authWaiters = new Set<{
+    minTtlMs: number
+    resolve: (auth: MiniappAuthState) => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+  private authRefreshPromise: Promise<MiniappAuthState | null> | null = null
 
   /**
    * Outbound queue for anything sent before CONNECT_ACK. Flushed in FIFO order
@@ -226,9 +259,12 @@ export class MiniappSession {
       this.colorScheme = injected.colorScheme
     }
 
+    this.auth = new AuthModule(this)
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
+    this.canvas = new CanvasManager(this)
+    this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
     this.glasses = new GlassesModule(this)
@@ -274,6 +310,37 @@ export class MiniappSession {
    */
   _getPermissions(): PermissionRecord {
     return {...this._permissions}
+  }
+
+  /** @internal — current miniapp-scoped backend auth, if the host provided one. */
+  _getAuth(): MiniappAuthState | null {
+    return this.authState ? {...this.authState} : null
+  }
+
+  /**
+   * @internal — wait for a scoped miniapp token. Used by session.auth; not part
+   * of the public SDK surface because authors should never manage wire events.
+   */
+  _waitForAuth(minTtlMs: number, timeoutMs = 10_000): Promise<MiniappAuthState> {
+    const current = this.authState
+    if (current && this.authHasTtl(current, minTtlMs)) {
+      return Promise.resolve({...current})
+    }
+
+    void this.requestAuthRefresh(minTtlMs)
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        minTtlMs,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.authWaiters.delete(waiter)
+          reject(new NotConnectedError("Miniapp auth token is not available"))
+        }, timeoutMs),
+      }
+      this.authWaiters.add(waiter)
+    })
   }
 
   /**
@@ -482,6 +549,10 @@ export class MiniappSession {
         if (ack.colorScheme === "light" || ack.colorScheme === "dark") {
           this.colorScheme = ack.colorScheme
         }
+        if (ack.auth) {
+          this.applyAuth(ack.auth)
+          if (!this.userId) this.userId = ack.auth.mentraUserId
+        }
         // Populate the manifest-declared permission cache. Older runtimes
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.
@@ -490,6 +561,15 @@ export class MiniappSession {
         this.flushQueue()
         this.emitter.emit("ready")
         // Don't resolve request correlation here — CONNECT_ACK has no requestId.
+        return
+      }
+
+      case MiniappResponseType.AUTH_UPDATE: {
+        const next = (payload as unknown as AuthUpdatePayload).auth
+        if (next) {
+          this.applyAuth(next)
+          if (!this.userId) this.userId = next.mentraUserId
+        }
         return
       }
 
@@ -624,6 +704,55 @@ export class MiniappSession {
       pending.reject(error)
     }
     this.pendingRequests.clear()
+    // Auth waiters live outside pendingRequests — they're resolved by an
+    // AUTH_UPDATE push, not a correlated REQUEST_RESULT — so a transport drop,
+    // dispose, or CONNECT_ACK timeout must reject them here too. Otherwise an
+    // in-flight session.auth.getToken()/fetch() hangs until its 10s waiter
+    // timeout instead of failing fast with the disconnect error.
+    for (const waiter of Array.from(this.authWaiters)) {
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.reject(new NotConnectedError(error.message))
+    }
+  }
+
+  private authHasTtl(auth: MiniappAuthState, minTtlMs: number): boolean {
+    return auth.expiresAt - Date.now() > minTtlMs
+  }
+
+  private requestAuthRefresh(minTtlMs: number): Promise<MiniappAuthState | null> {
+    if (this.authRefreshPromise) return this.authRefreshPromise
+    if (!this.ready || !this.transport.isOpen()) return Promise.resolve(null)
+
+    this.authRefreshPromise = this.sendRequest<AuthRefreshResult>({
+      type: MiniappRequestType.AUTH_REFRESH,
+      minTtlMs,
+    })
+      .then((result) => {
+        const auth = result?.auth
+        if (auth) this.applyAuth(auth)
+        return auth ?? null
+      })
+      .catch((err) => {
+        console.warn("[MiniappSession] auth refresh failed:", err)
+        return null
+      })
+      .finally(() => {
+        this.authRefreshPromise = null
+      })
+
+    return this.authRefreshPromise
+  }
+
+  private applyAuth(next: MiniappAuthState): void {
+    this.authState = {...next}
+    for (const waiter of Array.from(this.authWaiters)) {
+      if (!this.authHasTtl(next, waiter.minTtlMs)) continue
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.resolve({...next})
+    }
+    this.emitter.emit("auth", {...next})
   }
 
   /**

@@ -2,6 +2,7 @@ package com.mentra.bluetoothsdk.controllers
 
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 
 abstract class ControllerManager {
     @JvmField var type: String = ""
@@ -15,30 +16,17 @@ abstract class ControllerManager {
     abstract fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean)
 
     // Camera & Media
-    abstract fun requestPhoto(
-        requestId: String,
-        appId: String,
-        size: String?,
-        webhookUrl: String?,
-        authToken: String?,
-        compress: String?,
-        flash: Boolean,
-        save: Boolean,
-        sound: Boolean,
-        exposureTimeNs: Long?,
-        iso: Int?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: Map<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)

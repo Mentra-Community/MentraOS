@@ -2,20 +2,21 @@
  * Production build script — two-output bundle.
  *
  * Emits two bundles under ./dist:
- *   dist/background/index.js  — the JSContext entry (no DOM, externalises
- *                                @mentra/miniapp/background because the
- *                                host's polyfill bundle provides the
- *                                runtime shape).
+ *   dist/background/index.js  — the JSContext entry. JSC + Zipline/QuickJS
+ *                                evaluate this as a classic script, so ESM
+ *                                `export` keywords are syntax errors there;
+ *                                we emit an IIFE and bundle
+ *                                `@mentra/miniapp/background` in (the
+ *                                JSContext has no module resolver).
  *   dist/ui/index.html + ...  — the WebView entry (full DOM, Tailwind v4
  *                                compiled via bun-plugin-tailwind).
  *
  * Env vars whose name starts with `MENTRA_PUBLIC_` are inlined into both
- * bundles via `define`. Anything inlined into the UI bundle is visible
- * in WebView network requests + source maps; secrets MUST live behind
- * the developer's own backend, not in MENTRA_PUBLIC_*.
+ * bundles via `define`.
  */
 
 import {rm} from "fs/promises"
+import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
 
 const distDir = "./dist"
 
@@ -28,11 +29,6 @@ for (const [k, v] of Object.entries(process.env)) {
   }
 }
 
-// JSC + Zipline/QuickJS both evaluate the background bundle as a classic
-// script. ESM `export` keywords are syntax errors there, so we emit an
-// IIFE. `@mentra/miniapp/background` MUST be bundled in (not external)
-// because the JSContext has no module resolver — the polyfill installs
-// `__dispatch` / `__deliver` but it does NOT provide the SDK surface.
 const backgroundResult = await Bun.build({
   entrypoints: ["./src/background/index.ts"],
   outdir: `${distDir}/background`,
@@ -53,7 +49,7 @@ const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [tailwind],
+  plugins: [tailwind, reactSingletonPlugin(import.meta.url)],
   minify: true,
   define,
 })
@@ -63,6 +59,4 @@ if (!uiResult.success) {
   process.exit(1)
 }
 
-// Silence on success — the dev-server's `reload →` line is the
-// developer-facing confirmation. Failures already print via the
-// .success branches above.
+console.log("built local-captions -> dist/background/index.js + dist/ui")

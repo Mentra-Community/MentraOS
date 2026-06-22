@@ -248,6 +248,7 @@ class DeviceManager {
     private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
     private var lastLc3Event: Long? = null
     private var micReinitRunnable: Runnable? = null
+    private var systemMicAvailabilityRecheckRunnable: Runnable? = null
 
     // VAD
     private val vadBuffer = mutableListOf<ByteArray>()
@@ -357,6 +358,37 @@ class DeviceManager {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
             sgc?.setMicEnabled(true)
         }
+    }
+
+    private fun scheduleSystemMicAvailabilityRecheck(reason: String) {
+        if (systemMicAvailabilityRecheckRunnable != null) {
+            return
+        }
+
+        val recheck =
+                object : Runnable {
+                    override fun run() {
+                        systemMicAvailabilityRecheckRunnable = null
+
+                        if (!micEnabled || !systemMicUnavailable) {
+                            return
+                        }
+
+                        val stillBlocked = phoneMic?.hasBlockingMicInterruption() ?: true
+                        if (stillBlocked) {
+                            scheduleSystemMicAvailabilityRecheck(reason)
+                            return
+                        }
+
+                        systemMicUnavailable = false
+                        Bridge.log("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                        appendLog("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                        updateMicState()
+                    }
+                }
+
+        systemMicAvailabilityRecheckRunnable = recheck
+        mainHandler.postDelayed(recheck, 2_000)
     }
 
     // MARK: - Unique (Android)
@@ -635,11 +667,15 @@ class DeviceManager {
             var text: String,
             var data: String?,
             var animationData: Map<String, Any>?,
-            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            // Optional bitmap_view container position/size (used by G2; ignored by others).
+            // Reused by positioned_text for its container rect.
             var bmpX: Int? = null,
             var bmpY: Int? = null,
             var bmpWidth: Int? = null,
-            var bmpHeight: Int? = null
+            var bmpHeight: Int? = null,
+            // Optional positioned_text border (used by G2; ignored by others).
+            var borderWidth: Int? = null,
+            var borderRadius: Int? = null
     )
     // MARK: - End Unique
 
@@ -907,6 +943,17 @@ class DeviceManager {
                     )
                 }
             }
+            "positioned_text" -> {
+                sgc?.sendPositionedText(
+                        currentViewState.text,
+                        currentViewState.bmpX ?: 0,
+                        currentViewState.bmpY ?: 0,
+                        currentViewState.bmpWidth ?: 576,
+                        currentViewState.bmpHeight ?: 288,
+                        currentViewState.borderWidth ?: 0,
+                        currentViewState.borderRadius ?: 0
+                )
+            }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
         }
@@ -957,6 +1004,7 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
+                scheduleSystemMicAvailabilityRecheck("external_app_recording")
             }
             "audio_focus_available" -> {
                 // Audio focus is available again
@@ -975,6 +1023,7 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
+                scheduleSystemMicAvailabilityRecheck("phone_call_interruption")
             }
             "phone_call_ended" -> {
                 // Phone call ended - mark mic as available again
@@ -987,12 +1036,14 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
+                scheduleSystemMicAvailabilityRecheck("phone_call_active")
             }
             "audio_focus_denied" -> {
                 // Another app has audio focus
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
+                scheduleSystemMicAvailabilityRecheck("audio_focus_denied")
             }
             "permission_denied" -> {
                 // Microphone permission not granted
@@ -1020,6 +1071,9 @@ class DeviceManager {
                 // systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
                 appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
+                if (systemMicUnavailable) {
+                    scheduleSystemMicAvailabilityRecheck("recording_stopped")
+                }
             }
             else -> {
                 // Other route changes (headset plug/unplug, BT connect/disconnect, etc.)
@@ -1281,11 +1335,15 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        // Optional container position/size — used by bitmap_view and positioned_text (G2).
         val bmpX = (layout["x"] as? Number)?.toInt()
         val bmpY = (layout["y"] as? Number)?.toInt()
         val bmpWidth = (layout["width"] as? Number)?.toInt()
         val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        // Optional positioned_text border (G2).
+        val borderWidth = (layout["borderWidth"] as? Number)?.toInt()
+        val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
 
         var newViewState =
                 ViewState(
@@ -1299,7 +1357,9 @@ class DeviceManager {
                         bmpX,
                         bmpY,
                         bmpWidth,
-                        bmpHeight
+                        bmpHeight,
+                        borderWidth,
+                        borderRadius
                 )
 
         val currentState = viewStates[stateIndex]
@@ -1344,7 +1404,6 @@ class DeviceManager {
 
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
-        message["flash"] = true
         sgc?.startStream(message)
     }
 
@@ -1414,18 +1473,31 @@ class DeviceManager {
     }
 
     fun sendButtonPhotoSettings(requestId: String, size: String) {
+        sendButtonPhotoSettings(requestId, PhotoCaptureDefaults(PhotoSize.fromValue(size)))
+    }
+
+    fun sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.sendButtonPhotoSettings(requestId, size)
+        live.sendButtonPhotoSettings(
+            requestId,
+            settings.size?.value,
+            settings.mfnr,
+            settings.zsl,
+            settings.noiseReduction,
+            settings.edgeEnhancement,
+            settings.ispDigitalGain,
+            settings.ispAnalogGain,
+            settings.aeExposureDivisor,
+            settings.isoCap,
+            settings.compress,
+            settings.sound,
+            settings.resetCaptureTuning == true,
+        )
     }
 
     fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
-    }
-
-    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
-        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.sendButtonCameraLedSetting(requestId, enabled)
     }
 
     fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
@@ -1436,11 +1508,6 @@ class DeviceManager {
     fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraFovSetting(requestId, fov, roiPosition)
-    }
-
-    fun retryOtaVersionCheck() {
-        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
-        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1526,11 +1593,11 @@ class DeviceManager {
             maxRecordingTimeMinutes: Int = 0,
     ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, sound=$sound, " +
                         "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
         sgc?.startVideoRecording(
-                requestId, save, true, sound, width, height, fps, maxRecordingTimeMinutes)
+                requestId, save, sound, width, height, fps, maxRecordingTimeMinutes)
     }
 
     fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
@@ -1556,38 +1623,31 @@ class DeviceManager {
         updateMicState()
     }
 
-    fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String,
-            authToken: String?,
-            compress: String,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Double? = null,
-            iso: Int? = null,
-    ) {
+    fun requestPhoto(request: PhotoRequest) {
         val exposureNs: Long? =
-                exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
                     when {
                         v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
                         else -> v.toLong()
                     }
                 }
-        val manualIso = if (exposureNs != null) iso?.takeIf { it > 0 } else null
+        val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
+        val routed =
+                request.copy(
+                        exposureTimeNs = exposureNs?.toDouble(),
+                        iso = manualIso,
+                )
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
             Bridge.log(
-                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=$requestId"
+                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs, manualIso)
+        activeSgc.requestPhoto(routed)
     }
 
     fun rgbLedControl(
@@ -1799,6 +1859,8 @@ class DeviceManager {
 
         micReinitRunnable?.let { mainHandler.removeCallbacks(it) }
         micReinitRunnable = null
+        systemMicAvailabilityRecheckRunnable?.let { mainHandler.removeCallbacks(it) }
+        systemMicAvailabilityRecheckRunnable = null
 
         // Clean up transcriber resources
         transcriber?.shutdown()

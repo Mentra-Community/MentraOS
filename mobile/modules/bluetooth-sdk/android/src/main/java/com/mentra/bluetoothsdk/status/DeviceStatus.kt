@@ -248,7 +248,6 @@ internal data class BluetoothStatus(
     val contextualDashboard: Boolean,
     val galleryModeEnabled: Boolean,
     val buttonPhotoSize: ButtonPhotoSize,
-    val buttonCameraLed: Boolean,
     val buttonMaxRecordingTime: Int,
     val buttonVideoWidth: Int,
     val buttonVideoHeight: Int,
@@ -301,7 +300,6 @@ internal data class BluetoothStatus(
             "contextual_dashboard" to contextualDashboard,
             "galleryModeEnabled" to galleryModeEnabled,
             "button_photo_size" to buttonPhotoSize.value,
-            "button_camera_led" to buttonCameraLed,
             "button_max_recording_time" to buttonMaxRecordingTime,
             "button_video_width" to buttonVideoWidth,
             "button_video_height" to buttonVideoHeight,
@@ -349,7 +347,6 @@ internal data class BluetoothStatus(
                 galleryModeEnabled =
                     boolValue(values, "gallery_mode") ?: boolValue(values, "galleryModeEnabled") ?: true,
                 buttonPhotoSize = ButtonPhotoSize.fromValue(stringValue(values, "button_photo_size")),
-                buttonCameraLed = boolValue(values, "button_camera_led") ?: true,
                 buttonMaxRecordingTime = numberValue(values, "button_max_recording_time") ?: 10,
                 buttonVideoWidth = numberValue(values, "button_video_width") ?: 1280,
                 buttonVideoHeight = numberValue(values, "button_video_height") ?: 720,
@@ -554,7 +551,6 @@ internal data class BluetoothStatusUpdate(
     val contextualDashboard: Boolean? = null,
     val galleryModeEnabled: Boolean? = null,
     val buttonPhotoSize: ButtonPhotoSize? = null,
-    val buttonCameraLed: Boolean? = null,
     val buttonMaxRecordingTime: Int? = null,
     val buttonVideoWidth: Int? = null,
     val buttonVideoHeight: Int? = null,
@@ -597,7 +593,6 @@ internal data class BluetoothStatusUpdate(
             putIfNotNull("contextual_dashboard", contextualDashboard)
             putIfNotNull("galleryModeEnabled", galleryModeEnabled)
             buttonPhotoSize?.let { put("button_photo_size", it.value) }
-            putIfNotNull("button_camera_led", buttonCameraLed)
             putIfNotNull("button_max_recording_time", buttonMaxRecordingTime)
             putIfNotNull("button_video_width", buttonVideoWidth)
             putIfNotNull("button_video_height", buttonVideoHeight)
@@ -648,7 +643,6 @@ internal data class BluetoothStatusUpdate(
                     optionalBoolValue(values, "gallery_mode") ?: optionalBoolValue(values, "galleryModeEnabled"),
                 buttonPhotoSize =
                     optionalStringValue(values, "button_photo_size")?.let(ButtonPhotoSize::fromValue),
-                buttonCameraLed = optionalBoolValue(values, "button_camera_led"),
                 buttonMaxRecordingTime = optionalNumberValue(values, "button_max_recording_time"),
                 buttonVideoWidth = optionalNumberValue(values, "button_video_width"),
                 buttonVideoHeight = optionalNumberValue(values, "button_video_height"),

@@ -79,8 +79,8 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?) {
-        Bridge.log("requestPhoto")
+    func requestPhoto(_ request: PhotoRequest) {
+        Bridge.log("requestPhoto save=\(request.save) sound=\(request.sound)")
     }
 
     func startStream(_: [String: Any]) {
@@ -95,7 +95,7 @@ class Simulated: SGCManager {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {
         Bridge.log("startVideoRecording")
     }
 
@@ -111,10 +111,6 @@ class Simulated: SGCManager {
 
     func sendButtonVideoRecordingSettings() {
         Bridge.log("sendButtonVideoRecordingSettings")
-    }
-
-    func sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
     }
 
     func sendCameraFovSetting() {

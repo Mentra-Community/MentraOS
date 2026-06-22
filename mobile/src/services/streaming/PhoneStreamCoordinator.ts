@@ -4,7 +4,7 @@
  * Architecture:
  *   miniapp → SDK → LocalMiniappRuntime → coordinator
  *           coordinator → BluetoothSdk (BLE → glasses publisher)
- *           coordinator ↔ v2StreamApi (managed only, Cloudflare provisioning)
+ *           coordinator ↔ cloudStreamApi (managed only, cloud-v2 runtime provisioning)
  *           coordinator ↔ StreamLifecycleController (keep-alive heartbeat)
  *           coordinator → status listeners → routed back to miniapp(s)
  *
@@ -29,7 +29,13 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import type {KeepAliveAckEvent, StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
+import type {
+  KeepAliveAckEvent,
+  StreamResolvedConfig,
+  StreamStartRequest,
+  StreamStatusEvent,
+} from "@mentra/bluetooth-sdk-internal"
+import {getRuntimeHooks} from "@mentra/island"
 
 import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
 import {
@@ -39,7 +45,7 @@ import {
   type CloudflareStatus,
   type ProvisionResult,
   type RestreamDestinationInput,
-} from "./v2StreamApi"
+} from "./cloudStreamApi"
 
 /**
  * Default cadence + thresholds. Exposed via {@link CoordinatorTimings} so tests
@@ -74,16 +80,25 @@ const consoleLogger: LifecycleLogger = {
 
 export interface StartUnmanagedOptions {
   streamUrl: string
-  video?: unknown
-  audio?: unknown
+  video?: StreamStartRequest["video"]
+  audio?: StreamStartRequest["audio"]
   sound?: boolean
 }
 
 export interface StartManagedOptions {
   restreamDestinations?: RestreamDestinationInput[]
-  video?: unknown
-  audio?: unknown
+  video?: StreamStartRequest["video"]
+  audio?: StreamStartRequest["audio"]
   sound?: boolean
+  /**
+   * Ingest protocol preference — a real latency/durability trade on Cloudflare:
+   *   - "srt" (default): SRT ingest -> LL-HLS playback (~10-20s glass-to-screen),
+   *     with shareable HLS/DASH URLs and automatic recording.
+   *   - "whip": WebRTC ingest -> WHEP playback (<1s glass-to-screen), but NO
+   *     HLS/DASH playback and NO recording (Cloudflare limitation; the returned
+   *     hlsUrl will serve 204 forever).
+   */
+  ingest?: "srt" | "whip"
 }
 
 export interface StreamPublisherStartResult {
@@ -94,6 +109,10 @@ export interface StreamPublisherStartResult {
 
 export interface ManagedStartResult extends StreamPublisherStartResult {
   liveInputId: string
+  /** Playback mode this stream supports: "hls" (SRT/RTMP ingest — use hlsUrl/
+   *  dashUrl, recording on) or "webrtc" (WHIP ingest — use webrtcUrl/WHEP,
+   *  sub-second, no HLS, no recording). */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -120,6 +139,9 @@ interface ManagedEntry {
   streamId: string
   liveInputId: string
   ingestUrl: string
+  /** Playback mode the chosen ingest supports: SRT/RTMP feed HLS; WHIP feeds
+   *  only WHEP. Readiness is gated differently per mode. */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -131,14 +153,40 @@ interface ManagedEntry {
   cloudflareTimer?: ReturnType<typeof setInterval>
   hlsTimer?: ReturnType<typeof setInterval>
   hlsAttempts: number
+  /** webrtc mode: CF status polls seen while waiting for first "connected". */
+  connectAttempts: number
 }
 
 type Entry = UnmanagedEntry | ManagedEntry
 
 export class StreamConflictError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+    /** Pipeline stage that failed (provision | command | publish | playback). */
+    public readonly stage?: string,
+    /** Transport in play at the failure (cloud-rest | ble | wifi). */
+    public readonly transport?: string,
+  ) {
     super(message)
     this.name = "StreamConflictError"
+  }
+}
+
+/**
+ * Fail fast if glasses aren't connected — BEFORE provisioning. Without this a
+ * managed start would create a provider live input, fail the BLE command, and
+ * tear the input down again: a slow, billable no-op with a confusing error.
+ */
+function assertGlassesConnected(): void {
+  const glasses = getRuntimeHooks().glassesStatus?.get()
+  if (!glasses?.connected) {
+    throw new StreamConflictError(
+      "GLASSES_NOT_CONNECTED",
+      "Glasses are not connected",
+      "command",
+      "ble",
+    )
   }
 }
 
@@ -206,6 +254,7 @@ export class PhoneStreamCoordinator {
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
       throw new StreamConflictError("STREAM_URL_REQUIRED", "streamUrl is required")
     }
+    assertGlassesConnected()
     return this.runExclusive(async () => {
       if (this.current) {
         throw new StreamConflictError(
@@ -230,11 +279,11 @@ export class PhoneStreamCoordinator {
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
-          keepAlive: true,
-          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
           sound: opts.sound ?? true,
-          video: opts.video as never,
-          audio: opts.audio as never,
+          // The native bridge rejects explicit `undefined` values ("Value is
+          // undefined, expected an Object") — only include what was provided.
+          ...(opts.video !== undefined ? {video: opts.video} : {}),
+          ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)
@@ -253,6 +302,7 @@ export class PhoneStreamCoordinator {
     // Two-phase: the entry-claim runs under the transition lock; the wait for
     // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
     // block subsequent start/stop transitions on this coordinator.
+    assertGlassesConnected()
     type JoinDecision =
       | {kind: "join"; entry: ManagedEntry; immediate: ManagedStartResult | null}
       | {kind: "fresh"; entry: ManagedEntry}
@@ -289,13 +339,16 @@ export class PhoneStreamCoordinator {
       // and joins instead of double-provisioning.
       const provision = await provisionManagedStream(opts.restreamDestinations)
       const streamId = this.mintId("m")
-      const ingestUrl = pickIngestUrl(provision)
+      const ingestUrl = pickIngestUrl(provision, opts.ingest)
+      const mode: ManagedEntry["mode"] =
+        ingestUrl === provision.webrtcPublishUrl ? "webrtc" : "hls"
 
       const entry: ManagedEntry = {
         kind: "managed",
         streamId,
         liveInputId: provision.liveInputId,
         ingestUrl,
+        mode,
         hlsUrl: provision.hlsUrl,
         dashUrl: provision.dashUrl,
         webrtcUrl: provision.webrtcUrl,
@@ -304,6 +357,7 @@ export class PhoneStreamCoordinator {
         hlsReadyResolvers: [],
         hlsReadyRejecters: [],
         hlsAttempts: 0,
+        connectAttempts: 0,
       }
       this.current = entry
 
@@ -312,11 +366,10 @@ export class PhoneStreamCoordinator {
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,
-          keepAlive: true,
-          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
           sound: opts.sound ?? true,
-          video: opts.video as never,
-          audio: opts.audio as never,
+          // See startUnmanaged: the native bridge rejects explicit `undefined`.
+          ...(opts.video !== undefined ? {video: opts.video} : {}),
+          ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
         })
         entry.publisherStart = publisherStartResult(streamId, event)
       } catch (err) {
@@ -327,7 +380,12 @@ export class PhoneStreamCoordinator {
 
       this.startLifecycle(streamId)
       this.startCloudflareStatusPoll(entry)
-      this.startHlsReadinessPoll(entry)
+      // hls mode: readiness = a real HLS manifest exists. webrtc mode: HLS
+      // never materializes (Cloudflare WHIP limitation) — readiness resolves
+      // off the status poll's first "connected" instead.
+      if (entry.mode === "hls") {
+        this.startHlsReadinessPoll(entry)
+      }
       return {kind: "fresh", entry}
     })
 
@@ -335,8 +393,8 @@ export class PhoneStreamCoordinator {
       return decision.immediate
     }
 
-    // Wait for HLS readiness OUTSIDE the lock — readiness can take ~10s and
-    // we don't want to block other transitions for that long.
+    // Wait for playback readiness OUTSIDE the lock — readiness can take ~10s
+    // and we don't want to block other transitions for that long.
     return new Promise<ManagedStartResult>((resolve, reject) => {
       decision.entry.hlsReadyResolvers.push(resolve)
       decision.entry.hlsReadyRejecters.push(reject)
@@ -383,13 +441,20 @@ export class PhoneStreamCoordinator {
       data: event as unknown as Record<string, unknown>,
     })
 
-    // Glasses-reported terminal states unwind the coordinator. Queue the
-    // teardown through the transition lock so it serializes with any
-    // start/stop currently in flight.
-    const isError = event.kind === "error"
-    const isStopped = event.kind === "lifecycle" && event.status === "stopped"
-    if (isError || isStopped) {
-      const reason = isError ? "glasses_error" : "glasses_stopped"
+    // Glasses-reported TERMINAL states unwind the coordinator. Terminal means
+    // the publisher gave up or stopped — NOT a transient `kind:"error"`: the
+    // glasses publisher auto-recovers (error → reconnecting → reconnected),
+    // and tearing down on the first hiccup deletes the live input out from
+    // under a publisher that comes right back (it then retries into a dead
+    // input forever). A publisher that errors and never recovers is reaped by
+    // the keep-alive ack timeout. Queue the teardown through the transition
+    // lock so it serializes with any start/stop currently in flight.
+    const isStopped =
+      (event.kind === "lifecycle" && event.status === "stopped") ||
+      (event.kind === "snapshot" && event.status === "stopped")
+    const isGiveUp = event.kind === "reconnect" && event.status === "reconnect_failed"
+    if (isGiveUp || isStopped) {
+      const reason = isGiveUp ? "glasses_gave_up" : "glasses_stopped"
       const targetStreamId = this.current.streamId
       void this.runExclusive(async () => {
         // The stream we wanted to tear down may already be gone (e.g. another
@@ -453,6 +518,16 @@ export class PhoneStreamCoordinator {
   }
 
   private startCloudflareStatusPoll(entry: ManagedEntry): void {
+    // webrtc mode: how many polls to wait for the first "connected" before
+    // declaring the publisher never reached Cloudflare. Mirrors the HLS
+    // readiness budget (~60s at the default 5s cadence).
+    const maxConnectAttempts = Math.max(
+      1,
+      Math.ceil(
+        (this.timings.hlsReadinessMaxAttempts * this.timings.hlsReadinessPollMs) /
+          this.timings.cloudflareStatusPollMs,
+      ),
+    )
     const poll = async () => {
       if (this.current !== entry) return
       try {
@@ -463,6 +538,45 @@ export class PhoneStreamCoordinator {
           status: status.isConnected ? "connected" : "disconnected",
           data: status as unknown as Record<string, unknown>,
         })
+        // webrtc mode readiness: first "connected" means WHEP playback is
+        // available (WebRTC playback follows the ingest directly; there is no
+        // manifest to probe).
+        if (entry.mode === "webrtc" && !entry.hlsReady) {
+          if (status.isConnected) {
+            entry.hlsReady = true
+            const result = managedStartResult(entry)
+            for (const r of entry.hlsReadyResolvers) r(result)
+            entry.hlsReadyResolvers = []
+            entry.hlsReadyRejecters = []
+            this.fanout({
+              streamId: entry.streamId,
+              source: "coordinator",
+              status: "webrtc_ready",
+              data: result as unknown as Record<string, unknown>,
+            })
+          } else {
+            entry.connectAttempts += 1
+            if (entry.connectAttempts >= maxConnectAttempts) {
+              const err = new Error(
+                `WebRTC ingest never reached Cloudflare after ${entry.connectAttempts} status polls`,
+              )
+              for (const reject of entry.hlsReadyRejecters) reject(err)
+              entry.hlsReadyResolvers = []
+              entry.hlsReadyRejecters = []
+              this.fanout({
+                streamId: entry.streamId,
+                source: "coordinator",
+                status: "error",
+                data: {reason: "webrtc_not_connected"},
+              })
+              const targetStreamId = entry.streamId
+              void this.runExclusive(async () => {
+                if (this.current?.streamId !== targetStreamId) return
+                await this.teardownLocked("webrtc_not_connected")
+              })
+            }
+          }
+        }
       } catch (err) {
         console.warn("[STREAM] cloudflare status poll failed:", err)
       }
@@ -478,8 +592,11 @@ export class PhoneStreamCoordinator {
       if (this.current !== entry) return
       entry.hlsAttempts += 1
       try {
+        // Require a real manifest (200 with a body), not just res.ok — the
+        // playback edge returns 204 No Content while the input has no
+        // HLS-capable frames (e.g. WebRTC ingest), and 204 is "ok".
         const res = await fetch(entry.hlsUrl, {method: "HEAD"})
-        if (res.ok) {
+        if (res.status === 200) {
           entry.hlsReady = true
           if (entry.hlsTimer) {
             clearInterval(entry.hlsTimer)
@@ -596,12 +713,24 @@ export class PhoneStreamCoordinator {
   }
 }
 
-function pickIngestUrl(p: ProvisionResult): string {
+function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip"): string {
   // Glasses' StreamCommandHandler detects protocol from URL prefix.
-  // Priority: WHIP > SRT > RTMP. Cloudflare populates all three normally;
-  // throw if none resolved so the caller's Promise rejects with a clear
+  //
+  // Default priority: SRT > RTMP > WHIP. SRT first: Cloudflare's WebRTC (WHIP)
+  // ingest does NOT feed HLS/DASH playback or recording — a WHIP-ingested
+  // managed stream reports "connected" while its hlsUrl serves 204 forever,
+  // which breaks the managed contract (subscribers share HLS playback). SRT
+  // also survives office firewalls that kill RTMPS:443 mid-handshake.
+  //
+  // "whip" preference flips the trade: sub-second WHEP playback for
+  // live-monitor use cases, accepting no HLS and no recording.
+  //
+  // Throw if none resolved so the caller's Promise rejects with a clear
   // message rather than the glasses' "unknown protocol" error.
-  const url = p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
+  const url =
+    preference === "whip"
+      ? p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
+      : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
   if (!url) {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }
@@ -622,6 +751,7 @@ function managedStartResult(entry: ManagedEntry): ManagedStartResult {
     ...publisher,
     streamId: entry.streamId,
     liveInputId: entry.liveInputId,
+    mode: entry.mode,
     hlsUrl: entry.hlsUrl,
     dashUrl: entry.dashUrl,
     webrtcUrl: entry.webrtcUrl,

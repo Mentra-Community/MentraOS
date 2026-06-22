@@ -15,7 +15,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
-type PhotoSize = "small" | "medium" | "large" | "max"
+type PhotoSize = "low" | "medium" | "high" | "max"
 // The Mentra Live sensor only records 1080p/720p — 1440p/4K wedge the camera.
 type VideoResolution = "720p" | "1080p"
 type VideoFps = "30" | "15" | "5"
@@ -26,11 +26,27 @@ const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 
 const PHOTO_SIZE_OPTIONS = [
-  {key: "small" as PhotoSize, label: "Low (960×720)"},
+  {key: "low" as PhotoSize, label: "Low (960×720)"},
   {key: "medium" as PhotoSize, label: "Medium (1440×1088)"},
-  {key: "large" as PhotoSize, label: "High (3264×2448)"},
+  {key: "high" as PhotoSize, label: "High (3264×2448)"},
   {key: "max" as PhotoSize, label: "Max (camera maximum)"},
 ]
+
+function normalizeButtonPhotoSize(value?: string): PhotoSize {
+  switch (value) {
+    case "small":
+      return "low"
+    case "large":
+      return "high"
+    case "low":
+    case "medium":
+    case "high":
+    case "max":
+      return value
+    default:
+      return "medium"
+  }
+}
 
 const VIDEO_RESOLUTION_OPTIONS = [
   {key: "720p" as VideoResolution, label: "720p (1280×720)"},
@@ -71,8 +87,8 @@ export default function CameraSettingsScreen() {
   const {theme, themed} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
   const [_devMode, _setDevMode] = useSetting(SETTINGS.debug_mode.key)
-  const [photoSize, setPhotoSize] = useSetting(SETTINGS.button_photo_size.key)
-  const [_ledEnabled, setLedEnabled] = useSetting(SETTINGS.button_camera_led.key)
+  const [storedPhotoSize, setPhotoSize] = useSetting(SETTINGS.button_photo_size.key)
+  const photoSize = normalizeButtonPhotoSize(storedPhotoSize)
   const [videoSettings, setVideoSettings] = useSetting(SETTINGS.button_video_settings.key)
   const [maxRecordingTime, setMaxRecordingTime] = useSetting(SETTINGS.button_max_recording_time.key)
   const [cameraFovSetting, setCameraFovSetting] = useSetting(SETTINGS.camera_fov.key)
@@ -109,6 +125,14 @@ export default function CameraSettingsScreen() {
       setVideoSettings({width: norm.width, height: norm.height, fps: videoSettings.fps ?? 30})
     }
   }, [videoSettings, setVideoSettings])
+
+  useEffect(() => {
+    if (!storedPhotoSize) return
+    const normalized = normalizeButtonPhotoSize(storedPhotoSize)
+    if (normalized !== storedPhotoSize) {
+      setPhotoSize(normalized)
+    }
+  }, [storedPhotoSize, setPhotoSize])
 
   // Derive video fps from settings (snap to the nearest offered option)
   const videoFps: VideoFps = (() => {
@@ -163,14 +187,6 @@ export default function CameraSettingsScreen() {
       button_video_height: height,
       button_video_fps: fps,
     })
-  }
-
-  const _handleLedToggle = (enabled: boolean) => {
-    if (!glassesConnected) {
-      console.log("Cannot toggle LED - glasses not connected")
-      return
-    }
-    setLedEnabled(enabled)
   }
 
   const handleMaxRecordingTimeChange = (time: MaxRecordingTime) => {

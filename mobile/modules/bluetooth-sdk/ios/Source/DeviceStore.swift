@@ -91,8 +91,7 @@ class DeviceStore {
         // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
         store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", ["fov": 118, "roi_position": 0])
         store.set("bluetooth", "button_video_width", 1280)
@@ -114,6 +113,10 @@ class DeviceStore {
 
     func set(_ category: String, _ key: String, _ value: Any) {
         store.set(category, key, value)
+    }
+
+    func remove(_ category: String, _ key: String) {
+        store.remove(category, key)
     }
 
     private func scheduleDashboardHeightToGlasses() {
@@ -253,9 +256,6 @@ class DeviceStore {
 
         case ("bluetooth", "button_photo_size"):
             DeviceManager.shared.sgc?.sendButtonPhotoSettings()
-
-        case ("bluetooth", "button_camera_led"):
-            DeviceManager.shared.sgc?.sendButtonCameraLedSetting()
 
         case ("bluetooth", "button_max_recording_time"):
             DeviceManager.shared.sgc?.sendButtonMaxRecordingTime()

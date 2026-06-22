@@ -46,6 +46,7 @@ interface OfflineAppHostProps {
   onExit: () => void
   /** Capture an app-switcher screenshot without exiting. */
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
 interface StackEntry {
@@ -53,7 +54,7 @@ interface StackEntry {
   params?: any
 }
 
-export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture}: OfflineAppHostProps) {
+export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture, showCapsule = false}: OfflineAppHostProps) {
   const def = offlineAppRegistry[packageName]
 
   const [stack, setStack] = useState<StackEntry[]>(() => (def ? [{path: def.initialRoute}] : []))
@@ -73,22 +74,37 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
   const onShouldCaptureRef = useRef(onShouldCapture)
   onShouldCaptureRef.current = onShouldCapture
 
+  // The host stays mounted through the Compositor's fade-out (renderedApp
+  // lingers after clearForeground). During that window the interceptor must
+  // stand down so real navigation works again.
+  //
+  // This tracks the host's OWN lifecycle rather than reading the apps store's
+  // `foregrounded` flag: that flag can be transiently flipped false by a
+  // background refresh() rebuilding the apps array, which would make the
+  // interceptor decline an internal route and let it fall through to the root
+  // router — remounting the whole hosted miniapp. `activeRef` is true from
+  // mount until the host itself initiates its exit, so a refresh can never
+  // flip it. The host remounts fresh on each foreground, re-initializing it.
+  const activeRef = useRef(true)
+  const isHostForegrounded = useCallback(() => activeRef.current, [])
+
+  // Single exit funnel: stand the interceptor down (so navigation during the
+  // fade-out reaches the real router) THEN run the host's exit. Every exit
+  // path — capsule house/X, compositor back, external-route fall-through —
+  // goes through here so `activeRef` and the exit stay in lockstep.
+  const beginExit = useCallback(() => {
+    activeRef.current = false
+    onExitRef.current()
+  }, [])
+
   const popOrExit = useCallback(() => {
     if (stackRef.current.length > 1) {
       // Removing the top <NativeScreen> plays the native pop transition.
       setStack((s) => s.slice(0, -1))
     } else {
-      onExitRef.current()
+      beginExit()
     }
-  }, [])
-
-  // The host stays mounted through the Compositor's fade-out (renderedApp
-  // lingers after clearForeground). During that window the interceptor must
-  // stand down so real navigation works again.
-  const isHostForegrounded = useCallback(
-    () => useAppStatusStore.getState().apps.some((a) => a.foregrounded && a.packageName === packageName),
-    [packageName],
-  )
+  }, [beginExit])
 
   useEffect(() => {
     if (!def) return
@@ -104,6 +120,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
           return true
         }
         // External route — close the overlay and let the real push proceed.
+        activeRef.current = false
         onShouldCaptureRef.current?.()
         useAppStatusStore.getState().clearForeground()
         return false
@@ -115,6 +132,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
           return true
         }
         // e.g. sign-out replace("/") — close the overlay first.
+        activeRef.current = false
         useAppStatusStore.getState().clearForeground()
         return false
       },
@@ -156,13 +174,14 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
       // its own <CapsuleMenu forceShow /> below (same trick as LocalMiniappView).
       visibleOnRoutes: ["/intentionally-not-a-real-route"],
       handleLeftPress: () => {
-        onExitRef.current()
+        beginExit()
       },
       handleRightPress: () => {
-        onExitRef.current()
+        beginExit()
+        // wait until after the animation is complete to stop the miniapp:
         BgTimer.setTimeout(() => {
           useAppStatusStore.getState().stop(packageName)
-        }, 100)
+        }, 1000)
       },
     }
     useCapsuleStore.getState().setActive(registration)
@@ -229,7 +248,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
           )
         })}
       </ScreenStack>
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }

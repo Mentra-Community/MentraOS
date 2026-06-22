@@ -21,7 +21,7 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
-import {getAsgOtaVersionUrl} from "@/effects/OtaUpdateChecker"
+import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -343,7 +343,7 @@ export default function OtaProgressScreen() {
       const glassesState = useGlassesStore.getState()
       const otaVersionUrl = getAsgOtaVersionUrl(glassesState.otaVersionUrl, glassesState.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
-      await BluetoothSdk.sendOtaStart(otaVersionUrl)
+      await BluetoothSdk.startOtaUpdate(otaVersionUrl)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
       clearRetryTimeout()
@@ -459,14 +459,14 @@ export default function OtaProgressScreen() {
     }
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
-    // Older glasses may expose a background-prefetch status with an empty sessionId;
-    // treat it as no session so ota_start still begins an explicit install.
-    const isBackgroundPrefetch = !!storeSnapshot.otaStatus && storeSnapshot.otaStatus.sessionId === ""
-    const noSessionYet = (!storeSnapshot.otaStatus && !storeSnapshot.otaProgress) || isBackgroundPrefetch
+    // An idle ota_status has an empty sessionId; treat it as no session so ota_start
+    // still begins an explicit install.
+    const isIdleStatus = !!storeSnapshot.otaStatus && storeSnapshot.otaStatus.sessionId === ""
+    const noSessionYet = (!storeSnapshot.otaStatus && !storeSnapshot.otaProgress) || isIdleStatus
     if (noSessionYet) {
       console.log(
-        isBackgroundPrefetch
-          ? "[OTA_PROGRESS] initial mount, legacy background prefetch status (no sessionId), sending ota_start"
+        isIdleStatus
+          ? "[OTA_PROGRESS] initial mount, idle status (no sessionId), sending ota_start"
           : "[OTA_PROGRESS] initial mount, no session in store, sending ota_start",
       )
       retryCountRef.current = 0
@@ -597,11 +597,10 @@ export default function OtaProgressScreen() {
     }
   }, [displayState, clearPerStepTimers])
 
-  // Clear the cache-ready install hint when this session reaches any terminal UI state.
+  // Clear the selected update once this session reaches any terminal UI state.
   // Catches paths the MantleManager ota_status listener misses — notably BES success
   // (which terminates as `step_complete`, not `complete`) and APK build-number fallback
-  // completions (which never produce a `complete` ota_status). Without this, a stale
-  // otaUpdateAvailable would survive into /home and trip the cache-ready popup.
+  // completions (which never produce a `complete` ota_status).
   useEffect(() => {
     if (displayState === "complete" || displayState === "restarting" || displayState === "failed") {
       useGlassesStore.getState().setOtaUpdateAvailable(null)

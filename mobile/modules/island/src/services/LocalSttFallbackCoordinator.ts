@@ -21,11 +21,11 @@ class LocalSttFallbackCoordinator {
   private hasTranscriptionSubscription = false
   private activeLanguage: string | null = null
   /**
-   * Default to "cloud is up" so we never accidentally activate local STT
-   * before the host has had a chance to wire `cloudConnection` via
+   * Default to "cloud is up" so we never accidentally activate local STT before
+   * the host has had a chance to wire the cloud-client adapter via
    * `configureRuntime`. The adapter is attached lazily on the first
-   * subscription/reconcile pass; once attached, this field reflects the
-   * real WS status.
+   * subscription/reconcile pass; once attached, this field reflects the real
+   * cloud-client runtime status.
    */
   private cloudConnected = true
   private localActive = false
@@ -48,10 +48,11 @@ class LocalSttFallbackCoordinator {
    */
   private attachCloudAdapterIfReady(): void {
     if (this.cloudAdapterAttached) return
-    const cloud = getRuntimeHooks().cloudConnection
+    const cloud = getRuntimeHooks().cloud
     if (!cloud) return
     this.cloudConnected = cloud.isConnected()
-    cloud.addListener((connected) => {
+    cloud.onStatusChanged((status) => {
+      const connected = status.status === "connected"
       if (this.cloudConnected === connected) return
       this.log(`cloud connection -> ${connected ? "up" : "down"}`)
       this.cloudConnected = connected
@@ -83,10 +84,11 @@ class LocalSttFallbackCoordinator {
   }
 
   /**
-   * Called by SocketComms when a cloud transcript arrives. Informational
-   * hook — the cloud-connected listener is the authoritative switching
-   * signal. Kept for future hysteresis if connection-state alone proves too
-   * coarse.
+   * Informational hook, retained for API stability. No longer called: the
+   * authoritative switching signal is the cloud-client adapter (local miniapps
+   * are powered only by V2). v1 cloud transcripts deliberately do NOT drive this
+   * coordinator anymore. Kept for future hysteresis if connection-state alone
+   * proves too coarse.
    */
   onCloudTranscript(): void {}
 
@@ -107,10 +109,18 @@ class LocalSttFallbackCoordinator {
       this.log("local stt model is not available yet — skipping activation")
       return
     }
+    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
+      this.log("local stt activation skipped: cloud recovered before start completed")
+      return
+    }
     try {
       await getRuntimeHooks().restartTranscriber?.()
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
+    }
+    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
+      this.log("local stt activation skipped: cloud recovered during transcriber restart")
+      return
     }
     getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
