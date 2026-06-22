@@ -1205,6 +1205,18 @@ struct ViewState {
         sgc?.queryGalleryStatus()
     }
 
+    func sendWipeMediaForPairing() {
+        (sgc as? MentraLive)?.sendWipeMedia()
+    }
+
+    func sendPairingFinalize() {
+        (sgc as? MentraLive)?.sendPairingFinalize()
+    }
+
+    func sendPairingAbort() {
+        (sgc as? MentraLive)?.sendPairingAbort()
+    }
+
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
