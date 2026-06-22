@@ -3955,14 +3955,15 @@ class G2: NSObject, SGCManager {
             // rebuildState relies on it to know whether to re-send the mic-enable command
             // (mirrors the dashboard-shutdown recovery path).
             if eventType == .systemExit || eventType == .abnormalExit {
-                Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                Task { [weak self] in
-                    await self?.rebuildState()
-                    // Reconcile against DeviceManager's authoritative current view so the
-                    // glasses match the phone, not just the last-cached G2 containers.
-                    DeviceManager.shared.sendCurrentState()
-                }
+                DeviceStore.shared.apply("glasses", "micEnabled", false)// mic is killed
+                // Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
+                // Task { [weak self] in
+                //     await self?.rebuildState()
+                //     // Reconcile against DeviceManager's authoritative current view so the
+                //     // glasses match the phone, not just the last-cached G2 containers.
+                //     DeviceManager.shared.sendCurrentState()
+                // }
             }
             return
         }

@@ -4040,13 +4040,14 @@ class G2 : SGCManager() {
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
                 // Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                displayScope.launch {
-                    // Firmware kills the mic on system exit; re-arm it if it should be on
-                    DeviceStore.apply("glasses", "micEnabled", false)
-                    DeviceManager.getInstance().updateMicState()
-                    // rebuildState()
-                    // DeviceManager.getInstance().sendCurrentState()
-                }
+                DeviceStore.apply("glasses", "micEnabled", false)// the mic is killed
+                // displayScope.launch {
+                //     // Firmware kills the mic on system exit; re-arm it if it should be on
+                //     DeviceStore.apply("glasses", "micEnabled", false)
+                //     DeviceManager.getInstance().updateMicState()
+                //     // rebuildState()
+                //     // DeviceManager.getInstance().sendCurrentState()
+                // }
             }
             return
         }
