@@ -22,6 +22,7 @@ import {
   GlassesMediaVolumeSetResult,
   GlassesStatus,
   GalleryStatusEvent,
+  WipeMediaResultEvent,
   HotspotStatusChangeEvent,
   MicPreference,
   ObservableStoreCategory,
