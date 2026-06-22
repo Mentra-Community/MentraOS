@@ -126,6 +126,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
+  wipeMediaForPairing(): Promise<WipeMediaResultEvent>
+  finalizePairingTransfer(): Promise<void>
+  abortPairingTransfer(): Promise<void>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
