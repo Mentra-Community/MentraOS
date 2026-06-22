@@ -33,6 +33,19 @@ public store, or modify the preinstalled registry.
 
 ## Core Concepts
 
+### Hostname-Bound Environment
+
+The Admin Console environment is determined by the hostname. There is no
+in-app environment switcher and no admin-controlled environment editing.
+
+- `admin.dev.mentraglass.com` manages the dev environment.
+- `admin.staging.mentraglass.com` manages the staging environment.
+- `admin.mentraglass.com` manages production.
+
+The UI may show the current environment as read-only context, especially for
+dangerous actions, but changing environments means opening the corresponding
+hostname.
+
 ### Review Queue
 
 Developers submit release versions for review. An admin reviews a specific
@@ -86,7 +99,8 @@ time. It can be partially designed now even if implementation is phased.
 - As a registry admin, I can create a new registry revision.
 - As a registry admin, I can promote a registry revision.
 - As a registry admin, I can roll back to a previous registry revision.
-- As a registry admin, I can understand which environment I am editing.
+- As a registry admin, I can see which hostname-bound environment I am operating
+  in.
 
 ### Incidents
 
@@ -181,6 +195,6 @@ Incidents may be WIP in v1, but the IA should reserve space for:
   registry?
 - How should dangerous admin actions be confirmed without slowing routine review?
 - What is the right density for internal tables?
-- How should environment selection be presented so admins do not accidentally
-  edit prod?
+- How should read-only environment context be presented so admins do not
+  accidentally mutate prod?
 - How should audit history appear without overwhelming the primary workflow?
