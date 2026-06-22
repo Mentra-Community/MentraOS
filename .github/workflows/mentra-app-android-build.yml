@@ -134,7 +134,11 @@ jobs:
           # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
-            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+            # Portable in-place edit. This job runs on bare `self-hosted`, which
+            # may be Linux (GNU sed); `sed -i ''` is BSD/macOS-only and on GNU sed
+            # treats the script as a filename ("can't read s|...|" → exit 2). The
+            # temp-file form works on both. (The iOS/staging jobs are macOS-pinned.)
+            sed "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env > .env.tmp && mv .env.tmp .env
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
           fi

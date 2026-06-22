@@ -85,14 +85,13 @@ const AUTOCOMPLETE_CACHE_TTL_MS = 60_000;
 const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 1_000;
 
 interface CacheEntry<T> {
+  // When a SETTLED entry expires. While the upstream call is still in flight
+  // this is `Infinity`, so a concurrent caller always reuses the pending promise
+  // (in-flight dedup) instead of firing a second billed request — even if the
+  // nominal TTL has elapsed. The real TTL clock starts only when the value
+  // resolves (see `cachedUpstream`).
   expiresAt: number;
   promise: Promise<T>;
-  /**
-   * True until the promise settles. A still-pending entry is reused even past
-   * its TTL, so a slow upstream request never gets a duplicate in-flight call
-   * issued alongside it (in-flight dedup independent of the cache window).
-   */
-  pending: boolean;
 }
 
 const routeCache = new Map<string, CacheEntry<Route[]>>();
@@ -109,12 +108,11 @@ export function clearMapsCaches(): void {
 /**
  * Return the cached promise for `key`, or create one via `fn`. The promise is
  * stored BEFORE it settles, so concurrent identical calls coalesce onto one
- * upstream request (in-flight dedup). An entry is reused when it is still
- * unexpired OR still PENDING — so a slow upstream request outliving its TTL
- * never gets a duplicate in-flight call issued alongside it (which would be
- * duplicate billed traffic under slow responses / retry storms). A promise that
- * REJECTS is evicted on settle, so a failure is never served from cache (and the
- * rejection still propagates to every waiter, matching `fn`'s throw-on-failure).
+ * upstream request (in-flight dedup) — and they keep coalescing for the whole
+ * lifetime of that request, not just until its nominal TTL elapses (the entry's
+ * TTL clock starts on RESOLUTION). A promise that REJECTS is evicted on settle,
+ * so a failure is never served from cache (and the rejection still propagates to
+ * every waiter, matching `fn`'s own throw-on-failure contract).
  */
 function cachedUpstream<T>(
   cache: Map<string, CacheEntry<T>>,
@@ -123,31 +121,35 @@ function cachedUpstream<T>(
   maxEntries: number,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const now = Date.now();
   const existing = cache.get(key);
-  if (existing && (existing.pending || existing.expiresAt > now)) {
+  if (existing && existing.expiresAt > Date.now()) {
     return existing.promise;
   }
 
-  const entry: CacheEntry<T> = { expiresAt: now + ttlMs, promise: undefined as never, pending: true };
-  const promise = fn().then(
+  // Insert with `expiresAt: Infinity` so that while this call is in flight,
+  // concurrent identical calls reuse it regardless of TTL (an upstream that
+  // stalls past the TTL must not spawn a second billed request). On SUCCESS we
+  // stamp the real expiry, measured from resolution. On FAILURE we evict so one
+  // upstream blip can't pin an error. Both branches guard on object identity so
+  // a concurrent FIFO eviction / refresh can't clobber a newer entry.
+  const entry: CacheEntry<T> = {
+    expiresAt: Infinity,
+    promise: undefined as unknown as Promise<T>,
+  };
+  entry.promise = fn().then(
     (value) => {
-      entry.pending = false;
+      if (cache.get(key) === entry) {
+        entry.expiresAt = Date.now() + ttlMs;
+      }
       return value;
     },
     (err: unknown) => {
-      entry.pending = false;
-      // Evict on failure so one upstream blip can't pin an error for the whole
-      // TTL. Guard: only drop the entry if it is still the one we created (a
-      // concurrent refresh may already have replaced it). Re-throw so waiters
-      // see the real error rather than a cached success.
       if (cache.get(key) === entry) {
         cache.delete(key);
       }
       throw err;
     },
   );
-  entry.promise = promise;
 
   cache.set(key, entry);
 
@@ -159,7 +161,7 @@ function cachedUpstream<T>(
     cache.delete(oldest);
   }
 
-  return promise;
+  return entry.promise;
 }
 
 // ---------------------------------------------------------------------------

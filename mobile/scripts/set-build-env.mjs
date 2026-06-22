@@ -102,9 +102,24 @@ export async function setBuildEnv() {
   if (mapboxPk && mapboxPk.startsWith("pk.")) {
     envOverrides.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = mapboxPk
   }
+  // The Mapbox Downloads:Read SECRET token (MAPBOX_DOWNLOADS_TOKEN, sk.…) is
+  // deliberately NOT mirrored into .env. It's a build-time-only credential read
+  // straight from the environment (Android Gradle via System.getenv) and from
+  // ~/.netrc (iOS SPM, written by syncMapboxNetrc above). Persisting it to .env
+  // would write a live secret to disk and echo it in the build log below.
 
   // Merge with build vars (env-injected real tokens take highest precedence).
   const updatedEnv = {...existingEnv, ...buildVars, ...envOverrides}
+
+  // Belt-and-suspenders: never let a real sk.… Downloads token reach .env, even
+  // if a prior run or a hand-edit left one in the existing file. The ci/dev
+  // dummy ("sk-ci-dummy-…", a hyphen not a dot) is preserved.
+  if (
+    typeof updatedEnv.MAPBOX_DOWNLOADS_TOKEN === "string" &&
+    updatedEnv.MAPBOX_DOWNLOADS_TOKEN.startsWith("sk.")
+  ) {
+    delete updatedEnv.MAPBOX_DOWNLOADS_TOKEN
+  }
 
   // write env to process.env:
   Object.entries(updatedEnv).forEach(([key, value]) => {
