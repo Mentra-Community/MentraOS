@@ -4,8 +4,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.os.Build;
@@ -14,6 +16,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -35,6 +38,9 @@ public class OtaService extends Service {
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
 
+    /** Receives remediation in-progress / completed signals from the recovery worker sidecar. */
+    private BroadcastReceiver remediationInstallReceiver;
+
     // Delay before rebooting to apply a staged MTK-only update. Gives the BLE
     // ota_status "complete" message time to reach the phone before we drop the
     // connection, so the phone settles on its "complete" UI rather than a bare
@@ -55,6 +61,7 @@ public class OtaService extends Service {
         startForeground(NOTIFICATION_ID, createNotification("OTA Service Running"));
 
         stopLegacyOtaUpdaterIfPresent();
+        registerRemediationInstallReceiver();
 
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
@@ -82,6 +89,8 @@ public class OtaService extends Service {
         if (EventBus.getDefault().isRegistered(this)) {
             EventBus.getDefault().unregister(this);
         }
+
+        unregisterRemediationInstallReceiver();
 
         // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
         // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
@@ -121,6 +130,42 @@ public class OtaService extends Service {
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(contentText));
         }
+    }
+
+    private void registerRemediationInstallReceiver() {
+        remediationInstallReceiver =
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context ctx, Intent intent) {
+                        String action = intent.getAction();
+                        if (OtaConstants.ACTION_REMEDIATION_INSTALL_IN_PROGRESS.equals(action)) {
+                            OtaHelper.setRemediationInstallInProgress(true);
+                        } else if (OtaConstants.ACTION_REMEDIATION_INSTALL_COMPLETED.equals(action)) {
+                            OtaHelper.setRemediationInstallInProgress(false);
+                        }
+                    }
+                };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(OtaConstants.ACTION_REMEDIATION_INSTALL_IN_PROGRESS);
+        filter.addAction(OtaConstants.ACTION_REMEDIATION_INSTALL_COMPLETED);
+        // Require the sender to hold ASG_TELEMETRY_PERMISSION (same permission the recovery worker
+        // already uses for telemetry signals) to prevent spoofing by other apps.
+        ContextCompat.registerReceiver(
+                this,
+                remediationInstallReceiver,
+                filter,
+                OtaConstants.ASG_TELEMETRY_PERMISSION,
+                null,
+                ContextCompat.RECEIVER_EXPORTED);
+    }
+
+    private void unregisterRemediationInstallReceiver() {
+        if (remediationInstallReceiver == null) return;
+        try {
+            unregisterReceiver(remediationInstallReceiver);
+        } catch (Exception ignored) {
+        }
+        remediationInstallReceiver = null;
     }
 
     private void stopLegacyOtaUpdaterIfPresent() {

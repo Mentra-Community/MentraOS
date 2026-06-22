@@ -19,21 +19,46 @@ public class RemediationInstaller {
   }
 
   /**
-   * Signals install-in-progress and sends the OEM install broadcast. Returns {@code true} when the
-   * broadcast was dispatched (not a confirmation of install completion).
+   * Signals install-in-progress (in-process + cross-app to ASG) and sends the OEM install
+   * broadcast. Returns {@code true} when the broadcast was dispatched (not a confirmation of
+   * install completion).
    */
   public boolean install(RemediationPolicy policy) {
     if (policy == null) {
       return false;
     }
+    // Signal ASG that a remediation install is starting so its OTA pipeline defers.
+    // This is the reverse of OtaHelper.notifyRecoveryInstallInProgress().
+    notifyAsgRemediationInProgress(true);
     InstallPauseNotifier.notifyInstallInProgress();
     boolean dispatched =
         new SystemInstaller(context)
             .installApk(RecoveryConstants.REMEDIATION_APK_PATH, policy.packageName);
     if (!dispatched) {
       Log.e(RecoveryConstants.TAG, "Remediation install broadcast failed to dispatch");
+      // Undo the pause signals immediately since no install will happen.
+      notifyAsgRemediationInProgress(false);
       InstallPauseNotifier.notifyInstallCompleted();
     }
     return dispatched;
+  }
+
+  /**
+   * Sends the remediation in-progress / completed signal to ASG so its OTA pipeline knows whether
+   * the recovery worker is currently installing ASG.
+   */
+  public void notifyAsgRemediationInProgress(boolean inProgress) {
+    try {
+      String action =
+          inProgress
+              ? RecoveryConstants.ACTION_REMEDIATION_INSTALL_IN_PROGRESS
+              : RecoveryConstants.ACTION_REMEDIATION_INSTALL_COMPLETED;
+      Intent intent = new Intent(action);
+      intent.setPackage(RecoveryConstants.ASG_PACKAGE);
+      context.sendBroadcast(intent, RecoveryConstants.ASG_TELEMETRY_PERMISSION);
+      Log.d(RecoveryConstants.TAG, "Notified ASG: remediation install inProgress=" + inProgress);
+    } catch (Exception e) {
+      Log.w(RecoveryConstants.TAG, "Failed to notify ASG of remediation install state", e);
+    }
   }
 }

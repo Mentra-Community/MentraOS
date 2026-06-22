@@ -148,6 +148,11 @@ public class RemediationWorker extends Worker {
           "mentra_remediation_failed", policy.versionName, "NO_PONG_AFTER_INSTALL", attempt, false);
       return Result.success();
     } finally {
+      // Notify ASG that the remediation install window is closed (mirrors the in-progress signal
+      // sent by RemediationInstaller.install()). ASG may have been killed and restarted by the
+      // OEM installer, in which case its static deadline resets to 0 automatically — sending
+      // COMPLETED is harmless but good hygiene for any in-process OTA that was deferred.
+      installer.notifyAsgRemediationInProgress(false);
       InstallPauseNotifier.notifyInstallCompleted();
     }
   }
