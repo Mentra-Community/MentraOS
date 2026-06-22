@@ -16,6 +16,9 @@ export const G2_PROFILE: DisplayProfile = {
   ...G1_PROFILE,
   id: "even-realities-g2",
   name: "Even Realities G2",
+  // G2 fits more vertical text than G1 — allow up to 8 lines before the
+  // wrapper truncates (G1 stays at its inherited 5).
+  maxLines: 8,
 }
 
 /**

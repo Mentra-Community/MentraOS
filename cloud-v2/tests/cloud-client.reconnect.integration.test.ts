@@ -41,6 +41,14 @@ const RELAY_PORT = 13042;
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPemWrap(
     access.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   const miniapp = crypto.generateKeyPairSync("ed25519");
   process.env.MENTRA_MINIAPP_JWT_PRIVATE_KEY = stripPemWrap(
     miniapp.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
@@ -49,11 +57,22 @@ const RELAY_PORT = 13042;
     miniapp.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
+  // Runtime verifies cloud-runtime tokens against these issuers; trust the
+  // cloud-core issuer Core brokers its runtime tokens from (see issueRuntimeToken).
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS ??= JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.MONGO_URL ??=
     "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-reconnect-test";
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/6";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
+  process.env.AUDIO_PROVIDER = "mock";
   process.env.LOG_LEVEL ??= "warn";
 }
 
@@ -147,7 +166,7 @@ describe("cloud.runtime reconnect (real core + audio, relayed socket)", () => {
     });
 
     await cloud.runtime.connect();
-    await cloud.auth.getAccessToken();
+    await cloud.auth.getCoreToken();
     const { mentraUserId } = cloud.auth.identity;
 
     await cloud.runtime.setSubscriptions([
@@ -200,7 +219,12 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
     // live socket on demand while subscription PUTs still reach the real server.
     // The runtime derives the ws URL from this (http -> ws, + /ws/session).
     endpoints: { core: coreHandle.url, runtime: `http://localhost:${RELAY_PORT}` },
-    auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    auth: {
+      core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+      // Broker the runtime token from Core (mobile uses the same path); the
+      // runtime trusts the cloud-core issuer via CLOUD_RUNTIME_AUTH_ISSUERS.
+      runtime: { source: "core" },
+    },
     audio: { codec: "pcm", sampleRate: 16000 },
     // Fast, jitter-free backoff so the reconnect happens within the test window.
     reconnect: { baseMs: 50, maxMs: 200, jitter: false },

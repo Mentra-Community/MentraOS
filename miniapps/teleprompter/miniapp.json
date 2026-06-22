@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.teleprompter",
+  "version": "1.0.0",
+  "name": "Teleprompter",
+  "description": "Your notes, floating in front of you while you speak. Paste a script, then read it from your glasses — scrolling follows your voice or runs at a speed you set.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3160,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used for voice-following auto-scroll — the teleprompter advances as you speak"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Renders your script on the glasses display while you present"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "OPTIONAL",
+      "description": "Captures speech so scrolling can follow your voice; timed scrolling works without it"
+    }
+  ]
+}

@@ -8,6 +8,8 @@
  *                         tokens out.
  *   POST /refresh       — RFC 6749 refresh flow. Old refresh token in, fresh
  *                         access + refresh out (rotated).
+ *   POST /runtime-token — Core access token (Bearer) in, short-lived Runtime
+ *                         token out (`aud=cloud-runtime`).
  *   POST /miniapp-token — Access token (Bearer) + packageName in, a short-lived
  *                         miniapp-scoped Ed25519 JWT out.
  *
@@ -34,6 +36,7 @@ import {
   createSession,
   refreshSession,
   issueMiniappToken,
+  issueRuntimeToken,
 } from "../../services/session.service";
 import { userAuth } from "../middleware/user-auth.middleware";
 import type { AppContext, AppEnv } from "../../types/hono.types";
@@ -50,6 +53,7 @@ app.post("/refresh", postRefresh);
 
 // miniapp-token requires a verified access token, so it sits behind userAuth,
 // which populates `c.var.user` (mentraUserId + oemId) from the Bearer token.
+app.post("/runtime-token", userAuth, postRuntimeToken);
 app.post("/miniapp-token", userAuth, postMiniappToken);
 
 // === Handlers ===
@@ -119,6 +123,24 @@ async function postMiniappToken(c: AppContext) {
   });
 
   return c.json({ token, expiresAt });
+}
+
+async function postRuntimeToken(c: AppContext) {
+  const user = c.var.user;
+  if (!user) {
+    throw new InvalidRequest("missing authenticated user");
+  }
+
+  const { token, expiresAt } = await issueRuntimeToken({
+    mentraUserId: user.mentraUserId,
+    oemId: user.oemId,
+  });
+
+  return c.json({
+    access_token: token,
+    token_type: "Bearer",
+    expires_in: Math.max(0, expiresAt - Math.floor(Date.now() / 1000)),
+  });
 }
 
 // === Helpers ===

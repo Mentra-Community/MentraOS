@@ -78,7 +78,7 @@ public class MtkOtaReceiver extends BroadcastReceiver {
                                         context.getApplicationContext(), AsgClientEntryPoint.class)
                                 .otaHelper();
                 if (helper != null) {
-                    helper.clearCachedArtifactsForType("mtk");
+                    helper.deleteDownloadedArtifactForType("mtk");
                 }
                 break;
 

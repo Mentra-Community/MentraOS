@@ -62,15 +62,21 @@ is TCP/HTTP only).
 
 ## DNS (Cloudflare)
 
-**Custom hostnames** (when we add them): `<service>-<region>.cloud-v2.mentra.glass`
+**Custom hostnames**: `<service>.<env>.<region>.mentraglass.com`
 
 Examples:
-- `audio-udp-us-west-2.cloud-v2.mentra.glass` → audio UDP NLB
-- `audio-us-west-2.cloud-v2.mentra.glass` → audio HTTP/WS ALB
 
-`.cloud-v2.` in the path makes it obvious which generation of the cloud
-the hostname refers to. v1 used `.augmentos.cloud` and bare
-`mentra.glass`.
+- `core.dev.us-west-2.mentraglass.com` → dev Core HTTP/REST ALB
+- `runtime.dev.us-west-2.mentraglass.com` → dev Runtime HTTP/WS ALB
+- `core.debug.us-west-2.mentraglass.com` → debug Core HTTP/REST ALB
+- `runtime.debug.us-west-2.mentraglass.com` → debug Runtime HTTP/WS ALB
+- `audio-udp.debug.us-west-2.mentraglass.com` → debug Runtime UDP NLB
+- `runtime.staging.us-west-2.mentraglass.com` → future staging Runtime HTTP/WS ALB
+
+Service first keeps the mobile/debug UI readable, and `<env>.<region>` makes
+it clear which deployed environment and AWS region a hostname targets. Avoid
+mixing environment words in one hostname (for example, don't use both
+`debug` and `dev` in the same name).
 
 **DNS-only mode (grey cloud)** for UDP records. Always. See
 [`cloudflare/dns-for-nlb.md`](../cloudflare/dns-for-nlb.md).

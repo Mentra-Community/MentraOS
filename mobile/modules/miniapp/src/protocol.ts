@@ -18,11 +18,17 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /** Request a fresh miniapp-scoped backend auth token. */
+  AUTH_REFRESH = "miniapp_auth_refresh",
+
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 
   /** Push a layout to the glasses display. */
   DISPLAY = "miniapp_display",
+
+  /** Push a canvas command to the glasses canvas. */
+  CANVAS = "miniapp_canvas",
 
   /** Play an arbitrary audio URL through the phone's audio playback service. */
   PLAY_AUDIO = "miniapp_play_audio",
@@ -163,6 +169,12 @@ export enum MiniappResponseType {
    * and fires session.permissions.onUpdate handlers.
    */
   PERMISSIONS_UPDATE = "miniapp_permissions_update",
+
+  /**
+   * Push: miniapp-scoped backend auth token changed. Carries a token minted for
+   * this packageName only; it is never a Core or runtime access token.
+   */
+  AUTH_UPDATE = "miniapp_auth_update",
 
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",

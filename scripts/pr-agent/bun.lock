@@ -5,6 +5,7 @@
     "": {
       "name": "@mentra/pr-agent",
       "dependencies": {
+        "@connectrpc/connect-node": "^1.6.1",
         "@cursor/sdk": "^1.0.0",
         "@octokit/rest": "^21.1.1",
         "minimatch": "^10.0.1",
@@ -22,6 +23,8 @@
     "@bufbuild/protobuf": ["@bufbuild/protobuf@1.10.0", "", {}, "sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag=="],
 
     "@connectrpc/connect": ["@connectrpc/connect@1.7.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^1.10.0" } }, "sha512-iNKdJRi69YP3mq6AePRT8F/HrxWCewrhxnLMNm0vpqXAR8biwzRtO6Hjx80C6UvtKJ5sFmffQT7I4Baecz389w=="],
+
+    "@connectrpc/connect-node": ["@connectrpc/connect-node@1.7.0", "", { "dependencies": { "undici": "^5.28.4" }, "peerDependencies": { "@bufbuild/protobuf": "^1.10.0", "@connectrpc/connect": "1.7.0" } }, "sha512-6vaPIkG/NyhxlYgytLoR9KYbPhczEboFB2OYWkA9qvUz1K7efXfeGrlRxoLtpa+r8VxyIOw73w5ktNe743nD+A=="],
 
     "@connectrpc/connect-web": ["@connectrpc/connect-web@1.7.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^1.10.0", "@connectrpc/connect": "1.7.0" } }, "sha512-qyP0YOnUPRWwCc/VfsoydMJvkb7EyUPr2q9sHgBuJzbADjiqck1gKH5V5ZPzPhTLBvmz5UvG+wiZ5sMRQHU1MQ=="],
 
@@ -89,6 +92,8 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.1", "", { "os": "win32", "cpu": "x64" }, "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A=="],
 
+    "@fastify/busboy": ["@fastify/busboy@2.1.1", "", {}, "sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA=="],
+
     "@octokit/auth-token": ["@octokit/auth-token@5.1.2", "", {}, "sha512-JcQDsBdg49Yky2w2ld20IHAlwr8d/d8N6NiOXbtuoPCqzbsiJgF633mVUw3x4mo0H5ypataQIX7SFu3yy44Mpw=="],
 
     "@octokit/core": ["@octokit/core@6.1.6", "", { "dependencies": { "@octokit/auth-token": "^5.0.0", "@octokit/graphql": "^8.2.2", "@octokit/request": "^9.2.3", "@octokit/request-error": "^6.1.8", "@octokit/types": "^14.0.0", "before-after-hook": "^3.0.2", "universal-user-agent": "^7.0.0" } }, "sha512-kIU8SLQkYWGp3pVKiYzA5OSaNF5EE03P/R8zEmmrG6XwOg5oBjXyQVVIauQ0dgau4zYhpZEhJrvIYt6oM+zZZA=="],
@@ -136,6 +141,8 @@
     "tsx": ["tsx@4.22.4", "", { "dependencies": { "esbuild": "~0.28.0" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "bin": { "tsx": "dist/cli.mjs" } }, "sha512-X8EX+XV4QR5xCsrgxaED954zTDfY8KqlDtskKEL0cHhyS/P8b4IFOvGDQpsC9Q1XnLq915wEfwwY/zzskCtmhg=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "undici": ["undici@5.29.0", "", { "dependencies": { "@fastify/busboy": "^2.0.0" } }, "sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg=="],
 
     "undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
 

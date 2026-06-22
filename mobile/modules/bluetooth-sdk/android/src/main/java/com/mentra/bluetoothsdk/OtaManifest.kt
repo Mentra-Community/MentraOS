@@ -16,7 +16,7 @@ internal object OtaManifestDefaults {
     fun defaultOtaVersionUrl(): String {
         val sdkVersion = BuildConfig.SDK_VERSION.trim()
         if (sdkVersion.isBlank() || sdkVersion == "unspecified") {
-            throw BluetoothException(
+            throw BluetoothSdkException(
                 "missing_sdk_version",
                 "Cannot determine Bluetooth SDK version for the default OTA manifest URL.",
             )
@@ -31,19 +31,19 @@ internal object OtaManifestChecker {
     fun normalizeHttpUrl(value: String): String {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) {
-            throw BluetoothException("invalid_ota_url", "OTA version URL must be a non-empty http(s) URL.")
+            throw BluetoothSdkException("invalid_ota_url", "OTA version URL must be a non-empty http(s) URL.")
         }
 
         val uri =
             try {
                 URI(trimmed)
             } catch (error: Exception) {
-                throw BluetoothException("invalid_ota_url", "OTA version URL must be a valid http(s) URL.", error)
+                throw BluetoothSdkException("invalid_ota_url", "OTA version URL must be a valid http(s) URL.", error)
             }
 
         val scheme = uri.scheme?.lowercase()
         if ((scheme != "http" && scheme != "https") || uri.host.isNullOrBlank()) {
-            throw BluetoothException("invalid_ota_url", "OTA version URL must be an http(s) URL.")
+            throw BluetoothSdkException("invalid_ota_url", "OTA version URL must be an http(s) URL.")
         }
 
         return uri.toString()
@@ -57,7 +57,7 @@ internal object OtaManifestChecker {
         return try {
             val status = connection.responseCode
             if (status !in 200..299) {
-                throw BluetoothException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status.")
+                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status.")
             }
             JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {
@@ -92,13 +92,13 @@ internal object OtaManifestChecker {
             return manifest
         }
 
-        throw BluetoothException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
+        throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
     }
 
     private fun hasApkUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean {
         val currentVersion =
             currentBuildNumber.toLongOrNull()
-                ?: throw BluetoothException(
+                ?: throw BluetoothSdkException(
                     "invalid_glasses_version",
                     "Cannot check OTA update because glasses build number is invalid.",
                 )
@@ -124,7 +124,7 @@ internal object OtaManifestChecker {
         if (besFirmware == null) return false
         val serverVersion = besFirmware.optString("version", "")
         if (serverVersion.isBlank()) {
-            throw BluetoothException("invalid_ota_manifest", "OTA manifest bes_firmware.version is missing.")
+            throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest bes_firmware.version is missing.")
         }
         if (currentVersion.isBlank()) return true
         return compareVersions(serverVersion, currentVersion) > 0
@@ -149,5 +149,5 @@ internal object OtaManifestChecker {
 
     private fun JSONObject.requiredLong(key: String): Long =
         (opt(key) as? Number)?.toLong()
-            ?: throw BluetoothException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
+            ?: throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
 }

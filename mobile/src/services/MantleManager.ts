@@ -1,5 +1,5 @@
 import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -32,6 +32,8 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
+  DEV_APP_PACKAGE_NAME,
+  getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
@@ -186,6 +188,15 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
+      miniappAuth: {
+        getToken: (packageName, opts) => {
+          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+          if (!authPackageName) {
+            throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
+          }
+          return cloudClient.getMiniappAuthToken(authPackageName, opts)
+        },
+      },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
@@ -214,18 +225,6 @@ class MantleManager {
             (state) => state.getSetting(key),
             (value) => onChange(value as never),
           ),
-      },
-      cloudConnection: {
-        // Local island miniapps are powered ONLY by the cloud client, so the
-        // on-device STT fallback for miniapps must track cloud liveness, not the
-        // v1 WebSocket. When the cloud is connected and delivering transcripts
-        // the fallback stays off (the cloud powers captions); when it is down,
-        // local STT engages. This adapter is consumed exclusively by
-        // LocalSttFallbackCoordinator, whose only consumer is the local-miniapp
-        // path. The glasses offline-captions display runs off its own
-        // `offline_captions_running` setting and is unaffected.
-        isConnected: () => cloudClient.isConnected(),
-        addListener: (l) => cloudClient.onConnectionChange(l),
       },
       // The dev laptop's live address, from Metro. The island runtime uses it
       // to repair persisted dev-miniapp URLs that froze a previous network's
@@ -300,9 +299,15 @@ class MantleManager {
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       let loadedSettings = res.value
-      // exclude default_wearable and pending_wearable from the settings when pulling from the server:
+      // Device/pairing identity is per-phone state and is now saveOnServer: false, so it
+      // should never come back from the server. These deletes are a migration guard: users
+      // paired before that flag flipped still have stale values persisted server-side, and
+      // restoring them would clobber the locally paired device and point reconnect-on-launch
+      // at the wrong BLE address.
       delete loadedSettings["default_wearable"]
       delete loadedSettings["pending_wearable"]
+      delete loadedSettings["device_name"]
+      delete loadedSettings["device_address"]
       delete loadedSettings["default_controller"]
       delete loadedSettings["pending_controller"]
       delete loadedSettings["controller_device_name"]
@@ -856,6 +861,10 @@ class MantleManager {
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
           const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
+          const dashboardUrl = typeof event.dashboard_url === "string" ? event.dashboard_url : undefined
+          const expectedBehavior = dashboardUrl
+            ? `Captions tester runs should complete without a captions incident. Check live dashboard: ${dashboardUrl}.`
+            : "Captions tester runs should complete without a captions incident."
 
           const actualBehavior = JSON.stringify(
             {
@@ -880,7 +889,7 @@ class MantleManager {
                 triggerArea: "captions_tester",
                 triggerReason: "captions_incident_detected",
               },
-              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              expectedBehavior,
               actualBehavior,
               severityRating: 4,
               dedupeKey,
@@ -1104,30 +1113,6 @@ class MantleManager {
           }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("ota_update_available", (event) => {
-          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-            console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
-            return
-          }
-          console.log("📱 MANTLE: OTA update available from glasses:", event)
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            available: true,
-            versionCode: event.version_code ?? 0,
-            versionName: event.version_name ?? "",
-            updates: event.updates ?? [],
-            totalSize: event.total_size ?? 0,
-            cacheReady: event.cache_ready === true,
-          })
-          GlobalEventEmitter.emit("ota_update_available", {
-            versionCode: event.version_code,
-            versionName: event.version_name,
-            updates: event.updates,
-            totalSize: event.total_size,
-          })
         }),
       )
 

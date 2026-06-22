@@ -666,11 +666,15 @@ class DeviceManager {
             var text: String,
             var data: String?,
             var animationData: Map<String, Any>?,
-            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            // Optional bitmap_view container position/size (used by G2; ignored by others).
+            // Reused by positioned_text for its container rect.
             var bmpX: Int? = null,
             var bmpY: Int? = null,
             var bmpWidth: Int? = null,
-            var bmpHeight: Int? = null
+            var bmpHeight: Int? = null,
+            // Optional positioned_text border (used by G2; ignored by others).
+            var borderWidth: Int? = null,
+            var borderRadius: Int? = null
     )
     // MARK: - End Unique
 
@@ -928,6 +932,17 @@ class DeviceManager {
                             currentViewState.bmpHeight
                     )
                 }
+            }
+            "positioned_text" -> {
+                sgc?.sendPositionedText(
+                        currentViewState.text,
+                        currentViewState.bmpX ?: 0,
+                        currentViewState.bmpY ?: 0,
+                        currentViewState.bmpWidth ?: 576,
+                        currentViewState.bmpHeight ?: 288,
+                        currentViewState.borderWidth ?: 0,
+                        currentViewState.borderRadius ?: 0
+                )
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1302,11 +1317,15 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        // Optional container position/size — used by bitmap_view and positioned_text (G2).
         val bmpX = (layout["x"] as? Number)?.toInt()
         val bmpY = (layout["y"] as? Number)?.toInt()
         val bmpWidth = (layout["width"] as? Number)?.toInt()
         val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        // Optional positioned_text border (G2).
+        val borderWidth = (layout["borderWidth"] as? Number)?.toInt()
+        val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
 
         var newViewState =
                 ViewState(
@@ -1320,7 +1339,9 @@ class DeviceManager {
                         bmpX,
                         bmpY,
                         bmpWidth,
-                        bmpHeight
+                        bmpHeight,
+                        borderWidth,
+                        borderRadius
                 )
 
         val currentState = viewStates[stateIndex]
@@ -1365,7 +1386,6 @@ class DeviceManager {
 
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
-        message["flash"] = true
         sgc?.startStream(message)
     }
 
@@ -1435,10 +1455,10 @@ class DeviceManager {
     }
 
     fun sendButtonPhotoSettings(requestId: String, size: String) {
-        sendButtonPhotoSettings(requestId, ButtonPhotoSettings(ButtonPhotoSize.fromValue(size)))
+        sendButtonPhotoSettings(requestId, PhotoCaptureDefaults(PhotoSize.fromValue(size)))
     }
 
-    fun sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) {
+    fun sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonPhotoSettings(
             requestId,
@@ -1462,11 +1482,6 @@ class DeviceManager {
         live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
     }
 
-    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
-        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.sendButtonCameraLedSetting(requestId, enabled)
-    }
-
     fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendButtonMaxRecordingTime(requestId, minutes)
@@ -1475,11 +1490,6 @@ class DeviceManager {
     fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraFovSetting(requestId, fov, roiPosition)
-    }
-
-    fun retryOtaVersionCheck() {
-        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
-        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1565,11 +1575,11 @@ class DeviceManager {
             maxRecordingTimeMinutes: Int = 0,
     ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, sound=$sound, " +
                         "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
         sgc?.startVideoRecording(
-                requestId, save, true, sound, width, height, fps, maxRecordingTimeMinutes)
+                requestId, save, sound, width, height, fps, maxRecordingTimeMinutes)
     }
 
     fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
@@ -1606,11 +1616,11 @@ class DeviceManager {
         val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
         val routed =
                 request.copy(
-                    exposureTimeNs = exposureNs?.toDouble(),
-                    iso = manualIso,
+                        exposureTimeNs = exposureNs?.toDouble(),
+                        iso = manualIso,
                 )
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} flash=${routed.flash} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

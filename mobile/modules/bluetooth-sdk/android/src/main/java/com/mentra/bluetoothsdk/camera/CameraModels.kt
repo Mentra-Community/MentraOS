@@ -56,8 +56,8 @@ enum class PhotoCompression(val value: String) {
     }
 }
 
-data class ButtonPhotoSettings(
-    val size: ButtonPhotoSize? = null,
+data class PhotoCaptureDefaults(
+    val size: PhotoSize? = null,
     val mfnr: Boolean? = null,
     val zsl: Boolean? = null,
     val noiseReduction: Boolean? = null,
@@ -71,7 +71,7 @@ data class ButtonPhotoSettings(
     val resetCaptureTuning: Boolean = false,
 )
 
-data class ButtonVideoRecordingSettings(
+data class VideoRecordingDefaults(
     val width: Int,
     val height: Int,
     val fps: Int,
@@ -138,13 +138,13 @@ data class CameraFovResult(
             fallback: CameraFov,
         ): CameraFovResult {
             if (ack.status == "error") {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     ack.errorCode ?: "camera_fov_failed",
                     ack.errorMessage ?: "Camera FOV request failed.",
                 )
             }
             if (!ack.hardwareApplied) {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     "camera_fov_not_applied",
                     "Camera FOV was saved but not applied to hardware.",
                 )
@@ -167,7 +167,6 @@ data class PhotoRequest @JvmOverloads constructor(
     val webhookUrl: String,
     val authToken: String? = null,
     val compress: PhotoCompression = PhotoCompression.MEDIUM,
-    val flash: Boolean = true,
     val save: Boolean = false,
     val sound: Boolean = true,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
@@ -218,7 +217,6 @@ data class PhotoRequest @JvmOverloads constructor(
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
                 compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
-                flash = boolValue(values, "flash") ?: true,
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 exposureTimeNs = exposureTimeNs,

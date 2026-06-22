@@ -22,11 +22,14 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
-    // Optional bitmap_view container position/size (used by G2; ignored by others)
-    var bmpX: Int32?
-    var bmpY: Int32?
-    var bmpWidth: Int32?
-    var bmpHeight: Int32?
+    // Optional container position/size — used by bitmap_view and positioned_text (G2; ignored by others)
+    var bmpX: Int32? = nil
+    var bmpY: Int32? = nil
+    var bmpWidth: Int32? = nil
+    var bmpHeight: Int32? = nil
+    // Optional positioned_text border (used by G2; ignored by others)
+    var borderWidth: Int32? = nil
+    var borderRadius: Int32? = nil
 }
 
 @MainActor
@@ -714,6 +717,19 @@ struct ViewState {
                     width: currentViewState.bmpWidth,
                     height: currentViewState.bmpHeight
                 )
+            case "positioned_text":
+                Bridge.log(
+                    "MAN: positioned_text → text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                )
+                await sgc?.sendPositionedText(
+                    currentViewState.text,
+                    x: currentViewState.bmpX ?? 0,
+                    y: currentViewState.bmpY ?? 0,
+                    width: currentViewState.bmpWidth ?? 576,
+                    height: currentViewState.bmpHeight ?? 288,
+                    borderWidth: currentViewState.borderWidth ?? 0,
+                    borderRadius: currentViewState.borderRadius ?? 0
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -1039,6 +1055,8 @@ struct ViewState {
         let bmpY = (layout["y"] as? NSNumber).map { $0.int32Value }
         let bmpWidth = (layout["width"] as? NSNumber).map { $0.int32Value }
         let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
+        let borderWidth = (layout["borderWidth"] as? NSNumber).map { $0.int32Value }
+        let borderRadius = (layout["borderRadius"] as? NSNumber).map { $0.int32Value }
 
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
@@ -1048,7 +1066,8 @@ struct ViewState {
         var newViewState = ViewState(
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
             text: text, data: data, animationData: nil,
-            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight
+            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight,
+            borderWidth: borderWidth, borderRadius: borderRadius
         )
 
         if layoutType == "bitmap_animation" {
@@ -1067,6 +1086,27 @@ struct ViewState {
             } else {
                 Bridge.log("MAN: ERROR: bitmap_animation missing frames or interval")
             }
+        }
+
+        // positioned_text is a sticky overlay container (e.g. the nav trip-stats
+        // label) that lives ALONGSIDE the main view. It must NOT flow through the
+        // single replaceable viewState[stateIndex] — otherwise the constantly-
+        // refreshing main text_wall (maneuver text) and the minimap bitmap_view
+        // overwrite it every frame and it never renders. Route it straight to the
+        // SGC, which keeps its own persistent text container for that rect.
+        if layoutType == "positioned_text" {
+            Bridge.log(
+                "MAN: positioned_text (sticky) → text='\(text)' rect=\(bmpX ?? 0),\(bmpY ?? 0) \(bmpWidth ?? 576)x\(bmpHeight ?? 288)"
+            )
+            Task { [weak self] in
+                await self?.sgc?.sendPositionedText(
+                    text,
+                    x: bmpX ?? 0, y: bmpY ?? 0,
+                    width: bmpWidth ?? 576, height: bmpHeight ?? 288,
+                    borderWidth: borderWidth ?? 0, borderRadius: borderRadius ?? 0
+                )
+            }
+            return
         }
 
         let cS = viewStates[stateIndex]
@@ -1115,7 +1155,6 @@ struct ViewState {
 
     func startStream(_ message: [String: Any]) {
         var message = message
-        message["flash"] = true
         Bridge.log("MAN: startStream: \(message)")
         sgc?.startStream(message)
     }
@@ -1181,7 +1220,7 @@ struct ViewState {
 
     private func liveSgc() throws -> MentraLive {
         guard let live = sgc as? MentraLive else {
-            throw BluetoothError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
         }
         return live
     }
@@ -1193,20 +1232,16 @@ struct ViewState {
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
         try sendButtonPhotoSettings(
             requestId: requestId,
-            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
+            settings: PhotoCaptureDefaults(size: PhotoSize(normalizedRawValue: size))
         )
     }
 
-    func sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) throws {
+    func sendButtonPhotoSettings(requestId: String, settings: PhotoCaptureDefaults) throws {
         try liveSgc().sendButtonPhotoSettings(requestId: requestId, settings: settings)
     }
 
     func sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) throws {
         try liveSgc().sendButtonVideoRecordingSettings(requestId: requestId, width: width, height: height, fps: fps)
-    }
-
-    func sendButtonCameraLedSetting(requestId: String, enabled: Bool) throws {
-        try liveSgc().sendButtonCameraLedSetting(requestId: requestId, enabled: enabled)
     }
 
     func sendButtonMaxRecordingTime(requestId: String, minutes: Int) throws {
@@ -1215,11 +1250,6 @@ struct ViewState {
 
     func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
-    }
-
-    func retryOtaVersionCheck() {
-        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
-        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /// Request version info from glasses.
@@ -1248,10 +1278,10 @@ struct ViewState {
         _ fps: Int = 0, _ maxRecordingTimeMinutes: Int = 0
     ) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
         sgc?.startVideoRecording(
-            requestId: requestId, save: save, flash: true, sound: sound, width: width, height: height,
+            requestId: requestId, save: save, sound: sound, width: width, height: height,
             fps: fps, maxRecordingTimeMinutes: maxRecordingTimeMinutes
         )
     }
@@ -1334,7 +1364,6 @@ struct ViewState {
             webhookUrl: request.webhookUrl,
             authToken: request.authToken,
             compress: request.compress,
-            flash: request.flash,
             save: request.save,
             sound: request.sound,
             exposureTimeNs: manualExposureNs,
@@ -1349,7 +1378,7 @@ struct ViewState {
             ispAnalogGain: request.ispAnalogGain
         )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") flash=\(routed.flash) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(

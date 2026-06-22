@@ -31,12 +31,15 @@ on-device injection flow). Those two give the full v2 picture.
 
 ## How the pieces relate
 
-All paths converge on one token: the **Ed25519 Mentra access token**
-(`sub = mentraUserId`, `oemId`, ...), verified by services with Mentra's public
-key. OEM users get it via the oem-auth exchange; Mentra-direct users get it via the
-same exchange with reserved `oemId = "mentra"`. The runtime transport
-([`../../002-cloud-runtime/protocol.md`](../../002-cloud-runtime/protocol.md))
-verifies it. Miniapp auto-auth derives a short-lived miniapp-scoped token from it.
+Core-owned paths converge on a Core access token (`aud = "cloud-core"`,
+`sub = mentraUserId`, `oemId`, ...), verified by Core services with the published
+JWKS. OEM users get it via the oem-auth exchange; Mentra-direct users get it via
+the same exchange with reserved `oemId = "mentra"`. Runtime live services are being
+split onto their own `cloud-runtime` audience token so Runtime can be self-hosted
+without a live Core dependency; see
+[`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md).
+Miniapp auto-auth derives a short-lived miniapp-scoped token from the Core-backed
+credential path.
 
 ## Status
 

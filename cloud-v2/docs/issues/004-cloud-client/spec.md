@@ -18,14 +18,19 @@ import { CloudClient } from "@mentra/cloud-client/react-native"   // device
 import { CloudClient } from "@mentra/cloud-client/node"           // tests, dev-stack
 
 const cloud = new CloudClient({
-  endpoints: { core: string; runtime: string; proxy?: string },  // proxy rewrites both if set
-  auth:
-    | { subjectToken: string; subjectTokenType: SubjectTokenType }   // exchanged once
-    | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }  // fetched on demand
-    | { accessToken: string; refreshToken: string },                 // already exchanged
+  endpoints:
+    | { core: string; runtime: string; proxy?: string }   // Core + Runtime
+    | { runtime: string; proxy?: string },                // Runtime-only
+  auth: {
+    runtime:
+      | { source: "core" }                                // Core broker mints cloud-runtime token
+      | { getToken: () => Promise<string> },              // OEM/local runtime-token provider
+    core?: CoreBackedAuthConfig,                          // cloud-core audience, when Core exists
+  },
 })
 
-cloud.auth; cloud.runtime; cloud.core
+cloud.runtime
+cloud.core // present/usable only when Core is configured
 ```
 
 The root import (`@mentra/cloud-client`) is the shared build; it doesn't know what
@@ -44,20 +49,28 @@ interface CloudClientTransports {
 
 ```ts
 interface AuthModule {
-  getAccessToken(): Promise<string>                 // current, refreshing as needed (used by runtime/core)
+  getRuntimeToken(): Promise<string>                // cloud-runtime audience
+  getCoreToken(): Promise<string>                   // cloud-core audience, Core-backed mode only
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>  // cached per package
   readonly identity: { mentraUserId: string; oemId: string }
   onExpired(handler: () => void): () => void        // refresh failed; host must re-auth
 }
 ```
 
-- On first use it exchanges the subject token at
-  `POST /api/client/auth/exchange` for access + refresh, then owns refresh via
-  `POST /api/client/auth/refresh`.
+- `cloud.runtime` uses `getRuntimeToken()` only. Hosted-Core mode configures
+  `runtime: { source: "core" }`, which calls Core/Auth's runtime-token broker.
+  Runtime-only mode supplies `runtime.getToken()` from an OEM auth backend or
+  local/dev issuer without any Core endpoint.
+- In Core-backed mode, `getCoreToken()` and `getMiniappToken` use Core/Auth.
+  `getCoreToken()` is for Core-owned APIs with audience `cloud-core`.
 - `getMiniappToken` calls `POST /api/client/auth/miniapp-token`, caches per
-  packageName, re-mints before expiry. The access token is used only as the Bearer
-  to Mentra's own APIs and is never handed to a miniapp; only the miniapp-scoped
+  packageName, re-mints before expiry. The Core token is used only as the Bearer
+  to Core-owned APIs and is never handed to a miniapp; only the miniapp-scoped
   token is exposed to a miniapp.
+- `identity` is Core-owned identity. Runtime-only tokens may carry identity
+  claims for Runtime authorization/logging, but `cloud.auth.identity`, miniapp
+  token minting, and miniapp auto-auth are unavailable unless `auth.core` and
+  `endpoints.core` are configured.
 
 ## `cloud.runtime`
 
@@ -108,7 +121,8 @@ interface RuntimeSnapshot {
   through the event map, so there are no magic strings. Every `on*`/`on` returns
   an unsubscribe function.
 - `connect()` does the `connection.init` / `connection.ack` handshake (Bearer from
-  `cloud.auth`), reconnect with backoff, and the client-driven liveness ping.
+  `cloud.auth.getRuntimeToken()`), reconnect with backoff, and the client-driven
+  liveness ping.
 - `setSubscriptions` sends `{ subscriptions, sessionId, version }` (full-replace).
   The client owns `version` (monotonic) and echoes the `sessionId` from
   `connection.ack`.
@@ -129,8 +143,9 @@ interface RuntimeSnapshot {
 ## `cloud.core`
 
 The other v2 REST calls the device makes (not the live session, not auth), each sent
-with the access token from `cloud.auth`. It starts small and grows as miniapp-service
-lands.
+with the Core token from `cloud.auth`. It starts small and grows as miniapp-service
+lands. In runtime-only mode, `cloud.core` is absent; Core-owned APIs fail clearly
+instead of being routed to Runtime.
 
 ```ts
 interface CoreModule {

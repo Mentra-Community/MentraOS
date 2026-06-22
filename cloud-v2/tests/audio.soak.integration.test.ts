@@ -48,6 +48,16 @@ const N_CLIENTS = Number.parseInt(process.env.AUDIO_SOAK_N ?? "30", 10);
     publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
+  // Runtime verifies cloud-runtime tokens against these issuers; trust the
+  // cloud-core issuer Core brokers its runtime tokens from (see issueRuntimeToken).
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS ??= JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.MONGO_URL ??=
     "mongodb://127.0.0.1:27017/mentra-cloud-v2-soak-test";
   // Distinct Redis DB so this test doesn't share keys with other suites.

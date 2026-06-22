@@ -1,4 +1,4 @@
-# Depth review (Claude 4.6)
+# Depth review
 
 You are reviewing a pull request for **logic, correctness, and integration risk** in MentraOS.
 

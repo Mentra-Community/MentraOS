@@ -1,10 +1,13 @@
 # Cloud Core Auth: v2 API spec
 
-**TL;DR:** The v2 auth contract: the endpoints and token shapes the cloud-client
-and developer backends build against. Every actor (OEM user, Mentra user, miniapp)
-converges on one Ed25519 access token via RFC 8693 token exchange; a miniapp gets a
-short-lived audience-pinned token derived from it. This doc is endpoints + token
-shapes only.
+**TL;DR:** The v2 Core auth contract: the endpoints and token shapes the
+cloud-client and developer backends build against for Core-owned APIs. Every actor
+(OEM user, Mentra user, miniapp) can obtain a Core credential via RFC 8693 token
+exchange; a miniapp gets a short-lived audience-pinned token derived from that
+Core-backed path. Runtime live services are split onto a separate
+`cloud-runtime` audience token in
+[`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md).
+This doc is endpoints + token shapes only.
 
 New here? Read [`README.md`](./README.md) for the map and [`concepts.md`](./concepts.md)
 for the from-zero primer. The mechanisms behind these endpoints live in the sibling
@@ -33,26 +36,35 @@ product implied by the domain (no version segment; a future break would take
 
 ## Tokens
 
-### Access token (recap, from oem-auth)
+### Core access token
 
 Ed25519 JWT, signed with the **access-token key**. Claims: `sub = mentraUserId`,
-`oemId`, `sessionId`, `jti`, `aud`, `iss`, `exp` (1h). The device's credential to
-Mentra (runtime and core). Held by the cloud-client, **never** given to a miniapp.
+`oemId`, `sessionId`, `jti`, `aud = "cloud-core"`, `iss`, `exp` (1h). The
+device's credential to Core-owned APIs. Held by the cloud-client, **never** given
+to a miniapp.
+
+### Runtime token
+
+Separate JWT with `aud = "cloud-runtime"` for Runtime Services. In
+Mentra-hosted deployments, Core/Auth can mint or broker this token after verifying
+the OEM subject token. In OEM-hosted deployments, the runtime may trust an OEM
+issuer/JWKS directly and Core is not required for live services. The runtime token
+contract is tracked in issue 007.
 
 ### Miniapp-scoped token
 
 Ed25519 JWT, signed with a **separate miniapp-token key**. Claims:
-`sub = mentraUserId`, `oemId`, `aud = <packageName>`, `iss = "mentra"`, `iat`,
-`exp` (configurable, default 1h), `jti`. Audience-pinned to one miniapp; only ever
-valid against that miniapp's developer backend, which verifies it via JWKS. This
-is the only token a miniapp ever holds.
+`sub = mentraUserId`, `oemId`, `aud = <packageName>`, `iss = "cloud-core"`,
+`iat`, `exp` (configurable, default 1h), `jti`. Audience-pinned to one miniapp;
+only ever valid against that miniapp's developer backend, which verifies it via
+JWKS. This is the only token a miniapp ever holds.
 
 ## Endpoints
 
 ### `POST /api/client/auth/exchange`
 
 RFC 8693 token exchange. The mobile client presents a subject token and gets back
-Mentra tokens. `subject_token_type` selects the verification path:
+Core-backed tokens. `subject_token_type` selects the verification path:
 
 | subject token | verified with | `oemId` | `oemUserId` |
 | --- | --- | --- | --- |
@@ -62,33 +74,47 @@ Mentra tokens. `subject_token_type` selects the verification path:
 
 Maps `(oemId, oemUserId)` to the user's `_id` (the `mentraUserId`), creating the
 record on first sight. Returns `{ access_token, refresh_token, token_type,
-expires_in }`. Verification details, supported algorithms, and `jti` replay
-protection are in [`oem-auth.md`](./oem-auth.md).
+expires_in }`, where `access_token` is the Core access token unless a future
+response explicitly asks for a runtime token. Verification details, supported
+algorithms, and `jti` replay protection are in [`oem-auth.md`](./oem-auth.md).
 
 ### `POST /api/client/auth/refresh`
 
-`grant_type=refresh_token`. Returns a new access token and a **rotated** refresh
-token (the old one is invalidated). The OEM backend is not in this path.
+`grant_type=refresh_token`. Returns a new Core access token and a **rotated**
+refresh token (the old one is invalidated). The OEM backend is not in this path.
 
 ### `POST /api/client/auth/miniapp-token`
 
 ```
-Authorization: Bearer <access token>
+Authorization: Bearer <cloud-core token>
 { "packageName": "com.dev.app" }
 ->  { "token": "<ed25519 jwt>", "expiresAt": <unix seconds> }
 ```
 
-Verifies the access token, reads `mentraUserId` + `oemId`, and mints the
+Verifies the Core token, reads `mentraUserId` + `oemId`, and mints the
 miniapp-scoped token with `aud = packageName`. **No install or entitlement
-check**: a valid access token plus the requested packageName is sufficient, and
+check**: a valid Core token plus the requested packageName is sufficient, and
 the on-device Runtime enforces that a bundle can only request its own packageName.
 TTL is configurable (default 1h) so tests can shorten it. This is what
 `cloud.auth.getMiniappToken` calls.
 
+### `POST /api/client/auth/runtime-token`
+
+```
+Authorization: Bearer <cloud-core token>
+->  { "access_token": "<cloud-runtime jwt>", "token_type": "Bearer", "expires_in": 900 }
+```
+
+Verifies the Core token, reads `mentraUserId` + `oemId`, and mints a short-lived
+Runtime token with `aud = "cloud-runtime"`. Hosted-Core CloudClient mode uses
+this endpoint explicitly via `auth.runtime = { source: "core" }`. Runtime
+Services verify the token locally against their configured issuer/JWKS list.
+
 ### `GET /.well-known/jwks.json`
 
 Publishes Mentra's public keys in JWK form, each with a `kid`. Developer backends
-fetch it to verify miniapp tokens; services verify access tokens the same way.
+fetch it to verify miniapp tokens; Core services verify Core access tokens the
+same way. Runtime token verification is deployment-configured in issue 007.
 
 ## Signing keys
 
@@ -104,9 +130,12 @@ client coordination is needed.
 
 ## How the cloud-client uses this
 
-- Constructed with a **subject token** (the OEM-minted JWT, or the Mentra core
-  token), or a `getSubjectToken()` callback. It calls `/exchange` to get the
-  access + refresh tokens and owns refresh via `/refresh`.
+- In Core-backed mode, constructed with a **subject token** (the OEM-minted JWT,
+  or the Mentra core token), or a `getSubjectToken()` callback. It calls
+  `/exchange` to get Core access + refresh tokens and owns refresh via `/refresh`.
+- Runtime uses its own `cloud-runtime` token provider. Hosted deployments may
+  source that provider through Core/Auth; runtime-only deployments do not need a
+  Core endpoint.
 - Calls `/miniapp-token` per running miniapp's packageName, caches per package,
   and re-mints before expiry. It hands the miniapp only the miniapp-scoped token.
 - Developer backends (not the client) fetch the JWKS to verify.

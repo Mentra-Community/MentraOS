@@ -49,27 +49,27 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
         case .poweredOn:
             return
         case .poweredOff:
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "bluetooth_powered_off",
                 message: "Turn on phone Bluetooth to \(operation)."
             )
         case .unauthorized:
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "bluetooth_unauthorized",
                 message: "Allow Bluetooth access to \(operation)."
             )
         case .unsupported:
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "bluetooth_unsupported",
                 message: "This phone does not support Bluetooth."
             )
         case .resetting, .unknown:
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "bluetooth_not_ready",
                 message: "Bluetooth is not ready yet. Try again."
             )
         @unknown default:
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "bluetooth_unavailable",
                 message: "Bluetooth is unavailable. Try again."
             )

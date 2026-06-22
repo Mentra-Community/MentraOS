@@ -2,7 +2,8 @@
 
 **Status:** Spec. The camera runtime service: managed photo and managed stream.
 Both are client-initiated REST on the runtime domain, with no coupling to the
-audio session or its owner pod (any pod serves them). Auth is the access token.
+audio session or its owner pod (any pod serves them). Auth is the `cloud-runtime`
+token.
 
 Functionally this is what v1 already does, but **managed**: the cloud brokers
 capture and storage and the mobile client drives the control plane over REST.
@@ -16,7 +17,7 @@ learns of completion from the storage provider's event, then notifies the phone.
 
 1. `POST /api/camera/photo`
    ```
-   Authorization: Bearer <access token>
+   Authorization: Bearer <cloud-runtime token>
    { "size"?: "small|medium|large|full", "compress"?: "none|medium|heavy", "saveToGallery"?: bool, "sound"?: bool }
    -> { "requestId": string, "uploadUrl": string, "readUrl": string }
    ```
