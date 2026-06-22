@@ -227,6 +227,8 @@ class BluetoothSdkModule : Module() {
             "settings_ack",
             "version_info",
             "pair_failure",
+            "pairing_info",
+            "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -458,6 +460,15 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
+
+        AsyncFunction("wipeMediaForPairing") {
+            val result = requireSdk().wipeMediaForPairing()
+            mapOf("success" to result.success)
+        }
+
+        AsyncFunction("finalizePairingTransfer") { requireSdk().finalizePairingTransfer() }
+
+        AsyncFunction("abortPairingTransfer") { requireSdk().abortPairingTransfer() }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
