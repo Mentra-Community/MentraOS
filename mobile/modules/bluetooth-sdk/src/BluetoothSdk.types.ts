@@ -943,6 +943,20 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   *
+   * The phone sends a {@code camera_tuning_config} BLE command; the glasses relay it as a
+   * {@code camconfig} broadcast to the camera HAL so parameters take effect without a reboot.
+   *
+   * **Scan-mode convention**: call with `(false, false)` when activating scan mode to disable ANR
+   * and pixsmart gain for sharper text/barcode captures. Call with `(true, true)` to restore
+   * defaults when exiting scan mode.
+   *
+   * @param anrOn  `true` = ANR enabled (default), `false` = ANR disabled
+   * @param gainOn `true` = stock gain params (default), `false` = pixsmart gain-off params
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   startVideoRecording(

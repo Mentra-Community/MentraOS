@@ -202,6 +202,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Apply saved camera FOV on start (K900) so last user choice survives reboot
             applySavedCameraFovOnStart();
 
+            // Apply saved camera tuning config (ANR/gain) so HAL tuning survives reboot
+            applySavedCameraTuningOnStart();
+
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
             initializeWifiDebouncing();
@@ -733,6 +736,25 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
         } catch (Exception e) {
             Log.w(TAG, "Could not apply saved camera FOV on start", e);
+        }
+    }
+
+    /** Apply saved camera tuning (ANR / gain) on service start so HAL config survives reboot. */
+    private void applySavedCameraTuningOnStart() {
+        try {
+            if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+                return;
+            }
+            var asgSettings = serviceInitializer.getServiceManager().getAsgSettings();
+            if (asgSettings == null) {
+                return;
+            }
+            boolean anrOn = asgSettings.isCameraAnrEnabled();
+            boolean gainOn = asgSettings.isCameraGainEnabled();
+            SystemControllerFactory.get(this).setCameraTuningConfig(anrOn, gainOn);
+            Log.d(TAG, "Applied saved camera tuning on start: anr=" + anrOn + ", gain=" + gainOn);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not apply saved camera tuning on start", e);
         }
     }
 

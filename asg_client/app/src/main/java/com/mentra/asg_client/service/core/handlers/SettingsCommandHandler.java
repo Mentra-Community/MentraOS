@@ -48,7 +48,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                 "button_max_recording_time",
                 "button_photo_setting",
                 "button_mode_setting",
-                "camera_fov_setting");
+                "camera_fov_setting",
+                "camera_tuning_config");
     }
 
     @Override
@@ -67,6 +68,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                     return handleButtonModeSetting(data);
                 case "camera_fov_setting":
                     return handleCameraFovSetting(data);
+                case "camera_tuning_config":
+                    return handleCameraTuningConfig(data);
                 default:
                     Log.e(TAG, "Unsupported settings command: " + commandType);
                     return false;
@@ -485,6 +488,57 @@ public class SettingsCommandHandler implements ICommandHandler {
             sendSettingsAck(requestId, setting, STATUS_ERROR, values);
         } catch (Exception e) {
             Log.e(TAG, "Failed to send settings error for " + setting, e);
+        }
+    }
+
+    /**
+     * Handle camera_tuning_config command. Persists ANR and gain flags and immediately applies them
+     * via a {@code camconfig} broadcast to SystemUI.
+     *
+     * <p>Expected JSON fields (both optional; omitted fields keep the stored value):
+     * <ul>
+     *   <li>{@code anr} – boolean; {@code true} = ANR on, {@code false} = ANR off</li>
+     *   <li>{@code gain} – boolean; {@code true} = stock gain, {@code false} = pixsmart gain-off</li>
+     * </ul>
+     */
+    private boolean handleCameraTuningConfig(JSONObject data) {
+        try {
+            String requestId = getRequestId(data);
+
+            AsgSettings asgSettings = serviceManager.getAsgSettings();
+            if (asgSettings == null) {
+                Log.e(TAG, "Settings not available for camera_tuning_config");
+                sendSettingsError(
+                        requestId,
+                        "camera_tuning",
+                        "settings_unavailable",
+                        "Settings are not available.");
+                return false;
+            }
+
+            boolean anrOn = data.has("anr") ? data.optBoolean("anr", true) : asgSettings.isCameraAnrEnabled();
+            boolean gainOn = data.has("gain") ? data.optBoolean("gain", true) : asgSettings.isCameraGainEnabled();
+
+            asgSettings.setCameraAnrEnabled(anrOn);
+            asgSettings.setCameraGainEnabled(gainOn);
+            Log.d(TAG, "Camera tuning config saved: anr=" + anrOn + ", gain=" + gainOn);
+
+            Context context = serviceManager.getContext();
+            if (context != null) {
+                SystemControllerFactory.get(context).setCameraTuningConfig(anrOn, gainOn);
+                Log.d(TAG, "Camera tuning config applied via broadcast");
+            } else {
+                Log.w(TAG, "Context not available; tuning persisted but broadcast not sent");
+            }
+
+            JSONObject values = new JSONObject();
+            values.put("anr", anrOn);
+            values.put("gain", gainOn);
+            sendSettingsAck(requestId, "camera_tuning", STATUS_APPLIED, values);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera_tuning_config", e);
+            return false;
         }
     }
 

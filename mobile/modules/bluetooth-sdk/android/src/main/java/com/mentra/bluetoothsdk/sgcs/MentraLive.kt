@@ -8109,6 +8109,36 @@ class MentraLive : SGCManager() {
     }
 
     /**
+     * Send camera tuning config (ANR / gain) to the glasses via the {@code camera_tuning_config}
+     * command. The ASG client relays this as a {@code camconfig} broadcast to the camera HAL.
+     *
+     * @param requestId optional request ID echoed in the settings_ack response
+     * @param anrOn     {@code true} = ANR enabled, {@code false} = ANR disabled
+     * @param gainOn    {@code true} = stock gain params, {@code false} = pixsmart gain-off params
+     */
+    fun sendCameraTuningConfig(requestId: String?, anrOn: Boolean, gainOn: Boolean) {
+        Bridge.log("LIVE: Sending camera tuning config: anr=$anrOn, gain=$gainOn")
+
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send camera tuning config - not connected")
+            return
+        }
+
+        try {
+            val json = JSONObject()
+            json.put("type", "camera_tuning_config")
+            if (!requestId.isNullOrEmpty()) {
+                json.put("request_id", requestId)
+            }
+            json.put("anr", anrOn)
+            json.put("gain", gainOn)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating camera tuning config message", e)
+        }
+    }
+
+    /**
      * Send button max recording time to glasses Matches iOS MentraLive.swift
      * sendButtonMaxRecordingTime pattern
      */
