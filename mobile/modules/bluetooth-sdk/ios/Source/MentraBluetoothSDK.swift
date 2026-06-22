@@ -176,6 +176,7 @@ public final class MentraBluetoothSDK {
     private var pendingStreamStarts: [String: PendingResponse<StreamStatusEvent>] = [:]
     private var pendingStreamStop: (streamId: String?, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
+    private var pendingWipeMedia: PendingResponse<WipeMediaResultEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
     private var pendingWifiScan: PendingWifiScan?
@@ -799,6 +800,38 @@ public final class MentraBluetoothSDK {
             }
             throw error
         }
+    }
+
+    public func wipeMediaForPairing() async throws -> WipeMediaResultEvent {
+        if pendingWipeMedia != nil {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A wipe media request is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<WipeMediaResultEvent>(operation: "wipe media for pairing")
+        pendingWipeMedia = pending
+        DeviceManager.shared.sendWipeMediaForPairing()
+        do {
+            let event = try await pending.wait()
+            if pendingWipeMedia === pending {
+                pendingWipeMedia = nil
+            }
+            return event
+        } catch {
+            if pendingWipeMedia === pending {
+                pendingWipeMedia = nil
+            }
+            throw error
+        }
+    }
+
+    public func finalizePairingTransfer() {
+        DeviceManager.shared.sendPairingFinalize()
+    }
+
+    public func abortPairingTransfer() {
+        DeviceManager.shared.sendPairingAbort()
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
@@ -1739,6 +1772,12 @@ public final class MentraBluetoothSDK {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
+        case "pairing_info":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
+        case "wipe_media_result":
+            let event = WipeMediaResultEvent(values: data)
+            pendingWipeMedia?.resolve(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "wipe_media_result", values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
             handlePhotoResponseForRequests(event)
