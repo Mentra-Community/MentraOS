@@ -67,7 +67,12 @@ export const directionsRequestSchema = z.object({
   /** Defaults to "driving" when omitted. */
   mode: travelModeSchema.optional(),
   avoid: routeAvoidancesSchema.optional(),
-  /** Up to N alternate routes (provider permitting). Default 1. */
+  /**
+   * Total number of routes to return — the primary plus any alternates, provider
+   * permitting. 1 (the default) means the primary route only, no alternates; a
+   * value > 1 asks the provider for alternates. (Mirrors the prior on-device
+   * behavior: Mapbox `alternatives` is requested only when this exceeds 1.)
+   */
   alternatives: z.number().int().positive().optional(),
 });
 export type DirectionsRequest = z.infer<typeof directionsRequestSchema>;

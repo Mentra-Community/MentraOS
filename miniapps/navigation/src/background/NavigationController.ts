@@ -1754,11 +1754,17 @@ export class NavigationController {
     this.lastOffRouteBucket = 0
     this.offRouteAdvisory = false
     this.offRouteAdvisoryDistanceM = null
+    this.cachedInstructions = null
     try {
       this.navigation.stop()
     } catch {
       /* ignore */
     }
+    // If the large map is up at arrival, drop out of it so the "You have
+    // arrived" HUD can actually paint — refreshHUD() early-returns while
+    // largeMapShown, and the caller refreshes the HUD right after this returns.
+    // Mirrors the SDK arrived handler, which also exits the large map here.
+    this.exitLargeMap()
     this.ui.send("nav:trip-state", this.trip)
   }
 
