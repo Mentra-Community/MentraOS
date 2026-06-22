@@ -1,6 +1,6 @@
 import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -21,6 +21,8 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 
+const PAIRING_SCAN_TIMEOUT_MS = 15_000
+
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel} = useLocalSearchParams() as {deviceModel: DeviceModel}
   const {theme} = useAppTheme()
@@ -31,16 +33,11 @@ export default function SelectGlassesBluetoothScreen() {
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
-
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     setRememberedSearchResults([])
-  //   }, [setRememberedSearchResults]),
-  // )
+  const [scanTimedOut, setScanTimedOut] = useState(false)
+  const connectingRef = useRef(false)
+  const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
 
   focusEffectPreventBack((event) => {
-    // Skip cleanup when navigating forward (e.g. replace() to btclassic) —
-    // only run on actual back navigation.
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
@@ -68,6 +65,23 @@ export default function SelectGlassesBluetoothScreen() {
 
     void initializeAndSearchForDevices()
   }, [])
+
+  useEffect(() => {
+    if (!isMentraLivePairingScan) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      if (!connectingRef.current) {
+        setScanTimedOut(true)
+        void BluetoothSdk.stopScan()
+      }
+    }, PAIRING_SCAN_TIMEOUT_MS)
+
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [isMentraLivePairingScan])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {
@@ -106,13 +120,11 @@ export default function SelectGlassesBluetoothScreen() {
         })
       }, 2000)
       push("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
-      // push("/pairing/success", {deviceModel: deviceModel})
       return
     }
 
     await BluetoothSdk.setDefaultDevice(device)
     setDeviceName(device.name)
-    // pair bt classic first:
     replace("/pairing/btclassic")
     pushUnder("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }
@@ -126,12 +138,10 @@ export default function SelectGlassesBluetoothScreen() {
     return newName
   }
 
-  // remember the search results to ensure consistent ordering:
   useEffect(() => {
     setRememberedSearchResults((prev) => {
       const combined = [...prev]
       for (const result of searchResults) {
-        // if the device model is not our current device model, skip it:
         if (result.model !== deviceModel) {
           continue
         }
@@ -141,11 +151,27 @@ export default function SelectGlassesBluetoothScreen() {
       }
       return combined
     })
-  }, [searchResults])
+  }, [searchResults, deviceModel])
 
   const visibleResults = rememberedSearchResults.filter(
     (r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel,
   )
+
+  useEffect(() => {
+    if (!isMentraLivePairingScan || scanTimedOut || connectingRef.current || visibleResults.length !== 1) {
+      return
+    }
+
+    connectingRef.current = true
+    void triggerGlassesPairingGuide(visibleResults[0])
+  }, [isMentraLivePairingScan, scanTimedOut, visibleResults])
+
+  const handleTryAgain = () => {
+    connectingRef.current = false
+    setScanTimedOut(false)
+    setRememberedSearchResults([])
+    goBack()
+  }
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -159,10 +185,19 @@ export default function SelectGlassesBluetoothScreen() {
           />
           <Text
             className="text-center text-xl font-semibold text-text-dim"
-            text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
+            text={
+              scanTimedOut
+                ? translate("pairing:noGlassesFound")
+                : translate("pairing:scanningForGlassesModel", {model: deviceModel})
+            }
           />
 
-          {visibleResults.length === 0 ? (
+          {scanTimedOut ? (
+            <View className="gap-4 py-4">
+              <Text className="text-center text-sm text-muted-foreground" tx="pairing:noGlassesFoundHint" />
+              <Button preset="primary" tx="pairing:tryAgain" onPress={handleTryAgain} className="w-full" />
+            </View>
+          ) : visibleResults.length === 0 || (isMentraLivePairingScan && visibleResults.length === 1) ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
@@ -170,7 +205,7 @@ export default function SelectGlassesBluetoothScreen() {
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
                 {visibleResults.map((res: Device) => {
-                  let deviceName = filterDeviceName(res.name)
+                  const deviceName = filterDeviceName(res.name)
 
                   return (
                     <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
@@ -189,10 +224,14 @@ export default function SelectGlassesBluetoothScreen() {
               </Group>
             </ScrollView>
           )}
-          <Divider />
-          <View className="flex-row justify-end">
-            <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
-          </View>
+          {!scanTimedOut && (
+            <>
+              <Divider />
+              <View className="flex-row justify-end">
+                <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+              </View>
+            </>
+          )}
         </GlassView>
       </View>
       <Button
