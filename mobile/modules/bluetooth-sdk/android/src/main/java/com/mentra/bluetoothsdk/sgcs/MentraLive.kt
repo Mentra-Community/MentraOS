@@ -126,6 +126,18 @@ class MentraLive : SGCManager() {
                 10000 // 10 seconds for reconnection scans (faster than 60s default)
         private const val POST_SHUTDOWN_RECONNECT_DELAY_MS =
                 10_000L // 10s before first scan after shutdown
+
+        private const val MENTRA_MANUFACTURER_ID = 0xB822
+        private const val ADV_MANUF_PAIRING_FLAG_OFFSET = 5
+        private const val ADV_PAIRING_DISCOVERABLE: Byte = 0x01
+
+        private fun isPairingDiscoverable(result: ScanResult): Boolean {
+            val manufData = result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
+            if (manufData == null || manufData.size <= ADV_MANUF_PAIRING_FLAG_OFFSET) {
+                return false
+            }
+            return manufData[ADV_MANUF_PAIRING_FLAG_OFFSET] == ADV_PAIRING_DISCOVERABLE
+        }
         private const val SHUTDOWN_RECENT_MS = 45_000L // Consider "recent shutdown" for 45s
 
         // Keep-alive parameters
@@ -965,6 +977,11 @@ class MentraLive : SGCManager() {
                                     deviceName.startsWith("MENTRA_LIVE_BT") ||
                                     deviceName.lowercase().startsWith("mentra_live")
                     ) {
+                        val isReconnectTarget =
+                                savedDeviceName != null && savedDeviceName == deviceName
+                        if (!isReconnectTarget && !isPairingDiscoverable(result)) {
+                            return
+                        }
                         val glassType = if (deviceName == "Xy_A") "Standard" else "K900"
                         Bridge.log(
                                 "LIVE: Found compatible " +
@@ -2913,6 +2930,10 @@ class MentraLive : SGCManager() {
             "pong" ->
                     // Process heartbeat pong response
                     Bridge.log("LIVE: Received pong response - connection healthy")
+            "pairing_info" ->
+                    Bridge.sendPairingInfo(json.optBoolean("had_previous_bond", false))
+            "wipe_media_result" ->
+                    Bridge.sendWipeMediaResult(json.optBoolean("success", false))
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
@@ -4646,6 +4667,37 @@ class MentraLive : SGCManager() {
             Log.e(TAG, "📱 Error creating ota_query_status command", e)
         }
     }
+
+    fun sendWipeMedia() {
+        try {
+            val json = JSONObject()
+            json.put("type", "wipe_media")
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating wipe_media command", e)
+        }
+    }
+
+    fun sendPairingFinalize() {
+        try {
+            val json = JSONObject()
+            json.put("type", "pairing_finalize")
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating pairing_finalize command", e)
+        }
+    }
+
+    fun sendPairingAbort() {
+        try {
+            val json = JSONObject()
+            json.put("type", "pairing_abort")
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating pairing_abort command", e)
+        }
+    }
+
 
     /**
      * Request version info from glasses. Glasses will respond with version_info message containing
