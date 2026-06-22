@@ -763,3 +763,17 @@ public struct GalleryStatusEvent: CustomStringConvertible {
         "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }
 }
+
+public struct WipeMediaResultEvent: CustomStringConvertible {
+    public let success: Bool
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+        self.success = values["success"] as? Bool ?? false
+    }
+
+    public var description: String {
+        "WipeMediaResultEvent(success: \(success))"
+    }
+}
