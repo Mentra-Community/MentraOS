@@ -27,6 +27,9 @@ COPY packages/proxy/package.json ./packages/proxy/
 COPY packages/cloud-client/package.json ./packages/cloud-client/
 COPY test/test-oem/package.json ./test/test-oem/
 COPY test/test-client/package.json ./test/test-client/
+COPY websites/admin/package.json ./websites/admin/
+COPY websites/console/package.json ./websites/console/
+COPY websites/portal/package.json ./websites/portal/
 
 # Install (frozen lockfile so reproducible deploys).
 RUN bun install --frozen-lockfile
