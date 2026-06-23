@@ -145,6 +145,17 @@ internal object NimoProtocol {
     const val WIDGET_TEXT_APPEND = 0x01
     const val WIDGET_PICTURE = 0x80
 
+    // navigation widget resIds (appId 0x01): mini map 0x00, arrow 0x01, turn text 0x02,
+    // status bar 0x03 (raw), tip 0x04, large map 0x05.
+    const val NAV_RES_MINI_MAP = 0x00
+    const val NAV_RES_TURN_TEXT = 0x02
+    const val NAV_RES_LARGE_MAP = 0x05
+
+    // navigation image widget sizes (hard firmware requirements; see IMAGE_PROTOCOL).
+    const val NAV_MINI_MAP_SIZE = 160
+    const val NAV_LARGE_MAP_WIDTH = 452
+    const val NAV_LARGE_MAP_HEIGHT = 170
+
     // phone types
     const val PHONE_TYPE_OTHER = 0x02
 
@@ -1159,6 +1170,23 @@ class Nimo : SGCManager() {
         sendTextWall(top + "\n\n" + bottom)
     }
 
+    override fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int
+    ) {
+        // Navigation pushes turn text via positioned_text. Nimo widgets have fixed geometry, so
+        // position/border are ignored — funnel the text through the same coalesced path as
+        // sendTextWall so it renders on the ASR note page. Without this override the base no-op
+        // silently dropped all navigation text.
+        // Bridge.log("NIMO: sendPositionedText(text=$text)")
+        // pendingText = text
+    }
+
     override fun displayBitmap(
             base64ImageData: String,
             x: Int?,
@@ -1167,12 +1195,14 @@ class Nimo : SGCManager() {
             height: Int?
     ): Boolean {
         // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
-        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp). The mini-map is the only
-        // bitmap consumer today and is square, so it maps cleanly with no aspect distortion.
-        // The nav app must be foregrounded before pushing content (mirrors the text path).
-        // TODO: hardware-verify the nav app-mode (standalone vs popup) and enter/exit churn.
-        val targetWidth = 160
-        val targetHeight = 160
+        // large-map widget (appId 0x01, resId 0x05, 452x170 2bpp) — the full-width nav map,
+        // which shows far more than the small 160x160 mini-map (resId 0x00). bitmapToGrayscale
+        // aspect-fits onto black, so a non-matching source aspect letterboxes rather than
+        // distorts. The nav app must be foregrounded before pushing content (mirrors the text
+        // path). TODO: hardware-verify the large-map widget renders and the nav app-mode.
+        val targetWidth = NimoProtocol.NAV_LARGE_MAP_WIDTH
+        val targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
+        Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=$navAppEntered)")
         return try {
             val imageBytes = Base64.decode(base64ImageData, Base64.DEFAULT)
             val bitmap =
@@ -1209,7 +1239,7 @@ class Nimo : SGCManager() {
                     NimoFrameCodec.updateContentFrames(
                             appId = NimoProtocol.APP_ID_NAV,
                             layoutId = 0,
-                            resId = 0,
+                            resId = NimoProtocol.NAV_RES_LARGE_MAP,
                             resType = NimoProtocol.WIDGET_PICTURE,
                             content = content
                     )
@@ -2209,6 +2239,8 @@ class Nimo : SGCManager() {
         if (handshakeState != HandshakeState.READY) return
         pendingText = null
 
+        // All text (text_wall / double_text_wall / reference_card / positioned_text) renders on
+        // the ASR note page — the only text surface confirmed to render on hardware.
         Bridge.log("NIMO: text → glasses (enterApp=${!textAppEntered}): \"${text.take(60)}\"")
         if (!textAppEntered) {
             sendFrame(
@@ -2440,7 +2472,12 @@ class Nimo : SGCManager() {
             val p = pixels[i]
             val luminance =
                     (0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)).toInt()
-            gray[i] = luminance.coerceIn(0, 255).toByte()
+            // Invert luminance. MentraOS app bitmaps follow the platform convention of dark
+            // content on a light background (see BitmapJavaUtils: gray<128 -> "black"). Nimo's
+            // additive display lights up high 2bpp values (3 = white), so sending luma as-is
+            // lights the whole lens for the background and leaves the content dark — the
+            // inverted look. 255 - luma flips it so content renders lit on a dark lens.
+            gray[i] = (255 - luminance.coerceIn(0, 255)).toByte()
         }
         scaled.recycle()
         return gray

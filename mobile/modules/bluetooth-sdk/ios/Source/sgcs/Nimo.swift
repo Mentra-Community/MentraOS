@@ -115,6 +115,17 @@ enum NimoProtocol {
     static let WIDGET_TEXT_NEW = 0x00
     static let WIDGET_PICTURE = 0x80
 
+    // navigation widget resIds (appId 0x01): mini map 0x00, arrow 0x01, turn text 0x02,
+    // status bar 0x03 (raw), tip 0x04, large map 0x05.
+    static let NAV_RES_MINI_MAP = 0x00
+    static let NAV_RES_TURN_TEXT = 0x02
+    static let NAV_RES_LARGE_MAP = 0x05
+
+    // navigation image widget sizes (hard firmware requirements; see IMAGE_PROTOCOL).
+    static let NAV_MINI_MAP_SIZE = 160
+    static let NAV_LARGE_MAP_WIDTH = 452
+    static let NAV_LARGE_MAP_HEIGHT = 170
+
     // phone types
     static let PHONE_TYPE_IOS = 0x01
 
@@ -806,16 +817,30 @@ class Nimo: NSObject, SGCManager {
         await sendTextWall(top + "\n\n" + bottom)
     }
 
+    func sendPositionedText(
+        _ text: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
+        borderWidth _: Int32, borderRadius _: Int32
+    ) async {
+        // Navigation pushes turn text via positioned_text. Nimo widgets have fixed geometry, so
+        // position/border are ignored — funnel the text through the same coalesced path as
+        // sendTextWall so it renders on the ASR note page. Without this override the base no-op
+        // silently dropped all navigation text.
+        // Bridge.log("NIMO: sendPositionedText(text=\(text))")
+        // pendingText = text
+    }
+
     func displayBitmap(
         base64ImageData: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?
     ) async -> Bool {
         // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
-        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp). The mini-map is the only
-        // bitmap consumer today and is square, so it maps cleanly with no aspect distortion.
-        // The nav app must be foregrounded before pushing content (mirrors the text path).
-        // TODO: hardware-verify the nav app-mode (standalone vs popup) and enter/exit churn.
-        let targetWidth = 160
-        let targetHeight = 160
+        // large-map widget (appId 0x01, resId 0x05, 452x170 2bpp) — the full-width nav map,
+        // which shows far more than the small 160x160 mini-map (resId 0x00). bitmapToGrayscale
+        // aspect-fits onto black, so a non-matching source aspect letterboxes rather than
+        // distorts. The nav app must be foregrounded before pushing content (mirrors the text
+        // path). TODO: hardware-verify the large-map widget renders and the nav app-mode.
+        let targetWidth = NimoProtocol.NAV_LARGE_MAP_WIDTH
+        let targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
+        Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=\(navAppEntered))")
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {
@@ -849,7 +874,7 @@ class Nimo: NSObject, SGCManager {
         let frames = NimoFrameCodec.updateContentFrames(
             appId: NimoProtocol.APP_ID_NAV,
             layoutId: 0,
-            resId: 0,
+            resId: NimoProtocol.NAV_RES_LARGE_MAP,
             resType: NimoProtocol.WIDGET_PICTURE,
             content: content
         )
@@ -1368,6 +1393,8 @@ class Nimo: NSObject, SGCManager {
         guard let text = pendingText, handshakeState == .ready else { return }
         pendingText = nil
 
+        // All text (text_wall / double_text_wall / reference_card / positioned_text) renders on
+        // the ASR note page — the only text surface confirmed to render on hardware.
         if !textAppEntered {
             sendFrame(
                 NimoFrameCodec.encodeFrame(
@@ -1631,11 +1658,18 @@ class Nimo: NSObject, SGCManager {
 
         guard let buffer = context.data else { return nil }
         // CGContext rows are top-down here; copy row by row in case bytesPerRow != width.
+        // Invert luminance (255 - value): MentraOS app bitmaps follow the platform convention
+        // of dark content on a light background, but Nimo's additive display lights up high
+        // 2bpp values (3 = white). Without inverting, the background lights the whole lens and
+        // the content stays dark — the inverted look. Flipping renders content lit on a dark lens.
         var gray = Data(capacity: width * height)
         let bytesPerRow = context.bytesPerRow
+        let base = buffer.assumingMemoryBound(to: UInt8.self)
         for row in 0 ..< height {
-            let rowStart = buffer.advanced(by: row * bytesPerRow)
-            gray.append(Data(bytes: rowStart, count: width))
+            let rowOffset = row * bytesPerRow
+            for col in 0 ..< width {
+                gray.append(255 - base[rowOffset + col])
+            }
         }
         return gray
     }
