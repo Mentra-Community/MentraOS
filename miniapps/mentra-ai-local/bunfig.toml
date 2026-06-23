@@ -1,5 +1,2 @@
 [run]
 env = ".env"
-
-[serve.static]
-plugins = ["bun-plugin-tailwind"]
