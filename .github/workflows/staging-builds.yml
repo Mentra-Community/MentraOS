@@ -796,7 +796,8 @@ jobs:
               },
               mtk_patches: .mtk_patches,
               bes_firmware: .bes_firmware
-            }' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+            }
+            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
 
       - name: Build ASG OTA staging Pages site
         if: needs.build-asg.result == 'success'
