@@ -4,7 +4,6 @@ import android.content.Context;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bes.BesOtaManager;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -14,6 +13,8 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.core.NetworkManagerFactory;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.server.core.DefaultServerFactory;
 import com.mentra.asg_client.io.server.managers.AsgServerManager;
 import com.mentra.asg_client.io.server.services.AsgCameraServer;
@@ -61,7 +62,7 @@ public class AsgClientServiceManager {
     private RgbLedCommandHandler rgbLedCommandHandler;
 
     private final FileManager fileManager;
-    private final BesOtaRegistry besOtaRegistry;
+    private final IBesOtaRegistry besOtaRegistry;
 
     // StateManager for battery monitoring (set after construction)
     private IStateManager stateManager;
@@ -74,7 +75,7 @@ public class AsgClientServiceManager {
             @NonNull AsgClientService service,
             ICommunicationManager communicationManager,
             FileManager fileManager,
-            BesOtaRegistry besOtaRegistry,
+            IBesOtaRegistry besOtaRegistry,
             ICompanionTransport transport,
             INetworkManager networkManager) {
         AsgClientService requiredService = Objects.requireNonNull(service, "service");
@@ -725,7 +726,7 @@ public class AsgClientServiceManager {
         return serverManager;
     }
 
-    public BesOtaManager getBesOtaManager() {
+    public IBesOtaController getBesOtaManager() {
         return besOtaManager;
     }
 
