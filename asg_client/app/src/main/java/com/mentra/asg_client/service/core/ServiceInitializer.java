@@ -2,14 +2,12 @@ package com.mentra.asg_client.service.core;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
-import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
-import com.mentra.asg_client.io.network.core.NetworkManagerFactory;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.SimplePeripheralBus;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -31,6 +29,7 @@ import com.mentra.asg_client.service.core.handlers.subscribers.SwitchEventSubscr
 import com.mentra.asg_client.service.core.handlers.subscribers.TouchEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.VoiceActivityEventSubscriber;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
+import com.mentra.asg_client.service.core.processors.CommandProtocolDetector;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.media.managers.MediaManager;
@@ -41,6 +40,7 @@ import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
+import java.util.Set;
 
 /** Wires core service components (replaces the former {@link ServiceContainer}). */
 public final class ServiceInitializer {
@@ -59,17 +59,18 @@ public final class ServiceInitializer {
 
     public ServiceInitializer(
             @NonNull AsgClientService service,
+            @NonNull ICompanionTransport transport,
+            @NonNull INetworkManager network,
             @NonNull FileManager fileManager,
             @NonNull OtaHelper otaHelper,
             @NonNull IHardwareManager hardwareManager,
-            @NonNull BesOtaRegistry besOtaRegistry) {
+            @NonNull IBesOtaRegistry besOtaRegistry,
+            @NonNull Set<CommandProtocolDetector.ProtocolDetectionStrategy> protocolStrategies) {
         android.content.Context context = service;
 
-        // Create transport and network first — both are passed to CommunicationManager and
-        // AsgClientServiceManager so neither holds a circular reference to the other.
-        ICompanionTransport transport = BluetoothManagerFactory.getBluetoothManager(context);
-        INetworkManager network = NetworkManagerFactory.getNetworkManager(context);
-
+        // Transport and network are constructed by the vendor wiring layer and passed in — both
+        // go to CommunicationManager and AsgClientServiceManager so neither holds a circular
+        // reference to the other.
         this.communicationManager = new CommunicationManager(transport, network);
 
         this.serviceManager =
@@ -122,7 +123,8 @@ public final class ServiceInitializer {
                         fileManager,
                         rgbLedHandler,
                         otaCommandHandler,
-                        peripheralBus);
+                        peripheralBus,
+                        protocolStrategies);
 
         this.lifecycleManager =
                 new ServiceLifecycleManager(
