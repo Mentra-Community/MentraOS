@@ -1509,6 +1509,13 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
+    // Live hardware truth: is the firmware mic actually streaming right now. This is DISTINCT
+    // from the `glasses/micEnabled` DeviceStore flag, which is *intent* (does the user/cloud
+    // want the mic on). The mic can only stream inside a live EvenHub page, so whenever the
+    // page dies (systemExit / abnormalExit / shutdown cmd 9·10 / dashboard takes focus) the
+    // firmware kills the mic and we set this false — WITHOUT touching the intent flag, so the
+    // recovery path can re-arm the mic iff intent still says it should be on.
+    private var evenHubMicActive: Bool = false
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -2109,16 +2116,22 @@ class G2: NSObject, SGCManager {
         }) {
             textContainers[i].content = content
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
-            signalDisplayDirty()
             let container = textContainers[i]
+            // Wake the reconcile loop either way. When the page is live it sends the text;
+            // when the page is down the loop coalesces the burst into a single rebuild (see
+            // reconcileDisplay) instead of one shutdown/rebuild per caption. The container's
+            // content is overwritten in place (last-wins), so a backlog that piled up while
+            // iOS had us suspended collapses to one catch-up render — no flood on resume.
+            signalDisplayDirty()
+            if !pageCreated {
+                Bridge.log(
+                    "G2: sendText() - page down, buffering latest content for container \(container.id) (rebuild deferred to reconcile)"
+                )
+                return
+            }
             Bridge.log(
                 "G2: sendText() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
-            // A brand-new page needs its structure built first; pendingSends stays set so the loop
-            // pushes the content once the page exists.
-            if !pageCreated {
-                await rebuildPage()
-            }
             return
         }
 
@@ -2359,7 +2372,23 @@ class G2: NSObject, SGCManager {
     /// and `imgAckBox` is never clobbered. A failed image send leaves the container dirty for the
     /// next cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
     private func reconcileDisplay() async {
-        guard pageCreated else { return }
+        // Page is dead but content is waiting (e.g. captions kept arriving while iOS had us
+        // suspended and the firmware tore the session down). Rebuild the page ONCE here — the
+        // reconcile loop is coalesced (1-deep signal buffer), so a burst of buffered sendText
+        // calls collapses into a single rebuild instead of one shutdown/rebuild per caption.
+        // rebuildState() recreates the page, re-pushes the current text/image, and re-arms the
+        // mic iff intent says so. Skip while the native dashboard owns the screen.
+        if !pageCreated {
+            let useNativeDashboard =
+                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+            let hasPendingText = textContainers.contains { $0.pendingSends > 0 }
+            let hasPendingImage = imageContainers.contains { $0.dirty && !$0.bmpData.isEmpty }
+            if (hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0) {
+                Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
+                await rebuildState()
+            }
+            return
+        }
 
         // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
         for i in textContainers.indices where textContainers[i].pendingSends > 0 {
@@ -2705,6 +2734,7 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        evenHubMicActive = false  // dashboard takes EvenHub focus; firmware kills the mic
         currentBitmapBase64 = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
@@ -2929,8 +2959,10 @@ class G2: NSObject, SGCManager {
     }
 
     func restartMic() {
-        // if already enabled, set to disabled, then send enabled after 500ms:
+        // Intent is "mic on". The mic only exists inside a live EvenHub page, so we
+        // toggle it off then back on (the firmware needs the off→on edge to re-arm).
         DeviceStore.shared.apply("glasses", "micEnabled", true)
+        evenHubMicActive = false
         let msg = EvenHubProto.audioControlMessage(enable: false)
         sendEvenHubCommand(msg)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -2938,14 +2970,24 @@ class G2: NSObject, SGCManager {
             let useNativeDashboard =
                 DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
             // Bridge.log("G2: setMicEnabled - useNativeDashboard=\(useNativeDashboard), dashboardShowing=\(dashboardShowing)")
+            // Dashboard owns the screen + session right now — don't arm the mic into a
+            // page the dashboard has taken over; recovery re-arms on dashboard close.
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if !pageCreated {
-                DeviceManager.shared.sendCurrentState()  // should re-create the page if needed
+            // Never send audioControl(enable:true) without a live page — no page means no
+            // mic. Rebuild first, which itself re-arms the mic at the end (intent is on),
+            // so we're done.
+            if !self.pageCreated {
+                Task { [weak self] in
+                    await self?.rebuildState()
+                    DeviceManager.shared.sendCurrentState()
+                }
+                return
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
+            self.evenHubMicActive = true
         }
     }
 
@@ -2954,7 +2996,7 @@ class G2: NSObject, SGCManager {
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G2: setMicEnabled(\(enabled))")
         if enabled && !pageCreated {
-            retartMic()
+            restartMic()
             return
         }
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
@@ -2966,6 +3008,7 @@ class G2: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "micEnabled", enabled)
         let msg = EvenHubProto.audioControlMessage(enable: enabled)
         sendEvenHubCommand(msg)
+        evenHubMicActive = enabled
     }
 
     func sortMicRanking(list: [String]) -> [String] {
@@ -3202,7 +3245,7 @@ class G2: NSObject, SGCManager {
         // } else {
         //     stopCompass()
         // }
-        runAuthSequence()
+        Task { await runAuthSequence() }
     }
 
     /// Start a navigation session so the glasses stream compass heading via
@@ -3773,6 +3816,7 @@ class G2: NSObject, SGCManager {
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
                             pageCreated = false
+                            evenHubMicActive = false  // mic dies with the page
                         }
                     }
                     // if let errorCode = resFields[8] as? Int32 {
@@ -3790,6 +3834,7 @@ class G2: NSObject, SGCManager {
             if cmdValue == 9 || cmdValue == 10 {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
+                evenHubMicActive = false  // mic dies with the page
             }
         }
     }
@@ -3950,25 +3995,41 @@ class G2: NSObject, SGCManager {
             // }
 
             // System exit: glasses killed our EvenHub page (e.g. the firmware's
-            // "End this feature? Yes/No" screen, or another app taking focus). The page
-            // is gone, so re-create it to reclaim EvenHub focus — otherwise the next
-            // sendText reuses a container on a page that no longer exists and nothing
-            // renders. rebuildState() recreates the page, re-pushes current text + image
-            // content through the reconcile loop, and re-arms the mic if it should be on
-            // (the firmware also kills the mic on system exit). We intentionally do NOT
-            // clear glasses/micEnabled first: that flag is the intended state, and
-            // rebuildState relies on it to know whether to re-send the mic-enable command
-            // (mirrors the dashboard-shutdown recovery path).
+            // "End this feature? Yes/No" screen, or another app — like the native
+            // dashboard — taking focus). The page is gone and the firmware has also
+            // killed the mic, so re-create the page to reclaim EvenHub focus —
+            // otherwise the next sendText reuses a container on a page that no longer
+            // exists and nothing renders, and the mic stays dead.
+            //
+            // rebuildState() recreates the page, re-pushes current text + image content
+            // through the reconcile loop, then re-arms the mic IFF intent says it should
+            // be on. The mic only exists inside a live EvenHub page, so re-arming has to
+            // happen *after* the page is back — never on its own.
+            //
+            // We mark evenHubMicActive=false (live hardware truth: the firmware mic just
+            // died) but we DELIBERATELY do NOT touch glasses/micEnabled: that flag is the
+            // user/cloud *intent*, and the recovery path reads it to decide whether to
+            // re-arm. Clobbering it here is exactly what stranded the mic after a
+            // dashboard round-trip (intent erased → recovery thinks the user never wanted
+            // the mic → never re-arms).
             if eventType == .systemExit || eventType == .abnormalExit {
                 pageCreated = false
-                DeviceStore.shared.apply("glasses", "micEnabled", false)// mic is killed
-                // Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
-                // Task { [weak self] in
-                //     await self?.rebuildState()
-                //     // Reconcile against DeviceManager's authoritative current view so the
-                //     // glasses match the phone, not just the last-cached G2 containers.
-                //     DeviceManager.shared.sendCurrentState()
-                // }
+                evenHubMicActive = false  // firmware killed the mic with the page
+                let useNativeDashboard =
+                    DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+                // If the native dashboard is intentionally on screen it owns the display,
+                // so don't fight it by rebuilding our page here — recovery happens when the
+                // dashboard closes (the 08011A00 path also calls rebuildState()). For every
+                // other systemExit, rebuild now.
+                if !(useNativeDashboard && dashboardShowing > 0) {
+                    Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
+                    Task { [weak self] in
+                        await self?.rebuildState()
+                        // Reconcile against DeviceManager's authoritative current view so the
+                        // glasses match the phone, not just the last-cached G2 containers.
+                        DeviceManager.shared.sendCurrentState()
+                    }
+                }
             }
             return
         }
