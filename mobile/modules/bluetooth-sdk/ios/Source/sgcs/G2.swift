@@ -1455,6 +1455,14 @@ class G2: NSObject, SGCManager {
     private var pairingTimeoutTimer: DispatchWorkItem?
     private var useEvenDashboard = true
     private var dashboardShowing = 0
+    // Recovery throttle. The firmware can spam systemExit + dashboard-close (08011A00) ~1×/sec
+    // on its own (not user dashboard toggles). Each one used to fire a full rebuildState(), and
+    // the rebuilt page would be torn down again → rebuild→exit→rebuild storm that churns the
+    // display so captions never render. We coalesce: at most one recovery rebuild in flight, and
+    // no more than one every RECOVERY_DEBOUNCE_MS. A genuine close still recovers within a beat.
+    private var recoveryInFlight = false
+    private var lastRecoveryRebuildMs: Int64 = 0
+    private let RECOVERY_DEBOUNCE_MS: Int64 = 1500
 
     /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
@@ -2500,6 +2508,41 @@ class G2: NSObject, SGCManager {
 
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
         restartMicIfAlreadyEnabled()
+    }
+
+    /// Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never
+    /// stack rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this
+    /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
+    /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
+    private func recoverPageAndMic(reason: String) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // If the page is already alive and the mic matches intent, there's nothing to recover —
+        // this is a spurious/phantom firmware event (it spams close/exit even when our page is
+        // healthy). Rebuilding here is what created the churn, so skip it.
+        let micIntent = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        if pageCreated && evenHubMicActive == micIntent {
+            // Bridge.log("G2: recover(\(reason)) skipped — page alive, mic matches intent")
+            return
+        }
+        if recoveryInFlight {
+            // Bridge.log("G2: recover(\(reason)) skipped — already in flight")
+            return
+        }
+        if now - lastRecoveryRebuildMs < RECOVERY_DEBOUNCE_MS {
+            // Bridge.log("G2: recover(\(reason)) skipped — debounced")
+            return
+        }
+        recoveryInFlight = true
+        lastRecoveryRebuildMs = now
+        Bridge.log("G2: recover(\(reason)) — rebuilding EvenHub page")
+        Task { [weak self] in
+            guard let self = self else { return }
+            await self.rebuildState()
+            // Reconcile against DeviceManager's authoritative current view so the glasses
+            // match the phone, not just the last-cached G2 containers.
+            DeviceManager.shared.sendCurrentState()
+            self.recoveryInFlight = false
+        }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -3997,42 +4040,27 @@ class G2: NSObject, SGCManager {
             //     Bridge.log("G2: Click detected")
             // }
 
-            // System exit: glasses killed our EvenHub page (e.g. the firmware's
-            // "End this feature? Yes/No" screen, or another app — like the native
-            // dashboard — taking focus). The page is gone and the firmware has also
-            // killed the mic, so re-create the page to reclaim EvenHub focus —
-            // otherwise the next sendText reuses a container on a page that no longer
-            // exists and nothing renders, and the mic stays dead.
+            // System exit: glasses killed our EvenHub page (the firmware's "End this
+            // feature?" screen, or another app — like the native dashboard — taking focus).
+            // The page is gone and the firmware has also killed the mic.
             //
-            // rebuildState() recreates the page, re-pushes current text + image content
-            // through the reconcile loop, then re-arms the mic IFF intent says it should
-            // be on. The mic only exists inside a live EvenHub page, so re-arming has to
-            // happen *after* the page is back — never on its own.
+            // We ONLY mark state dead here; we do NOT rebuild. systemExit is fired together
+            // with the dashboard-close (08011A00) event for the same firmware transition, and
+            // a bare sendText/clearDisplay also follows. If this handler rebuilt the page, the
+            // dashboard-close handler would rebuild it a *second* time, the firmware would tear
+            // the fresh page down (another systemExit), and we'd loop rebuild→exit→rebuild
+            // ~1×/sec forever — the page never settles and captions never render. So recovery
+            // is owned by exactly one place: the dashboard-close handler (08011A00) and the
+            // reconcile loop's "page down with pending content → rebuild once" path. Both run
+            // after this, both re-arm the mic from intent.
             //
-            // We mark evenHubMicActive=false (live hardware truth: the firmware mic just
-            // died) but we DELIBERATELY do NOT touch glasses/micEnabled: that flag is the
-            // user/cloud *intent*, and the recovery path reads it to decide whether to
-            // re-arm. Clobbering it here is exactly what stranded the mic after a
-            // dashboard round-trip (intent erased → recovery thinks the user never wanted
-            // the mic → never re-arms).
+            // We mark evenHubMicActive=false (live hardware truth) but DELIBERATELY do NOT
+            // touch glasses/micEnabled: that flag is the user/cloud *intent*, and recovery
+            // reads it to decide whether to re-arm. Clobbering it stranded the mic after a
+            // dashboard round-trip.
             if eventType == .systemExit || eventType == .abnormalExit {
                 pageCreated = false
                 evenHubMicActive = false  // firmware killed the mic with the page
-                let useNativeDashboard =
-                    DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
-                // If the native dashboard is intentionally on screen it owns the display,
-                // so don't fight it by rebuilding our page here — recovery happens when the
-                // dashboard closes (the 08011A00 path also calls rebuildState()). For every
-                // other systemExit, rebuild now.
-                if !(useNativeDashboard && dashboardShowing > 0) {
-                    Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
-                    Task { [weak self] in
-                        await self?.rebuildState()
-                        // Reconcile against DeviceManager's authoritative current view so the
-                        // glasses match the phone, not just the last-cached G2 containers.
-                        DeviceManager.shared.sendCurrentState()
-                    }
-                }
             }
             return
         }
@@ -4354,17 +4382,13 @@ class G2: NSObject, SGCManager {
             // is dropped by the 500ms gesture_ctrl dedup or when systemExits interleave with
             // opens, and once it strands >0 the dashboardShowing>0 guard in restartMic wedges
             // the mic permanently (cloud keeps calling setMicEnabled(true) but it never arms).
-            // Self-heal: clear the count, rebuild the page, re-arm the mic iff intent says so.
+            // Self-heal: clear the count and recover. recoverPageAndMic() rebuilds the page and
+            // re-arms the mic from intent (rebuildState → restartMicIfAlreadyEnabled), and is
+            // debounced so the firmware's ~1×/sec systemExit+close spam can't storm rebuilds.
+            // If the page is already alive (a phantom close while our page is healthy), the
+            // debounce/in-flight guard makes this a cheap no-op.
             dashboardShowing = 0
-            Task {
-                await rebuildState()
-                // set the mic back on if it should be on
-                let micEnabled =
-                    DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                if micEnabled {
-                    restartMic()
-                }
-            }
+            recoverPageAndMic(reason: "dashboard-close")
             return
         }
 
