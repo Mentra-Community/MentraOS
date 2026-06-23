@@ -595,6 +595,20 @@ public final class MentraBluetoothSDK {
         return result
     }
 
+    public func setCameraTuningConfig(anrOn: Bool, gainOn: Bool) async throws -> SettingsAckEvent {
+        return try await performSettingsCommand(
+            setting: "camera_tuning",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendCameraTuningConfig(
+                    requestId: requestId,
+                    anrOn: anrOn,
+                    gainOn: gainOn
+                )
+            }
+        )
+    }
+
     public func setMicState(
         enabled: Bool,
         useGlassesMic: Bool = true,
