@@ -16,6 +16,17 @@ public interface ISystemController {
 
     void setEisEnabled(boolean enable);
 
+    /**
+     * Configure camera tuning parameters on the Mentra Live HAL via the {@code camconfig}
+     * broadcast.
+     *
+     * @param anrOn  {@code true} to enable ANR (Adaptive Noise Reduction); {@code false} to
+     *               disable.
+     * @param gainOn {@code true} to use the stock gain parameters; {@code false} to use the
+     *               pixsmart-modified gain-off parameters.
+     */
+    void setCameraTuningConfig(boolean anrOn, boolean gainOn);
+
     void restartCameraHal();
 
     String getSystemOtaVersion();

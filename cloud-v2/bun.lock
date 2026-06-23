@@ -9,6 +9,13 @@
         "typescript": "^5.7.0",
       },
     },
+    "packages/auth": {
+      "name": "@mentra/auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "jose": "^5.9.6",
+      },
+    },
     "packages/cloud-client": {
       "name": "@mentra/cloud-client",
       "version": "0.0.0",
@@ -83,6 +90,8 @@
   },
   "packages": {
     "@ioredis/commands": ["@ioredis/commands@1.10.0", "", {}, "sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q=="],
+
+    "@mentra/auth": ["@mentra/auth@workspace:packages/auth"],
 
     "@mentra/cloud-client": ["@mentra/cloud-client@workspace:packages/cloud-client"],
 

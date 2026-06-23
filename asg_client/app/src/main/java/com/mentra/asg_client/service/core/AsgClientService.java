@@ -203,6 +203,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Apply saved camera FOV on start (K900) so last user choice survives reboot
             applySavedCameraFovOnStart();
 
+            // Apply saved camera tuning config (ANR/gain) so HAL tuning survives reboot.
+            // If FOV restore triggered a HAL restart we must wait for the cooldown window to
+            // expire before sending the camconfig broadcast; otherwise the HAL may not yet be
+            // ready and the tuning settings will be silently dropped.
+            if (CameraRestartCooldown.isActive()) {
+                long delayMs = CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L;
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(this::applySavedCameraTuningOnStart, delayMs);
+            } else {
+                applySavedCameraTuningOnStart();
+            }
+
             // Schedule a 30-second test recording that starts 10 seconds after service init.
             scheduleStartupTestRecording();
 
@@ -737,6 +749,25 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
         } catch (Exception e) {
             Log.w(TAG, "Could not apply saved camera FOV on start", e);
+        }
+    }
+
+    /** Apply saved camera tuning (ANR / gain) on service start so HAL config survives reboot. */
+    private void applySavedCameraTuningOnStart() {
+        try {
+            if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+                return;
+            }
+            var asgSettings = serviceInitializer.getServiceManager().getAsgSettings();
+            if (asgSettings == null) {
+                return;
+            }
+            boolean anrOn = asgSettings.isCameraAnrEnabled();
+            boolean gainOn = asgSettings.isCameraGainEnabled();
+            SystemControllerFactory.get(this).setCameraTuningConfig(anrOn, gainOn);
+            Log.d(TAG, "Applied saved camera tuning on start: anr=" + anrOn + ", gain=" + gainOn);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not apply saved camera tuning on start", e);
         }
     }
 

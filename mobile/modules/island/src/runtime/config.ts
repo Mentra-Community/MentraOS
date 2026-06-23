@@ -11,7 +11,17 @@
  * the host and the runtime. Prefer pushing data IN over pulling it via a
  * getter when reasonable.
  */
-import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
+import type {
+  AudioSubscription,
+  DirectionsRequest,
+  DirectionsResult,
+  LatLng,
+  PlaceAutocompleteResult,
+  PlaceDetailsResult,
+  ReverseGeocodeResult,
+  TranscriptionData,
+  TranslationData,
+} from "@mentra/cloud-runtime/protocol"
 
 export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
 export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
@@ -38,6 +48,34 @@ export interface CloudRuntimeTtsSpeechSource {
 
 export interface CloudRuntimeTtsAdapter {
   speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
+}
+
+/**
+ * Runtime maps API: directions + reverse geocoding, computed in the v2 cloud
+ * (provider-abstracted, Mapbox today). The cloud holds the provider token; the
+ * device no longer calls Mapbox directly. Request/response — not a stream.
+ */
+export interface CloudRuntimeMapsAdapter {
+  directions: (req: DirectionsRequest) => Promise<DirectionsResult>
+  reverseGeocode: (coord: LatLng) => Promise<ReverseGeocodeResult>
+  placeAutocomplete: (req: {
+    query: string
+    near?: LatLng
+    sessionToken: string
+  }) => Promise<PlaceAutocompleteResult>
+  placeDetails: (req: {placeId: string; sessionToken: string}) => Promise<PlaceDetailsResult>
+}
+
+export interface MiniappAuthToken {
+  mentraUserId: string
+  oemId?: string
+  token: string
+  expiresAt: number
+}
+
+export interface MiniappAuthAdapter {
+  /** Mint or return a cached token scoped to one miniapp packageName. */
+  getToken: (packageName: string, opts?: {minTtlMs?: number}) => Promise<MiniappAuthToken>
 }
 
 import type {ClientApp} from "../types/applet"
@@ -91,6 +129,8 @@ export interface CloudRuntimeAdapter {
   onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void) => () => void
   /** Runtime TTS API. The cloud-client owns endpoint paths and validation. */
   tts: CloudRuntimeTtsAdapter
+  /** Runtime maps API (directions + reverse geocoding) computed in the v2 cloud. */
+  maps: CloudRuntimeMapsAdapter
   /**
    * Whether any transcription/translation subscription is currently set on v2.
    * The host's audio-capture site gates `sendAudioFrame` on this so we don't
@@ -99,16 +139,6 @@ export interface CloudRuntimeAdapter {
   hasAudioSubscriptions: () => boolean
   /** Whether the v2 live session is connected (handshake completed). */
   isConnected: () => boolean
-}
-
-/**
- * Cloud connection state surface used by LocalSttFallbackCoordinator to
- * decide when on-device STT should take over from cloud transcription.
- * Hosts wrap their own WebSocket-status store.
- */
-export interface CloudConnectionAdapter {
-  isConnected: () => boolean
-  addListener: (l: (connected: boolean) => void) => () => void
 }
 
 export interface AudioPlayRequest {
@@ -262,29 +292,10 @@ export interface NavigationAdapter {
   setWrongSidewalkOffset: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
   setSkipCrossings: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
   requestPermission: () => Promise<{ok: boolean; accepted: boolean; error?: string}>
-  computeRoute: (payload: Record<string, unknown>) => Promise<{
-    ok: boolean
-    error?: string
-    routes?: Array<{
-      points: Array<{lat: number; lng: number}>
-      totalDistanceMeters: number
-      totalDurationSeconds: number
-      summary?: string
-      steps?: NavRouteStep[]
-    }>
-  }>
-  /**
-   * Reverse-geocode a coordinate into a short road/route name. Used by
-   * the SDK pivot engine as a last-resort fallback when the Routes-API
-   * step's instruction text didn't yield a clean road name. Optional —
-   * hosts that don't implement it leave the SDK without a fallback,
-   * and pivots with no parseable instruction stay unlabeled.
-   */
-  reverseGeocodeRoad?: (coord: {lat: number; lng: number}) => Promise<{
-    ok: boolean
-    road?: string | null
-    error?: string
-  }>
+  // NOTE: route compute + reverse geocoding moved off this native adapter to the
+  // v2 cloud maps service (CloudRuntimeMapsAdapter). NavigationHandlers route the
+  // miniapp NAVIGATION_COMPUTE_ROUTE / NAVIGATION_REVERSE_GEOCODE requests to
+  // cloud.maps; this adapter now only covers the native turn-by-turn Nav SDK.
 }
 
 /**
@@ -310,14 +321,28 @@ export interface LocationTierAdapter {
  * miniapps. The runtime calls these from its stream request handlers; the
  * host's PhoneStreamCoordinator implements them.
  */
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
 export interface StreamingAdapter {
   /** Glasses-confirmed publisher start result. */
   startUnmanaged: (
     packageName: string,
     opts: {
       streamUrl: string
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
     },
   ) => Promise<StreamPublisherStartResult>
@@ -325,8 +350,8 @@ export interface StreamingAdapter {
     packageName: string,
     opts: {
       restreamDestinations?: Array<string | {url: string; name?: string}>
-      video?: unknown
-      audio?: unknown
+      video?: StreamVideoConfig
+      audio?: StreamAudioConfig
       sound?: boolean
       /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
       ingest?: "srt" | "whip"
@@ -440,18 +465,22 @@ export interface RuntimeHooks {
    * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
    */
   cloud?: CloudRuntimeAdapter
+  /**
+   * Package-scoped backend auth for local miniapps. The host owns the real
+   * Core/runtime credentials; this adapter returns only miniapp tokens.
+   */
+  miniappAuth?: MiniappAuthAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
   settings?: SettingsAccessor
-  /** Google Navigation SDK adapter (turn-by-turn + computeRoute). */
+  /** Native Navigation SDK adapter (live turn-by-turn). Route compute + reverse
+   * geocoding moved to the v2 cloud maps adapter. */
   navigation?: NavigationAdapter
   /** Device heading / compass adapter. */
   heading?: HeadingAdapter
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
   locationTier?: LocationTierAdapter
-  /** Cloud WebSocket connection state surface. */
-  cloudConnection?: CloudConnectionAdapter
   /**
    * The dev machine's live LAN host (no port), derived by the host from
    * Metro's `hostUri` — the address this dev bundle was actually served from,

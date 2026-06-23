@@ -12,10 +12,15 @@
  */
 
 import {rm} from "fs/promises"
-
 const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
+
+// App version, read from miniapp.json so there's a single source of truth.
+// Inlined into the UI bundle (and harmless in the background bundle) so the
+// dev panel can show which build is running.
+const miniapp = (await import("./miniapp.json")) as {version?: string}
+const appVersion = miniapp.version ?? "0.0.0"
 
 // The GCP key now feeds ONLY the Maps JavaScript API (ui/lib/googleMaps.ts),
 // which loads Google's script directly in the WebView and therefore can't be
@@ -27,10 +32,13 @@ await rm(distDir, {recursive: true, force: true})
 const navKey = process.env.PUBLIC_MAP_NAV_VIEWER ?? ""
 if (!navKey) console.warn("WARN: PUBLIC_MAP_NAV_VIEWER is not set — maps will fail to load.")
 
-// Base URL of the secret-proxy Worker (sdk/Navigation/worker). The background's
-// Places client (background/lib/places.ts) calls this instead of Google.
-const proxyBaseUrl = process.env.PROXY_BASE_URL ?? ""
-if (!proxyBaseUrl) console.warn("WARN: PROXY_BASE_URL is not set — place search will fail.")
+// Mapbox GL JS token (pk.…) for the front-end map (Mapbox migration). Same
+// public token as mobile's EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN. Injected into the
+// UI bundle only (the background bundle never renders a map). Replaces
+// PUBLIC_MAP_NAV_VIEWER once NavMap.tsx is ported to Mapbox GL JS; kept
+// alongside it during the transition so both map paths can build.
+const mapboxToken = process.env.PUBLIC_MAPBOX_TOKEN ?? ""
+if (!mapboxToken) console.warn("WARN: PUBLIC_MAPBOX_TOKEN is not set — Mapbox GL JS map will fail to load.")
 
 const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
 // Only announce when we're in production — that's the unusual case
@@ -38,19 +46,20 @@ const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "developm
 // spam the terminal three lines per file change.
 if (nodeEnv === "production") console.log("Building with NODE_ENV=production")
 
-// Background: Places via proxy only — the GCP key is deliberately NOT injected
-// here, so it can never appear in the shipped background bundle.
+// Background: no maps/provider keys are injected — place search and geocoding
+// go through the SDK → host → v2 cloud maps service, which holds the token.
 const backgroundDefine: Record<string, string> = {
-  "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
-// UI: needs the Maps JS key (can't be proxied). PROXY_BASE_URL is harmless here
-// and kept for parity in case the UI ever calls the proxy directly.
+// UI: needs the public map-render tokens client-side (GL JS can't proxy tile
+// fetches). These are public, render-only tokens — not provider secrets.
 const uiDefine: Record<string, string> = {
   "process.env.PUBLIC_MAP_NAV_VIEWER": JSON.stringify(navKey),
-  "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
+  "process.env.PUBLIC_MAPBOX_TOKEN": JSON.stringify(mapboxToken),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
 // Background: IIFE, no DOM. The JSContext loads this once.
@@ -70,11 +79,33 @@ if (!backgroundResult.success) {
 
 const tailwind = (await import("bun-plugin-tailwind")).default
 
+// Force a SINGLE React copy in the UI bundle. The @mentra/miniapp SDK is
+// symlinked and can resolve its own (different-version) React from a separate
+// node_modules, which produces two React instances → "Invalid hook call /
+// more than one copy of React". This plugin rewrites every react / react-dom
+// (and their sub-paths) import to THIS app's copy, so app components and SDK
+// hooks share one React.
+const reactDedupePlugin: import("bun").BunPlugin = {
+  name: "react-dedupe",
+  setup(build) {
+    const appDir = import.meta.dir
+    const pin = (spec: string) => Bun.resolveSync(spec, appDir)
+    // Match `react`, `react-dom`, and their sub-paths (e.g. react/jsx-runtime).
+    build.onResolve({filter: /^react(-dom)?(\/.*)?$/}, (args) => {
+      try {
+        return {path: pin(args.path)}
+      } catch {
+        return undefined // fall back to default resolution
+      }
+    })
+  },
+}
+
 const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [tailwind],
+  plugins: [reactDedupePlugin, tailwind],
   minify: true,
   define: uiDefine,
 })

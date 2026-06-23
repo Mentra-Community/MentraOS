@@ -45,7 +45,25 @@ if (!RUN) {
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPemWrap(
     access.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
+  // Runtime verifies cloud-runtime tokens against these issuers; trust the
+  // cloud-core issuer Core brokers its runtime tokens from (see issueRuntimeToken).
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS ??= JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-test";
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/4";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
@@ -193,7 +211,12 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
 
   return new CloudClient({
     endpoints: { core: coreHandle.url, runtime: `http://localhost:${AUDIO_HTTP_PORT}` },
-    auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    auth: {
+      core: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+      // Broker the runtime token from Core (mobile uses the same path); the
+      // runtime trusts the cloud-core issuer via CLOUD_RUNTIME_AUTH_ISSUERS.
+      runtime: { source: "core" },
+    },
     // Feed raw PCM (the say-generated audio) rather than LC3.
     audio: { codec: "pcm", sampleRate: 16000 },
   });

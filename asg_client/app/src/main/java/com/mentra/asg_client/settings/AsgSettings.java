@@ -20,7 +20,6 @@ public class AsgSettings {
     private static final String KEY_BUTTON_VIDEO_FPS = "button_video_fps";
     private static final String KEY_BUTTON_MAX_RECORDING_TIME_MINUTES = "button_max_recording_time_minutes";
     private static final String KEY_BUTTON_PHOTO_SIZE = "button_photo_size";
-    private static final String KEY_BUTTON_CAMERA_LED = "button_camera_led";
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
     private static final String KEY_ZSL_ENABLED = "zsl_enabled";
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
@@ -38,6 +37,8 @@ public class AsgSettings {
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
+    private static final String KEY_CAMERA_ANR_ENABLED = "camera_anr_enabled";
+    private static final String KEY_CAMERA_GAIN_ENABLED = "camera_gain_enabled";
 
     /** Supported FOV range for K900 camera, inclusive (118 = No ROI) */
     private static final int MIN_CAMERA_FOV = 62;
@@ -151,26 +152,6 @@ public class AsgSettings {
         prefs.edit().putString(KEY_BUTTON_PHOTO_SIZE, size).commit();
     }
     
-    /**
-     * Get the camera LED setting for button-initiated recordings
-     * @return true if LED should be enabled, false otherwise
-     */
-    public boolean getButtonCameraLedEnabled() {
-        boolean enabled = prefs.getBoolean(KEY_BUTTON_CAMERA_LED, true); // Default to true
-        Log.d(TAG, "Retrieved button camera LED setting: " + enabled);
-        return enabled;
-    }
-    
-    /**
-     * Set the camera LED setting for button-initiated recordings
-     * @param enabled true to enable LED, false to disable
-     */
-    public void setButtonCameraLedEnabled(boolean enabled) {
-        Log.d(TAG, "Setting button camera LED to: " + enabled);
-        // Using commit() for immediate persistence
-        prefs.edit().putBoolean(KEY_BUTTON_CAMERA_LED, enabled).commit();
-    }
-
     /**
      * Get the camera FOV setting (K900). Supported range: 62-118 inclusive (118 = No ROI).
      * @return FOV in degrees (default 118 = No ROI)
@@ -536,5 +517,32 @@ public class AsgSettings {
      */
     public void setBesFirmwareVersion(String version) {
         setMcuFirmwareVersion(version);
+    }
+
+    /**
+     * Whether ANR (Adaptive Noise Reduction) is enabled for the camera HAL tuning.
+     * Defaults to {@code true} (ANR on).
+     */
+    public boolean isCameraAnrEnabled() {
+        return prefs.getBoolean(KEY_CAMERA_ANR_ENABLED, true);
+    }
+
+    public void setCameraAnrEnabled(boolean enabled) {
+        Log.d(TAG, "Setting camera ANR enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_CAMERA_ANR_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Whether the stock gain parameters are used for the camera HAL tuning.
+     * {@code true} = stock gain on; {@code false} = pixsmart gain-off parameters.
+     * Defaults to {@code true}.
+     */
+    public boolean isCameraGainEnabled() {
+        return prefs.getBoolean(KEY_CAMERA_GAIN_ENABLED, true);
+    }
+
+    public void setCameraGainEnabled(boolean enabled) {
+        Log.d(TAG, "Setting camera gain enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_CAMERA_GAIN_ENABLED, enabled).commit();
     }
 }

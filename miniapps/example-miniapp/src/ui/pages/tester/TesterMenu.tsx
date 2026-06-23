@@ -32,6 +32,7 @@ const EXAMPLE_ROWS: Row[] = [
 // then placeholders.
 const API_ROWS: Row[] = [
   {emoji: "🖥️", title: "session.display", subtitle: "text walls, cards, bitmaps", path: "/tester/display"},
+  {emoji: "🎨", title: "session.canvas", subtitle: "show_text / show_bitmap / clear / show_page", path: "/tester/canvas"},
   {emoji: "🔊", title: "session.speaker", subtitle: "play URL, speak text", path: "/tester/speaker"},
   {emoji: "🎙️", title: "session.mic", subtitle: "audio chunks, VAD, stop()", path: "/tester/mic"},
   {emoji: "📝", title: "session.transcription", subtitle: "on / forLanguage / configure / stop", path: "/tester/transcription"},

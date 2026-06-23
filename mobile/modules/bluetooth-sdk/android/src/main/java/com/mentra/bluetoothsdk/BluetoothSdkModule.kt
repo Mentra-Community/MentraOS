@@ -136,10 +136,6 @@ class BluetoothSdkModule : Module() {
                     sendEvent("keep_alive_ack", event.values)
                 }
 
-                override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
-                    sendEvent("ota_update_available", event.values)
-                }
-
                 override fun onOtaStartAck(event: OtaStartAckEvent) {
                     sendEvent("ota_start_ack", event.values)
                 }
@@ -183,7 +179,7 @@ class BluetoothSdkModule : Module() {
 
     private fun requireSdk(): MentraBluetoothSdk =
             sdk
-                    ?: throw BluetoothException(
+                    ?: throw BluetoothSdkException(
                             "sdk_not_initialized",
                             "Bluetooth SDK is not initialized.",
                     )
@@ -244,7 +240,6 @@ class BluetoothSdkModule : Module() {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
-            "ota_update_available",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
@@ -441,49 +436,16 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("setButtonPhotoCaptureSettings") { params: Map<String, Any?> ->
-            val size = (params["size"] as? String)?.let { ButtonPhotoSize.fromValue(it) }
-            val mfnr = params["mfnr"] as? Boolean
-            val zsl = params["zsl"] as? Boolean
-            val noiseReduction = params["noiseReduction"] as? Boolean
-            val edgeEnhancement = params["edgeEnhancement"] as? Boolean
-            val ispDigitalGain = (params["ispDigitalGain"] as? Number)?.toInt()
-            val ispAnalogGain = params["ispAnalogGain"] as? String
-            val aeExposureDivisor = (params["aeExposureDivisor"] as? Number)?.toInt()
-            val isoCap = (params["isoCap"] as? Number)?.toInt()
-            val compress = params["compress"] as? String
-            val sound = params["sound"] as? Boolean
-            val resetCaptureTuning = params["resetCaptureTuning"] as? Boolean == true
-            requireSdk()
-                .setButtonPhotoSettings(
-                    ButtonPhotoSettings(
-                        size = size,
-                        mfnr = mfnr,
-                        zsl = zsl,
-                        noiseReduction = noiseReduction,
-                        edgeEnhancement = edgeEnhancement,
-                        ispDigitalGain = ispDigitalGain,
-                        ispAnalogGain = ispAnalogGain,
-                        aeExposureDivisor = aeExposureDivisor,
-                        isoCap = isoCap,
-                        compress = compress,
-                        sound = sound,
-                        resetCaptureTuning = resetCaptureTuning,
-                    ),
-                )
-                .values
+        AsyncFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
+            requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
         }
 
-        AsyncFunction("setButtonVideoRecordingSettings") { width: Int, height: Int, fps: Int ->
-            requireSdk().setButtonVideoRecordingSettings(width, height, fps).values
+        AsyncFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
+            requireSdk().setVideoRecordingDefaults(VideoRecordingDefaults(width, height, fps)).values
         }
 
-        AsyncFunction("setButtonCameraLed") { enabled: Boolean ->
-            requireSdk().setButtonCameraLed(enabled).values
-        }
-
-        AsyncFunction("setButtonMaxRecordingTime") { minutes: Int ->
-            requireSdk().setButtonMaxRecordingTime(minutes).values
+        AsyncFunction("setMaxVideoRecordingDuration") { minutes: Int ->
+            requireSdk().setMaxVideoRecordingDuration(minutes).values
         }
 
         AsyncFunction("setCameraFov") { fov: Map<String, Any> ->
@@ -493,6 +455,10 @@ class BluetoothSdkModule : Module() {
                     ?: (fov["roi_position"] as? Number)?.toInt(),
             )
             requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
+        }
+
+        AsyncFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
+            requireSdk().setCameraTuningConfig(anrOn, gainOn).values
         }
 
         AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
@@ -505,7 +471,7 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
             requireSdk().requestPhoto(req).values
         }
@@ -534,8 +500,6 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
-
-        AsyncFunction("retryOtaVersionCheck") { requireSdk().retryOtaVersionCheck().values }
 
         // MARK: - Version Info Commands
 
@@ -584,6 +548,10 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("startStream") { params: Map<String, Any> ->
             requireSdk().startStream(StreamRequest.fromMap(params)).values
+        }
+
+        AsyncFunction("startExternallyManagedStream") { params: Map<String, Any> ->
+            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
         }
 
         AsyncFunction("stopStream") { requireSdk().stopStream().values }
@@ -774,6 +742,22 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )
 }
+
+private fun Map<String, Any?>.toPhotoCaptureDefaults(): PhotoCaptureDefaults =
+        PhotoCaptureDefaults(
+                size = (this["size"] as? String)?.let { PhotoSize.fromValue(it) },
+                mfnr = this["mfnr"] as? Boolean,
+                zsl = this["zsl"] as? Boolean,
+                noiseReduction = this["noiseReduction"] as? Boolean,
+                edgeEnhancement = this["edgeEnhancement"] as? Boolean,
+                ispDigitalGain = (this["ispDigitalGain"] as? Number)?.toInt(),
+                ispAnalogGain = this["ispAnalogGain"] as? String,
+                aeExposureDivisor = (this["aeExposureDivisor"] as? Number)?.toInt(),
+                isoCap = (this["isoCap"] as? Number)?.toInt(),
+                compress = this["compress"] as? String,
+                sound = this["sound"] as? Boolean,
+                resetCaptureTuning = this["resetCaptureTuning"] as? Boolean == true,
+        )
 
 private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
     val values = this ?: return ConnectOptions()

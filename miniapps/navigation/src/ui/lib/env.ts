@@ -8,3 +8,10 @@
  * overlays tree-shake out of the production bundle.
  */
 export const isDev: boolean = process.env.NODE_ENV !== "production"
+
+/**
+ * App version, sourced from miniapp.json and inlined by `build.ts` via
+ * Bun's `define` map (`process.env.APP_VERSION`). Empty string when the
+ * dev server doesn't inject it, so callers should treat "" as "unknown".
+ */
+export const appVersion: string = process.env.APP_VERSION ?? ""

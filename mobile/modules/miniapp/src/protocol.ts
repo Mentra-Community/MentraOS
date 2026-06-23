@@ -18,11 +18,17 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /** Request a fresh miniapp-scoped backend auth token. */
+  AUTH_REFRESH = "miniapp_auth_refresh",
+
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 
   /** Push a layout to the glasses display. */
   DISPLAY = "miniapp_display",
+
+  /** Push a canvas command to the glasses canvas. */
+  CANVAS = "miniapp_canvas",
 
   /** Play an arbitrary audio URL through the phone's audio playback service. */
   PLAY_AUDIO = "miniapp_play_audio",
@@ -53,10 +59,19 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
-  /** Reverse-geocode a coordinate to a road name. Backs the engine's
-   *  fallback for pivots whose Routes-API instruction didn't include a
-   *  parseable road. Host calls Google's Geocoding REST API. */
+  /** Reverse-geocode a coordinate to a short road name + full formatted
+   *  address. `road` backs the engine's fallback for pivots whose Routes-API
+   *  instruction didn't include a parseable road; `address` backs UI labels for
+   *  dropped pins / POI taps. Resolved in the v2 cloud maps service (Mapbox
+   *  today) via the host bridge — the miniapp never holds a maps token. */
   NAVIGATION_REVERSE_GEOCODE = "miniapp_navigation_reverse_geocode",
+  /** Type-ahead place search (autocomplete). Resolved in the v2 cloud maps
+   *  service (Mapbox Search Box today) via the host bridge — the miniapp never
+   *  holds a maps token. Pairs with NAVIGATION_PLACE_DETAILS via a sessionToken. */
+  NAVIGATION_PLACE_AUTOCOMPLETE = "miniapp_navigation_place_autocomplete",
+  /** Resolve an autocomplete suggestion (placeId + sessionToken) to coordinates,
+   *  in the v2 cloud maps service via the host bridge. */
+  NAVIGATION_PLACE_DETAILS = "miniapp_navigation_place_details",
   /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
   NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 
@@ -163,6 +178,12 @@ export enum MiniappResponseType {
    * and fires session.permissions.onUpdate handlers.
    */
   PERMISSIONS_UPDATE = "miniapp_permissions_update",
+
+  /**
+   * Push: miniapp-scoped backend auth token changed. Carries a token minted for
+   * this packageName only; it is never a Core or runtime access token.
+   */
+  AUTH_UPDATE = "miniapp_auth_update",
 
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",

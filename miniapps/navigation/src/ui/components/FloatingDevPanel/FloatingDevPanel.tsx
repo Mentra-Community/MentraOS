@@ -15,6 +15,8 @@ import type {ReactNode} from "react"
 type Props = {
   /** Title shown in the panel header. */
   title?: string
+  /** App version shown next to the title (e.g. "1.1.2"). Hidden when omitted. */
+  version?: string
   /** Storage key for position + collapsed state. Use a unique key per
    *  page if you want independent panels. */
   storageKey?: string
@@ -34,6 +36,7 @@ function defaultState(): Persisted {
 
 export function FloatingDevPanel({
   title = "Dev",
+  version,
   storageKey = "FloatingDevPanel",
   children,
 }: Props) {
@@ -141,7 +144,7 @@ export function FloatingDevPanel({
           setCollapsed(false)
         }}
         style={{position: "fixed", left: pos.x, top: pos.y, touchAction: "none"}}
-        className="z-9999 w-11 h-11 rounded-full bg-[#1A1A1A] text-white shadow-[#FFFFFF14_0px_1px_0px_inset,#00000073_0px_12px_30px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing text-[11px] font-bold tracking-wider"
+        className="z-9999 w-11 h-11 rounded-full bg-[#E11D48] text-white shadow-[#FFFFFF14_0px_1px_0px_inset,#00000073_0px_12px_30px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing text-[11px] font-bold tracking-wider"
         aria-label={`Open ${title} panel`}>
         DBG
       </button>
@@ -165,6 +168,9 @@ export function FloatingDevPanel({
           DBG
         </div>
         <span className="grow tracking-[-0.01em] font-sans font-semibold text-white text-[15px]/5">{title}</span>
+        {version ? (
+          <span className="shrink-0 font-mono text-[11px] tracking-wide text-white/55 tabular-nums">v{version}</span>
+        ) : null}
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => setCollapsed(true)}

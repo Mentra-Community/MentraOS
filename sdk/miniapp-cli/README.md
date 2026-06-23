@@ -31,13 +31,14 @@ mentra-miniapp dev
 What it does:
 
 1. Reads + validates `miniapp.json` (hard-fails on bad permissions / hardware types so you don't have to debug it on the phone).
-2. Spawns `bun run --hot server.ts` in the project. The starter template ships a tiny Bun.serve that serves `index.html`, `miniapp.json`, `icon.png`, and any assets under `public/`.
-3. Polls `http://localhost:<port>` until the server is reachable.
-4. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
-5. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
-6. Watches for LAN-IP changes (Wi-Fi switch) every 10s and reprints the QR.
+2. Runs the project's `build.ts` so `dist/background/index.js` and `dist/ui/*` are current.
+3. Picks the first free adjacent port pair starting at `port`: one for static files and the next for the dev sidecar.
+4. Starts a static server that serves `miniapp.json`, `icon.png`, and project files.
+5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
+6. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+7. Watches for LAN-IP changes (Wi-Fi switch) every 10s and reprints the QR.
 
-Default `port` is `3000`; override with a `"port": <n>` field in `miniapp.json`.
+Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
 
 **On the phone:** open the MentraOS app → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi.
 
@@ -195,7 +196,7 @@ Required: `packageName`, `version`, `name`, `hardwareRequirements`. Everything e
 
 `packageName` must be reverse-DNS (`^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$`).
 
-`port` defaults to `3000` for `dev` and is ignored by `release` (which picks its own free port).
+`port` defaults to `3000` for `dev` and is ignored by `release` (which picks its own free port). For `dev`, this is the starting port; if the port or its sidecar neighbor is busy, the CLI scans upward until it finds a free adjacent pair.
 
 The CLI's allowed-value lists are mirrored by hand from `@mentra/types` to keep the CLI dependency-light so `bunx mentra-miniapp` stays fast. Drift between the two is caught at validation time, not import time.
 

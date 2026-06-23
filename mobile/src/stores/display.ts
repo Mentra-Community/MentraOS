@@ -20,9 +20,10 @@ export const useDisplayStore = create<DisplayStore>((set, get) => ({
   setDisplayEvent: (eventString: string) => {
     const event = JSON.parse(eventString)
     const currentView = get().view
+    const targetBucket = event.view === "dashboard" ? "dashboardEvent" : "mainEvent"
 
     const updates: any = {
-      [event.view === "dashboard" ? "dashboardEvent" : "mainEvent"]: event,
+      [targetBucket]: event,
     }
 
     // also update the current event if the view is the same:

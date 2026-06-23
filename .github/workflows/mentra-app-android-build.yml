@@ -11,6 +11,13 @@ on:
       - dev
   workflow_dispatch:
 
+# Cancel a branch's in-flight build when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; keeps the runner
+# queue from filling with superseded builds.
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -118,9 +125,23 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into the Android
+        # manifest (com.mapbox.token) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            # Portable in-place edit. This job runs on bare `self-hosted`, which
+            # may be Linux (GNU sed); `sed -i ''` is BSD/macOS-only and on GNU sed
+            # treats the script as a filename ("can't read s|...|" → exit 2). The
+            # temp-file form works on both. (The iOS/staging jobs are macOS-pinned.)
+            sed "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env > .env.tmp && mv .env.tmp .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
 
       - name: Run Expo prebuild
         working-directory: ./mobile
@@ -141,6 +162,17 @@ jobs:
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo so Gradle can fetch the Nav SDK (com.mapbox.navigationcore)
+          # binaries. Build-time only — never written into the APK.
+          # Passed under BOTH names: our hand-written repo block reads
+          # MAPBOX_DOWNLOADS_TOKEN, while the @rnmapbox/maps-generated repo block
+          # (allprojects, in mobile/android/build.gradle) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN. The generated block applies to ALL
+          # modules incl. :mentra-crust, so without the second name it adds the
+          # repo UNAUTHENTICATED → "Could not find navigationcore".
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Retry build with clean cache (if first attempt failed)
         if: steps.gradle-build.outcome == 'failure'
@@ -153,6 +185,7 @@ jobs:
           ./gradlew assembleRelease --build-cache --parallel
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Fail if both builds failed
         if: steps.gradle-build.outcome == 'failure'

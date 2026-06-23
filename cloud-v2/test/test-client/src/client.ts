@@ -176,6 +176,7 @@ export type MessageHandler = (msg: AnyServerMessage) => void;
 
 export class TestClient {
   private accessToken: string | null = null;
+  private runtimeToken: string | null = null;
   private ws: WebSocket | null = null;
   private ack: ConnectionAck | null = null;
   private udpSocket: UdpSocket | null = null;
@@ -208,10 +209,15 @@ export class TestClient {
     return tag;
   }
 
-  /** Mentra access token. Available after connect(). */
+  /**
+   * Runtime token (aud=cloud-runtime) for Runtime WS + REST calls. Available
+   * after connect(). The Runtime verifies this via `verifyRuntimeToken`; it
+   * never accepts the Core access token, so this is the token the audio/camera
+   * APIs must carry.
+   */
   get token(): string {
-    if (!this.accessToken) throw new Error("not connected");
-    return this.accessToken;
+    if (!this.runtimeToken) throw new Error("not connected");
+    return this.runtimeToken;
   }
 
   /**
@@ -220,8 +226,14 @@ export class TestClient {
    * socket. Throws on any step.
    */
   async connect(): Promise<void> {
+    // 1. OEM JWT → Core access token (aud=cloud-core).
     this.accessToken = await this.exchangeForAccessToken();
-    await this.openWebSocket(this.accessToken);
+    // 2. Broker a Runtime token (aud=cloud-runtime) from Core. The Runtime
+    //    verifies tokens via verifyRuntimeToken and rejects the Core access
+    //    token, so the WS handshake and audio/camera REST must carry this
+    //    brokered token. Mirrors the mobile client's auth.runtime.source="core".
+    this.runtimeToken = await this.fetchRuntimeToken(this.accessToken);
+    await this.openWebSocket(this.runtimeToken);
     this.udpSocket = await Bun.udpSocket({});
     if (this.opts.liveness) this.startLiveness();
   }
@@ -369,6 +381,7 @@ export class TestClient {
     this.udpSocket = null;
     this.ack = null;
     this.accessToken = null;
+    this.runtimeToken = null;
     this.messageHandlers = [];
     this.receivedMessages = [];
     this.livenessClosedCallback = null;
@@ -412,6 +425,29 @@ export class TestClient {
     }
     const tokens = (await exchangeRes.json()) as { access_token: string };
     return tokens.access_token;
+  }
+
+  /**
+   * Exchange the Core access token for a short-lived Runtime token
+   * (aud=cloud-runtime) via Core's brokered `/runtime-token` endpoint. This is
+   * the token the Runtime WS/REST APIs verify; the Core access token is never
+   * accepted there.
+   */
+  private async fetchRuntimeToken(coreAccessToken: string): Promise<string> {
+    const res = await fetch(
+      `${this.opts.coreUrl}/api/client/auth/runtime-token`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${coreAccessToken}` },
+      },
+    );
+    if (!res.ok) {
+      throw new Error(
+        `runtime-token request failed: ${res.status} ${await res.text()}`,
+      );
+    }
+    const { access_token } = (await res.json()) as { access_token: string };
+    return access_token;
   }
 
   private openWebSocket(accessToken: string): Promise<void> {

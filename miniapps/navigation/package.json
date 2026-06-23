@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",
+    "@turf/turf": "^7.3.5",
     "liquid-glass-react": "^1.1.1",
     "lucide-react": "^0.511.0",
+    "mapbox-gl": "^3.25.0",
     "motion": "^12.38.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

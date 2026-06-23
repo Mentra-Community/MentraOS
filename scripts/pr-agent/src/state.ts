@@ -106,6 +106,23 @@ export async function saveState(
   });
 }
 
+export async function upsertMarkerComment(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  marker: string,
+  body: string,
+): Promise<void> {
+  const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
+  const existing = comments.find((c) => c.body?.includes(marker));
+  if (existing) {
+    await octokit.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+    return;
+  }
+  await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+}
+
 export async function prHasLabel(
   octokit: Octokit,
   owner: string,

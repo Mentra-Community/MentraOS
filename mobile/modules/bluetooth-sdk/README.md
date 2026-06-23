@@ -315,7 +315,7 @@ console.log(ledAck.state)
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
 
 React Native narrows returned values to success shapes where the raw listener event can also report errors:
 
@@ -327,7 +327,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
 | `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 
-Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
+Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
 
 `setMicState(true)` defaults to continuous microphone PCM from the glasses. The SDK does not apply phone-side Voice Activity Detection gating to microphone audio events. Glasses-side Voice Activity Detection is disabled by default for public SDK consumers; use `setVoiceActivityDetectionEnabled(true)` when you want supported glasses to gate microphone audio and emit live speaking status. `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone events include the latest `voiceActivityDetectionEnabled` value.
 
@@ -405,8 +405,8 @@ await BluetoothSdk.startStream({
 await BluetoothSdk.stopStream()
 ```
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
-`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. Stream video input fields are `width`, `height`, `bitrate`, and `fps`. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
+`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight. The resolved effective frame rate is reported as `resolvedConfig.video.fps`.
 
 ## Events
 
@@ -459,13 +459,25 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
 
+For local Android source compile checks inside this monorepo, run from the
+MentraOS repo root:
+
+```sh
+./scripts/check-android-compile.sh bluetooth-sdk
+```
+
+The `android/` folder in this package is source for the generated Expo Android
+project, not the local Gradle entrypoint. The check script prepares
+`mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
+matching the CI release workflow's public SDK dependency mode.
+
 For bare native iOS apps, use the public SwiftPM repository:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.13`, then add the `MentraBluetoothSDK` product to your app target.
+Select version `0.1.14`, then add the `MentraBluetoothSDK` product to your app target.
 
 For local SDK development, add this package folder directly in Xcode:
 

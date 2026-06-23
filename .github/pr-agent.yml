@@ -1,14 +1,19 @@
 # PR Agent Orchestrator configuration
-# See docs/pr-agent-orchestrator-setup.md
+# See notes/pr-agent-orchestrator-setup.md
 
-dryRun: true
+dryRun: false
 
-reviewModel: claude-4.6-sonnet-medium-thinking
-fixModel: claude-opus-4-8-thinking-xhigh
+reviewModel: claude-opus-4-8
+fixModel: claude-opus-4-8
 
 authors:
-  mode: label_only # allowlist | all | label_only
-  allowlist: []
+  # allowlist | all | label_only
+  # allowlist: PRs authored by anyone in `allowlist` run automatically (no
+  # opt-in label needed). The `agent-stop` label is the kill switch that halts
+  # the orchestrator on any PR. Drafts are reviewed like any other PR.
+  mode: allowlist
+  allowlist:
+    - nic-olo
 
 limits:
   maxFixRounds: 5
@@ -16,7 +21,7 @@ limits:
   maxBugbotWaitMin: 12
   maxCiWaitMin: 45
   maxNewBlockingPerCycle: 5
-  maxFixAgentTurns: 20
+  maxFixAgentTurns: 80
   consecutiveNoNewReviewsForHandoff: 2
   discoveryCycles: 1
 

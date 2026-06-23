@@ -11,12 +11,13 @@
 
 import {create} from "zustand"
 
-import type {DevSettings, LogEntry, NavSnapshot, TripState} from "../../shared/types"
+import type {DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../../shared/types"
 
 type NavStore = NavSnapshot & {
   apply(snapshot: Partial<NavSnapshot>): void
   applyTrip(trip: TripState): void
   applyDevSettings(s: DevSettings): void
+  applyUnitSystem(u: UnitSystem): void
   appendLog(entry: LogEntry): void
   clearLog(): void
 }
@@ -44,7 +45,9 @@ const initialSnapshot: NavSnapshot = {
     wrongSidewalk: false,
     skipCrossings: false,
     useRawInstructions: true,
+    largeMapEnabled: false,
   },
+  unitSystem: "metric",
 }
 
 export const useNavStore = create<NavStore>((set) => ({
@@ -52,6 +55,7 @@ export const useNavStore = create<NavStore>((set) => ({
   apply: (snapshot) => set(snapshot),
   applyTrip: (trip) => set({trip}),
   applyDevSettings: (devSettings) => set({devSettings}),
+  applyUnitSystem: (unitSystem) => set({unitSystem}),
   appendLog: (entry) => set((s) => ({log: [entry, ...s.log].slice(0, 100)})),
   clearLog: () => set({log: []}),
 }))
@@ -72,6 +76,7 @@ export function installChannelSubscribers(): void {
   mentra.on("nav:log-append", (entry) => useNavStore.getState().appendLog(entry))
   mentra.on("nav:log-clear", () => useNavStore.getState().clearLog())
   mentra.on("nav:dev-settings-update", (s) => useNavStore.getState().applyDevSettings(s))
+  mentra.on("nav:units-update", ({unitSystem}) => useNavStore.getState().applyUnitSystem(unitSystem))
 
   // Best-effort snapshot kickoff — onOpen also fires one from background,
   // but issuing this explicitly ensures we hydrate even if the open

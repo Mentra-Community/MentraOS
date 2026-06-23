@@ -1,9 +1,10 @@
 import {Drawer} from "@/ui/components/Drawer/Drawer"
+import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
 import {parseAddress} from "@/ui/lib/parseAddress"
 import {useToast} from "@/ui/components/Toast/Toast"
-import {CopyIcon} from "@/ui/components/icons"
+import {StarIcon, StarIconOutline} from "@/ui/components/icons"
 import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
@@ -15,6 +16,10 @@ type Props = {
   routeDistanceMeters?: number | null
   /** Route duration from the Routes API — mode-aware (walking/driving/etc). */
   routeDurationSeconds?: number | null
+  /** Whether this destination is already in the user's saved places. */
+  saved?: boolean
+  /** Toggle the saved-state. `shouldSave` is true to star, false to unstar. */
+  onToggleSaved?: (place: PlaceDetails, shouldSave: boolean) => void | Promise<void>
   onStart: () => void
   onClose: () => void
 }
@@ -31,10 +36,13 @@ export function DestinationPreviewDrawer({
   speedMultiplier,
   routeDistanceMeters,
   routeDurationSeconds,
+  saved = false,
+  onToggleSaved,
   onStart,
   onClose,
 }: Props) {
   const toast = useToast()
+  const unitSystem = useNavStore((s) => s.unitSystem)
 
   // Prefer real route totals from computeRoute; fall back to straight-line
   // haversine + walking-speed only while waiting for the API response.
@@ -47,7 +55,7 @@ export function DestinationPreviewDrawer({
       : haversineDistance != null
         ? haversineDistance / FALLBACK_WALKING_M_PER_S
         : null
-  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : null
+  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters, unitSystem) : null
   const etaLabel = durationSeconds != null ? formatEta(durationSeconds) : null
   const arrivalLabel = durationSeconds != null ? formatArrival(durationSeconds) : null
 
@@ -88,27 +96,36 @@ export function DestinationPreviewDrawer({
                           {showStreet ? (
                             <div className="text-[15px]/5 truncate">{street}</div>
                           ) : null}
-                          {locality ? <div className="text-[13px]/4.5 truncate">{locality}</div> : null}
-                          {country ? <div className="text-[11px]/4 text-[#0000007A] truncate">{country}</div> : null}
+                          {locality || country ? (
+                            <div className="text-[13px]/4.5 truncate">
+                              {locality}
+                              {locality && country ? ", " : ""}
+                              {country ? <span className="text-[#0000007A]">{country}</span> : null}
+                            </div>
+                          ) : null}
                         </div>
                       )
                     })()}
                   </div>
                   <button
                     type="button"
-                    aria-label="Copy address"
-                    onClick={() => {
-                      // `address` is already the full formatted string for
-                      // both searched places and geocoded pins, so copy it
-                      // directly — prepending `name` would duplicate the
-                      // street segment.
-                      navigator.clipboard
-                        ?.writeText(destination.address)
-                        .then(() => toast("Address copied"))
-                        .catch(() => toast("Couldn’t copy address"))
+                    aria-label={saved ? "Remove from saved places" : "Save place"}
+                    aria-pressed={saved}
+                    onClick={async () => {
+                      const next = !saved
+                      try {
+                        await onToggleSaved?.(destination, next)
+                        toast(next ? "Saved" : "Removed from saved")
+                      } catch {
+                        toast(next ? "Couldn’t save place" : "Couldn’t remove place")
+                      }
                     }}
                     className="shrink-0 flex items-center justify-center size-12 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
-                    <CopyIcon size={22} />
+                    {saved ? (
+                      <StarIcon size={22} color="#1A1A1A" />
+                    ) : (
+                      <StarIconOutline size={22} color="#1A1A1A" strokeWidth={2} />
+                    )}
                   </button>
                 </div>
               </>

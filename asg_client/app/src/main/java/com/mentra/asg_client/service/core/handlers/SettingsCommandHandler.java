@@ -47,9 +47,9 @@ public class SettingsCommandHandler implements ICommandHandler {
                 "button_video_recording_setting",
                 "button_max_recording_time",
                 "button_photo_setting",
-                "button_camera_led",
                 "button_mode_setting",
-                "camera_fov_setting");
+                "camera_fov_setting",
+                "camera_tuning_config");
     }
 
     @Override
@@ -64,12 +64,12 @@ public class SettingsCommandHandler implements ICommandHandler {
                     return handleButtonMaxRecordingTime(data);
                 case "button_photo_setting":
                     return handleButtonPhotoSetting(data);
-                case "button_camera_led":
-                    return handleButtonCameraLedSetting(data);
                 case "button_mode_setting":
                     return handleButtonModeSetting(data);
                 case "camera_fov_setting":
                     return handleCameraFovSetting(data);
+                case "camera_tuning_config":
+                    return handleCameraTuningConfig(data);
                 default:
                     Log.e(TAG, "Unsupported settings command: " + commandType);
                     return false;
@@ -241,26 +241,27 @@ public class SettingsCommandHandler implements ICommandHandler {
                             + (hasCompress ? ", compress=" + compress : "")
                             + (hasSound ? ", sound=" + sound : ""));
             if (noiseReduction != null && !noiseReduction) {
-                Log.w(
+                Log.d(
                         TAG,
-                        "noiseReduction=false stored via button_photo_setting; HAL may report"
-                                + " not_implemented at capture");
+                        "noiseReduction=false stored via button_photo_setting; bridging to HAL"
+                                + " camconfig (anr=false). Camera2 NR mode may still report"
+                                + " not_implemented.");
             }
             if (ispDigitalGain != null) {
-                Log.w(
+                Log.d(
                         TAG,
                         "ispDigitalGain="
                                 + ispDigitalGain
-                                + " stored via button_photo_setting; HAL may report not_implemented"
-                                + " at capture");
+                                + " stored via button_photo_setting; gain bridged to HAL camconfig."
+                                + " Camera2 ISP digital gain may still report not_implemented.");
             }
             if (ispAnalogGain != null && !ispAnalogGain.isEmpty()) {
-                Log.w(
+                Log.d(
                         TAG,
                         "ispAnalogGain="
                                 + ispAnalogGain
-                                + " stored via button_photo_setting; HAL may report not_implemented"
-                                + " at capture");
+                                + " stored via button_photo_setting; gain bridged to HAL camconfig."
+                                + " Camera2 ISP analog gain may still report not_implemented.");
             }
 
             boolean resetCaptureTuning = data.optBoolean("resetCaptureTuning", false);
@@ -308,6 +309,33 @@ public class SettingsCommandHandler implements ICommandHandler {
                 }
                 if (hasSound) {
                     asgSettings.setButtonPhotoSound(sound);
+                }
+
+                // Bridge scan-preset noise-reduction / gain onto the HAL camconfig path so they
+                // actually take effect at the sensor. The Camera2 per-capture keys
+                // (NOISE_REDUCTION_MODE / ISP gain) are reported not_implemented by the MediaTek
+                // HAL, but the camera_tuning_config camconfig broadcast (anr/gain) is honored.
+                // Only touch global HAL tuning when the update carries the relevant scan fields (or
+                // a reset) so plain size-only button_photo updates leave it untouched.
+                boolean bridgeHalTuning =
+                        resetCaptureTuning || hasNoiseReduction || hasIspAnalogGain || hasIspDigitalGain;
+                if (bridgeHalTuning) {
+                    // Reset restores stock tuning; explicit scan fields then override the baseline.
+                    boolean anrOn = resetCaptureTuning ? true : asgSettings.isCameraAnrEnabled();
+                    boolean gainOn = resetCaptureTuning ? true : asgSettings.isCameraGainEnabled();
+                    if (hasNoiseReduction) {
+                        anrOn = noiseReduction;
+                    }
+                    if (hasIspAnalogGain && ispAnalogGain != null) {
+                        // "low" analog gain => pixsmart gain-off; anything else keeps stock gain.
+                        gainOn = !"low".equalsIgnoreCase(ispAnalogGain.trim());
+                    } else if (hasIspDigitalGain && ispDigitalGain != null) {
+                        // Analog gain takes precedence when both are present; digital is the
+                        // fallback. ispDigitalGain > 0 means a positive sensor gain is requested
+                        // (stock pipeline), so gain stays ON; 0 means suppress gain (gain-off).
+                        gainOn = ispDigitalGain > 0;
+                    }
+                    applyCameraTuning(asgSettings, anrOn, gainOn);
                 }
                 // For the ack, echo the persisted (effective) size rather than the wire value so
                 // clients that omit size receive the actual stored tier (e.g. max) in the response.
@@ -363,37 +391,6 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
 
-    /** Handle button camera LED setting command */
-    public boolean handleButtonCameraLedSetting(JSONObject data) {
-        try {
-            String requestId = getRequestId(data);
-            boolean enabled = data.optBoolean("enabled", true);
-
-            Log.d(TAG, "📱 Received button camera LED setting: " + enabled);
-
-            AsgSettings asgSettings = serviceManager.getAsgSettings();
-            if (asgSettings != null) {
-                asgSettings.setButtonCameraLedEnabled(enabled);
-                Log.d(TAG, "✅ Button camera LED setting saved: " + enabled);
-                JSONObject values = new JSONObject();
-                values.put("enabled", enabled);
-                sendSettingsAck(requestId, "button_camera_led", STATUS_APPLIED, values);
-                return true;
-            } else {
-                Log.e(TAG, "Settings not available");
-                sendSettingsError(
-                        requestId,
-                        "button_camera_led",
-                        "settings_unavailable",
-                        "Settings are not available.");
-                return false;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling button camera LED setting", e);
-            return false;
-        }
-    }
-
     /**
      * Handle camera FOV setting command (K900). Persists FOV and ROI, applies to hardware, restarts
      * camera HAL.
@@ -443,6 +440,33 @@ public class SettingsCommandHandler implements ICommandHandler {
                 CameraRestartCooldown.setCooldown();
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
                 sendCameraFovReadyAck(requestId, fov, roiPosition);
+                // Re-apply saved camera tuning after the HAL comes back up so ANR/gain config
+                // survives a runtime FOV change (mirrors the boot-time defer in AsgClientService).
+                AsgSettings savedSettings = asgSettings;
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(
+                                () -> {
+                                    try {
+                                        boolean anrOn = savedSettings.isCameraAnrEnabled();
+                                        boolean gainOn = savedSettings.isCameraGainEnabled();
+                                        SystemControllerFactory.get(context)
+                                                .setCameraTuningConfig(anrOn, gainOn);
+                                        Log.d(
+                                                TAG,
+                                                "Camera tuning re-applied after FOV HAL restart:"
+                                                        + " anr="
+                                                        + anrOn
+                                                        + ", gain="
+                                                        + gainOn);
+                                    } catch (Exception ex) {
+                                        Log.w(
+                                                TAG,
+                                                "Failed to re-apply camera tuning after FOV"
+                                                        + " restart",
+                                                ex);
+                                    }
+                                },
+                                CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
             } catch (UnsatisfiedLinkError e) {
                 Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
                 JSONObject values = new JSONObject();
@@ -519,6 +543,68 @@ public class SettingsCommandHandler implements ICommandHandler {
             sendSettingsAck(requestId, setting, STATUS_ERROR, values);
         } catch (Exception e) {
             Log.e(TAG, "Failed to send settings error for " + setting, e);
+        }
+    }
+
+    /**
+     * Handle camera_tuning_config command. Persists ANR and gain flags and immediately applies them
+     * via a {@code camconfig} broadcast to SystemUI.
+     *
+     * <p>Expected JSON fields (both optional; omitted fields keep the stored value):
+     * <ul>
+     *   <li>{@code anr} – boolean; {@code true} = ANR on, {@code false} = ANR off</li>
+     *   <li>{@code gain} – boolean; {@code true} = stock gain, {@code false} = pixsmart gain-off</li>
+     * </ul>
+     */
+    private boolean handleCameraTuningConfig(JSONObject data) {
+        try {
+            String requestId = getRequestId(data);
+
+            AsgSettings asgSettings = serviceManager.getAsgSettings();
+            if (asgSettings == null) {
+                Log.e(TAG, "Settings not available for camera_tuning_config");
+                sendSettingsError(
+                        requestId,
+                        "camera_tuning",
+                        "settings_unavailable",
+                        "Settings are not available.");
+                return false;
+            }
+
+            boolean anrOn = data.has("anr") ? data.optBoolean("anr") : asgSettings.isCameraAnrEnabled();
+            boolean gainOn = data.has("gain") ? data.optBoolean("gain") : asgSettings.isCameraGainEnabled();
+
+            applyCameraTuning(asgSettings, anrOn, gainOn);
+
+            JSONObject values = new JSONObject();
+            values.put("anr", anrOn);
+            values.put("gain", gainOn);
+            sendSettingsAck(requestId, "camera_tuning", STATUS_APPLIED, values);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera_tuning_config", e);
+            sendSettingsError(getRequestId(data), "camera_tuning", "internal_error", "Unexpected error applying camera tuning.");
+            return false;
+        }
+    }
+
+    /**
+     * Persist ANR/gain flags and apply them to the Mentra Live HAL via the {@code camconfig}
+     * broadcast. Shared by the dedicated {@code camera_tuning_config} command and the scan-mode
+     * {@code button_photo_setting} bridge so {@code noiseReduction}/gain actually take effect at the
+     * sensor instead of only persisting as Camera2 hints the HAL reports as not_implemented.
+     */
+    private void applyCameraTuning(AsgSettings asgSettings, boolean anrOn, boolean gainOn) {
+        asgSettings.setCameraAnrEnabled(anrOn);
+        asgSettings.setCameraGainEnabled(gainOn);
+        Log.d(TAG, "Camera tuning config saved: anr=" + anrOn + ", gain=" + gainOn);
+
+        Context context = serviceManager.getContext();
+        if (context != null) {
+            SystemControllerFactory.get(context).setCameraTuningConfig(anrOn, gainOn);
+            Log.d(TAG, "Camera tuning config applied via broadcast");
+        } else {
+            Log.w(TAG, "Context not available; tuning persisted but broadcast not sent");
         }
     }
 

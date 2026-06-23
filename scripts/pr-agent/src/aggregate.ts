@@ -119,8 +119,17 @@ export function aggregateCycle(
   let handoffReason: AggregateOutput['handoffReason'];
 
   const openCount = openBlocking(openFindings).length;
+  // Stagnation tracks the *fixer* failing to reduce open findings. It is only
+  // meaningful when the fixer actually runs — never accumulate it in dry run,
+  // where unchanged findings across review cycles are expected (no fixes land).
   let stagnationFixRounds = state.stagnationFixRounds;
-  if (state.lastOpenCount !== undefined && openCount === state.lastOpenCount && openCount > 0) {
+  if (config.dryRun) {
+    stagnationFixRounds = 0;
+  } else if (
+    state.lastOpenCount !== undefined &&
+    openCount === state.lastOpenCount &&
+    openCount > 0
+  ) {
     stagnationFixRounds += 1;
   } else if (openCount < (state.lastOpenCount ?? openCount)) {
     stagnationFixRounds = 0;

@@ -18,6 +18,7 @@ import { noopLogger } from "./logger";
 import type { Logger } from "./logger";
 import type { CloudClientConfig } from "./config";
 import { createHttpClient } from "./http";
+import { CloudClientError } from "./errors";
 import type { ConnectionInit } from "@mentra/cloud-runtime/protocol";
 
 // The module implementations. Each is owned by another agent under ./modules/**;
@@ -30,6 +31,7 @@ import { Connection } from "./modules/runtime/connection";
 import { RuntimeEmitter } from "./modules/runtime/emitter";
 import { Subscriptions } from "./modules/runtime/subscriptions";
 import { Camera } from "./modules/runtime/camera";
+import { Maps } from "./modules/runtime/maps";
 import { Tts } from "./modules/runtime/tts";
 import { UdpAudio } from "./modules/runtime/audio-udp";
 import { Core } from "./modules/core/core";
@@ -102,11 +104,11 @@ export class CloudClient {
   // Typed as the concrete module classes rather than separate `AuthModule` /
   // `RuntimeModule` / `CoreModule` interfaces: each class IS the implementation
   // of its public contract (per design.md), so a host gets the full, typed
-  // surface (`cloud.auth.getAccessToken()`, etc.) straight off these fields with
+  // surface (`cloud.auth.getRuntimeToken()`, etc.) straight off these fields with
   // no parallel interface to keep in sync.
   readonly auth: Auth;
   readonly runtime: Runtime;
-  readonly core: Core;
+  readonly core?: Core;
 
   constructor(config: CloudClientConfig) {
     // One logger for the whole client, so a host routes every module's logs in
@@ -119,18 +121,47 @@ export class CloudClient {
     // Resolve the two base addresses. With a proxy set, both route through it;
     // without one, each module talks to its own service directly.
     const { core: coreBase, runtime: runtimeBase, proxy } = config.endpoints;
-    const coreUrl = proxy ? rewriteThroughProxy(coreBase, proxy) : coreBase;
+    const coreUrl = coreBase
+      ? proxy
+        ? rewriteThroughProxy(coreBase, proxy)
+        : coreBase
+      : undefined;
     const runtimeUrl = proxy
       ? rewriteThroughProxy(runtimeBase, proxy)
       : runtimeBase;
 
+    if (config.auth.core && !coreUrl) {
+      throw new CloudClientError("auth.core requires endpoints.core");
+    }
+
+    // Runtime auth is the mandatory half (Core is optional). Guard it before the
+    // `in` check below so a caller passing the pre-split flat `auth` shape
+    // (`{ subjectToken, subjectTokenType }`, no `runtime`) gets a clear
+    // configuration error instead of an opaque `TypeError` from `"source" in undefined`.
+    if (!config.auth.runtime) {
+      throw new CloudClientError(
+        "auth.runtime is required (got a pre-split/flat auth config?)",
+      );
+    }
+
+    const runtimeUsesCore =
+      "source" in config.auth.runtime && config.auth.runtime.source === "core";
+    if (runtimeUsesCore && (!coreUrl || !config.auth.core)) {
+      throw new CloudClientError(
+        "auth.runtime.source='core' requires endpoints.core and auth.core",
+      );
+    }
+
     // Build auth FIRST: runtime and core both source their Bearer from it, so it
-    // has to exist before their HTTP helpers can reference `getAccessToken`.
+    // has to exist before their HTTP helpers can reference token providers.
     //
     // Auth's own HTTP helper has no default token source: its `/exchange` and
     // `/refresh` calls present the subject and refresh tokens via `opts.bearer`,
-    // before any access token exists. It talks to the core service.
-    const authHttp = createHttpClient({ baseUrl: coreUrl, logger });
+    // before any access token exists. It is deliberately Core-only: runtime-only
+    // clients never get a fallback that points Core/Auth calls at Runtime.
+    const authHttp = coreUrl
+      ? createHttpClient({ baseUrl: coreUrl, logger })
+      : undefined;
     const store = new TokenStore({ storage: config.transports.storage });
     const auth = new Auth({
       http: authHttp,
@@ -142,19 +173,19 @@ export class CloudClient {
       baseUrl: coreUrl,
     });
 
-    // Both the core and runtime HTTP helpers use auth as their default Bearer
-    // source, so every resource call carries a fresh (auto-refreshed) access
-    // token. `getAccessToken` is bound so it keeps `auth` as its receiver.
-    const getAccessToken = (): Promise<string> => auth.getAccessToken();
+    const getRuntimeToken = (): Promise<string> => auth.getRuntimeToken();
+    const getCoreToken = (): Promise<string> => auth.getCoreToken();
 
-    const coreHttp = createHttpClient({
-      baseUrl: coreUrl,
-      getToken: getAccessToken,
-      logger,
-    });
+    const coreHttp = coreUrl && config.auth.core
+      ? createHttpClient({
+          baseUrl: coreUrl,
+          getToken: getCoreToken,
+          logger,
+        })
+      : null;
     const runtimeHttp = createHttpClient({
       baseUrl: runtimeUrl,
-      getToken: getAccessToken,
+      getToken: getRuntimeToken,
       logger,
     });
 
@@ -196,16 +227,17 @@ export class CloudClient {
     const connection = new Connection({
       ws: config.transports.ws,
       url: toRuntimeWsUrl(runtimeUrl),
-      getToken: getAccessToken,
+      getToken: getRuntimeToken,
       initPayload,
       reconnect,
       onAuthRejected: async () => {
-        await auth.getAccessToken({ forceRefresh: true });
+        await auth.getRuntimeToken({ forceRefresh: true });
       },
       logger,
     });
     const camera = new Camera({ http: runtimeHttp });
     const tts = new Tts({ http: runtimeHttp });
+    const maps = new Maps({ http: runtimeHttp });
     const audio = new UdpAudio({ udp: config.transports.udp });
 
     const runtime = new Runtime({
@@ -214,16 +246,17 @@ export class CloudClient {
       subscriptions,
       camera,
       tts,
+      maps,
       audio,
       logger,
       // On a fatal AUTH_EXPIRED at handshake, runtime forces auth to drop its
       // cached access token and refresh; the connection then re-reads the fresh
-      // token via getAccessToken on the reopen.
-      forceRefreshToken: () => auth.getAccessToken({ forceRefresh: true }),
+      // token via getRuntimeToken on the reopen.
+      forceRefreshToken: () => auth.getRuntimeToken({ forceRefresh: true }),
     });
 
     // Core is last: stateless REST on the core service, Bearer from auth.
-    const core = new Core({ http: coreHttp });
+    const core = coreHttp ? new Core({ http: coreHttp }) : undefined;
 
     this.auth = auth;
     this.runtime = runtime;

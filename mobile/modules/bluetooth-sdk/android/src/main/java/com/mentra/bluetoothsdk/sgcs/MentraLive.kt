@@ -735,8 +735,7 @@ class MentraLive : SGCManager() {
             }
             // Drop cached version fields from the previous BLE session so the next version_info
             // repopulates RN. Otherwise a stale build (e.g. 38) can remain while ASG is still 36,
-            // and the phone-side OTA check will disagree with glasses' PackageManager +
-            // ota_update_available.
+            // and the phone-side OTA manifest check will compare against the wrong build.
             DeviceStore.apply("glasses", "buildNumber", "")
             DeviceStore.apply("glasses", "appVersion", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
@@ -3041,47 +3040,6 @@ class MentraLive : SGCManager() {
                                 (if (success) "SUCCESS" else "FAILED")
                 )
             }
-            "ota_update_available" -> {
-                // Process OTA update available notification from glasses (background mode)
-                Bridge.log("LIVE: 📱 Received ota_update_available from glasses")
-                Bridge.log("LIVE: 📱 OTA update available: " + json.toString())
-                try {
-                    val otaVersionCode = json.optLong("version_code", 0)
-                    val otaVersionName = json.optString("version_name", "")
-                    val otaTotalSize = json.optLong("total_size", 0)
-
-                    // Parse updates array
-                    val updates: MutableList<String> = ArrayList()
-                    if (json.has("updates")) {
-                        val updatesArray = json.getJSONArray("updates")
-                        for (i in 0 until updatesArray.length()) {
-                            updates.add(updatesArray.getString(i))
-                        }
-                    }
-
-                    Bridge.log(
-                            "LIVE: 📱 OTA available - version: " +
-                                    otaVersionName +
-                                    " (" +
-                                    otaVersionCode +
-                                    "), updates: " +
-                                    updates +
-                                    ", size: " +
-                                    otaTotalSize +
-                                    " bytes"
-                    )
-
-                    // Send to React Native
-                    Bridge.sendOtaUpdateAvailable(
-                            otaVersionCode,
-                            otaVersionName,
-                            updates,
-                            otaTotalSize
-                    )
-                } catch (e: JSONException) {
-                    Log.e(TAG, "Error parsing ota_update_available", e)
-                }
-            }
             "ota_start_ack" -> {
                 // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
                 Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
@@ -4660,7 +4618,7 @@ class MentraLive : SGCManager() {
      * When [otaVersionUrl] is non-null it is sent as the `ota_version_url` field so the glasses
      * download from that manifest; asg_client's OtaCommandHandler reads and validates that field
      * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
-     * their prefetched/default version manifest.
+     * their default version manifest.
      */
     fun sendOtaStart(otaVersionUrl: String? = null) {
         try {
@@ -4686,18 +4644,6 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: 📱 Sending ota_query_status command to glasses")
         } catch (e: JSONException) {
             Log.e(TAG, "📱 Error creating ota_query_status command", e)
-        }
-    }
-
-    fun sendOtaRetryVersionCheck() {
-        try {
-            val json = JSONObject()
-            json.put("type", "ota_retry_version_check")
-            json.put("timestamp", System.currentTimeMillis())
-            sendJson(json, true)
-            Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-        } catch (e: JSONException) {
-            Log.e(TAG, "⏰ Error creating ota_retry_version_check command", e)
         }
     }
 
@@ -5207,7 +5153,6 @@ class MentraLive : SGCManager() {
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
         val compress = request.compress.value
-        val flash = request.flash
         val save = request.save
         val sound = request.sound
         val exposureTimeNs = request.exposureTimeNs
@@ -5226,8 +5171,6 @@ class MentraLive : SGCManager() {
                         (if (hasAuthToken) "***" else "none") +
                         ", compress=" +
                         compress +
-                        ", flash=" +
-                        flash +
                         ", save=" +
                         save +
                         ", sound=" +
@@ -5267,7 +5210,6 @@ class MentraLive : SGCManager() {
             } else {
                 json.put("compress", "none")
             }
-            json.put("flash", flash)
             json.put("save", save)
             json.put("sound", sound)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
@@ -6141,25 +6083,6 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: ✅ [SETTINGS_SYNC] Video settings transmitted via BLE")
         } catch (e: JSONException) {
             Log.e(TAG, "❌ [SETTINGS_SYNC] Error sending button video recording settings", e)
-        }
-    }
-
-    fun sendButtonCameraLedSetting(enabled: Boolean) {
-        sendButtonCameraLedSetting(null, enabled)
-    }
-
-    fun sendButtonCameraLedSetting(requestId: String?, enabled: Boolean) {
-        // Send LED setting to glasses
-        val command = JSONObject()
-        try {
-            command.put("type", "button_camera_led")
-            if (requestId != null && !requestId.isEmpty()) {
-                command.put("request_id", requestId)
-            }
-            command.put("enabled", enabled)
-            sendJson(command, true)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending button camera LED setting", e)
         }
     }
 
@@ -8073,9 +7996,6 @@ class MentraLive : SGCManager() {
         // Send button photo settings
         sendButtonPhotoSettings()
 
-        // Send button camera LED setting
-        sendButtonCameraLedSetting()
-
         // Send camera FOV setting (K900 / Mentra Live)
         sendCameraFovSetting()
 
@@ -8144,12 +8064,6 @@ class MentraLive : SGCManager() {
         )
     }
 
-    /** Send button camera LED setting to glasses */
-    override fun sendButtonCameraLedSetting() {
-        val enabled = DeviceStore.get("bluetooth", "button_camera_led") as Boolean
-        sendButtonCameraLedSetting(null, enabled)
-    }
-
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
         var fov = 118
@@ -8195,6 +8109,36 @@ class MentraLive : SGCManager() {
     }
 
     /**
+     * Send camera tuning config (ANR / gain) to the glasses via the {@code camera_tuning_config}
+     * command. The ASG client relays this as a {@code camconfig} broadcast to the camera HAL.
+     *
+     * @param requestId optional request ID echoed in the settings_ack response
+     * @param anrOn     {@code true} = ANR enabled, {@code false} = ANR disabled
+     * @param gainOn    {@code true} = stock gain params, {@code false} = pixsmart gain-off params
+     */
+    fun sendCameraTuningConfig(requestId: String?, anrOn: Boolean, gainOn: Boolean) {
+        Bridge.log("LIVE: Sending camera tuning config: anr=$anrOn, gain=$gainOn")
+
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send camera tuning config - not connected")
+            return
+        }
+
+        try {
+            val json = JSONObject()
+            json.put("type", "camera_tuning_config")
+            if (!requestId.isNullOrEmpty()) {
+                json.put("request_id", requestId)
+            }
+            json.put("anr", anrOn)
+            json.put("gain", gainOn)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating camera tuning config message", e)
+        }
+    }
+
+    /**
      * Send button max recording time to glasses Matches iOS MentraLive.swift
      * sendButtonMaxRecordingTime pattern
      */
@@ -8228,17 +8172,15 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean
     ) {
-        startVideoRecording(requestId, save, flash, sound, 0, 0, 0, 0) // Use defaults
+        startVideoRecording(requestId, save, sound, 0, 0, 0, 0) // Use defaults
     }
 
     /**
      * Start video recording with optional resolution settings
      * @param requestId Request ID for tracking
      * @param save Whether to save the video
-     * @param flash Whether to enable privacy flash LED
      * @param sound Whether to enable start/stop sounds
      * @param width Video width (0 for default)
      * @param height Video height (0 for default)
@@ -8248,7 +8190,6 @@ class MentraLive : SGCManager() {
     override fun startVideoRecording(
             requestId: String,
             save: Boolean,
-            flash: Boolean,
             sound: Boolean,
             width: Int,
             height: Int,
@@ -8260,8 +8201,6 @@ class MentraLive : SGCManager() {
                         requestId +
                         ", save=" +
                         save +
-                        ", flash=" +
-                        flash +
                         ", sound=" +
                         sound +
                         ", resolution=" +
@@ -8285,7 +8224,6 @@ class MentraLive : SGCManager() {
             json.put("type", "start_video_recording")
             json.put("requestId", requestId)
             json.put("save", save)
-            json.put("flash", flash)
             json.put("sound", sound)
 
             // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.

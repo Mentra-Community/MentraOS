@@ -14,7 +14,7 @@ import mentraAuth from "@/utils/auth/authClient"
 
 export const VersionInfo = () => {
   const {themed} = useAppTheme()
-  const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
+  const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [storeUrl] = useSetting(SETTINGS.store_url.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
@@ -22,7 +22,7 @@ export const VersionInfo = () => {
 
   // Update audio transport info periodically (since it can change)
   useEffect(() => {
-    if (!devMode) return
+    if (!debugMode) return
 
     const updateAudioTransport = () => {
       if (udp.enabledAndReady()) {
@@ -36,7 +36,7 @@ export const VersionInfo = () => {
     updateAudioTransport()
     const interval = setInterval(updateAudioTransport, 2000)
     return () => clearInterval(interval)
-  }, [devMode])
+  }, [debugMode])
 
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)
@@ -48,7 +48,6 @@ export const VersionInfo = () => {
     const timeDiff = currentTime - lastPressTime.current
     const maxTimeDiff = 2000
     const maxPressCount = 10
-    const showAlertAtPressCount = 5
 
     // Reset counter if too much time has passed
     if (timeDiff > maxTimeDiff) {
@@ -66,23 +65,13 @@ export const VersionInfo = () => {
       clearTimeout(pressTimeout.current)
     }
 
-    // Handle different press counts
+    // Enable debug mode once the version number has been tapped enough times.
     if (pressCount.current === maxPressCount) {
       showAlert(translate("debug:debugModeEnabled"), translate("debug:debugModeEnabled"), [
         {text: translate("common:ok")},
       ])
-      setDevMode(true)
+      setDebugMode(true)
       pressCount.current = 0
-    } else if (pressCount.current >= showAlertAtPressCount) {
-      const remaining = maxPressCount - pressCount.current
-      Toast.show({
-        type: "info",
-        text1: translate("debug:debugMode"),
-        text2: translate("debug:debugModeMoreTaps", {number: remaining}),
-        position: "bottom",
-        topOffset: 80,
-        visibilityTime: 1000,
-      })
     }
 
     // Reset counter after 2 seconds of no activity
@@ -113,7 +102,7 @@ export const VersionInfo = () => {
     }
 
     await Clipboard.setStringAsync(info.join("\n"))
-    if (devMode) {
+    if (debugMode) {
       Toast.show({
         type: "info",
         text1: translate("debug:versionInfoCopied"),
@@ -147,7 +136,7 @@ export const VersionInfo = () => {
     }
   }
 
-  if (devMode) {
+  if (debugMode) {
     return (
       <TouchableOpacity onPressIn={handlePressIn} onPressOut={handlePressOut}>
         <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
