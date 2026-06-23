@@ -4,7 +4,7 @@ import {cors} from "hono/cors"
 import {agentApi} from "./agent.api"
 import {classifyApi} from "./classify.api"
 import {searchApi} from "./search.api"
-import {LLM_MODEL} from "../services/ai-config"
+import {DEFAULT_LLM_MODEL} from "../services/ai-config"
 
 export function createApp(): Hono {
   const app = new Hono()
@@ -22,7 +22,7 @@ export function createApp(): Hono {
     c.json({
       status: "ok",
       service: "mentra-ai-local-backend",
-      model: LLM_MODEL,
+      model: DEFAULT_LLM_MODEL,
     }),
   )
 

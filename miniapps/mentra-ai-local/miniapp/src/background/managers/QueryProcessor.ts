@@ -30,6 +30,8 @@ export interface QueryProcessorDeps {
   notifications: NotificationManager
   photo: PhotoManager
   chatHistory: ChatHistoryManager
+  /** Current OpenRouter model slug from settings, sent with each agent request. */
+  getModel: () => string
   /** Forward a chat event to the webview (chat:event channel). */
   emit: (event: ChatEvent) => void
 }
@@ -148,6 +150,7 @@ export class QueryProcessor {
         session,
         query,
         photos: photos.length > 0 ? photos : undefined,
+        model: this.deps.getModel(),
         context,
         onToolCall: (toolName) => {
           if (toolName === "search") this.deps.display.showStatus("Searching...", 10000)

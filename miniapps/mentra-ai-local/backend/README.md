@@ -1,13 +1,19 @@
 # Mentra AI (local) backend
 
-Backend for the Mentra AI local miniapp. It holds the AI secrets (Gemini +
+Backend for the Mentra AI local miniapp. It holds the AI secrets (OpenRouter +
 Jina) so they never ship inside the miniapp bundle. The miniapp background
-calls three authenticated routes and this service runs the AI server-side:
+calls three authenticated routes and this service runs the AI server-side.
 
-- `POST /api/classify` — does this query need the camera photo? (fast Gemini call)
-- `POST /api/agent` — run the full Gemini tool-loop, return the final answer
+Every model — Gemini, Claude, or GPT — runs through **OpenRouter**'s
+OpenAI-compatible API behind a single key. The user picks the model in the
+miniapp settings; the client sends the chosen OpenRouter slug with each
+`/api/agent` request. Valid models live in `src/services/models.ts` (all are
+vision-capable, so Mentra Live photo analysis works regardless of the pick).
+
+- `POST /api/classify` — does this query need the camera photo? (fast OpenRouter call)
+- `POST /api/agent` — run the full tool-loop on the selected model, return the answer
 - `POST /api/search` — Jina web search (also called in-process by the agent loop)
-- `GET  /healthz` — liveness + active model
+- `GET  /healthz` — liveness + default model
 
 Secrets live in Doppler (project `mentra-ai`, config `dev`). The dev scripts use
 it automatically:
@@ -60,9 +66,12 @@ PACKAGE_NAME=com.mentra.ai.local
 Backend-only secrets (never prefixed `MENTRA_PUBLIC_`, never inlined into the
 bundle):
 
-- `GEMINI_API_KEY` (or `GOOGLE_GENERATIVE_AI_API_KEY`) — agent + classifier
+- `OPENROUTER_API_KEY` — agent + classifier (serves all models)
 - `JINA_API_KEY` — web search
-- `LLM_MODEL`, `LLM_PROVIDER` — model id + label shown in the system prompt
+- `LLM_MODEL` — default OpenRouter slug when the client sends none (the settings
+  picker normally overrides this per request; must be a slug from `models.ts`)
+- `OPENROUTER_SITE_URL`, `OPENROUTER_APP_TITLE` — *optional* ranking headers
+- `OPENROUTER_BASE_URL` — *optional* override (proxies / testing)
 
 The only value baked into the miniapp bundle is the public backend URL
 (`MENTRA_PUBLIC_MENTRA_AI_BACKEND_URL`).

@@ -1,16 +1,26 @@
 /**
- * Mentra Agent service — Gemini generateContent tool-loop, server-side.
+ * Mentra Agent service — OpenRouter chat-completions tool-loop, server-side.
  *
- * Ported from the miniapp's agent/MentraAgent.ts. This is the heart of Option A:
- * the entire multi-step tool-loop (Gemini + Jina) runs here, on the backend,
- * with the Gemini key never leaving the server. The client POSTs
- * {query, photos, context} once and gets back {response, toolCalls}.
+ * The entire multi-step tool-loop runs here, on the backend, with the
+ * OpenRouter key never leaving the server. The client POSTs
+ * {query, photos, context, model} once and gets back {response, toolCalls}.
+ *
+ * Every model — Gemini, Claude, or GPT — runs through the same OpenAI-format
+ * path via OpenRouter; the chosen model is just a slug. The client's `model` is
+ * validated against the registry (models.ts), falling back to the default.
  */
 
-import {TOOL_DECLARATIONS, executeTool} from "./tools"
+import {OPENAI_TOOLS, executeTool} from "./tools"
 import {buildSystemPrompt, classifyResponseMode, MAX_STEPS, type AgentContext} from "./prompt"
 import {type AgentRequest, type AgentResult} from "./types"
-import {GEMINI_API_KEY, geminiUrl, hasLLMKey} from "../ai-config"
+import {hasLLMKey, DEFAULT_LLM_MODEL} from "../ai-config"
+import {resolveModel} from "../models"
+import {
+  callOpenRouter,
+  OpenRouterError,
+  type ChatMessage,
+  type ContentPart,
+} from "../openrouter"
 
 export class AgentServiceError extends Error {
   constructor(
@@ -22,26 +32,7 @@ export class AgentServiceError extends Error {
   }
 }
 
-// ── Gemini wire types (minimal) ─────────────────────────────────────
-interface GeminiPart {
-  text?: string
-  inlineData?: {mimeType: string; data: string}
-  functionCall?: {name: string; args?: Record<string, unknown>}
-  functionResponse?: {name: string; response: Record<string, unknown>}
-}
-interface GeminiContent {
-  role: "user" | "model"
-  parts: GeminiPart[]
-}
-
-/** Split a data URL into {mimeType, base64}. */
-function parseDataUrl(dataUrl: string): {mimeType: string; data: string} | null {
-  const match = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)
-  if (!match) return null
-  return {mimeType: match[1], data: match[2]}
-}
-
-/** Generate a response using Gemini, with a bounded tool-call loop. */
+/** Generate a response using OpenRouter, with a bounded tool-call loop. */
 export async function generateResponse(request: AgentRequest): Promise<AgentResult> {
   const {query, photos, context} = request
 
@@ -50,75 +41,103 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
   }
 
   if (!hasLLMKey) {
-    throw new AgentServiceError("GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY is required", 503)
+    throw new AgentServiceError("OPENROUTER_API_KEY is required", 503)
   }
 
+  const model = resolveModel(request.model ?? DEFAULT_LLM_MODEL)
   const responseMode = classifyResponseMode(query, context.hasDisplay)
+
+  // Only vision-capable models receive the photo. For text-only models (e.g.
+  // DeepSeek via OpenRouter), we drop the photo AND tell the prompt the camera
+  // is unavailable, so the model declines visual questions gracefully rather
+  // than erroring on an unsupported image part or hallucinating about a photo
+  // it never received. The glasses may still HAVE a camera — this reflects the
+  // model's inability to use it, not the hardware.
+  const usePhotos = model.visionCapable
+  const hasUsablePhotos = usePhotos && context.hasPhotos
 
   const agentContext: AgentContext = {
     ...context,
+    hasCamera: usePhotos && context.hasCamera,
+    hasPhotos: hasUsablePhotos,
     hasMicrophone: true,
     responseMode,
+    modelLabel: model.label,
+    modelProvider: model.provider,
   }
 
   const systemPrompt = buildSystemPrompt(agentContext)
 
-  // Build the initial user turn: query text + labeled photos.
-  const parts: GeminiPart[] = [{text: query}]
-  if (photos && photos.length > 0) {
+  // Build the initial user turn: query text + labeled photos as image_url parts.
+  const userContent: ContentPart[] = [{type: "text", text: query}]
+  if (usePhotos && photos && photos.length > 0) {
     photos.forEach((photo, i) => {
-      parts.push({
+      userContent.push({
+        type: "text",
         text:
           i === 0
             ? "[CURRENT photo — what the user is looking at right now. Answer about THIS image.]"
             : `[PREVIOUS photo ${i} — older context only. Ignore unless the user explicitly asks about something earlier.]`,
       })
-      const parsed = parseDataUrl(photo)
-      if (parsed) parts.push({inlineData: parsed})
+      // OpenRouter accepts base64 data URLs directly as the image_url.
+      userContent.push({type: "image_url", image_url: {url: photo}})
     })
   }
 
-  const contents: GeminiContent[] = [{role: "user", parts}]
+  const messages: ChatMessage[] = [
+    {role: "system", content: systemPrompt},
+    {role: "user", content: userContent},
+  ]
 
   console.log(
     `🤖 Generating response for: "${query.slice(0, 50)}${query.length > 50 ? "..." : ""}"`,
   )
   console.log(
-    `   Mode: ${responseMode}, Photos: ${photos?.length || 0}, hasPhotos: ${context.hasPhotos}, History: ${context.conversationHistory.length}`,
+    `   Model: ${model.id}, Mode: ${responseMode}, Photos: ${photos?.length || 0}, hasPhotos: ${context.hasPhotos}, History: ${context.conversationHistory.length}`,
   )
 
   let toolCallCount = 0
 
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const data = await callGemini(systemPrompt, contents)
-    const candidate = data?.candidates?.[0]
-    const responseParts: GeminiPart[] = candidate?.content?.parts ?? []
-
-    const functionCalls = responseParts.filter((p) => p.functionCall)
-
-    if (functionCalls.length === 0) {
-      // No tool calls — this is the final answer.
-      const text = responseParts
-        .map((p) => p.text ?? "")
-        .join("")
-        .trim()
-      console.log(`✅ Response generated (${text.length} chars, ${toolCallCount} tool calls)`)
-      return {response: text, toolCalls: toolCallCount}
-    }
-
-    // Append the model's tool-call turn, then execute and append responses.
-    contents.push({role: "model", parts: responseParts})
-
-    const toolResultParts: GeminiPart[] = []
-    for (const part of functionCalls) {
-      const call = part.functionCall!
-      toolCallCount++
-      const result = await executeTool(call.name, call.args ?? {})
-      toolResultParts.push({
-        functionResponse: {name: call.name, response: result},
+  try {
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const assistant = await callOpenRouter({
+        model: model.id,
+        messages,
+        tools: OPENAI_TOOLS,
       })
+
+      const toolCalls = assistant.tool_calls ?? []
+
+      if (toolCalls.length === 0) {
+        // No tool calls — this is the final answer.
+        const text = (assistant.content ?? "").trim()
+        console.log(`✅ Response generated (${text.length} chars, ${toolCallCount} tool calls)`)
+        return {response: text, toolCalls: toolCallCount}
+      }
+
+      // Append the model's tool-call turn, then execute and append each result.
+      messages.push({
+        role: "assistant",
+        content: assistant.content ?? null,
+        tool_calls: toolCalls,
+      })
+
+      for (const call of toolCalls) {
+        toolCallCount++
+        const args = parseToolArgs(call.function.arguments)
+        const result = await executeTool(call.function.name, args)
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(result),
+        })
+      }
     }
-    contents.push({role: "user", parts: toolResultParts})
+  } catch (error) {
+    if (error instanceof OpenRouterError) {
+      throw new AgentServiceError(error.message, error.status === 401 ? 503 : 500)
+    }
+    throw error
   }
 
   // Hit the step cap without a final text answer.
@@ -129,24 +148,13 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
   }
 }
 
-async function callGemini(systemPrompt: string, contents: GeminiContent[]): Promise<any> {
-  const response = await fetch(geminiUrl(), {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": GEMINI_API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      system_instruction: {parts: [{text: systemPrompt}]},
-      contents,
-      tools: [{functionDeclarations: TOOL_DECLARATIONS}],
-      generationConfig: {temperature: 0.7},
-    }),
-  })
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "")
-    throw new AgentServiceError(`Gemini HTTP ${response.status}: ${body.slice(0, 200)}`, 500)
+/** Parse a tool call's `arguments` JSON string; tolerate malformed/empty payloads. */
+function parseToolArgs(raw: string): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
   }
-  return response.json()
 }

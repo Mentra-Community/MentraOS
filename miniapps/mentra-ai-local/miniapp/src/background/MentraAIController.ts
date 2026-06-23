@@ -63,6 +63,7 @@ export class MentraAIController {
       notifications: this.notifications,
       photo: this.photo,
       chatHistory: this.chatHistory,
+      getModel: () => this.storage.get().model,
       emit: (event) => this.emit(event),
     })
 
@@ -83,6 +84,20 @@ export class MentraAIController {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
+
+    // Log which glasses we're connected to (e.g. "Even Realities G1",
+    // "Mentra Live"). modelName comes from session.capabilities, populated by
+    // the host on CONNECT_ACK — null if no glasses are connected yet.
+    const caps = this.session.capabilities
+    console.log(
+      `🕶️ Connected glasses: ${(caps?.modelName as string | undefined) ?? "none"}`,
+      {
+        modelName: caps?.modelName ?? null,
+        hasDisplay: Boolean(caps?.hasDisplay),
+        hasCamera: Boolean(caps?.hasCamera),
+        hasSpeaker: Boolean(caps?.hasSpeaker),
+      },
+    )
 
     // Load persisted settings before anything reads them.
     const settings = await this.storage.load()

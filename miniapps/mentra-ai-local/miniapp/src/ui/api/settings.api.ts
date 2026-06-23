@@ -15,12 +15,19 @@ export interface UserSettings {
   userId: string
   theme: "light" | "dark"
   chatHistoryEnabled: boolean
+  /** OpenRouter model slug for the agent (one of MODEL_OPTIONS ids). */
+  model: string
   createdAt?: string
   updatedAt?: string
 }
 
 function toUserSettings(s: Settings): UserSettings {
-  return {userId: "local-user", theme: s.theme, chatHistoryEnabled: s.chatHistoryEnabled}
+  return {
+    userId: "local-user",
+    theme: s.theme,
+    chatHistoryEnabled: s.chatHistoryEnabled,
+    model: s.model,
+  }
 }
 
 export const fetchUserSettings = async (_frontendToken?: string | null): Promise<UserSettings> => {
@@ -37,9 +44,15 @@ export const updateUserSettings = async (
     ...(updates.chatHistoryEnabled !== undefined
       ? {chatHistoryEnabled: updates.chatHistoryEnabled}
       : {}),
+    ...(updates.model !== undefined ? {model: updates.model} : {}),
   })
   return toUserSettings(settings)
 }
+
+export const updateModel = async (
+  frontendToken: string | null,
+  model: string,
+): Promise<UserSettings> => updateUserSettings(frontendToken, {model})
 
 export const updateTheme = async (
   frontendToken: string | null,

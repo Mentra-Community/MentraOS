@@ -32,16 +32,44 @@ export type ChatEvent =
   | {type: "history"; messages: ChatMessage[]}
   | {type: "status"; status: string}
 
+/**
+ * A selectable AI model. Mirrors the backend's model registry
+ * (backend/src/services/models.ts). `id` is the OpenRouter slug sent with each
+ * agent request. `visionCapable` is false for text-only models (e.g. DeepSeek
+ * via OpenRouter) — those can't do Mentra Live photo analysis.
+ */
+export interface ModelOption {
+  id: string
+  label: string
+  provider: string
+  visionCapable: boolean
+}
+
+/** The models the user can pick in settings. Keep in sync with the backend. */
+export const MODEL_OPTIONS: readonly ModelOption[] = [
+  {id: "google/gemini-3.1-flash-lite-preview", label: "Gemini 3.1 Flash Lite", provider: "Google", visionCapable: true},
+  {id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", provider: "Anthropic", visionCapable: true},
+  {id: "openai/gpt-5-mini", label: "GPT-5 Mini", provider: "OpenAI", visionCapable: true},
+  {id: "x-ai/grok-4.3", label: "Grok 4.3", provider: "xAI", visionCapable: true},
+  {id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "DeepSeek", visionCapable: false},
+] as const
+
+/** Default model id — the Gemini option (closest to the pre-OpenRouter behavior). */
+export const DEFAULT_MODEL_ID = MODEL_OPTIONS[0].id
+
 /** User-configurable settings, persisted in session.storage as JSON. */
 export interface Settings {
   theme: Theme
   /** When true, prior turns are fed back to the agent as conversation context. */
   chatHistoryEnabled: boolean
+  /** OpenRouter model slug for the agent (one of MODEL_OPTIONS ids). */
+  model: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   chatHistoryEnabled: false,
+  model: DEFAULT_MODEL_ID,
 }
 
 // ── Debug overlay ────────────────────────────────────────────────

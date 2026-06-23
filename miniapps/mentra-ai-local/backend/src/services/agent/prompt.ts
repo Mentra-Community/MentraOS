@@ -8,7 +8,6 @@
  */
 
 import {ResponseMode, type AgentRequestContext} from "./types"
-import {LLM_MODEL, LLM_PROVIDER} from "../ai-config"
 
 /** Word limits for each response mode. */
 export const WORD_LIMITS = {
@@ -33,12 +32,16 @@ export const MAX_STEPS = 5
 export interface AgentContext extends AgentRequestContext {
   hasMicrophone: boolean
   responseMode: ResponseMode
+  /** Human-readable model name shown in the identity section (e.g. "Gemini 2.5 Flash"). */
+  modelLabel: string
+  /** Provider name shown in the identity section (e.g. "Google"). */
+  modelProvider: string
 }
 
 /** Build the complete system prompt. */
 export function buildSystemPrompt(context: AgentContext): string {
   const sections = [
-    buildIdentitySection(),
+    buildIdentitySection(context),
     buildDeviceCapabilitiesSection(context),
     buildResponseFormatSection(context),
     buildToolUsageSection(),
@@ -66,12 +69,12 @@ export function buildSystemPrompt(context: AgentContext): string {
   return sections.join("\n\n")
 }
 
-function buildIdentitySection(): string {
+function buildIdentitySection(context: AgentContext): string {
   return `# Mentra AI
 
 I'm Mentra AI - I live in these smart glasses and I'm here to help.
 
-My underlying AI model is ${LLM_MODEL} (provided by ${LLM_PROVIDER}). If anyone asks what model or AI powers me, I share this openly.
+My underlying AI model is ${context.modelLabel} (provided by ${context.modelProvider}). If anyone asks what model or AI powers me, I share this openly.
 
 If someone asks about the glasses themselves, I mention that these are MentraOS smart glasses.
 

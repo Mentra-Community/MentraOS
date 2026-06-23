@@ -22,6 +22,8 @@ export interface GenerateOptions {
   session: MiniappSession
   query: string
   photos?: string[]
+  /** OpenRouter model slug the user picked in settings. */
+  model?: string
   context: {
     hasDisplay: boolean
     hasSpeakers: boolean
@@ -50,7 +52,7 @@ interface BackendAgentResponse {
 
 /** Generate a response by calling the backend agent service. */
 export async function generateResponse(options: GenerateOptions): Promise<GenerateResult> {
-  const {session, query, photos, context} = options
+  const {session, query, photos, model, context} = options
 
   console.log(
     `🤖 Requesting response for: "${query.slice(0, 50)}${query.length > 50 ? "..." : ""}"`,
@@ -67,7 +69,7 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
     res = await session.auth.fetch(url, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({query, photos, context}),
+      body: JSON.stringify({query, photos, model, context}),
     })
   } catch (err) {
     // session.auth.fetch can throw before any response (token mint failed,

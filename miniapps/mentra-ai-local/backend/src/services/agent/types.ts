@@ -57,6 +57,12 @@ export interface AgentRequest {
   query: string
   photos?: string[]
   context: AgentRequestContext
+  /**
+   * OpenRouter model slug the user selected (e.g. "anthropic/claude-haiku-4.5").
+   * Validated server-side against the model registry; falls back to the default
+   * when omitted or unknown. See backend `services/models.ts`.
+   */
+  model?: string
 }
 
 /** POST /api/agent response body — same shape as the old client GenerateResult. */

@@ -48,7 +48,7 @@ if (!backgroundResult.success) {
   process.exit(1)
 }
 
-const tailwind = (await import("bun-plugin-tailwind/index.d.mts")).default
+const tailwind = (await import("bun-plugin-tailwind")).default
 
 const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],

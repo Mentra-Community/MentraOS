@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import * as SwitchPrimitive from "@radix-ui/react-switch/dist/index.mjs"
+import * as SwitchPrimitive from "@radix-ui/react-switch"
 import { cn } from "./button"
 
 function Switch({

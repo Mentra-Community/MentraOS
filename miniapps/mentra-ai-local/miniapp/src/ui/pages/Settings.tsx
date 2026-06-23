@@ -5,7 +5,8 @@ import Header from '../components/Header';
 import SettingItem from '../ui/setting-item';
 import ToggleSwitch from '../ui/toggle-switch';
 import SimpleToggle from '../ui/simple-toggle';
-import { updateTheme, updateChatHistoryEnabled, fetchUserSettings } from '../api/settings.api';
+import { updateTheme, updateChatHistoryEnabled, updateModel, fetchUserSettings } from '../api/settings.api';
+import { MODEL_OPTIONS, DEFAULT_MODEL_ID } from '../../shared/types';
 // @ts-ignore - JSON import typed as unknown by env.d.ts
 import miniappManifest from '../../../miniapp.json';
 
@@ -36,6 +37,10 @@ const settingItems: Record<string, SettingItemInfo> = {
     settingName: 'Chat History',
     description: 'Save conversations to view later',
   },
+  model: {
+    settingName: 'AI Model',
+    description: 'Model that powers Mentra AI',
+  },
 };
 
 /**
@@ -51,6 +56,7 @@ function Settings({
   const { frontendToken } = useMentraAuth();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [chatHistoryEnabled, setChatHistoryEnabled] = useState(false);
+  const [model, setModel] = useState<string>(DEFAULT_MODEL_ID);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
 
   // Hidden debug-mode toggle: tap the version line DEBUG_TAP_THRESHOLD times.
@@ -78,6 +84,7 @@ function Settings({
       try {
         const settings = await fetchUserSettings(frontendToken);
         setChatHistoryEnabled(settings.chatHistoryEnabled ?? false);
+        setModel(settings.model ?? DEFAULT_MODEL_ID);
       } catch (error) {
         console.error('Failed to load settings:', error);
       } finally {
@@ -99,6 +106,19 @@ function Settings({
     } catch (error) {
       console.error('Failed to update chat history setting:', error);
       setChatHistoryEnabled(!newValue);
+    }
+  };
+
+  // Handle AI model change — optimistic, reverts on failure.
+  const handleModelChange = async (newModel: string) => {
+    const prev = model;
+    setModel(newModel);
+    try {
+      await updateModel(frontendToken, newModel);
+      console.log('AI model synced:', newModel);
+    } catch (error) {
+      console.error('Failed to update AI model:', error);
+      setModel(prev);
     }
   };
 
@@ -149,13 +169,46 @@ function Settings({
         {/* Theme Setting */}
         <SettingItem
           isFirstItem={true}
-          isLastItem={true}
+          isLastItem={false}
           settingItemName={settingItems.darkMode.settingName}
           description={settingItems.darkMode.description}
           customContent={
             <ToggleSwitch isOn={isDarkMode} onToggle={handleThemeToggle} label="Theme" />
           }
         />
+
+        {/* AI Model Setting — picks which OpenRouter model powers the agent.
+            Vision-capable models do Mentra Live photo analysis; text-only ones
+            (e.g. DeepSeek) are flagged and can't see photos. */}
+        <SettingItem
+          isFirstItem={false}
+          isLastItem={true}
+          settingItemName={settingItems.model.settingName}
+          description={settingItems.model.description}
+          customContent={
+            <select
+              value={model}
+              disabled={isLoadingSettings}
+              onChange={(e) => handleModelChange(e.target.value)}
+              aria-label="AI Model"
+              className="text-[14px] font-medium bg-transparent text-right outline-none cursor-pointer disabled:opacity-50"
+              style={{ color: 'var(--secondary-foreground)' }}
+            >
+              {MODEL_OPTIONS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} ({m.provider}){m.visionCapable ? '' : ' — text only'}
+                </option>
+              ))}
+            </select>
+          }
+        />
+
+        {/* Warn when the selected model can't analyze photos. */}
+        {MODEL_OPTIONS.find((m) => m.id === model)?.visionCapable === false && (
+          <p className="px-[16px] text-[12px]" style={{ color: 'var(--secondary-foreground)' }}>
+            This model can&apos;t analyze photos from the camera.
+          </p>
+        )}
 
         {/* Chat History Setting — disabled until persistence is implemented
         <SettingItem

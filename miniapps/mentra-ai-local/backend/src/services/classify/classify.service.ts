@@ -2,11 +2,14 @@
  * Visual-query classifier service — server-side.
  *
  * Ported from the miniapp's agent/visual-classifier.ts. A fast (~200-300ms)
- * Gemini call that decides whether a query needs the camera photo to answer.
- * Returns false on error (defaults to the fast / non-visual path).
+ * call that decides whether a query needs the camera photo to answer. Runs the
+ * default (cheap/fast) model through OpenRouter — it's a text-only yes/no, so
+ * it doesn't depend on the user's chosen agent model. Returns false on error
+ * (defaults to the fast / non-visual path).
  */
 
-import {GEMINI_API_KEY, geminiUrl, hasLLMKey} from "../ai-config"
+import {hasLLMKey, DEFAULT_LLM_MODEL} from "../ai-config"
+import {callOpenRouter} from "../openrouter"
 
 const SYSTEM_PROMPT = `You classify queries from a user wearing smart glasses with a camera. The camera sees whatever the user is looking at.
 Answer ONLY "yes" or "no".
@@ -30,30 +33,18 @@ no: "where am I?", "what time is it?", "what's that smell?", "check this out", "
 export async function isVisualQuery(query: string): Promise<boolean> {
   if (!hasLLMKey) return false
   try {
-    const response = await fetch(geminiUrl(), {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": GEMINI_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        system_instruction: {parts: [{text: SYSTEM_PROMPT}]},
-        contents: [{role: "user", parts: [{text: query}]}],
-        generationConfig: {
-          maxOutputTokens: 3,
-          temperature: 0,
-        },
-      }),
+    const message = await callOpenRouter({
+      model: DEFAULT_LLM_MODEL,
+      messages: [
+        {role: "system", content: SYSTEM_PROMPT},
+        {role: "user", content: query},
+      ],
+      temperature: 0,
+      maxTokens: 3,
     })
 
-    if (!response.ok) {
-      console.warn(`Visual classifier HTTP ${response.status}`)
-      return false
-    }
-
-    const data = (await response.json()) as any
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
-    return text.trim().toLowerCase().startsWith("yes")
+    const text = (message.content ?? "").trim().toLowerCase()
+    return text.startsWith("yes")
   } catch (error) {
     console.warn("Visual classifier failed, defaulting to non-visual:", error)
     return false

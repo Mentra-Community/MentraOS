@@ -1,16 +1,20 @@
 /**
- * Agent tools — Gemini functionDeclarations + an in-process executor.
+ * Agent tools — function declarations + an in-process executor.
  *
  * Ported from the miniapp's agent/tools/index.ts. Runs server-side as part of
  * the tool-loop in agent.service.ts. web_search delegates to the Jina
  * search.service; calculator/thinking run locally.
+ *
+ * The tools are advertised to OpenRouter (OpenAI chat-completions format) via
+ * `OPENAI_TOOLS`, derived from the same declarations.
  */
 
 import {Parser} from "expr-eval"
 
 import {webSearch} from "../search/search.service"
+import type {ToolDef} from "../openrouter"
 
-/** Gemini function declarations advertised to the model. */
+/** Function declarations (name/description/JSON-schema parameters). */
 export const TOOL_DECLARATIONS = [
   {
     name: "web_search",
@@ -52,6 +56,16 @@ export const TOOL_DECLARATIONS = [
     },
   },
 ] as const
+
+/** OpenAI chat-completions tool schema, derived from TOOL_DECLARATIONS. */
+export const OPENAI_TOOLS: ToolDef[] = TOOL_DECLARATIONS.map((t) => ({
+  type: "function",
+  function: {
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters as Record<string, unknown>,
+  },
+}))
 
 const parser = new Parser()
 
