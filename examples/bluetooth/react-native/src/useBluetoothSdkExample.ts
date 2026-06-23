@@ -227,7 +227,7 @@ export const SCAN_MODE_BUTTON_PRESET = {
   ispDigitalGain: 0,
   ispAnalogGain: 'low' as const,
   compress: 'none' as const,
-  sound: false,
+  sound: true,
 } as const;
 
 export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
@@ -1291,7 +1291,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const settings: PhotoCaptureDefaults = {
       size: overrides.size ?? photoSize,
       compress: overrides.compress ?? photoCompression,
-      sound: false,
+      sound: true,
     };
     let shouldResetCaptureTuning = false;
     const aeExposureDivisor = hasOverride('aeExposureDivisor')
@@ -1405,7 +1405,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     return addRequestTuningFields({
       size: photoSize,
       compress: photoCompression,
-      sound: !scanMode,
+      sound: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
       iso: photoExposureManual ? photoIso : null,
     });

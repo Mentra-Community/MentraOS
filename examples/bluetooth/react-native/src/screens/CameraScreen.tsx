@@ -76,7 +76,7 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
   const requestFields = [
         `  size: "${size}",`,
         `  compress: "${compression}",`,
-        `  sound: ${scanMode ? 'false' : 'true'},`,
+        '  sound: true,',
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
         exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO',
         !exposureManual && aeExposureDivisor !== null ? `  aeExposureDivisor: ${aeExposureDivisor},` : null,
