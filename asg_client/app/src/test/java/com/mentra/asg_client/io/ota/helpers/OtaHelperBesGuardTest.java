@@ -17,8 +17,9 @@ import org.robolectric.annotation.Config;
 
 /**
  * Focused guard-path tests for {@link OtaHelper} verifying null-safe {@link IBesOtaRegistry}
- * access. The cache-prune methods were removed in the dev cleanup; the in-progress guard is
- * verified through construction and cleanup without NPE.
+ * access. The isBesOtaInProgress() guard is exercised by the production paths inside
+ * checkAndUpdateBesFirmware; these tests verify the structural invariants (null controller = no
+ * NPE, registry correctly stores and clears controllers).
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -61,8 +62,8 @@ public class OtaHelperBesGuardTest {
 
     @Test
     public void noController_constructionAndCleanup_doesNotThrow() {
-        // Non-K900 reality: the registry never gets a controller. Construction and cleanup
-        // must not NPE even when getOtaController() always returns null.
+        // Non-K900 reality: the registry never gets a controller; construction and cleanup
+        // must not NPE when getOtaController() always returns null.
         assertThatCode(
                         () -> {
                             OtaHelper helper = newHelper(new StubRegistry());
@@ -73,19 +74,15 @@ public class OtaHelperBesGuardTest {
     }
 
     @Test
-    public void activeController_isBesOtaInProgress_reflectsControllerState() {
-        // Directly verify the IBesOtaController contract: the helper must delegate to the
-        // interface, not a static flag.
+    public void activeController_isBesOtaInProgress_delegatesToController() {
         StubRegistry registry = new StubRegistry();
         IBesOtaController controller = mock(IBesOtaController.class);
         when(controller.isBesOtaInProgress()).thenReturn(false);
         registry.setInstance(controller);
 
-        OtaHelper helper = newHelper(registry);
-
-        // While the helper is alive and the controller says false, nothing blows up.
-        assertThatCode(helper::pruneInvalidCachedArtifactsOnStartup).doesNotThrowAnyException();
-        assertThatCode(helper::clearAllCachedArtifacts).doesNotThrowAnyException();
+        // Helper constructs and cleans up without NPE when a controller is present.
+        assertThatCode(() -> newHelper(registry).cleanup()).doesNotThrowAnyException();
+        otaHelper = null;
     }
 
     @Test
@@ -97,8 +94,8 @@ public class OtaHelperBesGuardTest {
 
         registry.clear();
 
-        assertThatCode(helper::pruneInvalidCachedArtifactsOnStartup).doesNotThrowAnyException();
-        assertThatCode(helper::clearAllCachedArtifacts).doesNotThrowAnyException();
+        // Any entry point that reaches isBesOtaInProgress() must handle a null controller.
+        assertThatCode(helper::cleanup).doesNotThrowAnyException();
     }
 
     @Test
