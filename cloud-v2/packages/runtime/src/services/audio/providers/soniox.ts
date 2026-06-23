@@ -145,6 +145,12 @@ export async function createSonioxProvider(
     max_endpoint_delay_ms: 2_000,
     language_hints:
       opts.language && opts.language !== "auto" ? [opts.language] : undefined,
+    // Bias recognition toward MentraOS-specific brand/product terms so they
+    // are not mistranscribed (e.g. "Mentra" -> "mantra"). `context.terms` is
+    // Soniox's hook for domain-specific or uncommon words.
+    context: {
+      terms: ["Mentra", "MentraOS", "Mira"],
+    },
     // For translation subs, configure Soniox's one-way translation. Result
     // tokens then carry `translation_status: "original" | "translation"`
     // and we filter to the translation half.
