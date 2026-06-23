@@ -105,7 +105,7 @@ public class CommandProcessor {
         this.fileManager = fileManager;
         this.rgbLedCommandHandler = rgbLedCommandHandler;
         this.otaCommandHandler = otaCommandHandler;
-        this.audioRecorder = new AudioRecorder();
+        this.audioRecorder = new AudioRecorder(context);
 
         // Initialize components (Single Responsibility Principle)
         Log.d(TAG, "📦 Creating command processing components");

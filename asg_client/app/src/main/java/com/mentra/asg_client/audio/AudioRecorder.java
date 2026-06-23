@@ -1,8 +1,11 @@
 package com.mentra.asg_client.audio;
 
+import android.content.Context;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
@@ -15,6 +18,13 @@ import java.nio.ByteBuffer;
 
 /**
  * Captures raw PCM audio from the device microphone and delivers chunks to a registered callback.
+ *
+ * <h3>Audio source selection</h3>
+ * Uses {@link MediaRecorder.AudioSource#UNPROCESSED} when the device advertises support via
+ * {@link AudioManager#PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED}, bypassing vendor DSP
+ * processing (beamforming, noise suppression, AGC, echo cancellation) that would otherwise
+ * be applied upstream before samples reach this app. Falls back to
+ * {@link MediaRecorder.AudioSource#MIC} on devices that do not support the unprocessed path.
  *
  * <h3>Configuration</h3>
  * Records at 16 kHz, 16-bit mono PCM — the standard for speech processing and on-device ASR.
@@ -42,6 +52,7 @@ public class AudioRecorder {
     public static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     public static final int AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT;
 
+    private final Context mContext;
     private final HandlerThread mRecorderThread;
     private final Handler mRecorderHandler;
 
@@ -53,7 +64,11 @@ public class AudioRecorder {
     // Bytes per chunk — delivered to the callback on each successful read.
     private int mChunkBytes;
 
-    public AudioRecorder() {
+    // The audio source that was actually used for the most recent start() call.
+    private int mActiveAudioSource = MediaRecorder.AudioSource.MIC;
+
+    public AudioRecorder(Context context) {
+        mContext = context.getApplicationContext();
         mRecorderThread = new HandlerThread("AudioRecorder");
         mRecorderThread.start();
         mRecorderHandler = new Handler(mRecorderThread.getLooper());
@@ -91,8 +106,17 @@ public class AudioRecorder {
         return mRecording;
     }
 
+    /** Returns the audio source used for the most recently started recording session. */
+    public int getActiveAudioSource() {
+        return mActiveAudioSource;
+    }
+
     /**
      * Begin capturing audio. A no-op if already recording.
+     *
+     * <p>Attempts to use {@link MediaRecorder.AudioSource#UNPROCESSED} first (raw microphone
+     * samples with minimal vendor DSP processing). Falls back to
+     * {@link MediaRecorder.AudioSource#MIC} if the device does not support the unprocessed path.
      *
      * @return {@code true} if capture started successfully, {@code false} on any error.
      */
@@ -110,18 +134,10 @@ public class AudioRecorder {
 
         // Double the minimum to reduce the likelihood of buffer overruns on loaded hardware.
         int bufferBytes = minBytes * 2;
-        mChunkBytes = minBytes; // deliver chunks at the platform-native granularity
+        mChunkBytes = minBytes;
 
-        AudioRecord record = new AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE_HZ,
-                CHANNEL_CONFIG,
-                AUDIO_ENCODING,
-                bufferBytes);
-
-        if (record.getState() != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialize (state=" + record.getState() + ")");
-            record.release();
+        AudioRecord record = buildAudioRecord(bufferBytes);
+        if (record == null) {
             return false;
         }
 
@@ -134,7 +150,7 @@ public class AudioRecorder {
         // way to detect a silent failure (e.g. mic resource conflict with I2S audio path).
         if (record.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
             Log.e(TAG, "AudioRecord.startRecording() failed — native layer rejected the request "
-                    + "(recordingState=" + record.getRecordingState() + "). "
+                    + "(recordingState=" + record.getRecordingState() + ", source=" + mActiveAudioSource + "). "
                     + "Possible cause: microphone held by another process or I2S audio path.");
             record.release();
             mAudioRecord = null;
@@ -142,14 +158,15 @@ public class AudioRecorder {
         }
 
         mRecording = true;
-        Log.i(TAG, "Audio capture started — " + SAMPLE_RATE_HZ + " Hz, " + bufferBytes + "B buffer");
+        Log.i(TAG, "Audio capture started — source=" + audioSourceName(mActiveAudioSource)
+                + " " + SAMPLE_RATE_HZ + " Hz, " + bufferBytes + "B buffer");
 
         mRecorderHandler.post(this::readLoop);
         return true;
     }
 
     /**
-     * Stop capturing audio. Safe to call from any thread; blocks until the read loop drains.
+     * Stop capturing audio. Safe to call from any thread.
      * The {@link AudioRecord} instance is released; a subsequent {@link #start} call creates a
      * fresh one.
      */
@@ -159,7 +176,6 @@ public class AudioRecorder {
             return;
         }
         mRecording = false;
-        // AudioRecord.stop() signals the read loop to exit (reads return 0 or error).
         if (mAudioRecord != null) {
             try {
                 mAudioRecord.stop();
@@ -185,11 +201,79 @@ public class AudioRecorder {
     // ─── Internal ────────────────────────────────────────────────────────────────
 
     /**
+     * Build an {@link AudioRecord}, preferring {@code UNPROCESSED} when the device supports it
+     * and falling back to {@code MIC}. Returns {@code null} if neither source initialises.
+     */
+    @Nullable
+    private AudioRecord buildAudioRecord(int bufferBytes) {
+        if (supportsUnprocessedSource()) {
+            AudioRecord record = tryBuildRecord(
+                    MediaRecorder.AudioSource.UNPROCESSED, bufferBytes);
+            if (record != null) {
+                mActiveAudioSource = MediaRecorder.AudioSource.UNPROCESSED;
+                Log.i(TAG, "Using UNPROCESSED audio source (raw microphone, no vendor DSP)");
+                return record;
+            }
+            Log.w(TAG, "UNPROCESSED source advertised but AudioRecord init failed — falling back to MIC");
+        } else {
+            Log.d(TAG, "UNPROCESSED audio source not supported on this device — using MIC");
+        }
+
+        AudioRecord record = tryBuildRecord(MediaRecorder.AudioSource.MIC, bufferBytes);
+        if (record != null) {
+            mActiveAudioSource = MediaRecorder.AudioSource.MIC;
+            return record;
+        }
+
+        Log.e(TAG, "Failed to initialise AudioRecord with both UNPROCESSED and MIC sources");
+        return null;
+    }
+
+    /**
+     * Attempt to construct an {@link AudioRecord} with the given source.
+     * Returns the instance if {@link AudioRecord#STATE_INITIALIZED}, otherwise releases and
+     * returns {@code null}.
+     */
+    @Nullable
+    private AudioRecord tryBuildRecord(int audioSource, int bufferBytes) {
+        AudioRecord record = new AudioRecord(
+                audioSource,
+                SAMPLE_RATE_HZ,
+                CHANNEL_CONFIG,
+                AUDIO_ENCODING,
+                bufferBytes);
+        if (record.getState() == AudioRecord.STATE_INITIALIZED) {
+            return record;
+        }
+        Log.w(TAG, "AudioRecord(source=" + audioSourceName(audioSource)
+                + ") failed to initialise (state=" + record.getState() + ")");
+        record.release();
+        return null;
+    }
+
+    /**
+     * Returns {@code true} if the device explicitly advertises support for the
+     * {@link MediaRecorder.AudioSource#UNPROCESSED} capture path.
+     * Requires API 24+; returns {@code false} on older devices.
+     */
+    private boolean supportsUnprocessedSource() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) {
+            return false;
+        }
+        String supported = am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED);
+        return "true".equalsIgnoreCase(supported);
+    }
+
+    /**
      * Runs on the recorder thread. Reads chunks from {@link AudioRecord} and forwards them to the
      * registered callback until {@link #mRecording} is cleared.
      */
     private void readLoop() {
-        Log.d(TAG, "Read loop started");
+        Log.d(TAG, "Read loop started (source=" + audioSourceName(mActiveAudioSource) + ")");
 
         while (mRecording) {
             AudioRecord record = mAudioRecord;
@@ -218,5 +302,15 @@ public class AudioRecorder {
         }
 
         Log.d(TAG, "Read loop exited");
+    }
+
+    private static String audioSourceName(int source) {
+        switch (source) {
+            case MediaRecorder.AudioSource.MIC:               return "MIC";
+            case MediaRecorder.AudioSource.UNPROCESSED:       return "UNPROCESSED";
+            case MediaRecorder.AudioSource.VOICE_RECOGNITION: return "VOICE_RECOGNITION";
+            case MediaRecorder.AudioSource.VOICE_COMMUNICATION: return "VOICE_COMMUNICATION";
+            default: return "source(" + source + ")";
+        }
     }
 }
