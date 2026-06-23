@@ -25,7 +25,18 @@ on:
         default: false
 
 concurrency:
-  group: pr-agent-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  # For pull_request events: keyed on PR number (stable, deduplicated).
+  # For workflow_run events: keyed on the head branch so successive CI completions
+  # for the same branch cancel the prior run rather than piling up independently.
+  # For workflow_dispatch: keyed on the explicit PR number input.
+  # Fallback to run_id only for unknown event types (no cancellation intended).
+  group: >-
+    pr-agent-${{
+      github.event.pull_request.number ||
+      github.event.inputs.pr_number ||
+      github.event.workflow_run.head_branch ||
+      github.run_id
+    }}
   cancel-in-progress: true
 
 permissions:

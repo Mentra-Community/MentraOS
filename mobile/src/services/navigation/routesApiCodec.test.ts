@@ -5,12 +5,14 @@ describe("decodePolyline", () => {
     expect(decodePolyline("")).toEqual([])
   })
 
-  test("decodes the Google reference example", () => {
-    // From the Google polyline algorithm spec:
+  test("decodes the precision-5 reference example", () => {
+    // From the polyline algorithm spec (precision 5):
     //   points = [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]
     //   encoded = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
-    // https://developers.google.com/maps/documentation/utilities/polylinealgorithm
-    const result = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@")
+    // Mapbox `polyline` (and Google Routes) use precision 5; Mapbox
+    // `polyline6` uses precision 6, which is our default — so the
+    // precision-5 fixtures decode with an explicit precision argument.
+    const result = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", 5)
     expect(result).toHaveLength(3)
     expect(result[0].lat).toBeCloseTo(38.5, 5)
     expect(result[0].lng).toBeCloseTo(-120.2, 5)
@@ -20,20 +22,25 @@ describe("decodePolyline", () => {
     expect(result[2].lng).toBeCloseTo(-126.453, 5)
   })
 
-  test("decodes a single point", () => {
-    // Encoded form of (38.5, -120.2) alone is "_p~iF~ps|U".
-    const result = decodePolyline("_p~iF~ps|U")
+  test("default precision is 6 (Mapbox polyline6)", () => {
+    // The same encoded bytes decoded at precision 6 are 10× smaller than
+    // at precision 5 — this guards the default so a caller that forgets to
+    // pass precision still gets polyline6 (what Directions returns).
+    const p5 = decodePolyline("_p~iF~ps|U", 5)[0]
+    const p6 = decodePolyline("_p~iF~ps|U")[0]
+    expect(p6.lat).toBeCloseTo(p5.lat / 10, 5)
+    expect(p6.lng).toBeCloseTo(p5.lng / 10, 5)
+  })
+
+  test("decodes a single point at precision 5", () => {
+    const result = decodePolyline("_p~iF~ps|U", 5)
     expect(result).toHaveLength(1)
     expect(result[0].lat).toBeCloseTo(38.5, 5)
     expect(result[0].lng).toBeCloseTo(-120.2, 5)
   })
 
   test("preserves point order", () => {
-    // Same as the Google reference but the order matters — the algorithm
-    // accumulates deltas, so swapping points changes every subsequent value.
-    const points = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@")
-    // The latitudes are monotonic-increasing in the reference data, which
-    // is enough to assert that the second point isn't being emitted first.
+    const points = decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", 5)
     expect(points[0].lat).toBeLessThan(points[1].lat)
     expect(points[1].lat).toBeLessThan(points[2].lat)
   })
@@ -48,7 +55,14 @@ describe("decodePolyline", () => {
 })
 
 describe("parseDurationSeconds", () => {
-  test("parses Routes API duration strings ending in 's'", () => {
+  test("passes through Mapbox numeric durations (rounding)", () => {
+    // Mapbox Directions returns `duration` as a number of seconds.
+    expect(parseDurationSeconds(972.575)).toBe(973)
+    expect(parseDurationSeconds(0)).toBe(0)
+    expect(parseDurationSeconds(60)).toBe(60)
+  })
+
+  test("parses legacy Routes API duration strings ending in 's'", () => {
     expect(parseDurationSeconds("123s")).toBe(123)
     expect(parseDurationSeconds("0s")).toBe(0)
     expect(parseDurationSeconds("60s")).toBe(60)
