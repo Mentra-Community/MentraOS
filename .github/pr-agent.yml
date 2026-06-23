@@ -1,7 +1,7 @@
 # PR Agent Orchestrator configuration
 # See notes/pr-agent-orchestrator-setup.md
 
-dryRun: true
+dryRun: false
 
 reviewModel: claude-opus-4-8
 fixModel: claude-opus-4-8
