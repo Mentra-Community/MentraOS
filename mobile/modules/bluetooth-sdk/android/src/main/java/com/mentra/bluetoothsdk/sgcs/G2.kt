@@ -2823,8 +2823,12 @@ class G2 : SGCManager() {
 
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
+        if (enabled && !pageCreated) {
+            restartMic()
+            return
+        }
         val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-        if (currentEnabled && enabled) {
+        if (enabled && currentEnabled) {
             restartMic()
             return
         }

@@ -2953,8 +2953,12 @@ class G2: NSObject, SGCManager {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G2: setMicEnabled(\(enabled))")
+        if enabled && !pageCreated {
+            retartMic()
+            return
+        }
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if currentEnabled && enabled {
+        if enabled && currentEnabled {
             restartMic()
             return
         }
