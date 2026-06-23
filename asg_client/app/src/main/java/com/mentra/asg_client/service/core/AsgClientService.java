@@ -52,6 +52,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
+import javax.inject.Provider;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
@@ -77,11 +78,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     /** Vendor-supplied protocol detection strategies (e.g. the Mentra Live MCU wire format). */
     @Inject Set<CommandProtocolDetector.ProtocolDetectionStrategy> protocolStrategies;
 
-    /** Device-appropriate companion transport, constructed by the vendor wiring layer. */
-    @Inject ICompanionTransport companionTransport;
+    /**
+     * Provider for the device-appropriate companion transport. Using {@link Provider} defers
+     * construction until after {@link #ensureForegroundStarted()} so the K900 serial-port thread
+     * does not open before the foreground notification is posted.
+     */
+    @Inject Provider<ICompanionTransport> companionTransportProvider;
 
-    /** Device-appropriate network manager, constructed by the vendor wiring layer. */
-    @Inject INetworkManager injectedNetworkManager;
+    /**
+     * Provider for the device-appropriate network manager, deferred for the same reason as
+     * {@link #companionTransportProvider}.
+     */
+    @Inject Provider<INetworkManager> networkManagerProvider;
 
     // ---------------------------------------------
     // Constants //TODO: Extract all the Constants and Magic Number/Text to AsgConstants
@@ -651,8 +659,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             serviceInitializer =
                     new ServiceInitializer(
                             this,
-                            companionTransport,
-                            injectedNetworkManager,
+                            companionTransportProvider.get(),
+                            networkManagerProvider.get(),
                             fileManager,
                             otaHelper,
                             hardwareManager,
