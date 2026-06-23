@@ -38,6 +38,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final SerialPortBridge comManager;
     private boolean isSerialOpen = false;
     private final DebugNotificationManager notificationManager;
+    // Keep normal K900 messages contiguous on the shared ASG-to-BES UART stream.
+    private final Object outboundSendLock = new Object();
     private BesMessageParser messageParser;
 
     // File transfer state management
@@ -151,6 +153,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     @Override
     protected boolean sendMessageInternal(byte[] data) {
+        synchronized (outboundSendLock) {
+            return sendMessageInternalLocked(data);
+        }
+    }
+
+    private boolean sendMessageInternalLocked(byte[] data) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 K900 BLUETOOTH SEND DATA");
         Log.d(TAG, "📡 =========================================");
