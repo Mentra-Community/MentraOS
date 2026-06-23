@@ -10,7 +10,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.content.Intent;
-import dagger.hilt.android.EntryPointAccessors;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -307,15 +306,6 @@ public class OtaHelper {
             deleteFileIfExists(OtaConstants.BES_FIRMWARE_PATH, "BES firmware artifact");
             deleteFileIfExists(OtaConstants.BES_BACKUP_PATH, "BES backup artifact");
         }
-    }
-
-    public void clearAllCachedArtifacts() {
-        // Cache infrastructure removed in dev cleanup; no-op retained for API compatibility.
-    }
-
-    public void pruneInvalidCachedArtifactsOnStartup() {
-        // Cache infrastructure removed in dev cleanup; BES in-progress guard preserved via
-        // isBesOtaInProgress() helper, which is exercised in checkAndUpdateBesFirmware.
     }
 
     private void deleteFileIfExists(String path, String label) {
