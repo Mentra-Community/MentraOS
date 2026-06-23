@@ -7,6 +7,7 @@ import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
@@ -19,7 +20,7 @@ import org.greenrobot.eventbus.EventBus;
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
  * and protocol state machine
  */
-public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener {
+public class BesOtaManager implements IBesOtaController, BesOtaUartListener, BesOtaCommandListener {
     private static final String TAG = "BesOtaManager";
 
     // Static flag to track if BES OTA is in progress
@@ -65,11 +66,20 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     }
 
     /**
+     * @return true if a BES OTA update is currently in progress
+     */
+    @Override
+    public boolean isBesOtaInProgress() {
+        return isBesOtaInProgress;
+    }
+
+    /**
      * Get current firmware version from BES device
      *
      * @return byte array with [major, minor, patch, build] or null if not available
      */
-    public static byte[] getCurrentFirmwareVersion() {
+    @Override
+    public byte[] getCurrentFirmwareVersion() {
         return sCurrentFirmwareVersion;
     }
 
@@ -80,7 +90,8 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * @param versionCode Server version code
      * @return byte array [major, minor, patch, build]
      */
-    public static byte[] parseServerVersionCode(long versionCode) {
+    @Override
+    public byte[] parseServerVersionCode(long versionCode) {
         int major = (int) (versionCode / 1000000);
         int minor = (int) ((versionCode / 1000) % 1000);
         int patch = (int) (versionCode % 1000);
@@ -96,7 +107,8 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * @param v2 Second version
      * @return true if v1 is newer than v2, false otherwise
      */
-    public static boolean isNewerVersion(byte[] v1, byte[] v2) {
+    @Override
+    public boolean isNewerVersion(byte[] v1, byte[] v2) {
         if (v1 == null || v2 == null || v1.length < 4 || v2.length < 4) {
             return false;
         }
@@ -233,6 +245,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * @param filePath Path to firmware .bin file
      * @return true if started successfully
      */
+    @Override
     public boolean startFirmwareUpdate(String filePath) {
         Log.i(TAG, "startFirmwareUpdate: " + filePath);
 
@@ -333,6 +346,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * Called when BES chip grants OTA authorization This is the trigger to actually start the OTA
      * protocol
      */
+    @Override
     public void onAuthorizationGranted() {
         if (!isWaitingForAuthorization) {
             Log.w(TAG, "Received authorization but not waiting for it");
@@ -372,6 +386,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     }
 
     /** Called when BES chip denies OTA authorization */
+    @Override
     public void onAuthorizationDenied() {
         Log.e(TAG, "BES OTA authorization DENIED by BES chip");
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
