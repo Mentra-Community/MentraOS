@@ -530,11 +530,12 @@ public class OtaHelper {
                     // apps map so the normal OTA loop skips it; the recovery worker will install
                     // it autonomously. Once installed, the version exceeds maxVersionCode and
                     // normal OTA resumes ownership on the next ota_start.
-                    if (isAsgDeferredToRemediation(json, context)) {
-                        json.getJSONObject("apps").remove("com.mentra.asg_client");
-                        Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
-                                + "com.mentra.asg_client; recovery worker will handle it");
-                    }
+                    // TODO: re-enable once remediation is activated in the prod manifest.
+                    // if (isAsgDeferredToRemediation(json, context)) {
+                    //     json.getJSONObject("apps").remove("com.mentra.asg_client");
+                    //     Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
+                    //             + "com.mentra.asg_client; recovery worker will handle it");
+                    // }
                     processAppsSequentially(json, context);
                 } else {
                     Log.d(TAG, "Using legacy version.json format");

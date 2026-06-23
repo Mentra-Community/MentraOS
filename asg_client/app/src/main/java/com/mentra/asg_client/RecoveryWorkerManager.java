@@ -76,9 +76,10 @@ public class RecoveryWorkerManager {
             // sidecar to be updated without shipping a new ASG build and without any user
             // approval (OEM silent install, same mechanism as the bundled-asset path).
             // On success PackageInstallReceiver will launch the worker after the install.
-            if (fetchAndApplyRemoteUpdate()) {
-                return;
-            }
+            // TODO: re-enable once a standalone recovery_worker APK is published to the manifest.
+            // if (fetchAndApplyRemoteUpdate()) {
+            //     return;
+            // }
 
             int currentVersion = getInstalledVersion(RECOVERY_PACKAGE);
             if (!isRecoveryAssetBundled()) {
