@@ -2,13 +2,12 @@ import {AnimatePresence, motion} from "motion/react"
 import {useLayoutEffect, useRef, useState} from "react"
 import type {NavManeuver} from "@mentra/miniapp"
 
-import type {Pivot} from "@mentra/miniapp"
-
 import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
-import {haversineMeters} from "@/ui/lib/geometry"
+import {haversineMeters, remainingRouteMeters} from "@/ui/lib/geometry"
 import {ManeuverIcon} from "@/ui/components/icons"
-import type {Coords, LatLng, NavStatus, UnitSystem} from "@/shared/types"
+import {deriveManeuverDisplay, liveDistanceToNextTurn} from "@/shared/maneuverDisplay"
+import type {LatLng, NavRouteStep, NavStatus, UnitSystem} from "@/shared/types"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
@@ -19,57 +18,60 @@ const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
  *   In 198 m                    ← distance (small grey line)
  *   Turn right onto Market St   ← verb + road (big bold line)
  *
- * Or, with the `useRawInstructions` debug toggle on, the bottom line
- * becomes Google's raw `navigationInstruction` text instead:
- *
- *   In 198 m
- *   Head west on Hayes St toward Gough St
- *
- * Pivot direction + position come from the SDK's pivot API
- * (`user.navigation.getActivePivot()` / `getUpcomingPivot()`), which
- * owns trip-wide pivot detection. Road names come from the pivot's
- * own `fromRoad` / `toRoad` (sourced from the SDK's step list at
- * route-build time) and from the live `NavManeuver` events.
+ * The card follows Mapbox's OWN live step tracking — the `NavManeuver`
+ * event, which the native layer derives from the Mapbox Navigation SDK's
+ * RouteProgress (current step, maneuver type, distance-to-maneuver, and
+ * the road being entered). We no longer re-derive turns via the SDK's
+ * PivotEngine: Mapbox already map-matches the user to the route and tells
+ * us what to do, so following it directly keeps the icon and the
+ * instruction text from ever disagreeing.
  */
 export function OrientationCard({
+  me,
   maneuver,
+  routePoints,
+  routeSteps,
   status,
 }: {
   me: LatLng | null
   heading: number | null
   maneuver: NavManeuver | null
   routePoints: LatLng[] | null
+  routeSteps: NavRouteStep[] | null
   status?: NavStatus
   onClose?: () => void
 }) {
-  const activePivot = useNavStore((s) => s.activePivot)
-  const upcomingPivot = useNavStore((s) => s.upcomingPivot)
-  const coords = useNavStore((s) => s.coords)
-  const routeSteps = useNavStore((s) => s.trip.routeSteps)
-  const useRawInstructions = useNavStore((s) => s.devSettings.useRawInstructions)
   const unitSystem = useNavStore((s) => s.unitSystem)
-  const snap = derivePivotView(activePivot, upcomingPivot, coords, maneuver, status)
-  const real = pickDisplay(
-    snap,
-    {
-      useRawInstructions,
-      activeInstruction: useRawInstructions ? lookupInstructionForPivot(activePivot, routeSteps) : null,
-      upcomingInstruction: useRawInstructions ? lookupInstructionForPivot(upcomingPivot, routeSteps) : null,
-    },
+  // Destination name + arrival side (from the trip state) so the arrived
+  // card can say "Arrived at <name>, on your left/right" (or "up ahead").
+  const destinationName = useNavStore((s) => s.trip.activeDestinationName)
+  const arrivalSide = useNavStore((s) => s.trip.arrivalSide)
+  // LIVE distance to the next turn, recomputed from the user's current position
+  // (`me`, fed by nav:coords) against the route on EVERY coords-driven re-render.
+  // This is what keeps the "In X m" line ticking down smoothly: the maneuver
+  // event's own distance only refreshes when a new native RouteProgress event
+  // fires (slower), so without this the top line lagged while the bottom drawer
+  // — which already recomputes from coords — stayed live. The glasses HUD does
+  // the identical recompute (shared liveDistanceToNextTurn), so phone + glasses
+  // agree. For the ARRIVE leg we pass distance-to-destination instead.
+  const liveDist =
+    maneuver?.maneuverType === "ARRIVE"
+      ? remainingRouteMeters(me, routePoints)
+      : liveDistanceToNextTurn(me, routePoints, routeSteps, remainingRouteMeters, haversineMeters)
+  // The card now follows Mapbox's OWN live step tracking (the `maneuver`
+  // event, derived natively from RouteProgress) rather than the SDK's
+  // re-derived PivotEngine turns. Mapbox already map-matches the user to
+  // the route and tells us the current step, its maneuver type, the
+  // distance to it, and the road being entered — so re-deriving pivots was
+  // redundant work that could disagree with Mapbox (the icon/label mismatch
+  // seen on pedestrian routes). One source of truth: the maneuver event.
+  const real = pickDisplayFromManeuver(
+    maneuver,
+    status,
     unitSystem,
-  )
-
-  // Diagnostic: dump every input the card uses to choose its text, so a
-  // wrong card (e.g. "Arriving in 112 m" when there are pivots ahead)
-  // can be traced to the exact missing/empty field. Logs both the raw
-  // pivot store values and the derived snapshot.
-  console.log(
-    `[ManeuverCard] active=${activePivot ? `idx=${activePivot.index} dir=${activePivot.direction} to=${activePivot.toRoad ?? "—"}` : "null"} ` +
-      `upcoming=${upcomingPivot ? `idx=${upcomingPivot.index} dir=${upcomingPivot.direction} to=${upcomingPivot.toRoad ?? "—"}` : "null"} ` +
-      `distToNext=${snap.distanceToNextPivotMeters?.toFixed(0) ?? "—"}m ` +
-      `distToDest=${snap.distanceToDestinationMeters?.toFixed(0) ?? "—"}m ` +
-      `status=${status ?? "—"} arrived=${snap.arrived} → ` +
-      `nextRoad="${real.nextRoad ?? ""}" label="${real.label}" icon=${real.icon}`,
+    destinationName,
+    arrivalSide,
+    liveDist,
   )
 
   // HARDCODED PREVIEW STUB — overrides every dynamic field with sample
@@ -119,8 +121,6 @@ export function OrientationCard({
               <AutoFitLabel text={label} />
             </motion.div>
           </AnimatePresence>
-          
-          
         </div>
       </div>
     </div>
@@ -178,189 +178,55 @@ function AutoFitLabel({text}: {text: string}) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Snapshot + maneuver -> display fields                                       */
+/* Mapbox maneuver -> display fields                                           */
 
 /**
- * Snapshot derived purely from the SDK's pivot API plus trip status.
- * Pivots are the SOURCE OF TRUTH for road names — there is no
- * geocoder fallback and no read from the live NavManeuver event. If
- * a pivot doesn't have a road name, the UI shows nothing rather than
- * making something up.
- */
-type PivotView = {
-  arrived: boolean
-  /** Direction of the pivot the user is currently turning at, if any. */
-  activeDirection: "left" | "right" | null
-  /** Maneuver string of the active pivot (e.g. CROSS_STREET, TURN_LEFT). */
-  activeManeuver: string | null
-  /** Road we're heading onto for the active turn, if known. */
-  activeToRoad: string | null
-  /** Direction of the next upcoming pivot, if any. */
-  upcomingDirection: "left" | "right" | null
-  /** Maneuver string of the upcoming pivot. */
-  upcomingManeuver: string | null
-  /** Road the user is currently on (i.e. approach road), if known. */
-  upcomingFromRoad: string | null
-  /** Road we'll be on after the upcoming turn, if known. */
-  upcomingToRoad: string | null
-  distanceToNextPivotMeters: number | null
-  distanceToDestinationMeters: number | null
-}
-
-function derivePivotView(
-  active: Pivot | null,
-  upcoming: Pivot | null,
-  coords: Coords | null,
-  maneuver: NavManeuver | null,
-  status?: NavStatus,
-): PivotView {
-  if (status === "arrived") {
-    return {
-      arrived: true,
-      activeDirection: null,
-      activeManeuver: null,
-      activeToRoad: null,
-      upcomingDirection: null,
-      upcomingManeuver: null,
-      upcomingFromRoad: null,
-      upcomingToRoad: null,
-      distanceToNextPivotMeters: null,
-      distanceToDestinationMeters: null,
-    }
-  }
-
-  let distanceToNextPivotMeters: number | null = null
-  if (upcoming && coords) {
-    distanceToNextPivotMeters = haversineMeters(
-      {lat: coords.lat, lng: coords.lng},
-      {lat: upcoming.lat, lng: upcoming.lng},
-    )
-  }
-
-  const distanceToDestinationMeters =
-    maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0
-      ? maneuver.distanceToDestinationMeters
-      : null
-
-  return {
-    arrived: false,
-    activeDirection: active?.direction ?? null,
-    activeManeuver: active?.maneuver ?? null,
-    activeToRoad: realRoadName(active?.toRoad),
-    upcomingDirection: upcoming?.direction ?? null,
-    upcomingManeuver: upcoming?.maneuver ?? null,
-    upcomingFromRoad: realRoadName(upcoming?.fromRoad),
-    upcomingToRoad: realRoadName(upcoming?.toRoad),
-    distanceToNextPivotMeters,
-    distanceToDestinationMeters,
-  }
-}
-
-type RawOpts = {
-  useRawInstructions: boolean
-  activeInstruction: string | null
-  upcomingInstruction: string | null
-}
-
-function pickDisplay(
-  snap: PivotView,
-  raw: RawOpts = {useRawInstructions: false, activeInstruction: null, upcomingInstruction: null},
-  unit: UnitSystem = "metric",
-): {label: string; icon: string; road: string | null; nextRoad: string | null} {
-  // Mirrors refreshHUD() in NavigationController so the card and the
-  // glasses always say the same thing. `nextRoad` is the small grey
-  // top line (distance / context); `label` is the big bold bottom
-  // line (verb + road or Google's raw instruction).
-  if (snap.arrived) {
-    return {label: "Arrived", icon: "ARRIVE", road: null, nextRoad: null}
-  }
-
-  // Active turn — user is inside the pivot's radius. Two-line layout
-  // (no distance, the user is AT the turn):
-  //   <empty top line>
-  //   Turn left|right [onto <toRoad>]
-  if (snap.activeDirection) {
-    const verb = snap.activeDirection === "right" ? "Turn right" : "Turn left"
-    const icon = snap.activeDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
-    // At the pivot. Google's raw text already contains the verb
-    // ("Turn right onto X St"); show "Now" as the top line instead of
-    // duplicating our own "Turn right" line.
-    if (raw.useRawInstructions && raw.activeInstruction) {
-      return {label: raw.activeInstruction, icon, nextRoad: "Now", road: null}
-    }
-    const label = snap.activeToRoad ? `${verb} onto ${snap.activeToRoad}` : verb
-    return {label, icon, nextRoad: null, road: null}
-  }
-
-  // Approaching the next turn. Mirror of the HUD's distance-first
-  // layout:
-  //   In <distance>
-  //   Turn left|right onto <toRoad>     (or Google's raw text)
-  if (snap.distanceToNextPivotMeters != null && snap.upcomingDirection) {
-    const verb = snap.upcomingDirection === "right" ? "Turn right" : "Turn left"
-    const distStr = formatDistance(snap.distanceToNextPivotMeters, unit)
-    const icon = snap.upcomingDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
-    const topLine = `In ${distStr}`
-    if (raw.useRawInstructions && raw.upcomingInstruction) {
-      return {label: raw.upcomingInstruction, icon, nextRoad: topLine, road: null}
-    }
-    const label = snap.upcomingToRoad ? `${verb} onto ${snap.upcomingToRoad}` : verb
-    return {label, icon, nextRoad: topLine, road: null}
-  }
-
-  // No upcoming pivot — final approach to destination. Single-line:
-  //   Arriving in <distance>
-  if (snap.distanceToDestinationMeters != null) {
-    const distStr = formatDistance(snap.distanceToDestinationMeters, unit)
-    return {
-      label: `Arriving in ${distStr}`,
-      icon: "ARRIVE",
-      nextRoad: null,
-      road: null,
-    }
-  }
-
-  // No pivot, no destination distance — nothing actionable to say.
-  return {label: "Arriving", icon: "ARRIVE", road: null, nextRoad: null}
-}
-
-/**
- * Sanitize a road label coming off the SDK. The Nav SDK occasionally
- * leaks its maneuver-instruction text (e.g. "Slight left", "Toward
- * Fell St", "Roundabout") into the road-name fields when the
- * underlying road has no real name. Rendered blindly these read as
- * "onto Slight left", so we treat any label starting with one of
- * those verbs as missing.
+ * Derive the card's display fields from the live `NavManeuver` event via
+ * the SHARED `deriveManeuverDisplay` helper — the exact same logic the
+ * glasses HUD uses, so the phone card and the glasses can never disagree on
+ * instruction text, distance, or turn. This wrapper only adapts the shared
+ * pieces into the card's field shape and formats the distance with the
+ * user's unit system:
  *
- * If this returns null, the UI just shows nothing — there is no
- * fallback path. Pivot road names are the single source of truth.
+ *   In <distance>                       ← nextRoad (small grey top line)
+ *   <Mapbox's verbatim instruction>     ← label (big bold bottom line)
  */
-/**
- * Match a pivot to its corresponding step in `trip.routeSteps` by
- * `(lat, lng)` and return that step's cached Google `instruction`
- * string. Returns null when no match — usually means the cache hasn't
- * been refreshed after a reroute yet (the controller's silent refetch
- * handles that, this is the consumer side).
- */
-function lookupInstructionForPivot(
-  pivot: Pivot | null,
-  steps: import("@/shared/types").NavRouteStep[] | null,
-): string | null {
-  if (!pivot || !steps || steps.length === 0) return null
-  const EPS = 1e-5
-  for (const s of steps) {
-    if (Math.abs(s.lat - pivot.lat) < EPS && Math.abs(s.lng - pivot.lng) < EPS) {
-      return s.instruction || null
-    }
+function pickDisplayFromManeuver(
+  maneuver: NavManeuver | null,
+  status: NavStatus | undefined,
+  unit: UnitSystem,
+  destinationName?: string | null,
+  arrivalSide?: "left" | "right" | null,
+  liveDistanceMeters?: number | null,
+): {label: string; icon: string; road: string | null; nextRoad: string | null} {
+  if (status === "arrived") {
+    // "You have arrived at <name>, on your left/right" — or "up ahead" when
+    // the destination is straight in front (no side). Mirrors the glasses HUD.
+    const at = destinationName ? ` at ${destinationName}` : ""
+    const side = arrivalSide ? `, on your ${arrivalSide}` : ", up ahead"
+    return {label: `You have arrived${at}${side}`, icon: "ARRIVE", road: null, nextRoad: null}
   }
-  return null
-}
+  const d = deriveManeuverDisplay(maneuver, status, liveDistanceMeters)
+  if (!d) {
+    // No maneuver yet — typically the brief gap right after pressing Start,
+    // before Mapbox emits the first step. Show a neutral "Starting…" rather
+    // than "Arriving" (which wrongly implies we're about to reach the
+    // destination). Straight-ahead icon, no distance line.
+    return {label: "Starting…", icon: "STRAIGHT", road: null, nextRoad: null}
+  }
 
-function realRoadName(raw: string | null | undefined): string | null {
-  if (!raw) return null
-  const trimmed = raw.trim()
-  if (trimmed.length === 0) return null
-  if (/^(toward|turn|continue|destination|head|cross|slight|sharp|keep|merge|fork|exit|take|roundabout|u[\s-]?turn|arrive|arriving|depart|enter|leave|stay)\b/i.test(trimmed)) return null
-  return trimmed
+  // Final-leg arrival countdown.
+  if (d.arriving) {
+    const label =
+      d.distanceMeters != null ? `Arriving in ${formatDistance(d.distanceMeters, unit)}` : "Arriving"
+    return {label, icon: "ARRIVE", nextRoad: null, road: null}
+  }
+
+  const topLine = d.distanceMeters != null ? `In ${formatDistance(d.distanceMeters, unit)}` : null
+  // Turn icon ONLY at the turn ("Now"); straight-ahead while still
+  // approaching ("In 90 m"). Mirrors the glasses ↑→←/→ arrow gate so the
+  // phone card and the HUD show the same directional state at the same time.
+  const icon = d.atTurn ? d.kind : "STRAIGHT"
+  return {label: d.instruction, icon, nextRoad: d.atTurn ? "Now" : topLine, road: null}
 }
 

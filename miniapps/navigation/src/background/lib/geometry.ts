@@ -110,6 +110,48 @@ export function nextSegmentBearing(me: LatLng | null, route: LatLng[] | null): n
  * end *along the route*, rather than straight-line to the destination
  * pin (the pin can sit a few meters off the walkable polyline).
  */
+/**
+ * The portion of the route the user has NOT walked yet: the user's projected
+ * point onto the closest segment, followed by every route point after it.
+ * Used to draw only the route AHEAD on the minimap (the part behind the user
+ * is trimmed as they pass it). Returns the full route if `me` is null, and
+ * null for empty / single-point routes.
+ */
+export function remainingRoutePoints(me: LatLng | null, route: LatLng[] | null): LatLng[] | null {
+  if (!route || route.length < 2) return route ?? null
+  if (!me) return route
+  // Closest segment (same scan as remainingRouteMeters / nextSegmentBearing).
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < route.length - 1; i++) {
+    const d = perpDistanceMeters(me, route[i], route[i + 1])
+    if (d < bestDist) {
+      bestDist = d
+      bestIdx = i
+    }
+  }
+  // Project `me` onto that segment to get the exact "where I am on the route"
+  // point, so the trimmed line starts right at the user, not at the segment's
+  // start vertex (which could be several meters behind).
+  const seg = route[bestIdx]
+  const next = route[bestIdx + 1]
+  const mPerDegLat = 111_320
+  const mPerDegLng = 111_320 * Math.cos((seg.lat * Math.PI) / 180)
+  const bx = (next.lng - seg.lng) * mPerDegLng
+  const by = (next.lat - seg.lat) * mPerDegLat
+  const px = (me.lng - seg.lng) * mPerDegLng
+  const py = (me.lat - seg.lat) * mPerDegLat
+  const len2 = bx * bx + by * by
+  let t = len2 > 0 ? (px * bx + py * by) / len2 : 0
+  t = Math.max(0, Math.min(1, t))
+  const projected: LatLng = {
+    lat: seg.lat + (next.lat - seg.lat) * t,
+    lng: seg.lng + (next.lng - seg.lng) * t,
+  }
+  // projected point + the rest of the route ahead.
+  return [projected, ...route.slice(bestIdx + 1)]
+}
+
 export function remainingRouteMeters(me: LatLng | null, route: LatLng[] | null): number | null {
   if (!me || !route || route.length < 2) return null
   let bestIdx = 0
@@ -156,12 +198,26 @@ export function remainingRouteMeters(me: LatLng | null, route: LatLng[] | null):
  */
 export function sideOfFinalSegment(route: LatLng[] | null, pin: LatLng | null): "left" | "right" | null {
   if (!route || route.length < 2 || !pin) return null
-  const a = route[route.length - 2]
   const b = route[route.length - 1]
+  // Find the last DISTINCT point before the endpoint. Mapbox routes often end
+  // with duplicate trailing coordinates (b === route[length-2]); using one of
+  // those would make `segBearing` a meaningless bearing-between-identical-
+  // points (≈0/North), which flips left/right at random. Walk back until we
+  // find a point at least ~0.5 m from b so the segment has a real direction.
+  let a: LatLng | null = null
+  for (let i = route.length - 2; i >= 0; i--) {
+    if (haversineMeters(route[i], b) > 0.5) {
+      a = route[i]
+      break
+    }
+  }
+  if (!a) return null // whole tail collapses onto b — no usable bearing
   const segBearing = bearingDeg(a, b)
   const pinBearing = bearingDeg(b, pin)
   const diff = signedAngleDiff(pinBearing, segBearing)
   if (diff === 0) return null
+  // Compass bearings increase CLOCKWISE, so a destination to the walker's
+  // RIGHT has a larger bearing than the travel direction → positive diff.
   return diff > 0 ? "right" : "left"
 }
 

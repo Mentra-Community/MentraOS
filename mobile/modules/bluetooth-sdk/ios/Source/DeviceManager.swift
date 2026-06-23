@@ -1254,6 +1254,10 @@ struct ViewState {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
+    func sendCameraTuningConfig(requestId: String, anrOn: Bool, gainOn: Bool) throws {
+        try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
+    }
+
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
     func requestVersionInfo() {

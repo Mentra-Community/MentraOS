@@ -349,6 +349,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
         }
 
+        AsyncFunction("setCameraTuningConfig") { (anrOn: Bool, gainOn: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraTuningConfig(anrOn: anrOn, gainOn: gainOn).values
+        }
+
         AsyncFunction("queryGalleryStatus") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.queryGalleryStatus().values

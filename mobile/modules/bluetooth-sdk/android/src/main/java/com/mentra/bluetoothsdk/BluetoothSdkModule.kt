@@ -457,6 +457,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
         }
 
+        AsyncFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
+            requireSdk().setCameraTuningConfig(anrOn, gainOn).values
+        }
+
         AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->

@@ -23,6 +23,7 @@ import { Connection, type ConnectionDeps } from "./connection";
 import { RuntimeEmitter } from "./emitter";
 import { Subscriptions } from "./subscriptions";
 import { Camera } from "./camera";
+import { Maps } from "./maps";
 import { Tts } from "./tts";
 import { UdpAudio } from "./audio-udp";
 import type { WebSocketLike, UdpSocketLike } from "../../transports";
@@ -201,6 +202,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -263,6 +265,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
       logger: noopLogger,
@@ -336,6 +339,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -393,6 +397,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -450,6 +455,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
