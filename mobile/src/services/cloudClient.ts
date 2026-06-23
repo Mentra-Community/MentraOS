@@ -323,6 +323,24 @@ function buildAdapter(): CloudRuntimeAdapter {
         return client.runtime.tts.speak(text, options)
       },
     },
+    maps: {
+      directions: req => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.maps.directions(req)
+      },
+      reverseGeocode: coord => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.maps.reverseGeocode(coord)
+      },
+      placeAutocomplete: req => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.maps.placeAutocomplete(req)
+      },
+      placeDetails: req => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.maps.placeDetails(req)
+      },
+    },
     hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
     isConnected: (): boolean => connected,
   }

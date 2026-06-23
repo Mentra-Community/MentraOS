@@ -168,6 +168,16 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
+  // runtimeUrl} — core + runtime are saved together because they are always
+  // applied as a matched set (presets fill both; Save & Test verifies both).
+  saved_cloud_url_pairs: {
+    key: "saved_cloud_url_pairs",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
     defaultValue: () => [],

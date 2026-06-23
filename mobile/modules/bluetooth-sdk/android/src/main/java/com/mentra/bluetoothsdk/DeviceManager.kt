@@ -1513,6 +1513,11 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    fun sendCameraTuningConfig(requestId: String, anrOn: Boolean, gainOn: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraTuningConfig(requestId, anrOn, gainOn)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).

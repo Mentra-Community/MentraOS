@@ -1,7 +1,6 @@
 import AVKit
 import CoreLocation
 import ExpoModulesCore
-import GoogleNavigation
 import Photos
 
 /// User-visible album in Apple Photos for glasses sync (matches dedicated-folder behavior on Android).
@@ -62,17 +61,22 @@ public class CrustModule: Module {
 
         AsyncFunction("requestNavigationPermission") { () -> [String: Any] in
             await withCheckedContinuation { continuation in
-                NavigationManager.shared.requestPermission { accepted in
-                    continuation.resume(returning: ["ok": true, "accepted": accepted])
+                // NavigationManager is @MainActor-isolated; hop onto the main
+                // actor before touching it from this nonisolated AsyncFunction.
+                Task { @MainActor in
+                    NavigationManager.shared.requestPermission { accepted in
+                        continuation.resume(returning: ["ok": true, "accepted": accepted])
+                    }
                 }
             }
         }
 
-        // iOS stub — Google's iOS Nav SDK has no equivalent to
-        // resetTermsAccepted, so this is a no-op for now. Returning ok:
-        // false lets the JS button surface the platform gap.
+        // Mapbox has no Terms & Conditions dialog (that was Google-specific),
+        // so there's nothing to reset. No-op for parity with Android, whose
+        // resetTermsAccepted is also a Mapbox no-op. Returns ok:true since the
+        // "reset" is trivially satisfied (no accepted-terms state exists).
         AsyncFunction("resetNavigationPermission") { () -> [String: Any] in
-            return ["ok": false, "error": "not supported on iOS"]
+            return ["ok": true]
         }
 
         AsyncFunction("startNavigation") { (lat: Double, lng: Double, options: [String: Any]?) -> [String: Any] in
@@ -98,6 +102,9 @@ public class CrustModule: Module {
             if stops.isEmpty { stops = [(lat: lat, lng: lng)] }
 
             return await withCheckedContinuation { continuation in
+              // NavigationManager is @MainActor-isolated; hop onto the main actor
+              // before calling start() from this nonisolated AsyncFunction.
+              Task { @MainActor in
                 NavigationManager.shared.start(
                     stops: stops,
                     mode: mode,
@@ -127,16 +134,17 @@ public class CrustModule: Module {
                     if let error { result["error"] = error }
                     continuation.resume(returning: result)
                 }
+              }
             }
         }
 
         AsyncFunction("stopNavigation") { () -> [String: Any] in
-            NavigationManager.shared.stop()
+            await MainActor.run { NavigationManager.shared.stop() }
             return ["ok": true]
         }
 
         AsyncFunction("simulateDeviation") { (offsetMeters: Double?) -> [String: Any] in
-            NavigationManager.shared.simulateDeviation(offsetMeters: offsetMeters ?? 50)
+            await MainActor.run { NavigationManager.shared.simulateDeviation(offsetMeters: offsetMeters ?? 50) }
             return ["ok": true]
         }
 

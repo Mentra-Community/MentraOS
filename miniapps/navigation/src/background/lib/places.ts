@@ -1,21 +1,20 @@
 /**
- * Places client — talks to Google Places (New) Autocomplete + Details
- * THROUGH the secret-proxy Worker (sdk/Navigation/worker), so the Google
- * API key never ships in this bundle. The Worker holds the key and
- * forwards to Google.
+ * Places client — type-ahead autocomplete + details for the search box.
  *
- * Auth is a placeholder: we send an `X-User-Email` header. When a real
- * logged-in session exists, `session.userId` carries it; otherwise we fall
- * back to a hardcoded address (PLACEHOLDER_USER_EMAIL). This is NOT real
- * auth — it's the swap-in seam for the future signed-token layer. The real
- * guardrail today is the GCP quota cap on the (now server-side) Places key.
+ * Routes entirely through the miniapp SDK (`session.navigation.place*`), which
+ * the host bridges to the v2 cloud maps service (Mapbox Search Box today). There
+ * is NO backend Worker and no provider key in this bundle — the cloud holds the
+ * token, caches, and bills. This replaced the old Google-Places secret-proxy
+ * Worker.
  *
- * One PlacesSession represents one autocomplete-then-details flow. Google
- * bills the autocomplete keystrokes + the final details call as a single
- * session when the same `sessionToken` is sent on all of them, so callers
- * should create a session per "search box opening" and reset it after the
- * user picks a result.
+ * One PlacesSession represents one autocomplete-then-details flow. The provider
+ * bills the autocomplete keystrokes + the final details call as a single search
+ * session when the same `sessionToken` is sent on all of them, so callers should
+ * create a session per "search box opening" and `reset()` it after the user
+ * picks a result.
  */
+
+import type {MiniappSession} from "@mentra/miniapp"
 
 export type PlaceSuggestion = {
   placeId: string
@@ -53,92 +52,39 @@ export type SavedPlace = PlaceDetails & {
   type?: SavedPlaceType
 }
 
-// Base URL of the secret-proxy Worker (sdk/Navigation/worker). The Worker
-// holds the Google Places key and forwards to Google; this bundle never sees
-// the key. Injected at build time via build.ts `define`.
-const PROXY_BASE_URL = process.env.PROXY_BASE_URL ?? ""
-
-// Placeholder identity sent to the proxy as X-User-Email. When a real
-// logged-in session exists, `session.userId` is threaded in (see
-// PlacesSession constructor); otherwise we fall back to this. NOT real auth —
-// the swap-in seam for the future signed-token layer.
-const PLACEHOLDER_USER_EMAIL = "something@mentraglass.com"
-
 export class PlacesSession {
   private token: string
-  private readonly userEmail: string
 
-  constructor(userEmail?: string) {
+  constructor(private readonly session: MiniappSession) {
     this.token = newToken()
-    this.userEmail = userEmail && userEmail.trim() ? userEmail : PLACEHOLDER_USER_EMAIL
   }
 
-  async autocomplete(input: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
+  /**
+   * Type-ahead suggestions for `input`, optionally biased toward `near`. Goes
+   * through the SDK → host → v2 cloud maps (Mapbox Search Box). The same
+   * `token` is sent on every keystroke + the final `details()` so the cloud
+   * bills one search session.
+   */
+  async autocomplete(input: string, near?: {lat: number; lng: number}): Promise<PlaceSuggestion[]> {
     if (!input.trim()) return []
-    // Fail loudly at call time (build.ts only warns): with an empty base
-    // URL the fetch would silently hit a relative path on the WebView's
-    // own origin and produce a confusing failure instead.
-    if (!PROXY_BASE_URL) throw new Error("missing PROXY_BASE_URL")
-    const res = await fetch(`${PROXY_BASE_URL}/places/autocomplete`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Email": this.userEmail,
-      },
-      body: JSON.stringify({input, sessionToken: this.token}),
-      signal,
+    const res = await this.session.navigation.placeAutocomplete({
+      query: input,
+      near,
+      sessionToken: this.token,
     })
-    if (!res.ok) throw new Error(`autocomplete ${res.status}`)
-    const json = (await res.json()) as {
-      suggestions?: Array<{
-        placePrediction?: {
-          placeId: string
-          text?: {text: string}
-          structuredFormat?: {
-            mainText?: {text: string}
-            secondaryText?: {text: string}
-          }
-        }
-      }>
-    }
-    return (json.suggestions ?? [])
-      .map((s) => s.placePrediction)
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => ({
-        placeId: p.placeId,
-        mainText: p.structuredFormat?.mainText?.text ?? p.text?.text ?? "",
-        secondaryText: p.structuredFormat?.secondaryText?.text ?? "",
-      }))
+    if (!res.ok) throw new Error(res.error || "autocomplete failed")
+    return res.suggestions ?? []
   }
 
-  async details(placeId: string, signal?: AbortSignal): Promise<PlaceDetails> {
-    if (!PROXY_BASE_URL) throw new Error("missing PROXY_BASE_URL")
-    const url =
-      `${PROXY_BASE_URL}/places/details/${encodeURIComponent(placeId)}` +
-      `?sessionToken=${encodeURIComponent(this.token)}`
-    // The Worker applies the field mask server-side (fixed to the cheapest
-    // pricing tier) — clients can't widen it, so we don't send one.
-    const res = await fetch(url, {
-      headers: {
-        "X-User-Email": this.userEmail,
-      },
-      signal,
+  /** Resolve a picked suggestion to coordinates. Uses the same session token. */
+  async details(placeId: string): Promise<PlaceDetails> {
+    const res = await this.session.navigation.placeDetails({
+      placeId,
+      sessionToken: this.token,
     })
-    if (!res.ok) throw new Error(`details ${res.status}`)
-    const json = (await res.json()) as {
-      id?: string
-      location?: {latitude: number; longitude: number}
-      displayName?: {text: string}
-      formattedAddress?: string
-    }
-    if (!json.location) throw new Error("details: no location")
-    return {
-      placeId: json.id ?? placeId,
-      lat: json.location.latitude,
-      lng: json.location.longitude,
-      name: json.displayName?.text ?? "",
-      address: json.formattedAddress ?? "",
-    }
+    if (!res.ok || !res.place) throw new Error(res.error || "details failed")
+    const {placeId: id, name, address, lat, lng} = res.place
+    return {placeId: id, name, address, lat, lng}
   }
 
   /** Rotate the token after a completed pick so the next search is a new

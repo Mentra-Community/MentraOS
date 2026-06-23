@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - mapbox-integration
       - cloud-v2/debug
       - cloud-v2/debug/**
     paths:
