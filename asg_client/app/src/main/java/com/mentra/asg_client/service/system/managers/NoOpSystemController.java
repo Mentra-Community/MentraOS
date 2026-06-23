@@ -87,4 +87,9 @@ public class NoOpSystemController implements ISystemController {
     public void injectAdbCommand(String shellCommand) {
         Log.w(TAG, "injectAdbCommand() unsupported on this device");
     }
+
+    @Override
+    public void setCameraTuningConfig(boolean anrOn, boolean gainOn) {
+        Log.w(TAG, "setCameraTuningConfig() unsupported on this device");
+    }
 }

@@ -107,6 +107,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   },
   setMaxVideoRecordingDuration: bindPublicMethod("setMaxVideoRecordingDuration"),
   setCameraFov: bindPublicMethod("setCameraFov"),
+  setCameraTuningConfig: bindPublicMethod("setCameraTuningConfig"),
   queryGalleryStatus: bindPublicMethod("queryGalleryStatus"),
   requestPhoto: bindPublicMethod("requestPhoto"),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
