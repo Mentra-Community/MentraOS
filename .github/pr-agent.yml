@@ -8,11 +8,12 @@ fixModel: claude-opus-4-8
 
 authors:
   # allowlist | all | label_only
-  # Draft PRs are reviewed like any other PR. In label_only mode the
-  # agent-review label implicitly gates drafts; in all/allowlist modes drafts
-  # are processed automatically once the author/mode check passes.
-  mode: label_only
-  allowlist: []
+  # allowlist: PRs authored by anyone in `allowlist` run automatically (no
+  # opt-in label needed). The `agent-stop` label is the kill switch that halts
+  # the orchestrator on any PR. Drafts are reviewed like any other PR.
+  mode: allowlist
+  allowlist:
+    - nic-olo
 
 limits:
   maxFixRounds: 5

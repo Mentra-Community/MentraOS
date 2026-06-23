@@ -92,6 +92,23 @@ export class NavigationManager {
     return this.session.navigation.computeRoute(opts)
   }
 
+  /**
+   * Reverse-geocode a coordinate to a road name + full address via the SDK,
+   * which routes through the v2 cloud maps service (the WebView never calls a
+   * maps provider directly). Normalizes the SDK's `{ok, road?, address?}` into a
+   * plain `{road, address}` for the RPC channel — a failed lookup surfaces as
+   * `{road: null, address: null}` rather than throwing, so dropped-pin / POI UI
+   * just falls back to coordinates.
+   */
+  async reverseGeocode(coord: {lat: number; lng: number}): Promise<{
+    road: string | null
+    address: string | null
+  }> {
+    const result = await this.session.navigation.reverseGeocodeRoad(coord)
+    if (!result.ok) return {road: null, address: null}
+    return {road: result.road ?? null, address: result.address ?? null}
+  }
+
   /** Subscribe to pivot events (approaching / entered / exited). */
   onPivot(handler: PivotListener): Unsubscribe {
     return this.session.navigation.onPivot(handler)

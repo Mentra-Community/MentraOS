@@ -14,3 +14,4 @@ export * from "./errors";
 export * from "./messages";
 export * from "./audio";
 export * from "./camera";
+export * from "./maps";

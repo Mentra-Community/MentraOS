@@ -1,41 +1,62 @@
-import GoogleNavigation
+import CoreLocation
+import Foundation
+import MapboxDirections
 
-// Maps the SDK's GMSNavigationManeuver enum to the string values
-// the JS layer expects (matching Android's NavInfoReceiverService mapping).
-func maneuverString(_ maneuver: GMSNavigationManeuver) -> String {
-  switch maneuver {
-  case .turnLeft, .turnKeepLeft: return "TURN_LEFT"
-  case .turnRight, .turnKeepRight: return "TURN_RIGHT"
-  case .turnSlightLeft: return "SLIGHT_LEFT"
-  case .turnSlightRight: return "SLIGHT_RIGHT"
-  case .turnSharpLeft: return "SHARP_LEFT"
-  case .turnSharpRight: return "SHARP_RIGHT"
-  case .turnUTurnClockwise, .turnUTurnCounterClockwise: return "U_TURN"
-  case .destination, .destinationLeft, .destinationRight: return "ARRIVE"
-  case .mergeUnspecified, .mergeLeft, .mergeRight: return "STRAIGHT"
-  case .forkLeft, .onRampLeft, .onRampSlightLeft, .onRampSharpLeft, .offRampLeft, .offRampSlightLeft, .offRampSharpLeft: return "SLIGHT_LEFT"
-  case .forkRight, .onRampRight, .onRampSlightRight, .onRampSharpRight, .offRampRight, .offRampSlightRight, .offRampSharpRight: return "SLIGHT_RIGHT"
-  case .ferryBoat, .ferryTrain: return "STRAIGHT"
-  case .roundaboutSharpLeftClockwise, .roundaboutSharpLeftCounterClockwise,
-       .roundaboutLeftClockwise, .roundaboutLeftCounterClockwise,
-       .roundaboutSlightLeftClockwise, .roundaboutSlightLeftCounterClockwise: return "TURN_LEFT"
-  case .roundaboutSharpRightClockwise, .roundaboutSharpRightCounterClockwise,
-       .roundaboutRightClockwise, .roundaboutRightCounterClockwise,
-       .roundaboutSlightRightClockwise, .roundaboutSlightRightCounterClockwise: return "TURN_RIGHT"
-  case .roundaboutStraightClockwise, .roundaboutStraightCounterClockwise,
-       .roundaboutClockwise, .roundaboutCounterClockwise,
-       .roundaboutExitClockwise, .roundaboutExitCounterClockwise: return "STRAIGHT"
-  case .straight: return "STRAIGHT"
+// Maps the Mapbox Directions maneuver (type + direction) to the string values
+// the JS layer expects — the SAME vocabulary the Android Mapbox migration
+// emits via NavigationManager.kt `mapManeuver()`, which is in turn the same
+// vocabulary the old Google iOS path produced. The miniapp SDK's
+// `ManeuverKind` is frozen, so these strings must not change.
+//
+// Mapbox Directions splits a maneuver into:
+//   • ManeuverType      — depart / turn / fork / merge / arrive / continue / …
+//   • ManeuverDirection — left / right / slightLeft / slightRight / sharpLeft /
+//                          sharpRight / straight / uTurn
+// We combine them the way Android does (type drives the verb; direction
+// drives left/right + slight/sharp variants).
+//
+// VERIFY-IN-XCODE: enum case spellings (`.turn`, `.slightLeft`, etc.) are from
+// MapboxDirections v3. Confirm against the installed SDK if the compiler
+// flags any case name.
+func maneuverString(type: ManeuverType?, direction: ManeuverDirection?) -> String {
+  switch type {
+  case .some(.arrive):
+    return "ARRIVE"
+  case .some(.depart):
+    return "DEPART"
+  case .some(.reachFork), .some(.merge), .some(.takeOnRamp), .some(.takeOffRamp):
+    // Forks / merges / ramps map to the SLIGHT variant of their side.
+    switch direction {
+    case .some(.left), .some(.slightLeft), .some(.sharpLeft):
+      return "SLIGHT_LEFT"
+    case .some(.right), .some(.slightRight), .some(.sharpRight):
+      return "SLIGHT_RIGHT"
+    default:
+      return "STRAIGHT"
+    }
+  default:
+    // turn / continue / endOfRoad / roundabout / rotary / unknown — direction
+    // drives the left/right + slight/sharp/u-turn family.
+    return directionString(direction)
+  }
+}
+
+/// Map a ManeuverDirection to the left/right family used by the JS layer.
+private func directionString(_ direction: ManeuverDirection?) -> String {
+  switch direction {
+  case .some(.left): return "TURN_LEFT"
+  case .some(.right): return "TURN_RIGHT"
+  case .some(.slightLeft): return "SLIGHT_LEFT"
+  case .some(.slightRight): return "SLIGHT_RIGHT"
+  case .some(.sharpLeft): return "SHARP_LEFT"
+  case .some(.sharpRight): return "SHARP_RIGHT"
+  case .some(.uTurn): return "U_TURN"
   default: return "STRAIGHT"
   }
 }
 
-// Converts a GMSPath to the [[lat, lng]] array the JS bridge expects.
-func pathToPoints(_ path: GMSPath) -> [[String: Double]] {
-  var points: [[String: Double]] = []
-  for i in 0..<path.count() {
-    let coord = path.coordinate(at: i)
-    points.append(["lat": coord.latitude, "lng": coord.longitude])
-  }
-  return points
+/// Convert a list of route coordinates to the `[{lat,lng}]` array the JS bridge
+/// expects (matching Android's RoutePoint shape).
+func coordinatesToPoints(_ coords: [CLLocationCoordinate2D]) -> [[String: Double]] {
+  coords.map { ["lat": $0.latitude, "lng": $0.longitude] }
 }

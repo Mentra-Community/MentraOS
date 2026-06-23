@@ -45,6 +45,7 @@ const initialSnapshot: NavSnapshot = {
     wrongSidewalk: false,
     skipCrossings: false,
     useRawInstructions: true,
+    largeMapEnabled: false,
   },
   unitSystem: "metric",
 }
