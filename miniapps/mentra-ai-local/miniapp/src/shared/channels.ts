@@ -38,6 +38,12 @@ export interface Channels {
   "settings:set-theme": Rpc<Theme, void>
   /** Debug: speak a fixed phrase through the glasses; returns the device outcome. */
   "debug:speak": Rpc<{text: string}, DebugSpeakResult>
+  /**
+   * Debug: start/stop a 30×30 spinner animation pinned to the bottom-right of
+   * the glasses HUD. `running` reflects the resulting state; `error` is set when
+   * the glasses have no display.
+   */
+  "debug:spinner": Rpc<{action: "start" | "stop"}, {running: boolean; error?: string}>
 }
 
 declare global {

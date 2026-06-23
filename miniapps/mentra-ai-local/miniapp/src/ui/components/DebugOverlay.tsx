@@ -1,6 +1,7 @@
 import {useState, useEffect, useRef, useCallback} from "react"
 import {TtsTestButton} from "./debug/TtsTestButton"
 import {WakeGlowButton} from "./debug/WakeGlowButton"
+import {SpinnerButton} from "./debug/SpinnerButton"
 import "../../shared/channels"
 import type {DebugTranscript} from "../../shared/types"
 
@@ -227,6 +228,7 @@ export function DebugOverlay({onClose}: DebugOverlayProps) {
           <div className="p-2.5 flex flex-col gap-2 border-b border-white/10">
             <TtsTestButton onLog={addActionLog} />
             <WakeGlowButton onLog={addActionLog} />
+            <SpinnerButton onLog={addActionLog} />
           </div>
           <div
             className="flex-1 overflow-y-auto px-2 py-1.5"

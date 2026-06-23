@@ -177,6 +177,18 @@ export class MentraAIController {
         }
       }
     })
+
+    // Debug: toggle the bottom-right spinner animation on the glasses HUD.
+    this.ui.handle("debug:spinner", ({action}) => {
+      if (!this.session.capabilities?.hasDisplay) {
+        return {running: false, error: "Glasses report no display"}
+      }
+      if (action === "start") {
+        return {running: this.display.startSpinner()}
+      }
+      this.display.stopSpinner()
+      return {running: false}
+    })
   }
 
   // ── webview open → hydrate with history snapshot ────────────────
