@@ -241,26 +241,27 @@ public class SettingsCommandHandler implements ICommandHandler {
                             + (hasCompress ? ", compress=" + compress : "")
                             + (hasSound ? ", sound=" + sound : ""));
             if (noiseReduction != null && !noiseReduction) {
-                Log.w(
+                Log.d(
                         TAG,
-                        "noiseReduction=false stored via button_photo_setting; HAL may report"
-                                + " not_implemented at capture");
+                        "noiseReduction=false stored via button_photo_setting; bridging to HAL"
+                                + " camconfig (anr=false). Camera2 NR mode may still report"
+                                + " not_implemented.");
             }
             if (ispDigitalGain != null) {
-                Log.w(
+                Log.d(
                         TAG,
                         "ispDigitalGain="
                                 + ispDigitalGain
-                                + " stored via button_photo_setting; HAL may report not_implemented"
-                                + " at capture");
+                                + " stored via button_photo_setting; gain bridged to HAL camconfig."
+                                + " Camera2 ISP digital gain may still report not_implemented.");
             }
             if (ispAnalogGain != null && !ispAnalogGain.isEmpty()) {
-                Log.w(
+                Log.d(
                         TAG,
                         "ispAnalogGain="
                                 + ispAnalogGain
-                                + " stored via button_photo_setting; HAL may report not_implemented"
-                                + " at capture");
+                                + " stored via button_photo_setting; gain bridged to HAL camconfig."
+                                + " Camera2 ISP analog gain may still report not_implemented.");
             }
 
             boolean resetCaptureTuning = data.optBoolean("resetCaptureTuning", false);
@@ -308,6 +309,30 @@ public class SettingsCommandHandler implements ICommandHandler {
                 }
                 if (hasSound) {
                     asgSettings.setButtonPhotoSound(sound);
+                }
+
+                // Bridge scan-preset noise-reduction / gain onto the HAL camconfig path so they
+                // actually take effect at the sensor. The Camera2 per-capture keys
+                // (NOISE_REDUCTION_MODE / ISP gain) are reported not_implemented by the MediaTek
+                // HAL, but the camera_tuning_config camconfig broadcast (anr/gain) is honored.
+                // Only touch global HAL tuning when the update carries the relevant scan fields (or
+                // a reset) so plain size-only button_photo updates leave it untouched.
+                boolean bridgeHalTuning =
+                        resetCaptureTuning || hasNoiseReduction || hasIspAnalogGain || hasIspDigitalGain;
+                if (bridgeHalTuning) {
+                    // Reset restores stock tuning; explicit scan fields then override the baseline.
+                    boolean anrOn = resetCaptureTuning ? true : asgSettings.isCameraAnrEnabled();
+                    boolean gainOn = resetCaptureTuning ? true : asgSettings.isCameraGainEnabled();
+                    if (hasNoiseReduction) {
+                        anrOn = noiseReduction;
+                    }
+                    if (hasIspAnalogGain && ispAnalogGain != null) {
+                        // "low" analog gain => pixsmart gain-off; anything else keeps stock gain.
+                        gainOn = !"low".equalsIgnoreCase(ispAnalogGain.trim());
+                    } else if (hasIspDigitalGain && ispDigitalGain != null) {
+                        gainOn = ispDigitalGain > 0;
+                    }
+                    applyCameraTuning(asgSettings, anrOn, gainOn);
                 }
                 // For the ack, echo the persisted (effective) size rather than the wire value so
                 // clients that omit size receive the actual stored tier (e.g. max) in the response.
@@ -519,17 +544,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             boolean anrOn = data.has("anr") ? data.optBoolean("anr", true) : asgSettings.isCameraAnrEnabled();
             boolean gainOn = data.has("gain") ? data.optBoolean("gain", true) : asgSettings.isCameraGainEnabled();
 
-            asgSettings.setCameraAnrEnabled(anrOn);
-            asgSettings.setCameraGainEnabled(gainOn);
-            Log.d(TAG, "Camera tuning config saved: anr=" + anrOn + ", gain=" + gainOn);
-
-            Context context = serviceManager.getContext();
-            if (context != null) {
-                SystemControllerFactory.get(context).setCameraTuningConfig(anrOn, gainOn);
-                Log.d(TAG, "Camera tuning config applied via broadcast");
-            } else {
-                Log.w(TAG, "Context not available; tuning persisted but broadcast not sent");
-            }
+            applyCameraTuning(asgSettings, anrOn, gainOn);
 
             JSONObject values = new JSONObject();
             values.put("anr", anrOn);
@@ -539,6 +554,26 @@ public class SettingsCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera_tuning_config", e);
             return false;
+        }
+    }
+
+    /**
+     * Persist ANR/gain flags and apply them to the Mentra Live HAL via the {@code camconfig}
+     * broadcast. Shared by the dedicated {@code camera_tuning_config} command and the scan-mode
+     * {@code button_photo_setting} bridge so {@code noiseReduction}/gain actually take effect at the
+     * sensor instead of only persisting as Camera2 hints the HAL reports as not_implemented.
+     */
+    private void applyCameraTuning(AsgSettings asgSettings, boolean anrOn, boolean gainOn) {
+        asgSettings.setCameraAnrEnabled(anrOn);
+        asgSettings.setCameraGainEnabled(gainOn);
+        Log.d(TAG, "Camera tuning config saved: anr=" + anrOn + ", gain=" + gainOn);
+
+        Context context = serviceManager.getContext();
+        if (context != null) {
+            SystemControllerFactory.get(context).setCameraTuningConfig(anrOn, gainOn);
+            Log.d(TAG, "Camera tuning config applied via broadcast");
+        } else {
+            Log.w(TAG, "Context not available; tuning persisted but broadcast not sent");
         }
     }
 
