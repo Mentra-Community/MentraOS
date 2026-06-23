@@ -1316,6 +1316,13 @@ class G2 : SGCManager() {
     private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
+    // Live hardware truth: is the firmware mic actually streaming right now. DISTINCT from the
+    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user/cloud want the mic
+    // on). The mic only exists inside a live EvenHub page, so whenever the page dies (systemExit
+    // / abnormalExit / shutdown cmd 9·10 / dashboard takes focus) the firmware kills the mic and
+    // we set this false — WITHOUT touching the intent flag, so recovery can re-arm iff intent says
+    // the mic should be on. See the iOS G2.swift counterpart.
+    private var evenHubMicActive: Boolean = false
     private var currentTextContent: String = ""
     private var textContainerID: Int = 1
     private var imageSessionCounter: Int = 0
@@ -2029,14 +2036,18 @@ class G2 : SGCManager() {
         if (existingIndex >= 0) {
             textContainers[existingIndex].content = content
             textContainers[existingIndex].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
-            signalDisplayDirty()
             container = textContainers[existingIndex]
-            Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
-            // A brand-new page needs its structure built first; pendingSends stays set so the loop
-            // pushes the content once the page exists.
+            // Wake the reconcile loop either way. When the page is live it sends the text; when the
+            // page is down the loop coalesces the burst into a single rebuild (see reconcileDisplay)
+            // instead of one shutdown/rebuild per caption. The container's content is overwritten in
+            // place (last-wins), so a backlog that piled up while we were suspended collapses to one
+            // catch-up render — no flood on resume.
+            signalDisplayDirty()
             if (!pageCreated) {
-                rebuildPage()
+                Bridge.log("G2: sendText() - page down, buffering latest content for container ${container.id} (rebuild deferred to reconcile)")
+                return
             }
+            Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
             return
         }
         container =
@@ -2282,7 +2293,22 @@ class G2 : SGCManager() {
      * cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
      */
     private suspend fun reconcileDisplay() {
-        if (!pageCreated) return
+        // Page is dead but content is waiting (e.g. captions kept arriving while we were suspended
+        // and the firmware tore the session down). Rebuild the page ONCE here — the reconcile loop
+        // is coalesced, so a burst of buffered sendText calls collapses into a single rebuild
+        // instead of one shutdown/rebuild per caption. rebuildState() recreates the page, re-pushes
+        // the current text/image, and re-arms the mic iff intent says so. Skip while the native
+        // dashboard owns the screen.
+        if (!pageCreated) {
+            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+            val hasPendingText = textContainers.any { it.pendingSends > 0 }
+            val hasPendingImage = imageContainers.any { it.dirty && it.bmpData.isNotEmpty() }
+            if ((hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0)) {
+                Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
+                rebuildState()
+            }
+            return
+        }
 
         // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
         for (i in textContainers.indices) {
@@ -2423,10 +2449,14 @@ class G2 : SGCManager() {
     /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
         Bridge.log("G2: showDashboard()")
-        dashboardShowing += 2
+        // Dashboard is open: a simple on/off flag, not an accumulating depth. The old `+= 2`
+        // could climb without bound when opens interleaved with dropped close events, stranding
+        // the counter >0 and wedging the mic (the dashboardShowing>0 guard in restartMic).
+        dashboardShowing = 1
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        evenHubMicActive = false // dashboard takes EvenHub focus; firmware kills the mic
         currentBitmapBase64 = ""
         mainHandler.postDelayed({
             // activate the dashboard by setting depth to the current setting:
@@ -2803,21 +2833,32 @@ class G2 : SGCManager() {
     }
 
     fun restartMic() {
-        // if already enabled, set to disabled, then send enabled after 500ms:
+        // Intent is "mic on". The mic only exists inside a live EvenHub page, so we toggle it
+        // off then back on (the firmware needs the off→on edge to re-arm).
         DeviceStore.apply("glasses", "micEnabled", true)
+        evenHubMicActive = false
         val msg = EvenHubProto.audioControlMessage(false)
         sendEvenHubCommand(msg)
         mainHandler.postDelayed({
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
             // Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
+            // Dashboard owns the screen + session right now — don't arm the mic into a page the
+            // dashboard has taken over; recovery re-arms on dashboard close.
             if (useNativeDashboard && dashboardShowing > 0) {
                 return@postDelayed
             }
+            // Never send audioControl(enable=true) without a live page — no page means no mic.
+            // Rebuild first, which itself re-arms the mic at the end (intent is on), so we're done.
             if (!pageCreated) {
-                DeviceManager.getInstance().sendCurrentState() // should re-create the page if needed
+                displayScope.launch {
+                    rebuildState()
+                    DeviceManager.getInstance().sendCurrentState()
+                }
+                return@postDelayed
             }
             val msg = EvenHubProto.audioControlMessage(true)
             sendEvenHubCommand(msg)
+            evenHubMicActive = true
         }, 500)
     }
 
@@ -2836,6 +2877,7 @@ class G2 : SGCManager() {
         DeviceStore.apply("glasses", "micEnabled", enabled)
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
+        evenHubMicActive = enabled
     }
 
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> {
@@ -3881,6 +3923,7 @@ class G2 : SGCManager() {
             if (cmdValue == 9 || cmdValue == 10) {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
+                evenHubMicActive = false // mic dies with the page
             }
 
             // Scan response fields for a shutdown/error code regardless of the debounce window.
@@ -3898,6 +3941,7 @@ class G2 : SGCManager() {
                             "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                         )
                         pageCreated = false
+                        evenHubMicActive = false // mic dies with the page
                     }
                 }
             }
@@ -4041,18 +4085,29 @@ class G2 : SGCManager() {
                 }
             }
 
-            // system exit:
+            // System exit: glasses killed our EvenHub page (the firmware's "End this feature?"
+            // screen, or another app — like the native dashboard — taking focus). The page is
+            // gone and the firmware has also killed the mic. rebuildState() recreates the page,
+            // re-pushes current text/image, then re-arms the mic IFF intent says so. The mic only
+            // exists inside a live page, so re-arming must happen *after* the page is back.
+            //
+            // We mark evenHubMicActive=false (live hardware truth) but DELIBERATELY do NOT touch
+            // glasses/micEnabled: that flag is the user/cloud *intent*, and recovery reads it to
+            // decide whether to re-arm. Clobbering it stranded the mic after a dashboard round-trip.
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
-                // Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                DeviceStore.apply("glasses", "micEnabled", false)// the mic is killed
-                // displayScope.launch {
-                //     // Firmware kills the mic on system exit; re-arm it if it should be on
-                //     DeviceStore.apply("glasses", "micEnabled", false)
-                //     DeviceManager.getInstance().updateMicState()
-                //     // rebuildState()
-                //     // DeviceManager.getInstance().sendCurrentState()
-                // }
+                evenHubMicActive = false // firmware killed the mic with the page
+                val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+                // If the native dashboard is intentionally on screen it owns the display, so don't
+                // fight it by rebuilding here — recovery happens on dashboard close (the 08011A00
+                // path also calls rebuildState()). For every other systemExit, rebuild now.
+                if (!(useNativeDashboard && dashboardShowing > 0)) {
+                    Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
+                    displayScope.launch {
+                        rebuildState()
+                        DeviceManager.getInstance().sendCurrentState()
+                    }
+                }
             }
             return
         }
@@ -4223,47 +4278,28 @@ class G2 : SGCManager() {
         // Dashboard close detection: 08011A00 means dashboard closed
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
-            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
-            if (!useNativeDashboard) {
-                dashboardShowing = 0
-                // Rebuild the page from cached containers, then reconcile against
-                // DeviceManager's authoritative current view so the glasses match the phone
-                // (not just the last-cached G2 containers) after returning from the dashboard.
-                displayScope.launch {
-                    rebuildState()
-                    DeviceManager.getInstance().sendCurrentState()
-                    // set the mic back on if it should be on — only after the rebuild
-                    // completes, matching iOS (which awaits rebuildState before restartMic).
-                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                    if (micEnabled) {
-                        restartMic()
-                    }
-                }
-                return
-            } else {
-                // if we aren't trying to show the dashboard
-                // then we need to turn the mic back on and display the mentra main page:
-                if (dashboardShowing <= 1) {
-                    dashboardShowing = 0
-                    // Rebuild the page from cached containers, then reconcile against
-                    // DeviceManager's authoritative current view so the glasses match the phone
-                    // (not just the last-cached G2 containers) after returning from the dashboard.
-                    displayScope.launch {
-                        rebuildState()
-                        // set the mic back on if it should be on
-                        val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                        if (micEnabled) {
-                            restartMic()
-                        }
-                    }
-                    return
-                }
-                // do nothing this time since we just closed the dashboard
-                dashboardShowing -= 1
-                if (dashboardShowing < 0) {
-                    dashboardShowing = 0
+            // A dashboard-close event unambiguously means the dashboard is gone, so always reset
+            // to 0 and recover. We deliberately do NOT keep a residual depth count (the old
+            // +=2 / -=1 "decrement dance"): that counter drifts when a close frame is dropped by
+            // the 500ms gesture_ctrl dedup or when systemExits interleave with opens, and once it
+            // strands >0 the dashboardShowing>0 guard in restartMic wedges the mic permanently
+            // (cloud keeps calling setMicEnabled(true) but it never arms). Self-heal: clear the
+            // count, rebuild the page, re-arm the mic iff intent says so.
+            dashboardShowing = 0
+            // Rebuild the page from cached containers, then reconcile against DeviceManager's
+            // authoritative current view so the glasses match the phone (not just the last-cached
+            // G2 containers) after returning from the dashboard.
+            displayScope.launch {
+                rebuildState()
+                DeviceManager.getInstance().sendCurrentState()
+                // set the mic back on if it should be on — only after the rebuild completes,
+                // matching iOS (which awaits rebuildState before restartMic).
+                val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                if (micEnabled) {
+                    restartMic()
                 }
             }
+            return
         }
     }
 

@@ -2730,7 +2730,10 @@ class G2: NSObject, SGCManager {
     /// The glasses fall back to the dashboard automatically when no page is up.
     func showDashboard() {
         Bridge.log("G2: showDashboard()")
-        dashboardShowing += 2
+        // Dashboard is open: a simple on/off flag, not an accumulating depth. The old
+        // `+= 2` could climb without bound when opens interleaved with dropped close
+        // events, stranding the counter >0 and wedging the mic. Set, don't accumulate.
+        dashboardShowing = 1
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -4345,42 +4348,24 @@ class G2: NSObject, SGCManager {
         // so we need to revive it:
         if data == Data([0x08, 0x01, 0x1A, 0x00]) {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=\(dashboardShowing)")
-            let useNativeDashboard =
-                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
-            if !useNativeDashboard {
-                dashboardShowing = 0
-                // rebuild state:
-                Task {
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                }
-                return
-            } else {
-                // if we aren't trying to show the dashboard
-                // then we need to turn the mic back on and display the mentra main page:
-                if dashboardShowing <= 1 {
-                    dashboardShowing = 0
-                    // rebuild state:
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                    return
-                }
-                // do nothing this time since we just closed the dashboard
-                dashboardShowing -= 1
-                if dashboardShowing < 0 {
-                    dashboardShowing = 0
+            // A dashboard-close event unambiguously means the dashboard is gone, so always
+            // reset to 0 and recover. We deliberately do NOT keep a residual depth count
+            // (the old +=2 / -=1 "decrement dance"): that counter drifts when a close frame
+            // is dropped by the 500ms gesture_ctrl dedup or when systemExits interleave with
+            // opens, and once it strands >0 the dashboardShowing>0 guard in restartMic wedges
+            // the mic permanently (cloud keeps calling setMicEnabled(true) but it never arms).
+            // Self-heal: clear the count, rebuild the page, re-arm the mic iff intent says so.
+            dashboardShowing = 0
+            Task {
+                await rebuildState()
+                // set the mic back on if it should be on
+                let micEnabled =
+                    DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+                if micEnabled {
+                    restartMic()
                 }
             }
+            return
         }
 
         // if we got 08011097012200 that means we selected a menu item:
