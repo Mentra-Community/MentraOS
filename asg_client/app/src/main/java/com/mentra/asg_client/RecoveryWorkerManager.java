@@ -118,9 +118,9 @@ public class RecoveryWorkerManager {
             if (manifest == null) return false;
 
             JSONObject apps = manifest.optJSONObject("apps");
-            if (apps == null || !apps.has(OtaConstants.RECOVERY_WORKER_PACKAGE)) return false;
+            if (apps == null || !apps.has(OtaConstants.RECOVERY_PACKAGE)) return false;
 
-            JSONObject info = apps.getJSONObject(OtaConstants.RECOVERY_WORKER_PACKAGE);
+            JSONObject info = apps.getJSONObject(OtaConstants.RECOVERY_PACKAGE);
             int remoteVersionCode = info.optInt("versionCode", -1);
             String apkUrl = info.optString("apkUrl", "");
             String sha256 = info.optString("sha256", "");

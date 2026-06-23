@@ -135,17 +135,56 @@ public class RemediationWorker extends Worker {
 
     try {
       boolean alive = waitForPong(context, RecoveryConstants.RESTART_GRACE_MS);
+
+      // Re-read the installed version to confirm the OEM install actually took effect before
+      // marking applied. A PONG can arrive from the OLD build while it is still alive (the OEM
+      // installer kills ASG asynchronously), so trusting a PONG alone can suppress future
+      // remediation even when the install was rejected or dropped.
+      long nowInstalled =
+          RemediationEvaluator.getInstalledVersion(context, policy.packageName);
+      boolean installConfirmed = nowInstalled >= policy.versionCode;
+
       if (alive) {
-        RemediationEvaluator.markApplied(context, policy);
+        if (installConfirmed) {
+          // PONG + version confirmed — definitive success.
+          RemediationEvaluator.markApplied(context, policy);
+          telemetry.emit(
+              "mentra_remediation_applied", policy.versionName, "PONG_AFTER_INSTALL", attempt, true);
+          return Result.success();
+        }
+        // PONG from old build before installer fired, or installer was rejected/dropped.
+        // Do NOT mark applied so the next periodic run can retry.
+        Log.w(RecoveryConstants.TAG,
+            "PONG received but installed version " + nowInstalled
+                + " < target " + policy.versionCode + "; not marking applied, will retry");
         telemetry.emit(
-            "mentra_remediation_applied", policy.versionName, "PONG_AFTER_INSTALL", attempt, true);
-        return Result.success();
+            "mentra_remediation_failed",
+            policy.versionName,
+            "PONG_VERSION_NOT_UPDATED",
+            attempt,
+            false);
+        return Result.retry();
       }
-      // Mark applied even on missing PONG: the install broadcast was dispatched and the device
-      // typically reboots into the new build; re-running anyway would re-trigger an install loop.
+
+      // No PONG: ASG was likely killed by the OEM installer and is rebooting. Mark applied to
+      // avoid dispatching a duplicate install on the next run. Emit success/failure based on
+      // whether the version is already confirmed (fast install) or still pending (mid-reboot).
       RemediationEvaluator.markApplied(context, policy);
-      telemetry.emit(
-          "mentra_remediation_failed", policy.versionName, "NO_PONG_AFTER_INSTALL", attempt, false);
+      if (installConfirmed) {
+        telemetry.emit(
+            "mentra_remediation_applied",
+            policy.versionName,
+            "NO_PONG_VERSION_CONFIRMED",
+            attempt,
+            true);
+      } else {
+        telemetry.emit(
+            "mentra_remediation_failed",
+            policy.versionName,
+            "NO_PONG_AFTER_INSTALL",
+            attempt,
+            false);
+      }
       return Result.success();
     } finally {
       InstallPauseNotifier.notifyInstallCompleted();
