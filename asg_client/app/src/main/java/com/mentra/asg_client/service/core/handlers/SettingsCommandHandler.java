@@ -330,6 +330,9 @@ public class SettingsCommandHandler implements ICommandHandler {
                         // "low" analog gain => pixsmart gain-off; anything else keeps stock gain.
                         gainOn = !"low".equalsIgnoreCase(ispAnalogGain.trim());
                     } else if (hasIspDigitalGain && ispDigitalGain != null) {
+                        // Analog gain takes precedence when both are present; digital is the
+                        // fallback. ispDigitalGain > 0 means a positive sensor gain is requested
+                        // (stock pipeline), so gain stays ON; 0 means suppress gain (gain-off).
                         gainOn = ispDigitalGain > 0;
                     }
                     applyCameraTuning(asgSettings, anrOn, gainOn);
@@ -437,6 +440,33 @@ public class SettingsCommandHandler implements ICommandHandler {
                 CameraRestartCooldown.setCooldown();
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
                 sendCameraFovReadyAck(requestId, fov, roiPosition);
+                // Re-apply saved camera tuning after the HAL comes back up so ANR/gain config
+                // survives a runtime FOV change (mirrors the boot-time defer in AsgClientService).
+                AsgSettings savedSettings = asgSettings;
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(
+                                () -> {
+                                    try {
+                                        boolean anrOn = savedSettings.isCameraAnrEnabled();
+                                        boolean gainOn = savedSettings.isCameraGainEnabled();
+                                        SystemControllerFactory.get(context)
+                                                .setCameraTuningConfig(anrOn, gainOn);
+                                        Log.d(
+                                                TAG,
+                                                "Camera tuning re-applied after FOV HAL restart:"
+                                                        + " anr="
+                                                        + anrOn
+                                                        + ", gain="
+                                                        + gainOn);
+                                    } catch (Exception ex) {
+                                        Log.w(
+                                                TAG,
+                                                "Failed to re-apply camera tuning after FOV"
+                                                        + " restart",
+                                                ex);
+                                    }
+                                },
+                                CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
             } catch (UnsatisfiedLinkError e) {
                 Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
                 JSONObject values = new JSONObject();
@@ -541,8 +571,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            boolean anrOn = data.has("anr") ? data.optBoolean("anr", true) : asgSettings.isCameraAnrEnabled();
-            boolean gainOn = data.has("gain") ? data.optBoolean("gain", true) : asgSettings.isCameraGainEnabled();
+            boolean anrOn = data.has("anr") ? data.optBoolean("anr") : asgSettings.isCameraAnrEnabled();
+            boolean gainOn = data.has("gain") ? data.optBoolean("gain") : asgSettings.isCameraGainEnabled();
 
             applyCameraTuning(asgSettings, anrOn, gainOn);
 
@@ -553,6 +583,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera_tuning_config", e);
+            sendSettingsError(getRequestId(data), "camera_tuning", "internal_error", "Unexpected error applying camera tuning.");
             return false;
         }
     }
