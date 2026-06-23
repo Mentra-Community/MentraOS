@@ -2997,6 +2997,7 @@ class G2 : SGCManager() {
         // } else {
         //     stopCompass()
         // }
+        runAuthSequence()
     }
 
     /**

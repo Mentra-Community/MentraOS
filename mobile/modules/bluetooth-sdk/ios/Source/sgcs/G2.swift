@@ -3202,6 +3202,7 @@ class G2: NSObject, SGCManager {
         // } else {
         //     stopCompass()
         // }
+        runAuthSequence()
     }
 
     /// Start a navigation session so the glasses stream compass heading via
