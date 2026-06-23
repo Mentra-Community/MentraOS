@@ -2,7 +2,6 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
 
-import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 
@@ -61,11 +60,12 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            // Forward to K900BluetoothManager
+            // Forward to the active transport
             if (serviceManager != null && serviceManager.getBluetoothManager() != null) {
-                K900BluetoothManager bluetoothManager = (K900BluetoothManager) serviceManager.getBluetoothManager();
-                bluetoothManager.handlePhoneConfirmation(fileName, success);
-                Log.d(TAG, "✅ Forwarded transfer_complete to K900BluetoothManager");
+                serviceManager
+                        .getBluetoothManager()
+                        .onFileTransferConfirmation(fileName, success);
+                Log.d(TAG, "✅ Forwarded transfer_complete to transport");
                 return true;
             } else {
                 Log.e(TAG, "❌ BluetoothManager not available");
