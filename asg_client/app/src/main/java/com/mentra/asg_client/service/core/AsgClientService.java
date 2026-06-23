@@ -19,21 +19,24 @@ import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
-import com.mentra.asg_client.hardware.K900RgbLedController;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
+import com.mentra.asg_client.service.core.processors.CommandProtocolDetector;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
@@ -46,6 +49,7 @@ import dagger.hilt.android.AndroidEntryPoint;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
@@ -68,7 +72,16 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject FileManager fileManager;
     @Inject OtaHelper otaHelper;
     @Inject IHardwareManager hardwareManager;
-    @Inject BesOtaRegistry besOtaRegistry;
+    @Inject IBesOtaRegistry besOtaRegistry;
+
+    /** Vendor-supplied protocol detection strategies (e.g. the Mentra Live MCU wire format). */
+    @Inject Set<CommandProtocolDetector.ProtocolDetectionStrategy> protocolStrategies;
+
+    /** Device-appropriate companion transport, constructed by the vendor wiring layer. */
+    @Inject ICompanionTransport companionTransport;
+
+    /** Device-appropriate network manager, constructed by the vendor wiring layer. */
+    @Inject INetworkManager injectedNetworkManager;
 
     // ---------------------------------------------
     // Constants //TODO: Extract all the Constants and Magic Number/Text to AsgConstants
@@ -402,8 +415,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             if (hardwareManager.supportsRgbLed()) {
                 sendRgbLedControlAuthority(true);
                 hardwareManager.setRgbLedSolidWhite(
-                        UVC_STREAMING_LED_DURATION_MS,
-                        K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+                        UVC_STREAMING_LED_DURATION_MS, RgbLedConstants.DEFAULT_BRIGHTNESS);
                 Log.i(TAG, "UVC streaming RGB ring LED on (solid white)");
             } else {
                 Log.w(TAG, "RGB LED not supported on this device");
@@ -638,7 +650,14 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         try {
             serviceInitializer =
                     new ServiceInitializer(
-                            this, fileManager, otaHelper, hardwareManager, besOtaRegistry);
+                            this,
+                            companionTransport,
+                            injectedNetworkManager,
+                            fileManager,
+                            otaHelper,
+                            hardwareManager,
+                            besOtaRegistry,
+                            protocolStrategies);
             Log.d(TAG, "✅ ServiceInitializer created successfully");
 
             // Initialize container
