@@ -24,10 +24,10 @@ public interface IBluetoothManager {
     void disconnect();
 
     /**
-     * Send a message to the connected device.
+     * Queue a message to send to the connected device.
      *
      * @param data The data to send
-     * @return true if the data was sent successfully, false otherwise
+     * @return true if the data was accepted for outbound delivery, false otherwise
      */
     boolean sendMessage(byte[] data);
 

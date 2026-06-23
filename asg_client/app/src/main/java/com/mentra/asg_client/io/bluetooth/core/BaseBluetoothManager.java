@@ -2,13 +2,23 @@ package com.mentra.asg_client.io.bluetooth.core;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.json.JSONObject;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Base implementation of the IBluetoothManager interface. Provides common functionality for all
@@ -16,10 +26,15 @@ import org.json.JSONObject;
  */
 public abstract class BaseBluetoothManager implements ICompanionTransport {
     private static final String TAG = "BaseBluetoothManager";
+    private static final long SIGNIFICANT_QUEUE_DELAY_MS = 250;
+    private static final long SIGNIFICANT_SEND_DURATION_MS = 250;
+    private static final int SIGNIFICANT_QUEUE_SIZE = 5;
 
     protected final Context context;
     protected final List<TransportListener> listeners = new ArrayList<>();
     protected boolean isConnected = false;
+    private final ThreadPoolExecutor outboundBleExecutor;
+    private final AtomicLong outboundBleSequence = new AtomicLong(1);
 
     /**
      * Create a new BaseBluetoothManager
@@ -28,6 +43,20 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
      */
     public BaseBluetoothManager(Context context) {
         this.context = context.getApplicationContext();
+        this.outboundBleExecutor =
+                new ThreadPoolExecutor(
+                        1,
+                        1,
+                        0L,
+                        TimeUnit.MILLISECONDS,
+                        new LinkedBlockingQueue<>(),
+                        runnable -> {
+                            Thread thread =
+                                    new Thread(
+                                            runnable, getClass().getSimpleName() + "-outbound-ble");
+                            thread.setDaemon(true);
+                            return thread;
+                        });
     }
 
     @Override
@@ -84,30 +113,278 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         }
     }
 
-    /**
-     * Template method: broadcasts JSON responses to registered intent listeners, then delegates to
-     * the subclass-specific send implementation.
-     */
+    /** Queue an outbound message so BLE chunk pacing never blocks app/camera handler threads. */
     @Override
     public final boolean sendMessage(byte[] data) {
         if (data == null || data.length == 0) {
             return false;
         }
 
+        byte[] payload = Arrays.copyOf(data, data.length);
+        long sequence = outboundBleSequence.getAndIncrement();
+        long queuedAtMs = System.currentTimeMillis();
+        OutboundTraceInfo traceInfo = OutboundTraceInfo.from(payload);
+
+        try {
+            outboundBleExecutor.execute(
+                    () -> sendQueuedMessage(payload, sequence, queuedAtMs, traceInfo));
+            logOutboundQueueEvent(
+                    "queued",
+                    sequence,
+                    traceInfo,
+                    queuedAtMs,
+                    null,
+                    null,
+                    null,
+                    payload.length,
+                    outboundBleExecutor.getQueue().size(),
+                    null);
+            return true;
+        } catch (RejectedExecutionException e) {
+            logOutboundQueueEvent(
+                    "rejected",
+                    sequence,
+                    traceInfo,
+                    queuedAtMs,
+                    null,
+                    null,
+                    false,
+                    payload.length,
+                    outboundBleExecutor.getQueue().size(),
+                    e);
+            return false;
+        }
+    }
+
+    private void sendQueuedMessage(
+            byte[] data, long sequence, long queuedAtMs, OutboundTraceInfo traceInfo) {
+        long dequeuedAtMs = System.currentTimeMillis();
+        logOutboundQueueEvent(
+                "dequeued",
+                sequence,
+                traceInfo,
+                queuedAtMs,
+                dequeuedAtMs - queuedAtMs,
+                null,
+                null,
+                data.length,
+                outboundBleExecutor.getQueue().size(),
+                null);
+
+        long sendStartedAtMs = System.currentTimeMillis();
+        boolean success = false;
+        Exception error = null;
+        try {
+            success = sendMessageNow(data);
+        } catch (Exception e) {
+            error = e;
+            Log.e(TAG, "Error sending queued outbound BLE message", e);
+        } finally {
+            logOutboundQueueEvent(
+                    "send_result",
+                    sequence,
+                    traceInfo,
+                    queuedAtMs,
+                    sendStartedAtMs - queuedAtMs,
+                    System.currentTimeMillis() - sendStartedAtMs,
+                    success,
+                    data.length,
+                    outboundBleExecutor.getQueue().size(),
+                    error);
+        }
+    }
+
+    /**
+     * Template method: broadcasts JSON responses to registered intent listeners, then delegates to
+     * the subclass-specific send implementation.
+     */
+    private boolean sendMessageNow(byte[] data) {
         BleTraceLogger.logBytes("glasses_to_phone", "asg_ble_output", data);
 
         // Try to broadcast JSON responses to intent listeners
         try {
-            String str = new String(data, "UTF-8");
+            String str = new String(data, StandardCharsets.UTF_8);
             if (str.startsWith("{")) {
                 JSONObject json = new JSONObject(str);
                 IntentResponseBroadcaster.getInstance().broadcastResponse(context, json);
             }
         } catch (Exception e) {
-            // Not valid JSON — skip broadcast, still send over BLE
+            // Not valid JSON; skip broadcast, still send over BLE.
         }
 
         return sendMessageInternal(data);
+    }
+
+    private void logOutboundQueueEvent(
+            String stage,
+            long sequence,
+            OutboundTraceInfo traceInfo,
+            long queuedAtMs,
+            Long queueDelayMs,
+            Long sendDurationMs,
+            Boolean success,
+            int payloadBytes,
+            int queueSize,
+            Exception error) {
+        String warningReason =
+                outboundQueueWarningReason(
+                        stage, queueDelayMs, sendDurationMs, success, queueSize, error);
+        if (warningReason == null) {
+            return;
+        }
+
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("level", "warning");
+            payload.put("warningReason", warningReason);
+            payload.put("stage", stage);
+            payload.put("sequence", sequence);
+            payload.put("commandType", traceInfo.commandType);
+            putIfPresent(payload, "requestId", traceInfo.requestId);
+            putIfPresent(payload, "appId", traceInfo.appId);
+            if (traceInfo.messageId != -1) {
+                payload.put("messageId", traceInfo.messageId);
+            }
+            payload.put("queuedAtMs", queuedAtMs);
+            payload.put("payloadBytes", payloadBytes);
+            payload.put("queueSize", queueSize);
+            if (queueDelayMs != null) {
+                payload.put("queueDelayMs", queueDelayMs.longValue());
+            }
+            if (sendDurationMs != null) {
+                payload.put("sendDurationMs", sendDurationMs.longValue());
+            }
+            if (success != null) {
+                payload.put("success", success.booleanValue());
+            }
+            if (error != null) {
+                payload.put("errorClass", error.getClass().getSimpleName());
+                payload.put("errorMessage", error.getMessage());
+            }
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+
+        BleTraceLogger.logEvent(
+                "glasses_to_phone", "asg_ble_outbound_queue", traceInfo.commandType, payload);
+    }
+
+    private static String outboundQueueWarningReason(
+            String stage,
+            Long queueDelayMs,
+            Long sendDurationMs,
+            Boolean success,
+            int queueSize,
+            Exception error) {
+        if (error != null) {
+            return "send_error";
+        }
+        if (Boolean.FALSE.equals(success)) {
+            return "send_failed";
+        }
+        if ("rejected".equals(stage)) {
+            return "queue_rejected";
+        }
+        if (queueDelayMs != null && queueDelayMs >= SIGNIFICANT_QUEUE_DELAY_MS) {
+            return "queue_delay";
+        }
+        if (sendDurationMs != null && sendDurationMs >= SIGNIFICANT_SEND_DURATION_MS) {
+            return "send_duration";
+        }
+        if ("queued".equals(stage) && queueSize >= SIGNIFICANT_QUEUE_SIZE) {
+            return "queue_depth";
+        }
+        return null;
+    }
+
+    private static void putIfPresent(JSONObject payload, String key, String value) {
+        try {
+            if (value != null && !value.isEmpty()) {
+                payload.put(key, value);
+            }
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+    }
+
+    private static final class OutboundTraceInfo {
+        final String commandType;
+        final String requestId;
+        final String appId;
+        final long messageId;
+
+        OutboundTraceInfo(String commandType, String requestId, String appId, long messageId) {
+            this.commandType = commandType;
+            this.requestId = requestId;
+            this.appId = appId;
+            this.messageId = messageId;
+        }
+
+        static OutboundTraceInfo from(byte[] data) {
+            String commandType = "unknown";
+            String requestId = null;
+            String appId = null;
+            long messageId = -1;
+
+            try {
+                String str = new String(data, StandardCharsets.UTF_8).trim();
+                if (!str.startsWith("{")) {
+                    return new OutboundTraceInfo("raw", null, null, -1);
+                }
+
+                JSONObject json = new JSONObject(str);
+                commandType = nonEmptyString(json, "type");
+                requestId = nonEmptyString(json, "requestId");
+                appId = nonEmptyString(json, "appId");
+                messageId = optMessageId(json);
+
+                String cValue = json.optString("C", "");
+                if ((commandType == null || commandType.isEmpty()) && !cValue.isEmpty()) {
+                    try {
+                        JSONObject inner = new JSONObject(cValue);
+                        commandType = firstNonEmpty(inner, "type", "t");
+                        requestId = firstNonEmpty(inner, "requestId", "r");
+                        appId = firstNonEmpty(inner, "appId", "a");
+                        messageId = optMessageId(inner);
+                    } catch (Exception ignored) {
+                        // C is often a compact K900 command, not JSON.
+                    }
+
+                    if (commandType == null || commandType.isEmpty()) {
+                        commandType = "k900";
+                    }
+                }
+            } catch (Exception ignored) {
+                // Best-effort trace metadata only.
+            }
+
+            if (commandType == null || commandType.isEmpty()) {
+                commandType = "unknown";
+            }
+            return new OutboundTraceInfo(commandType, requestId, appId, messageId);
+        }
+
+        private static String firstNonEmpty(JSONObject json, String... keys) {
+            for (String key : keys) {
+                String value = nonEmptyString(json, key);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private static String nonEmptyString(JSONObject json, String key) {
+            String value = json.optString(key, "");
+            return value.isEmpty() ? null : value;
+        }
+
+        private static long optMessageId(JSONObject json) {
+            if (json.has("messageId")) {
+                return json.optLong("messageId", -1);
+            }
+            return json.optLong("mId", -1);
+        }
     }
 
     /**
@@ -133,6 +410,7 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down bluetooth manager");
+        outboundBleExecutor.shutdownNow();
         listeners.clear();
     }
 
