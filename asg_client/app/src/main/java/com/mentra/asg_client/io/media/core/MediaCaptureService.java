@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.hardware.K900RgbLedController;
@@ -1354,8 +1355,7 @@ public class MediaCaptureService {
      * size
      */
     public void takePhotoLocally() {
-        // TODO: TEMPORARY - hardcoded scan mode; revert to ("medium", false, false)
-        takePhotoLocally("max", false, false);
+        takePhotoLocally("medium", false, false);
     }
 
     /**
@@ -1449,19 +1449,14 @@ public class MediaCaptureService {
         captureDirFile.mkdirs();
         String photoFilePath = new File(captureDirFile, "base.jpg").getAbsolutePath();
 
-        // TODO: TEMPORARY - hardcoded scan mode preset; revert to AsgSettings merge
-        PhotoCaptureSettings captureSettings = new PhotoCaptureSettings.Builder()
-                .mfnr(false)
-                .zsl(false)
-                .noiseReduction(false)
-                .edgeEnhancement(false)
-                .ispDigitalGain(0)
-                .ispAnalogGain("low")
-                .aeExposureDivisor(3)
-                .isoCap(800)
-                .build();
-        boolean effectiveSound = false;
-        String effectiveCompress = "none";
+        AsgSettings asgSettings = new AsgSettings(mContext);
+        PhotoCaptureSettings captureSettings =
+                PhotoCaptureSettings.mergeWithStoredDefaults(PhotoCaptureSettings.EMPTY, asgSettings);
+        Boolean storedSound = asgSettings.getButtonPhotoSound();
+        boolean effectiveSound = storedSound != null ? storedSound : enableSound;
+
+        String storedCompress = asgSettings.getButtonPhotoCompress();
+        String effectiveCompress = storedCompress != null ? storedCompress : "none";
 
         Log.i(
                 TAG,
