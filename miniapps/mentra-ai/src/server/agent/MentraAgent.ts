@@ -38,6 +38,8 @@ export interface GenerateOptions {
     timezone?: string;
     notifications: string;
     conversationHistory: ConversationTurn[];
+    /** "glasses" (default) or "chat" (webview text box — relaxed length). */
+    channel?: 'glasses' | 'chat';
   };
   onToolCall?: (toolName: string) => void;
   /**
@@ -105,6 +107,7 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
     notifications: context.notifications,
     conversationHistory: context.conversationHistory,
     agentEnabled: Boolean(options.delegate),
+    channel: context.channel ?? 'glasses',
   };
 
   // Create agent with context (delegation tool added when a delegate is given)

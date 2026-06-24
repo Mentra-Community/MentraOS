@@ -6,7 +6,7 @@
 
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { sessions } from "../manager/SessionManager";
-import type { SessionContext } from "../utils/auth";
+import type { AuthContext } from "../utils/auth";
 
 // Custom writer interface for SSE clients
 interface SSEWriter {
@@ -81,11 +81,16 @@ export function broadcastChatEvent(userId: string, event: {
 }
 
 /**
- * Chat SSE stream endpoint
+ * Chat SSE stream endpoint.
+ *
+ * Auth-only (no live glasses session required): the webview chat works even
+ * when no glasses are connected. We get-or-create the User so a webview-only
+ * tester has somewhere to read history from; the heartbeat below still reports
+ * whether glasses are actually active.
  */
-export async function chatStream(c: SessionContext) {
+export async function chatStream(c: AuthContext) {
   const userId = c.get("userId");
-  const user = c.get("user");
+  const user = sessions.getOrCreate(userId);
 
   const recipientId = c.req.query("recipientId");
 
@@ -173,4 +178,34 @@ export async function chatStream(c: SessionContext) {
     // Keep stream open
     await new Promise(() => {});
   });
+}
+
+/**
+ * POST /api/chat/send — process a message typed into the webview chat box.
+ *
+ * Auth-only, no glasses required (the primary use is testing the assistant from
+ * the phone without speaking). Get-or-creates the User, runs the text-chat
+ * pipeline (relaxed length, delegation supported), and returns the answer. The
+ * message + reply are also broadcast on the SSE stream above, which is how any
+ * async delegation follow-up reaches the open client.
+ */
+export async function chatSend(c: AuthContext) {
+  const userId = c.get("userId");
+
+  let body: { text?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ error: "text is required" }, 400);
+
+  const user = sessions.getOrCreate(userId);
+  // initialize() is idempotent (in-memory MVP no-op); safe for a fresh
+  // webview-only user as well as one already connected to glasses.
+  await user.initialize();
+
+  const result = await user.queryProcessor.processTextQuery(text);
+  return c.json({ ok: true, ...result });
 }

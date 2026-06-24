@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { useMentraAuth } from '@mentra/react';
-import { X } from 'lucide-react';
+import { X, ArrowUp, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { withAuthSseUrl } from '../lib/authFetch';
+import { createAuthFetch, withAuthSseUrl } from '../lib/authFetch';
 // @ts-ignore - Bun bundler doesn't resolve `export { X as default }` re-exports correctly
 import LottieImport from 'lottie-react';
 const Lottie: typeof LottieImport = (LottieImport as any)?.default ?? LottieImport;
@@ -233,6 +233,9 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
     };
   }, []);
   const [currentPage, setCurrentPage] = useState<'chat' | 'settings'>('chat');
+  // Webview chat box — type a message to test the assistant without speaking.
+  const [inputText, setInputText] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
@@ -246,6 +249,31 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
     requestAnimationFrame(() => {
       container.scrollTo({ top: container.scrollHeight, behavior: instant ? 'instant' : 'smooth' });
     });
+  };
+
+  // Send a typed message to the assistant. The user + assistant bubbles render
+  // via the SSE stream (the backend broadcasts both), so we don't insert
+  // optimistically here — we just fire the request and let the stream update.
+  const handleSendMessage = async () => {
+    const text = inputText.trim();
+    if (!text || isSending) return;
+    setInputText('');
+    setIsSending(true);
+    try {
+      const authFetch = createAuthFetch(frontendToken);
+      const res = await authFetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        console.error('chat send failed:', res.status, await res.text().catch(() => ''));
+      }
+    } catch (err) {
+      console.error('chat send error:', err);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   useEffect(() => {
@@ -657,6 +685,8 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                   </motion.div>
                 )}
 
+                {/* Spacer so the last message clears the fixed input bar. */}
+                <div className="h-28 shrink-0" />
                 <div ref={messagesEndRef} />
               </div>
             </motion.div>
@@ -665,6 +695,39 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
 
         {/* Bottom Header */}
         <BottomHeader isDarkMode={isDarkMode} isVisible={messages.length > 0} />
+
+        {/* Chat input bar — type a message to test the assistant without
+            speaking. Pinned to the bottom; works with or without glasses. */}
+        <div className="fixed bottom-0 left-0 right-0 z-30 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
+          <div className="mx-auto flex w-full max-w-[460px] items-center gap-2.5 pointer-events-auto">
+            <div className="flex flex-1 items-center rounded-full border border-gray-200 bg-white px-5 py-3 shadow-[0_2px_16px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#1c1c1e]">
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                placeholder="Ask Mentra…"
+                enterKeyHint="send"
+                aria-label="Message Mentra"
+                className="flex-1 bg-transparent text-[16px] text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSendMessage}
+              disabled={!inputText.trim() || isSending}
+              aria-label="Send message"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-black text-white shadow-md transition-transform active:scale-95 disabled:opacity-40 dark:bg-white dark:text-black"
+            >
+              {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowUp className="h-5 w-5" strokeWidth={2.5} />}
+            </button>
+          </div>
+        </div>
       </motion.div>
 
       {/* Image Zoom Modal */}

@@ -33,6 +33,11 @@ export interface AgentContext {
 
   // Whether the ask_agent (giga-agent) delegation tool is available this turn
   agentEnabled?: boolean;
+
+  // Where the query came from. "glasses" (default) = voice, tight length limits,
+  // HUD/speaker formatting. "chat" = the webview text box: no device, relaxed
+  // length, markdown OK. Used for testing and longer-form answers.
+  channel?: 'glasses' | 'chat';
 }
 
 /**
@@ -45,12 +50,17 @@ const LLM_PROVIDER = process.env.LLM_PROVIDER || "Google";
  * Build the complete system prompt
  */
 export function buildSystemPrompt(context: AgentContext): string {
-  const sections = [
-    buildIdentitySection(),
-    buildDeviceCapabilitiesSection(context),
-    buildResponseFormatSection(context),
-    buildToolUsageSection(),
-  ];
+  const isChat = context.channel === 'chat';
+
+  const sections = [buildIdentitySection()];
+
+  // Device capabilities + vision are glasses concerns; the chat box has none.
+  if (!isChat) {
+    sections.push(buildDeviceCapabilitiesSection(context));
+  }
+
+  sections.push(buildResponseFormatSection(context));
+  sections.push(buildToolUsageSection());
 
   // Delegation rules — only when the giga-agent escalation tool is available
   if (context.agentEnabled) {
@@ -58,23 +68,27 @@ export function buildSystemPrompt(context: AgentContext): string {
   }
 
   // Vision section — depends on camera AND whether photo was actually captured
-  if (context.hasCamera && context.hasPhotos) {
+  if (!isChat && context.hasCamera && context.hasPhotos) {
     sections.push(buildVisionSection());
-  } else if (context.hasCamera && !context.hasPhotos) {
+  } else if (!isChat && context.hasCamera && !context.hasPhotos) {
     sections.push(buildVisionFailedSection());
   }
 
   // Context sections
   sections.push(buildContextSection(context));
 
-  // TTS formatting only for speaker glasses (no display)
-  if (context.hasSpeakers && !context.hasDisplay) {
-    sections.push(buildTTSFormatSection());
-  }
-
-  // Display formatting for HUD glasses
-  if (context.hasDisplay) {
-    sections.push(buildDisplayFormatSection());
+  if (isChat) {
+    // The webview renders markdown and has room — no TTS/HUD constraints.
+    sections.push(buildChatFormatSection());
+  } else {
+    // TTS formatting only for speaker glasses (no display)
+    if (context.hasSpeakers && !context.hasDisplay) {
+      sections.push(buildTTSFormatSection());
+    }
+    // Display formatting for HUD glasses
+    if (context.hasDisplay) {
+      sections.push(buildDisplayFormatSection());
+    }
   }
 
   return sections.join("\n\n");
@@ -149,6 +163,17 @@ IMPORTANT: When the user asks "what can you do?" or "what can I do with these gl
  * Response format section based on mode and device
  */
 function buildResponseFormatSection(context: AgentContext): string {
+  // Chat box (webview): no tight glasses limit — the user is reading on a phone
+  // screen and typed their question, so longer, fuller answers are welcome.
+  if (context.channel === 'chat') {
+    return `## Response Length
+
+You're answering in a chat window the user typed into, so be as long as the
+question warrants — a sentence for simple things, a few short paragraphs for
+explanations. Stay focused and useful; don't pad. (No tight word limit here,
+unlike the glasses voice/HUD experience.)`;
+  }
+
   const limits = context.hasDisplay
     ? WORD_LIMITS.hud
     : WORD_LIMITS.speaker;
@@ -165,6 +190,19 @@ Current mode: ${context.responseMode.toUpperCase()}
 - DETAILED (${limits[ResponseMode.DETAILED]} words): Complex explanations, step-by-step
 
 Count your words before responding. Keep it concise.`;
+}
+
+/**
+ * Chat (webview) output formatting — markdown is rendered, so use it.
+ */
+function buildChatFormatSection(): string {
+  return `## Chat Output Formatting
+
+The user is reading your reply in a chat window that renders Markdown:
+- Use Markdown where it helps: **bold**, lists, \`code\`, short headers.
+- Lead with the answer, then add detail.
+- This is a typed conversation, not voice — write naturally, no need to spell
+  out numbers/units or strip symbols.`;
 }
 
 /**

@@ -246,6 +246,86 @@ export class QueryProcessor {
   }
 
   /**
+   * Process a query typed into the webview chat box (no glasses required).
+   *
+   * Runs the same agent + delegation pipeline as the voice path, but as a text
+   * channel: no photo, no HUD/speaker output, relaxed length. The reply (and any
+   * async delegation follow-up) is broadcast to the chat SSE stream; the final
+   * answer is also returned so the caller can render it directly.
+   */
+  async processTextQuery(text: string): Promise<{ response: string; actions: AgentAction[] }> {
+    const userId = this.user.userId;
+
+    // Echo the user's message into the chat thread + show the typing state.
+    broadcastChatEvent(userId, {
+      type: "message",
+      id: `user-${Date.now()}`,
+      senderId: userId,
+      recipientId: "mentra-ai",
+      content: text,
+      timestamp: new Date().toISOString(),
+    });
+    broadcastChatEvent(userId, { type: "processing" });
+
+    // Text-only channel: no device I/O, relaxed length. Location/time/notes/
+    // history are included when available (webview-only users have none).
+    const context: GenerateOptions["context"] = {
+      hasDisplay: false,
+      hasSpeakers: false,
+      hasCamera: false,
+      hasPhotos: false,
+      glassesType: "camera",
+      location: this.user.location.getCachedContext(),
+      localTime: this.getLocalTime(),
+      timezone: this.user.location.getTimezone() ?? undefined,
+      notifications: this.user.notifications.formatForPrompt(),
+      conversationHistory: this.user.chatHistory.getRecentTurns(),
+      channel: "chat",
+    };
+
+    let pendingDelegation = false;
+    let delegatedActions: AgentAction[] = [];
+    const delegate = isDelegationEnabled()
+      ? async (task: string): Promise<DelegateOutcome> => {
+          const outcome = await this.delegateToAgent(task, { query: text, hadPhoto: false, context });
+          if (outcome.status === "pending") {
+            pendingDelegation = true;
+            return { status: "working" };
+          }
+          delegatedActions = outcome.actions;
+          return { status: "done", reply: outcome.reply };
+        }
+      : undefined;
+
+    let response: string;
+    try {
+      const result = await generateResponse({ query: text, context, delegate });
+      response = result.response;
+    } catch (error) {
+      console.error(`Chat agent error for ${userId}:`, error);
+      response = "I'm sorry, I had trouble with that. Please try again.";
+    }
+
+    broadcastChatEvent(userId, {
+      type: "message",
+      id: `ai-${Date.now()}`,
+      senderId: "mentra-ai",
+      recipientId: userId,
+      content: response,
+      timestamp: new Date().toISOString(),
+      ...(delegatedActions.length ? { actions: delegatedActions } : {}),
+    });
+    broadcastChatEvent(userId, { type: "idle" });
+
+    // Skip history on a pending delegation — deliverFollowUp records the final answer.
+    if (!pendingDelegation) {
+      await this.user.chatHistory.addTurn(text, response, false);
+    }
+
+    return { response, actions: delegatedActions };
+  }
+
+  /**
    * Delegate a task to the user's giga-agent via the control plane.
    *
    * Blocks up to the grace window for a fast answer; otherwise registers the

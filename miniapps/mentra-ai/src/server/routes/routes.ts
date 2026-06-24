@@ -18,7 +18,7 @@ import { Hono } from "hono";
 
 import { agentWebhook } from "../api/agentWebhook";
 import { speak, stopAudio } from "../api/audio";
-import { chatStream } from "../api/chat";
+import { chatSend, chatStream } from "../api/chat";
 import { killSession, playPoppingSound, playStartSound } from "../api/debug";
 import { getHealth } from "../api/health";
 import { getLatestPhoto, getPhotoData, getPhotoBase64 } from "../api/photo";
@@ -62,6 +62,12 @@ protectedApi.use("*", requireAuth);
 protectedApi.get("/settings", getSettings);
 protectedApi.patch("/settings", updateSettings);
 
+// Chat works without glasses (webview text box for testing + reading history),
+// so the stream and send live here, not behind requireSession.
+protectedApi.use("/chat/stream", sseHeaders);
+protectedApi.get("/chat/stream", chatStream);
+protectedApi.post("/chat/send", chatSend);
+
 // ── Session-required ───────────────────────────────────────────────
 //
 // Authenticated AND a live User exists in the SessionManager.
@@ -76,11 +82,9 @@ sessionApi.use("*", requireSession);
 
 sessionApi.use("/photo-stream", sseHeaders);
 sessionApi.use("/transcription-stream", sseHeaders);
-sessionApi.use("/chat/stream", sseHeaders);
 
 sessionApi.get("/photo-stream", photoStream);
 sessionApi.get("/transcription-stream", transcriptionStream);
-sessionApi.get("/chat/stream", chatStream);
 
 sessionApi.post("/speak", speak);
 sessionApi.post("/stop-audio", stopAudio);
