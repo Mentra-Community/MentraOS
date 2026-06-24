@@ -672,7 +672,24 @@ export class NavigationController {
    */
   private async resolveDestination(query: string): Promise<{lat: number; lng: number; name?: string} | null> {
     try {
-      const near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
+      let near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
+      // A headless start_navigation invoke can be dispatched before the initial
+      // GPS fix lands (seedInitialFix runs later in start()). Grab a one-shot fix
+      // so place search is biased to the wearer, per the action contract — and
+      // seed this.coords so beginTrip has a start position too.
+      if (!near) {
+        try {
+          const d = await this.location.getOnce()
+          near = {lat: d.lat, lng: d.lng}
+          if (!this.coords) {
+            this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+            this.lastCoordsAt = Date.now()
+            this.ui.send("nav:coords", this.coords)
+          }
+        } catch {
+          /* no fix yet — fall back to an unbiased search */
+        }
+      }
       const suggestions = await this.places.autocomplete(query, near)
       if (!suggestions.length) return null
       const details = await this.places.details(suggestions[0].placeId)

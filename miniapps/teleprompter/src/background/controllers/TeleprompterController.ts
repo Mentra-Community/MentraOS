@@ -244,10 +244,16 @@ export class TeleprompterController {
     try {
       this.unsubs.push(
         this.session.actions.handle("load_script", (params) => {
-          const script = typeof params.script === "string" ? params.script : ""
+          // `script` is required and must be a string. Reject malformed calls
+          // here (the handler is the last line of defense for action params) —
+          // coercing a missing/non-string value to "" would wipe the user's
+          // saved script. The thrown error is returned to the caller.
+          if (typeof params.script !== "string") {
+            throw new Error("load_script: 'script' is required and must be a string")
+          }
           // Default on: opening the teleprompter with text should start reading.
           const autostart = params.autostart !== false
-          return this.loadScript(script, autostart)
+          return this.loadScript(params.script, autostart)
         }),
       )
     } catch (err) {
@@ -269,6 +275,11 @@ export class TeleprompterController {
     this.engine.setScript(next)
     // Reset to the top, stop any in-progress read, then show the opening lines.
     this.toIdle()
+    // Force the push even if the opening window matches what we last sent:
+    // another app may have overwritten the glasses while we were backgrounded,
+    // so an explicit "open with this text" must land on-screen rather than be
+    // deduped away by render()'s lastRenderedText cache.
+    this.lastRenderedText = ""
     this.render()
     this.broadcastSettings()
     this.broadcastStatus()
