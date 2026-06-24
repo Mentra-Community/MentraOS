@@ -1703,7 +1703,7 @@ class G2 : SGCManager() {
 
         delay(200)
         val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
-        sendDevSettingsCommand(timeSync)
+        sendDevSettingsCommand(timeSync, left = true, right = true)
 
         // Skip onboarding on connect
         delay(200)
