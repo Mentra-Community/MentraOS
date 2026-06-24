@@ -52,6 +52,8 @@ export class RecorderController {
   private lastLevel = 0
   private lastEmitMs = 0
   private writeErrored = false
+  /** True while a stop/cancel is finalizing the blob — blocks a new start from racing its state. */
+  private finalizing = false
   /** Serializes blob writes so chunks land in order, one at a time. */
   private drainChain: Promise<void> = Promise.resolve()
 
@@ -153,7 +155,7 @@ export class RecorderController {
   // ── Recording (capture in the miniapp) ─────────────────────────────────────
 
   private async startRecording(): Promise<void> {
-    if (this.recordingId) return
+    if (this.recordingId || this.finalizing) return
     try {
       const writer = await this.session.blob.createWriteStream(makeKey(), {mimeType: "audio/wav", name: makeName()})
       // Placeholder header — patched with real sizes on stop.
@@ -251,61 +253,73 @@ export class RecorderController {
   private async stopRecording(): Promise<void> {
     const writer = this.writer
     if (!this.recordingId || !writer) return
-    // Stop the feed first so no more chunks arrive, then flush + finalize.
+    // `finalizing` blocks a new start from racing this recording's capture state
+    // (pcmBytes/sampleRate/buffers) while we flush + write the header.
+    this.finalizing = true
     try {
-      this.micUnsub?.()
-    } catch {
-      /* ignore */
-    }
-    this.micUnsub = null
-    this.recordingId = null
-    this.lastStatus = null
-    this.ui.send("rec:stopped", {})
-
-    try {
-      await this.drainChain // queued writes
-      await this.drainOnce() // anything still buffered
-      // Patch the real WAV header now that the size is known.
-      await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
-      await writer.close({
-        durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
-        sampleRate: this.sampleRate,
-        channels: 1,
-        bitsPerSample: 16,
-      })
-    } catch (err) {
-      console.log("Recorder: finalize failed", err)
+      // Stop the feed first so no more chunks arrive, then flush + finalize.
       try {
-        await writer.abort()
+        this.micUnsub?.()
       } catch {
         /* ignore */
       }
+      this.micUnsub = null
+      this.recordingId = null
+      this.lastStatus = null
+      this.ui.send("rec:stopped", {})
+
+      try {
+        await this.drainChain // queued writes
+        await this.drainOnce() // anything still buffered
+        // Patch the real WAV header now that the size is known.
+        await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
+        await writer.close({
+          durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
+          sampleRate: this.sampleRate,
+          channels: 1,
+          bitsPerSample: 16,
+        })
+      } catch (err) {
+        console.log("Recorder: finalize failed", err)
+        try {
+          await writer.abort()
+        } catch {
+          /* ignore */
+        }
+      }
+      await this.resetCapture(false)
+      await this.refreshList()
+      this.renderHud()
+    } finally {
+      this.finalizing = false
     }
-    await this.resetCapture(false)
-    await this.refreshList()
-    this.renderHud()
   }
 
   private async cancelRecording(): Promise<void> {
     const writer = this.writer
     if (!this.recordingId || !writer) return
+    this.finalizing = true
     try {
-      this.micUnsub?.()
-    } catch {
-      /* ignore */
+      try {
+        this.micUnsub?.()
+      } catch {
+        /* ignore */
+      }
+      this.micUnsub = null
+      this.recordingId = null
+      this.lastStatus = null
+      this.ui.send("rec:stopped", {})
+      try {
+        await this.drainChain
+        await writer.abort()
+      } catch {
+        /* ignore */
+      }
+      await this.resetCapture(false)
+      this.renderHud()
+    } finally {
+      this.finalizing = false
     }
-    this.micUnsub = null
-    this.recordingId = null
-    this.lastStatus = null
-    this.ui.send("rec:stopped", {})
-    try {
-      await this.drainChain
-      await writer.abort()
-    } catch {
-      /* ignore */
-    }
-    await this.resetCapture(false)
-    this.renderHud()
   }
 
   /** Drop capture state. When `abortWriter`, also abort the open blob writer. */
@@ -352,6 +366,9 @@ export class RecorderController {
 
   private async clearAll(): Promise<void> {
     this.stopPlay()
+    // Stop an active capture first — clear() deletes the blob dir, so a writer
+    // left open would keep writing to a now-deleted .part file.
+    if (this.recordingId) await this.cancelRecording()
     try {
       await this.session.blob.clear()
     } catch (err) {

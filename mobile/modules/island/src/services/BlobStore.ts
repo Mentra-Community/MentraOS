@@ -76,6 +76,8 @@ interface ActiveUpload {
   partFile: File
   handle: FileHandle
   bytes: number
+  /** Bytes already committed under this key (overwrite target) — excluded from the quota check. */
+  priorBytes: number
   name?: string
   mimeType: string
   meta?: Record<string, string | number | boolean>
@@ -245,6 +247,7 @@ export class BlobStore {
         partFile,
         handle,
         bytes: 0,
+        priorBytes: this.readMeta(packageName, key)?.bytes ?? 0,
         name: typeof payload.name === "string" ? payload.name : undefined,
         mimeType: typeof payload.mimeType === "string" ? payload.mimeType : "application/octet-stream",
         meta: (payload.meta as Record<string, string | number | boolean>) ?? undefined,
@@ -285,7 +288,8 @@ export class BlobStore {
         this.hooks.sendResult(packageName, requestId, true, {bytesWritten: up.bytes})
         return
       }
-      if (this.committedUsage(packageName) + up.bytes + bytes.length > BLOB_QUOTA_BYTES) {
+      // Exclude the prior blob under this key — it's freed on commit (overwrite).
+      if (this.committedUsage(packageName) - up.priorBytes + up.bytes + bytes.length > BLOB_QUOTA_BYTES) {
         this.hooks.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.BLOB_QUOTA_EXCEEDED,
           message: `Blob quota (${BLOB_QUOTA_BYTES} bytes) exceeded`,
@@ -479,6 +483,9 @@ export class BlobStore {
 
   handleClear(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
     try {
+      // Abort any in-flight uploads / open readers first so nothing keeps writing
+      // to a .part file in the directory we're about to delete.
+      this.closeAppHandles(packageName)
       for (const m of this.allMeta(packageName)) mmkvStorage.remove(this.metaKey(packageName, m.key))
       const dir = this.dirFor(packageName)
       try {
@@ -594,20 +601,25 @@ export class BlobStore {
 
   /** Called from LocalMiniappRuntime.unregisterApp — drop this app's in-flight state. */
   onAppGone(packageName: string): void {
-    for (const [key, up] of this.uploads) {
+    this.closeAppHandles(packageName)
+  }
+
+  /** Abort in-flight uploads + close open read handles for an app (no-op if none). */
+  private closeAppHandles(packageName: string): void {
+    for (const [k, up] of this.uploads) {
       if (up.packageName === packageName) {
         this.discardUpload(up)
-        this.uploads.delete(key)
+        this.uploads.delete(k)
       }
     }
-    for (const [key, reader] of this.readers) {
+    for (const [k, reader] of this.readers) {
       if (reader.packageName === packageName) {
         try {
           reader.handle.close()
         } catch {
           /* ignore */
         }
-        this.readers.delete(key)
+        this.readers.delete(k)
       }
     }
   }
