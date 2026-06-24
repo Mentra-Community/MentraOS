@@ -939,7 +939,7 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
-      // Persistent binary blob storage + host-side audio recorder
+      // Persistent binary blob storage (session.blob)
       case MiniappRequestType.BLOB_CREATE:
         this.blobStore.handleCreate(packageName, payload, requestId)
         break
@@ -952,10 +952,13 @@ class LocalMiniappRuntime {
       case MiniappRequestType.BLOB_ABORT:
         this.blobStore.handleAbort(packageName, payload, requestId)
         break
-      case MiniappRequestType.BLOB_GET:
-        this.blobStore.handleGet(packageName, payload, requestId)
+      case MiniappRequestType.BLOB_SET_FROM_URL:
+        void this.blobStore.handleSetFromUrl(packageName, payload, requestId)
         break
-      case MiniappRequestType.BLOB_STAT:
+      case MiniappRequestType.BLOB_IMPORT:
+        void this.blobStore.handleImport(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_GET:
         this.blobStore.handleGet(packageName, payload, requestId)
         break
       case MiniappRequestType.BLOB_LIST:
@@ -979,8 +982,8 @@ class LocalMiniappRuntime {
       case MiniappRequestType.BLOB_CLOSE_READ:
         this.blobStore.handleCloseRead(packageName, payload, requestId)
         break
-      case MiniappRequestType.BLOB_EXPORT:
-        void this.blobStore.handleExport(packageName, payload, requestId)
+      case MiniappRequestType.BLOB_SHARE:
+        void this.blobStore.handleShare(packageName, payload, requestId)
         break
 
       // Cloud-coordinated features

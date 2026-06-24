@@ -63,4 +63,32 @@ describe("base64 codec", () => {
     const ab = enc("foobar").buffer
     expect(bytesToBase64(ab)).toBe("Zm9vYmFy")
   })
+
+  // Invariant that BlobWriter.writeBase64 relies on: a base64 string sliced on
+  // 4-char boundaries yields whole groups, so decoding each slice and
+  // concatenating reproduces the original bytes losslessly.
+  it("chunking base64 on 4-char boundaries decodes losslessly", () => {
+    for (const n of [0, 1, 2, 3, 16, 17, 18, 100, 257]) {
+      const buf = new Uint8Array(n)
+      for (let i = 0; i < n; i++) buf[i] = (i * 53 + 11) & 0xff
+      const b64 = bytesToBase64(buf)
+      for (const groupChunkChars of [4, 8, 12, 40]) {
+        const parts: Uint8Array[] = []
+        let total = 0
+        for (let off = 0; off < b64.length; off += groupChunkChars) {
+          const slice = base64ToBytes(b64.slice(off, off + groupChunkChars))
+          parts.push(slice)
+          total += slice.length
+        }
+        const out = new Uint8Array(total)
+        let at = 0
+        for (const p of parts) {
+          out.set(p, at)
+          at += p.length
+        }
+        expect(out.length).toBe(n)
+        for (let i = 0; i < n; i++) expect(out[i]).toBe(buf[i])
+      }
+    }
+  })
 })

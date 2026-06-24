@@ -117,15 +117,18 @@ export enum MiniappRequestType {
   BLOB_ABORT = "miniapp_blob_abort",
   BLOB_GET = "miniapp_blob_get",
   BLOB_LIST = "miniapp_blob_list",
-  BLOB_STAT = "miniapp_blob_stat",
   BLOB_DELETE = "miniapp_blob_delete",
   BLOB_CLEAR = "miniapp_blob_clear",
   BLOB_USAGE = "miniapp_blob_usage",
   BLOB_OPEN_READ = "miniapp_blob_open_read",
   BLOB_READ = "miniapp_blob_read",
   BLOB_CLOSE_READ = "miniapp_blob_close_read",
-  /** Share/export a stored blob from disk (no bytes cross the bridge). */
-  BLOB_EXPORT = "miniapp_blob_export",
+  /** Download a URL straight into a blob, host-side (no bytes cross the bridge). */
+  BLOB_SET_FROM_URL = "miniapp_blob_set_from_url",
+  /** Open the OS file picker and import the chosen file into a blob, host-side. */
+  BLOB_IMPORT = "miniapp_blob_import",
+  /** Share a stored blob from disk via the OS share sheet (no bytes cross the bridge). */
+  BLOB_SHARE = "miniapp_blob_share",
 
   /** Phone → miniapp liveness probe. Miniapp SDK auto-replies with PONG. */
   PING = "miniapp_ping",
@@ -335,4 +338,8 @@ export enum MiniappErrorCode {
   BLOB_HANDLE_INVALID = "BLOB_HANDLE_INVALID",
   /** Filesystem write failed (out of disk, permissions, etc.). */
   BLOB_WRITE_FAILED = "BLOB_WRITE_FAILED",
+  /** `blob.setFromUrl` could not download the URL (network / non-2xx). */
+  BLOB_DOWNLOAD_FAILED = "BLOB_DOWNLOAD_FAILED",
+  /** `blob.importFile` failed (not the user cancelling — that resolves to null). */
+  BLOB_IMPORT_FAILED = "BLOB_IMPORT_FAILED",
 }

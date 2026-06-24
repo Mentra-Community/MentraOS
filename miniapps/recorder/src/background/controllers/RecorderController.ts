@@ -11,7 +11,7 @@
  *     first; on stop we know the size and patch the real header in at offset 0
  *     (writeAt), then commit.
  *   - Playback uses `session.speaker.play` on the blob's file:// uri; export uses
- *     `session.blob.export` (OS share sheet).
+ *     `session.blob.share` (OS share sheet).
  *
  * The captured PCM is what the audio system produces AFTER LC3 decode (the same
  * stream that feeds transcription) — i.e. a debugging view of "what audio did we
@@ -155,12 +155,12 @@ export class RecorderController {
   private async startRecording(): Promise<void> {
     if (this.recordingId) return
     try {
-      const writer = await this.session.blob.create({mimeType: "audio/wav", name: makeName()})
+      const writer = await this.session.blob.createWriteStream(makeKey(), {mimeType: "audio/wav", name: makeName()})
       // Placeholder header — patched with real sizes on stop.
       await writer.write(new Uint8Array(WAV_HEADER_BYTES))
 
       this.writer = writer
-      this.recordingId = writer.id
+      this.recordingId = writer.key
       this.chunks = []
       this.bufBytes = 0
       this.pcmBytes = 0
@@ -173,7 +173,7 @@ export class RecorderController {
       this.micUnsub = this.session.mic.onAudioChunk((d) => this.onChunk(d))
       this.unsubs.push(() => this.micUnsub?.())
 
-      this.lastStatus = {recordingId: writer.id, ms: 0, bytes: WAV_HEADER_BYTES, level: 0}
+      this.lastStatus = {recordingId: writer.key, ms: 0, bytes: WAV_HEADER_BYTES, level: 0}
       this.ui.send("rec:status", this.lastStatus)
       this.renderHud()
     } catch (err) {
@@ -267,7 +267,7 @@ export class RecorderController {
       await this.drainOnce() // anything still buffered
       // Patch the real WAV header now that the size is known.
       await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
-      await writer.commit({
+      await writer.close({
         durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
         sampleRate: this.sampleRate,
         channels: 1,
@@ -399,7 +399,7 @@ export class RecorderController {
 
   private async exportRecording(id: string): Promise<void> {
     try {
-      await this.session.blob.export(id)
+      await this.session.blob.share(id)
     } catch (err) {
       console.log("Recorder: export failed", err)
     }
@@ -422,14 +422,19 @@ export class RecorderController {
 
 function toItem(m: BlobMeta): RecordingItem {
   return {
-    id: m.id,
-    name: m.name ?? m.id,
+    id: m.key,
+    name: m.name ?? m.key,
     createdAt: m.createdAt,
     bytes: m.bytes,
     durationMs: Number(m.meta?.durationMs ?? 0),
     sampleRate: Number(m.meta?.sampleRate ?? 0),
     truncated: m.meta?.truncated === true,
   }
+}
+
+/** A stable storage key for one recording. */
+function makeKey(): string {
+  return `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 /** A filesystem-friendly default name, e.g. "recording-20260624-153012.wav". */

@@ -21,9 +21,29 @@ miniapp is the first consumer.
 >   the real header via `writeAt(0, …)` and commits. WAV assembly + level meter +
 >   duration all live in the miniapp.
 >
-> Everything in the `session.blob` API + host implementation sections below is
-> accurate. The `session.recorder` / `BLOB_RECORD_*` / host-PCM-tap parts
-> (the "Companion" subsection and ticket 2d) were **not** built — ignore them.
+> The host implementation sections below are accurate. The `session.recorder` /
+> `BLOB_RECORD_*` / host-PCM-tap parts (the "Companion" subsection and ticket 2d)
+> were **not** built — ignore them.
+>
+> **Final API surface** (reshaped for dev-ex to mirror `session.storage`, so the
+> method names below in the older API section are superseded by these):
+>
+> ```ts
+> blob.set(key, data, {mimeType?})          // data: Uint8Array | ArrayBuffer | base64 string
+> blob.setFromUrl(key, url, {mimeType?, headers?})  // host downloads (like Cache API cache.add)
+> blob.importFile({key?, mimeType?})        // OS file picker → blob (null if cancelled)
+> blob.get(key) / stat(key)                 // → BlobMeta{key, uri, mimeType, bytes, ...} | null
+> blob.bytes(key)                           // → Uint8Array | null (bounded; stream big ones)
+> blob.has(key) / keys() / list() / delete(key) / clear() / usage()
+> blob.share(key)                           // OS share sheet
+> blob.createWriteStream(key) / createReadStream(key)   // streaming; writer: write/writeBase64/writeAt/close/abort
+> ```
+>
+> `setFromUrl` + `importFile` keep bytes entirely host-side (the canonical mobile
+> pattern: iOS `URLSession` download / Android `DownloadManager` / web
+> `cache.add` / `expo-file-system.downloadFileAsync` + `pickFileAsync`). Blobs
+> are background-only; a blob `uri` is a private `file://` a WebView generally
+> can't load directly — render via a host capability for now (accepted for v1).
 
 ## Why this exists
 

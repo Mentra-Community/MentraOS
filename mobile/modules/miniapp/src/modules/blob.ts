@@ -1,129 +1,158 @@
 /**
- * @fileoverview BlobModule — phone-local persistent BINARY storage, scoped to
- * (userId, packageName). The binary counterpart to `session.storage`
- * (SimpleStorage), which is small string KV in MMKV.
+ * @fileoverview BlobModule — phone-local persistent BINARY storage, keyed and
+ * scoped to (userId, packageName). The binary sibling of `session.storage`:
+ * where storage holds small strings, blob holds arbitrary bytes (PDFs, EPUBs,
+ * audio, video, model files, caches) as files on the phone.
  *
- * Blobs are arbitrary bytes written to the phone filesystem
- * (`Paths.document/mentra_blobs/{userId}/{packageName}/{id}`). Each blob has a
- * `BlobMeta` record (id, mimeType, size, timestamps, md5, file:// uri) plus the
- * bytes on disk. Per-app isolation is enforced host-side — a miniapp can only
- * see its own blobs.
+ * It deliberately mirrors `session.storage`'s shape — `set` / `get` / `delete` /
+ * `keys` / `has` / `clear` — so it's instantly familiar, plus the things files
+ * (and not strings) need:
+ *   - `setFromUrl(key, url)` — the host downloads a URL straight to disk
+ *     (like the web Cache API's `cache.add`, iOS `URLSession` download task, or
+ *     Android `DownloadManager`). Bytes never cross the bridge.
+ *   - `importFile()` — opens the OS file picker and stores the chosen file.
+ *     Bytes never cross the bridge.
+ *   - `share(key)` — hands the file to the OS share sheet.
+ *   - `createWriteStream` / `createReadStream` — for streaming huge payloads
+ *     (named like Node's `fs.createWriteStream`).
  *
- * BACKGROUND-ONLY. Binary doesn't belong in the WebView (DOM memory +
- * postMessage). UIs mirror metadata over the miniapp's own UI channel and issue
- * play/export commands; they never hold bytes.
+ * BACKGROUND-ONLY. Binary doesn't belong in the WebView. A blob's `uri` is a
+ * `file://` path in the app's private storage — fine for `session.speaker.play`,
+ * `blob.share`, or another host capability, but a WebView generally can't load
+ * it directly (route rendering through a host viewer for now).
  *
- * Transfer model — the bridge moves JSON strings through a per-miniapp JS engine
- * (JSC/QuickJS) with a watchdog that kills a context whose single eval blocks
- * too long. So bytes never cross in one shot: writes/reads are CHUNKED
- * (`BLOB_WRITE` / `BLOB_READ`, ≤ ~1 MB raw per call). Audio capture buffers
- * `session.mic.onAudioChunk` frames and streams them here in ~1s chunks — the
- * host stays a generic byte store with no audio-specific code.
+ * Transfer model: the bridge moves JSON strings through a per-miniapp JS engine
+ * (JSC/QuickJS) with a watchdog, so in-JS writes/reads are CHUNKED (≤ ~1 MB raw
+ * per call). Prefer `setFromUrl` / `importFile` when you can — they keep the
+ * bytes entirely host-side.
  */
 
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 import {base64ToBytes, bytesToBase64, toUint8Array} from "./base64"
 
-/** Metadata for one stored blob. `uri` is a `file://` path safe for speaker.play / export. */
+/** Metadata for one stored blob. `uri` is a `file://` path. */
 export interface BlobMeta {
-  /** Stable id. Host-assigned (uuid) unless the caller passed an explicit `id`. */
-  id: string
-  /** Optional human label, e.g. "rec-2026-06-24-1530.wav". */
+  /** The key it's stored under (caller-chosen). */
+  key: string
+  /** Optional display/file name (e.g. the original filename for an import). */
   name?: string
-  /** MIME type, e.g. "audio/wav". */
+  /** MIME type, e.g. "application/pdf". */
   mimeType: string
   /** Size on disk in bytes. */
   bytes: number
-  /** Epoch ms when first committed. */
+  /** Epoch ms first written. */
   createdAt: number
-  /** Epoch ms of the last write. */
+  /** Epoch ms last written. */
   updatedAt: number
-  /** Content md5 (lowercase hex), computed host-side on commit. */
+  /** Content md5 (lowercase hex), computed host-side (skipped for very large blobs). */
   md5?: string
-  /** `file://` URI. Feed to `session.speaker.play({audioUrl})` or `blob.export`. */
+  /** `file://` URI. Feed to `session.speaker.play`, `blob.share`, etc. */
   uri: string
-  /** App-defined metadata persisted alongside the blob (e.g. {durationMs, sampleRate}). */
+  /** App-defined metadata persisted with the blob. */
   meta?: Record<string, string | number | boolean>
 }
 
-export interface BlobCreateOptions {
-  /** Explicit id. Reusing an existing id overwrites it on commit. Default: host uuid. */
-  id?: string
-  name?: string
+export interface BlobSetOptions {
   /** Default "application/octet-stream". */
+  mimeType?: string
+  name?: string
+  meta?: Record<string, string | number | boolean>
+}
+
+export interface BlobSetFromUrlOptions extends BlobSetOptions {
+  /** Request headers (e.g. an Authorization token) for the download. */
+  headers?: Record<string, string>
+}
+
+export interface BlobImportOptions {
+  /** Key to store under. Default: a generated key. */
+  key?: string
+  /** Restrict the picker to a MIME type, e.g. "application/pdf". */
   mimeType?: string
   meta?: Record<string, string | number | boolean>
 }
 
-/** Raw bytes per BLOB_WRITE call. ~1 MB raw → ~1.34 MB base64, well under the watchdog. */
+/** Raw bytes per chunked write. ~1 MB raw → ~1.34 MB base64, under the watchdog. */
 export const BLOB_WRITE_CHUNK_BYTES = 1024 * 1024
-
-/** Max bytes `readAll()` will buffer before throwing BLOB_TOO_LARGE. */
+const BLOB_WRITE_CHUNK_B64 = Math.floor(BLOB_WRITE_CHUNK_BYTES / 3) * 4
+/** Max bytes `bytes()` will buffer before throwing — read large blobs as a stream. */
 export const BLOB_READ_ALL_MAX_BYTES = 32 * 1024 * 1024
 
 /**
- * Streaming writer. Created by `blob.create()`. Call `write()` as many times as
- * you like (each call is auto-split into bridge-safe chunks), then `commit()` to
- * publish the blob, or `abort()` to discard the partial file.
+ * Streaming writer (`fs.createWriteStream`-like). Call `write`/`writeBase64` as
+ * many times as you like (each is auto-split into bridge-safe chunks), then
+ * `close()` to publish, or `abort()` to discard the partial blob.
  */
 export class BlobWriter {
   private settled = false
 
   constructor(
     private readonly session: MiniappSession,
-    readonly id: string,
+    readonly key: string,
   ) {}
 
-  /** Append bytes. Auto-chunked. Throws if the per-app quota would be exceeded. */
+  /** Append raw bytes. Auto-chunked. */
   async write(chunk: Uint8Array | ArrayBuffer): Promise<void> {
-    if (this.settled) throw new Error("BlobWriter already committed/aborted")
+    this.assertOpen()
     const bytes = toUint8Array(chunk)
-    for (let offset = 0; offset < bytes.length; offset += BLOB_WRITE_CHUNK_BYTES) {
-      const slice = bytes.subarray(offset, offset + BLOB_WRITE_CHUNK_BYTES)
-      await this.session.sendRequest<{bytesWritten: number}>({
-        type: MiniappRequestType.BLOB_WRITE,
-        id: this.id,
-        base64: bytesToBase64(slice),
-      })
+    for (let off = 0; off < bytes.length; off += BLOB_WRITE_CHUNK_BYTES) {
+      await this.send(bytesToBase64(bytes.subarray(off, off + BLOB_WRITE_CHUNK_BYTES)))
+    }
+  }
+
+  /** Append already-base64-encoded bytes (e.g. straight from `mic.onAudioChunk`). */
+  async writeBase64(b64: string): Promise<void> {
+    this.assertOpen()
+    // Slice on 4-char boundaries so each chunk is whole base64 groups.
+    for (let off = 0; off < b64.length; off += BLOB_WRITE_CHUNK_B64) {
+      await this.send(b64.slice(off, off + BLOB_WRITE_CHUNK_B64))
     }
   }
 
   /**
-   * Overwrite bytes at a fixed offset within the not-yet-committed blob (a seek
+   * Overwrite bytes at a fixed offset within the not-yet-closed blob (a seek
    * write). Must stay within already-written bytes; does not grow the blob.
-   * Used e.g. to patch a WAV header's size fields after the audio is written.
+   * Advanced — used e.g. to patch a container header on finalize.
    */
   async writeAt(offset: number, chunk: Uint8Array | ArrayBuffer): Promise<void> {
-    if (this.settled) throw new Error("BlobWriter already committed/aborted")
+    this.assertOpen()
     await this.session.sendRequest<{bytesWritten: number}>({
       type: MiniappRequestType.BLOB_WRITE,
-      id: this.id,
+      key: this.key,
       offset,
       base64: bytesToBase64(toUint8Array(chunk)),
     })
   }
 
-  /** Finalize the blob and return its metadata. Optional `meta` merges into the record. */
-  async commit(meta?: Record<string, string | number | boolean>): Promise<BlobMeta> {
-    if (this.settled) throw new Error("BlobWriter already committed/aborted")
+  /** Finalize and return the blob's metadata. Optional `meta` merges into the record. */
+  async close(meta?: Record<string, string | number | boolean>): Promise<BlobMeta> {
+    this.assertOpen()
     this.settled = true
-    return this.session.sendRequest<BlobMeta>({
-      type: MiniappRequestType.BLOB_COMMIT,
-      id: this.id,
-      meta,
-    })
+    return this.session.sendRequest<BlobMeta>({type: MiniappRequestType.BLOB_COMMIT, key: this.key, meta})
   }
 
   /** Discard the partial blob. Idempotent. */
   async abort(): Promise<void> {
     if (this.settled) return
     this.settled = true
-    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_ABORT, id: this.id})
+    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_ABORT, key: this.key})
+  }
+
+  private assertOpen(): void {
+    if (this.settled) throw new Error("BlobWriter is already closed/aborted")
+  }
+
+  private send(base64: string): Promise<{bytesWritten: number}> {
+    return this.session.sendRequest<{bytesWritten: number}>({
+      type: MiniappRequestType.BLOB_WRITE,
+      key: this.key,
+      base64,
+    })
   }
 }
 
-/** Streaming reader. Created by `blob.open()`. */
+/** Streaming reader (`fs.createReadStream`-like). */
 export class BlobReader {
   private closed = false
 
@@ -133,7 +162,7 @@ export class BlobReader {
     readonly meta: BlobMeta,
   ) {}
 
-  /** Read up to `maxBytes` (default one chunk). `done` is true once the end is reached. */
+  /** Read up to `maxBytes` (default one chunk). `done` is true at end of file. */
   async read(maxBytes = BLOB_WRITE_CHUNK_BYTES): Promise<{bytes: Uint8Array; done: boolean}> {
     if (this.closed) throw new Error("BlobReader is closed")
     const res = await this.session.sendRequest<{base64: string; done: boolean}>({
@@ -154,38 +183,83 @@ export class BlobReader {
 export class BlobModule {
   constructor(private readonly session: MiniappSession) {}
 
-  /** Open a streaming writer. */
-  async create(opts: BlobCreateOptions = {}): Promise<BlobWriter> {
-    const res = await this.session.sendRequest<{id: string}>({
-      type: MiniappRequestType.BLOB_CREATE,
-      id: opts.id,
-      name: opts.name,
-      mimeType: opts.mimeType,
-      meta: opts.meta,
-    })
-    return new BlobWriter(this.session, res.id)
-  }
+  // ── write ────────────────────────────────────────────────────────────────
 
-  /** Convenience: write a whole buffer and commit. Auto-chunked. */
-  async put(data: Uint8Array | ArrayBuffer, opts: BlobCreateOptions = {}): Promise<BlobMeta> {
-    const writer = await this.create(opts)
+  /** Store bytes under `key`. `data` may be a Uint8Array/ArrayBuffer or a base64 string. */
+  async set(key: string, data: Uint8Array | ArrayBuffer | string, opts: BlobSetOptions = {}): Promise<BlobMeta> {
+    const writer = await this.createWriteStream(key, opts)
     try {
-      await writer.write(data)
-      return await writer.commit()
+      if (typeof data === "string") await writer.writeBase64(data)
+      else await writer.write(data)
+      return await writer.close()
     } catch (err) {
       await writer.abort().catch(() => {})
       throw err
     }
   }
 
-  /** Metadata (incl. `file://` uri) for one blob, or null if absent. */
-  get(id: string): Promise<BlobMeta | null> {
-    return this.session.sendRequest<BlobMeta | null>({type: MiniappRequestType.BLOB_GET, id})
+  /**
+   * Download `url` straight into a blob under `key`, host-side. The bytes never
+   * cross the bridge (like the web Cache API's `cache.add`). `opts.headers` lets
+   * you pass auth. Resolves to the stored blob's metadata.
+   */
+  setFromUrl(key: string, url: string, opts: BlobSetFromUrlOptions = {}): Promise<BlobMeta> {
+    return this.session.sendRequest<BlobMeta>({
+      type: MiniappRequestType.BLOB_SET_FROM_URL,
+      key,
+      url,
+      mimeType: opts.mimeType,
+      name: opts.name,
+      headers: opts.headers,
+      meta: opts.meta,
+    })
   }
 
-  /** Alias of `get` — mirrors the file-stat verb. */
-  stat(id: string): Promise<BlobMeta | null> {
-    return this.session.sendRequest<BlobMeta | null>({type: MiniappRequestType.BLOB_STAT, id})
+  /**
+   * Open the OS file picker and store the chosen file as a blob, host-side.
+   * Resolves to the blob's metadata, or `null` if the user cancelled.
+   */
+  importFile(opts: BlobImportOptions = {}): Promise<BlobMeta | null> {
+    return this.session.sendRequest<BlobMeta | null>({
+      type: MiniappRequestType.BLOB_IMPORT,
+      key: opts.key,
+      mimeType: opts.mimeType,
+      meta: opts.meta,
+    })
+  }
+
+  /** Open a streaming writer for `key` (for large/streamed payloads). */
+  async createWriteStream(key: string, opts: BlobSetOptions = {}): Promise<BlobWriter> {
+    const res = await this.session.sendRequest<{key: string}>({
+      type: MiniappRequestType.BLOB_CREATE,
+      key,
+      mimeType: opts.mimeType,
+      name: opts.name,
+      meta: opts.meta,
+    })
+    return new BlobWriter(this.session, res.key)
+  }
+
+  // ── read ─────────────────────────────────────────────────────────────────
+
+  /** Metadata (incl. the `file://` uri) for `key`, or null if absent. */
+  get(key: string): Promise<BlobMeta | null> {
+    return this.session.sendRequest<BlobMeta | null>({type: MiniappRequestType.BLOB_GET, key})
+  }
+
+  /** Alias of `get` — the file-stat verb. */
+  stat(key: string): Promise<BlobMeta | null> {
+    return this.get(key)
+  }
+
+  /** True iff a blob is stored under `key`. */
+  async has(key: string): Promise<boolean> {
+    return (await this.get(key)) !== null
+  }
+
+  /** Every key this miniapp has stored, newest first. */
+  async keys(): Promise<string[]> {
+    return (await this.list()).map((m) => m.key)
   }
 
   /** Every blob this miniapp owns, newest first. */
@@ -194,35 +268,23 @@ export class BlobModule {
     return res?.blobs ?? []
   }
 
-  /** Per-app usage + the quota ceiling, in bytes. */
-  usage(): Promise<{bytes: number; count: number; quotaBytes: number}> {
-    return this.session.sendRequest<{bytes: number; count: number; quotaBytes: number}>({
-      type: MiniappRequestType.BLOB_USAGE,
-    })
-  }
-
-  /** Delete one blob. No-op if absent. */
-  async delete(id: string): Promise<void> {
-    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_DELETE, id})
-  }
-
-  /** Delete every blob this miniapp owns. */
-  async clear(): Promise<void> {
-    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_CLEAR})
-  }
-
-  /** Open a streaming reader. Rarely needed — prefer `get().uri` for playback/export. */
-  async open(id: string): Promise<BlobReader> {
+  /** Open a streaming reader. Prefer `get(key).uri` when you just need to play/share it. */
+  async createReadStream(key: string): Promise<BlobReader> {
     const res = await this.session.sendRequest<{handle: string; meta: BlobMeta}>({
       type: MiniappRequestType.BLOB_OPEN_READ,
-      id,
+      key,
     })
     return new BlobReader(this.session, res.handle, res.meta)
   }
 
-  /** Read an entire blob into memory as bytes. Throws BLOB_TOO_LARGE past the cap. */
-  async readAll(id: string): Promise<Uint8Array> {
-    const reader = await this.open(id)
+  /** Read a whole blob into memory as bytes, or null if absent. Throws past the cap — stream big ones. */
+  async bytes(key: string): Promise<Uint8Array | null> {
+    let reader: BlobReader
+    try {
+      reader = await this.createReadStream(key)
+    } catch {
+      return null
+    }
     const parts: Uint8Array[] = []
     let total = 0
     try {
@@ -231,7 +293,7 @@ export class BlobModule {
         if (bytes.length) {
           total += bytes.length
           if (total > BLOB_READ_ALL_MAX_BYTES) {
-            throw new Error(`Blob ${id} exceeds readAll cap (${BLOB_READ_ALL_MAX_BYTES} bytes) — stream it instead`)
+            throw new Error(`Blob "${key}" exceeds the in-memory read cap — stream it with createReadStream()`)
           }
           parts.push(bytes)
         }
@@ -249,15 +311,30 @@ export class BlobModule {
     return out
   }
 
-  /**
-   * Share/export a stored blob via the OS share sheet. The host shares the file
-   * straight from disk — the bytes never re-enter the JSContext.
-   */
-  async export(id: string, opts: {mode?: "share" | "download"} = {}): Promise<{success: boolean; cancelled?: boolean}> {
+  // ── manage ───────────────────────────────────────────────────────────────
+
+  /** Per-app usage + the quota ceiling, in bytes. */
+  usage(): Promise<{bytes: number; count: number; quotaBytes: number}> {
+    return this.session.sendRequest<{bytes: number; count: number; quotaBytes: number}>({
+      type: MiniappRequestType.BLOB_USAGE,
+    })
+  }
+
+  /** Delete the blob under `key`. No-op if absent. */
+  async delete(key: string): Promise<void> {
+    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_DELETE, key})
+  }
+
+  /** Delete every blob this miniapp owns. */
+  async clear(): Promise<void> {
+    await this.session.sendRequest<void>({type: MiniappRequestType.BLOB_CLEAR})
+  }
+
+  /** Share the blob via the OS share sheet (host shares from disk — no bytes cross the bridge). */
+  async share(key: string): Promise<{success: boolean; cancelled?: boolean}> {
     const res = await this.session.sendRequest<{success: boolean; cancelled?: boolean}>({
-      type: MiniappRequestType.BLOB_EXPORT,
-      id,
-      mode: opts.mode ?? "share",
+      type: MiniappRequestType.BLOB_SHARE,
+      key,
     })
     return res ?? {success: false}
   }
