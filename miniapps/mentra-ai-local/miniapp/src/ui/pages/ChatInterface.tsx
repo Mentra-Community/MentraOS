@@ -28,6 +28,12 @@ const BACKDROP_GRADIENT =
 const VIGNETTE_GRADIENT =
   'radial-gradient(ellipse 115% 70% at 50% 38% in oklab, oklab(100% 0 0 / 0%) 58%, oklab(15.2% 0.002 -0.008 / 5%) 100%)';
 
+interface MessageAction {
+  type: 'open_url';
+  kind: 'oauth_connect' | 'link';
+  url: string;
+}
+
 interface Message {
   id: string;
   senderId: string;
@@ -35,6 +41,24 @@ interface Message {
   content: string;
   timestamp: Date;
   image?: string;
+  actions?: MessageAction[];
+}
+
+/** Friendly label for an action button, derived from its kind/host. */
+function actionLabel(action: MessageAction): string {
+  if (action.kind === 'oauth_connect') {
+    const m = action.url.toLowerCase().match(/(gmail|googlecalendar|calendar|google|slack|github|notion|linear)/);
+    if (m) {
+      const svc = m[1] === 'googlecalendar' ? 'Google Calendar' : m[1].charAt(0).toUpperCase() + m[1].slice(1);
+      return `Connect ${svc}`;
+    }
+    return 'Connect account';
+  }
+  try {
+    return new URL(action.url).host.replace(/^www\./, '');
+  } catch {
+    return 'Open link';
+  }
 }
 
 interface ChatInterfaceProps {
@@ -287,6 +311,25 @@ const ChatBubble = memo(function ChatBubble({
         <Markdown components={MD_COMPONENTS}>{message.content}</Markdown>
       </div>
 
+      {/* Agent action buttons (e.g. an OAuth "Connect Gmail" link). Opens in the
+          system browser via the background's session.system.openUrl. */}
+      {message.actions && message.actions.length > 0 && (
+        <div className="flex flex-col gap-2 pl-0.5 pt-1">
+          {message.actions.map((action, i) => (
+            <button
+              key={`${message.id}-action-${i}`}
+              type="button"
+              onClick={() => {
+                void mentra.request('system:open-url', { url: action.url });
+              }}
+              className="inline-flex items-center justify-center self-start rounded-full bg-[#0B0B0F] px-4 py-2 text-[14px] font-semibold text-white transition-opacity active:opacity-80"
+            >
+              {actionLabel(action)}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Action row: copy + thumbs up/down */}
       <div className="flex items-center pl-0.5 gap-3.5">
         <button
@@ -486,6 +529,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
               content: data.content,
               timestamp: new Date(data.timestamp),
               image: data.image,
+              actions: data.actions,
             },
           ];
         });
@@ -509,6 +553,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
           content: msg.content,
           timestamp: new Date(msg.timestamp),
           image: msg.image,
+          actions: msg.actions,
         }));
         for (const msg of historyMessages) {
           renderedIdsRef.current.add(msg.id);

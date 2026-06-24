@@ -14,6 +14,7 @@
 import type {MiniappSession} from "@mentra/miniapp/background"
 
 import {BACKEND_ROUTES} from "../lib/ai-config"
+import type {AgentAction} from "../../shared/types"
 import type {LocationContext} from "../managers/LocationManager"
 import type {ConversationTurn} from "../managers/ChatHistoryManager"
 
@@ -42,11 +43,25 @@ export interface GenerateOptions {
 export interface GenerateResult {
   response: string
   toolCalls: number
+  /** Set when a delegation ran long: `response` is an ack; poll this task id. */
+  pendingTaskId?: string
+  /** Action buttons (e.g. an OAuth connect link) from a fast delegation. */
+  actions?: AgentAction[]
 }
 
 interface BackendAgentResponse {
   response?: string
   toolCalls?: number
+  pendingTaskId?: string
+  actions?: AgentAction[]
+  error?: string
+}
+
+/** Result of polling a pending delegation task. */
+export interface DelegationPollResult {
+  status: "working" | "done" | "failed"
+  reply?: string
+  actions?: AgentAction[]
   error?: string
 }
 
@@ -101,5 +116,39 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
   if (toolCalls > 0) options.onToolCall?.("search")
 
   console.log(`✅ Response received (${(body.response ?? "").length} chars, ${toolCalls} tool calls)`)
-  return {response: body.response ?? "", toolCalls}
+  return {
+    response: body.response ?? "",
+    toolCalls,
+    pendingTaskId: body.pendingTaskId,
+    actions: body.actions,
+  }
+}
+
+/**
+ * Poll a pending giga-agent delegation until it finishes (the backend proxies
+ * the control plane). Resolves with the final result, or a "failed" status on
+ * timeout. The grace window already elapsed server-side, so we poll modestly.
+ */
+export async function pollDelegation(
+  session: MiniappSession,
+  taskId: string,
+): Promise<DelegationPollResult> {
+  const POLL_INTERVAL_MS = 4000
+  const MAX_LIFETIME_MS = 6 * 60 * 1000
+  const deadline = Date.now() + MAX_LIFETIME_MS
+  const url = BACKEND_ROUTES.agentTask(taskId)
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+    try {
+      const res = await session.auth.fetch(url, {method: "GET"})
+      if (res.ok) {
+        const data = (await res.json()) as DelegationPollResult
+        if (data.status === "done" || data.status === "failed") return data
+      }
+    } catch (err) {
+      console.warn(`🤝 delegation poll error:`, err instanceof Error ? err.message : err)
+    }
+  }
+  return {status: "failed", error: "delegation timed out"}
 }

@@ -11,7 +11,7 @@
  */
 
 import "../../shared/channels"
-import type {ChatEvent, ChatMessage} from "../../shared/types"
+import type {AgentAction, ChatEvent, ChatMessage} from "../../shared/types"
 
 /** Event shape the cloud ChatInterface expects (senderId/recipientId/etc). */
 export type IncomingChatEvent =
@@ -23,6 +23,7 @@ export type IncomingChatEvent =
       content: string
       timestamp: string
       image?: string
+      actions?: AgentAction[]
     }
   | {type: "wake_word"}
   | {type: "processing"}
@@ -45,6 +46,7 @@ function adapt(event: ChatEvent): IncomingChatEvent | null {
         content: event.content,
         timestamp: event.timestamp,
         image: event.image,
+        actions: event.actions,
       }
     case "wake_word":
       return {type: "wake_word"}

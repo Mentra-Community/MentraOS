@@ -10,7 +10,8 @@
  * validated against the registry (models.ts), falling back to the default.
  */
 
-import {OPENAI_TOOLS, executeTool} from "./tools"
+import {buildOpenAITools, executeTool, type DelegationHolder, type ToolExecContext} from "./tools"
+import {isDelegationEnabled} from "./delegation"
 import {buildSystemPrompt, classifyResponseMode, MAX_STEPS, type AgentContext} from "./prompt"
 import {type AgentRequest, type AgentResult} from "./types"
 import {hasLLMKey, DEFAULT_LLM_MODEL} from "../ai-config"
@@ -32,8 +33,11 @@ export class AgentServiceError extends Error {
   }
 }
 
-/** Generate a response using OpenRouter, with a bounded tool-call loop. */
-export async function generateResponse(request: AgentRequest): Promise<AgentResult> {
+/**
+ * Generate a response using OpenRouter, with a bounded tool-call loop.
+ * `userId` (the caller's mentraUserId) enables the ask_agent delegation tool.
+ */
+export async function generateResponse(request: AgentRequest, userId?: string): Promise<AgentResult> {
   const {query, photos, context} = request
 
   if (!query || !query.trim()) {
@@ -56,6 +60,9 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
   const usePhotos = model.visionCapable
   const hasUsablePhotos = usePhotos && context.hasPhotos
 
+  // Delegation is offered only when configured AND we know who the user is.
+  const delegationEnabled = isDelegationEnabled() && Boolean(userId)
+
   const agentContext: AgentContext = {
     ...context,
     hasCamera: usePhotos && context.hasCamera,
@@ -64,9 +71,16 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
     responseMode,
     modelLabel: model.label,
     modelProvider: model.provider,
+    agentEnabled: delegationEnabled,
   }
 
   const systemPrompt = buildSystemPrompt(agentContext)
+  const tools = buildOpenAITools(delegationEnabled)
+
+  // Out-of-band channel for the delegation outcome (the tool's return goes to
+  // the model; we also need the actions + any pending taskId here).
+  const delegation: DelegationHolder = {}
+  const toolCtx: ToolExecContext = {userId, delegation}
 
   // Build the initial user turn: query text + labeled photos as image_url parts.
   const userContent: ContentPart[] = [{type: "text", text: query}]
@@ -103,16 +117,16 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
       const assistant = await callOpenRouter({
         model: model.id,
         messages,
-        tools: OPENAI_TOOLS,
+        tools,
       })
 
       const toolCalls = assistant.tool_calls ?? []
 
       if (toolCalls.length === 0) {
-        // No tool calls — this is the final answer.
+        // No tool calls — this is the final answer (or a delegation ack).
         const text = (assistant.content ?? "").trim()
         console.log(`✅ Response generated (${text.length} chars, ${toolCallCount} tool calls)`)
-        return {response: text, toolCalls: toolCallCount}
+        return finalize(text, toolCallCount, delegation)
       }
 
       // Append the model's tool-call turn, then execute and append each result.
@@ -125,7 +139,7 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
       for (const call of toolCalls) {
         toolCallCount++
         const args = parseToolArgs(call.function.arguments)
-        const result = await executeTool(call.function.name, args)
+        const result = await executeTool(call.function.name, args, toolCtx)
         messages.push({
           role: "tool",
           tool_call_id: call.id,
@@ -142,9 +156,16 @@ export async function generateResponse(request: AgentRequest): Promise<AgentResu
 
   // Hit the step cap without a final text answer.
   console.warn("⚠️ Agent hit maxSteps without a final answer")
+  return finalize("I wasn't able to finish that. Could you try rephrasing?", toolCallCount, delegation)
+}
+
+/** Assemble the AgentResult, attaching any delegation outcome (actions / pending). */
+function finalize(response: string, toolCalls: number, delegation: DelegationHolder): AgentResult {
   return {
-    response: "I wasn't able to finish that. Could you try rephrasing?",
-    toolCalls: toolCallCount,
+    response,
+    toolCalls,
+    ...(delegation.pendingTaskId ? {pendingTaskId: delegation.pendingTaskId} : {}),
+    ...(delegation.actions?.length ? {actions: delegation.actions} : {}),
   }
 }
 

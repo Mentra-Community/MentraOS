@@ -36,6 +36,8 @@ export interface Channels {
   "settings:set": Rpc<Partial<Settings>, Settings>
   /** Convenience: set just the theme. */
   "settings:set-theme": Rpc<Theme, void>
+  /** Open a URL in the phone's system browser (e.g. an agent OAuth connect link). */
+  "system:open-url": Rpc<{url: string}, void>
   /** Debug: speak a fixed phrase through the glasses; returns the device outcome. */
   "debug:speak": Rpc<{text: string}, DebugSpeakResult>
   /**

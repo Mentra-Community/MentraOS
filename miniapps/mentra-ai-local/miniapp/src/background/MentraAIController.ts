@@ -18,6 +18,7 @@ import type {MiniappSession} from "@mentra/miniapp/background"
 import type {Channels} from "../shared/channels"
 import type {ChatEvent} from "../shared/types"
 
+import {BACKEND_ROUTES} from "./lib/ai-config"
 import {AudioManager} from "./managers/AudioManager"
 import {ChatHistoryManager} from "./managers/ChatHistoryManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -74,6 +75,10 @@ export class MentraAIController {
       onWakeWord: () => {
         this.emit({type: "wake_word"})
         this.audio.playStartSound()
+        // Predictive wake: warm the giga-agent container while STT runs, so a
+        // delegation isn't paying the ~25-30s cold start. The backend no-ops
+        // when delegation isn't configured. Fire-and-forget.
+        this.session.auth.fetch(BACKEND_ROUTES.agentWake(), {method: "POST"}).catch(() => {})
       },
       onListeningUpdate: (full) => this.display.showStatus(`Listening...\n\n${full}`, 5000),
       // Feed the debug overlay's live transcription tab (every event, raw).
@@ -151,6 +156,12 @@ export class MentraAIController {
     this.ui.handle("settings:set-theme", async (theme) => {
       const merged = await this.storage.set({theme})
       this.ui.send("settings:update", merged)
+    })
+
+    // Open a URL in the phone's system browser (agent OAuth connect links etc.).
+    // session.system.openUrl bridges to the host; it blocks dangerous schemes.
+    this.ui.handle("system:open-url", ({url}) => {
+      this.session.system.openUrl(url)
     })
 
     // Debug: speak a phrase through the glasses and report the device outcome.

@@ -19,6 +19,10 @@ export function backendUrl(): string {
 /** Backend route URLs. */
 export const BACKEND_ROUTES = {
   agent: () => `${backendUrl()}/api/agent`,
+  /** Poll a pending giga-agent delegation by task id. */
+  agentTask: (taskId: string) => `${backendUrl()}/api/agent/task/${encodeURIComponent(taskId)}`,
+  /** Predictive wake — warm the user's giga-agent container at wake-word time. */
+  agentWake: () => `${backendUrl()}/api/agent/wake`,
   classify: () => `${backendUrl()}/api/classify`,
   search: () => `${backendUrl()}/api/search`,
 } as const

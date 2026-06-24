@@ -12,7 +12,7 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp/background"
-import {generateResponse} from "../agent/MentraAgent"
+import {generateResponse, pollDelegation, type GenerateResult} from "../agent/MentraAgent"
 import {formatForTTS} from "../lib/tts-formatter"
 import type {ChatEvent} from "../../shared/types"
 import type {AudioManager} from "./AudioManager"
@@ -144,9 +144,9 @@ export class QueryProcessor {
 
     // Step 5: generate.
     this.deps.display.showStatus("Thinking...", 10000)
-    let response: string
+    let result: GenerateResult
     try {
-      const result = await generateResponse({
+      result = await generateResponse({
         session,
         query,
         photos: photos.length > 0 ? photos : undefined,
@@ -156,20 +156,22 @@ export class QueryProcessor {
           if (toolName === "search") this.deps.display.showStatus("Searching...", 10000)
         },
       })
-      response = result.response
     } catch (error) {
       console.error("Agent error:", error)
-      response = "I'm sorry, I had trouble processing that. Please try again."
+      result = {response: "I'm sorry, I had trouble processing that. Please try again.", toolCalls: 0}
     }
+    const response = result.response
     lap("AI-GENERATE-RESPONSE")
 
-    // Broadcast the AI response + idle state.
+    // Broadcast the AI response (with any action buttons) + idle state. For a
+    // pending delegation `response` is just the ack — the real answer follows.
     emit({
       type: "message",
       id: `ai-${Date.now()}`,
       senderId: "mentra-ai",
       content: response,
       timestamp: new Date().toISOString(),
+      ...(result.actions?.length ? {actions: result.actions} : {}),
     })
     emit({type: "idle"})
     lap("EMIT-AI-MSG")
@@ -179,12 +181,60 @@ export class QueryProcessor {
     this.outputResponse(response, hasSpeakers, hasDisplay)
     lap("OUTPUT-TO-GLASSES")
 
-    // Step 7: save history.
-    this.deps.chatHistory.addTurn(query, response, photos.length > 0, photoDataUrl)
+    // Step 7: history (+ follow-up for a delegated turn). When the giga-agent
+    // ran long, `response` is the ack; the real answer is recorded by the
+    // follow-up below, so we don't save the ack here.
+    if (result.pendingTaskId) {
+      void this.awaitFollowUp(result.pendingTaskId, query, photos.length > 0, photoDataUrl, hasSpeakers, hasDisplay)
+    } else {
+      this.deps.chatHistory.addTurn(query, response, photos.length > 0, photoDataUrl)
+    }
     lap("SAVE-HISTORY")
 
     console.log(`⏱️ [PIPELINE-DONE] Total: ${Date.now() - pipelineStart}ms`)
     return response
+  }
+
+  /**
+   * Wait for a pending giga-agent delegation, then deliver the answer as a
+   * second turn: emit it to the webview, record it in history (the final answer,
+   * not the earlier ack), and speak/show it on the glasses if connected.
+   */
+  private async awaitFollowUp(
+    taskId: string,
+    query: string,
+    hadPhoto: boolean,
+    photoDataUrl: string | undefined,
+    hasSpeakers: boolean,
+    hasDisplay: boolean,
+  ): Promise<void> {
+    const {session, emit} = this.deps
+    const final = await pollDelegation(session, taskId)
+
+    if (final.status === "done" && final.reply) {
+      const reply = final.reply
+      console.log(`🤝 delivering delegation follow-up (${reply.length} chars, ${final.actions?.length ?? 0} actions)`)
+      emit({
+        type: "message",
+        id: `ai-${Date.now()}`,
+        senderId: "mentra-ai",
+        content: reply,
+        timestamp: new Date().toISOString(),
+        ...(final.actions?.length ? {actions: final.actions} : {}),
+      })
+      this.deps.chatHistory.addTurn(query, reply, hadPhoto, photoDataUrl)
+      this.outputResponse(reply, hasSpeakers, hasDisplay)
+    } else {
+      const msg = "Sorry — that one didn't go through. Want me to try again?"
+      emit({
+        type: "message",
+        id: `ai-${Date.now()}`,
+        senderId: "mentra-ai",
+        content: msg,
+        timestamp: new Date().toISOString(),
+      })
+      this.outputResponse(msg, hasSpeakers, hasDisplay)
+    }
   }
 
   private getLocalTime(): string {

@@ -65,8 +65,23 @@ export interface AgentRequest {
   model?: string
 }
 
+/** A structured action extracted from a delegation (a URL the user opens). */
+export interface AgentAction {
+  type: "open_url"
+  kind: "oauth_connect" | "link"
+  url: string
+}
+
 /** POST /api/agent response body — same shape as the old client GenerateResult. */
 export interface AgentResult {
   response: string
   toolCalls: number
+  /**
+   * Set when the agent delegated to the giga-agent and it ran past the grace
+   * window: `response` is then a spoken ack, and the caller polls
+   * /api/agent/task/:pendingTaskId for the real answer.
+   */
+  pendingTaskId?: string
+  /** Action buttons (e.g. an OAuth connect link) from a fast delegation. */
+  actions?: AgentAction[]
 }

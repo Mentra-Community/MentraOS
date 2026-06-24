@@ -7,6 +7,13 @@
 
 export type Theme = "light" | "dark"
 
+/** A tappable action on a message (e.g. an OAuth "Connect" link from the agent). */
+export interface AgentAction {
+  type: "open_url"
+  kind: "oauth_connect" | "link"
+  url: string
+}
+
 /** A single chat message rendered in the webview. */
 export interface ChatMessage {
   id: string
@@ -17,6 +24,8 @@ export interface ChatMessage {
   timestamp: string
   /** Optional data: URL of the photo captured for this turn (user messages). */
   image?: string
+  /** Action buttons (e.g. an OAuth connect link) on an assistant message. */
+  actions?: AgentAction[]
 }
 
 /**
