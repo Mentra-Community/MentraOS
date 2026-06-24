@@ -324,7 +324,8 @@ public class Bridge private constructor() {
                 deviceModel: String,
                 gestureName: String,
                 timestamp: Long,
-                source: Int? = null
+                source: Int? = null,
+                extra: Map<String, Any>? = null
         ) {
             val body = HashMap<String, Any>()
             body["type"] = "touch_event"
@@ -334,6 +335,7 @@ public class Bridge private constructor() {
             if (source != null) {
                 body["source"] = source
             }
+            extra?.let { body.putAll(it) }
             sendTypedMessage("touch_event", body)
         }
 

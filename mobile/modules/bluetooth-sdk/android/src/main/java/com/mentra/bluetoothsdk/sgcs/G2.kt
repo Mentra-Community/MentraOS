@@ -331,6 +331,50 @@ private object EvenHubProto {
         return w.toByteArray()
     }
 
+    fun listItemContainerProperty(
+        itemCount: Int,
+        itemWidth: Int = 0,
+        isItemSelectBorderEn: Boolean = true,
+        itemName: List<String>
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, itemCount)
+        w.writeInt32Field(2, itemWidth)
+        w.writeInt32Field(3, if (isItemSelectBorderEn) 1 else 0)
+        for (item in itemName) w.writeStringField(4, item)
+        return w.toByteArray()
+    }
+
+    fun listContainerProperty(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int = 1,
+        borderColor: Int = 13,
+        borderRadius: Int = 6,
+        paddingLength: Int = 5,
+        containerID: Int,
+        containerName: String? = null,
+        itemContainer: ByteArray,
+        isEventCapture: Boolean = false
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, x)
+        w.writeInt32Field(2, y)
+        w.writeInt32Field(3, width)
+        w.writeInt32Field(4, height)
+        w.writeInt32Field(5, borderWidth)
+        w.writeInt32Field(6, borderColor)
+        w.writeInt32Field(7, borderRadius)
+        w.writeInt32Field(8, paddingLength)
+        w.writeInt32Field(9, containerID)
+        containerName?.let { w.writeStringField(10, it) }
+        w.writeMessageField(11, itemContainer)
+        w.writeInt32Field(12, if (isEventCapture) 1 else 0)
+        return w.toByteArray()
+    }
+
     fun imageRawDataUpdate(
         containerID: Int,
         containerName: String? = null,
@@ -355,11 +399,13 @@ private object EvenHubProto {
 
     fun createStartupPageContainer(
         containerTotalNum: Int,
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList()
     ): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, containerTotalNum)
+        for (lc in listContainers) w.writeMessageField(2, lc)
         for (tc in textContainers) w.writeMessageField(3, tc)
         for (ic in imageContainers) w.writeMessageField(4, ic)
         return w.toByteArray()
@@ -413,13 +459,14 @@ private object EvenHubProto {
     }
 
     fun createPageMessage(
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList(),
         magicRandom: Int = 0,
         appId: Int? = null
     ): ByteArray {
-        val total = textContainers.size + imageContainers.size
-        val createMsg = createStartupPageContainer(total, textContainers, imageContainers)
+        val total = listContainers.size + textContainers.size + imageContainers.size
+        val createMsg = createStartupPageContainer(total, listContainers, textContainers, imageContainers)
         return evenHubMessage(
             EvenHubCmd.CREATE_STARTUP_PAGE,
             3,
@@ -430,13 +477,14 @@ private object EvenHubProto {
     }
 
     fun rebuildPageMessage(
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList(),
         magicRandom: Int = 0,
         appId: Int? = null
     ): ByteArray {
-        val total = textContainers.size + imageContainers.size
-        val rebuildMsg = createStartupPageContainer(total, textContainers, imageContainers)
+        val total = listContainers.size + textContainers.size + imageContainers.size
+        val rebuildMsg = createStartupPageContainer(total, listContainers, textContainers, imageContainers)
         return evenHubMessage(
             EvenHubCmd.REBUILD_PAGE,
             7,
@@ -1458,16 +1506,62 @@ class G2 : SGCManager() {
                 this.paddingLength == paddingLength
     }
 
+    /** A tracked native selectable list container on the current page. */
+    private data class ListContainer(
+        val id: Int,
+        val x: Int,
+        val y: Int,
+        val width: Int,
+        val height: Int,
+        val borderWidth: Int,
+        val borderColor: Int,
+        val borderRadius: Int,
+        val paddingLength: Int,
+        val itemWidth: Int,
+        val showSelectionBorder: Boolean,
+        val items: List<String>
+    ) {
+        val name: String
+            get() = "list-$id"
+
+        fun matches(
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderColor: Int,
+            borderRadius: Int,
+            paddingLength: Int,
+            itemWidth: Int,
+            showSelectionBorder: Boolean,
+            items: List<String>
+        ): Boolean =
+            this.x == x &&
+                this.y == y &&
+                this.width == width &&
+                this.height == height &&
+                this.borderWidth == borderWidth &&
+                this.borderColor == borderColor &&
+                this.borderRadius == borderRadius &&
+                this.paddingLength == paddingLength &&
+                this.itemWidth == itemWidth &&
+                this.showSelectionBorder == showSelectionBorder &&
+                this.items == items
+    }
+
     /**
      * Live list of image containers on the page, ordered oldest→newest (for LRU eviction). The page
      * may hold at most 4 image containers (IDs from the pool below).
      */
     private val imageContainers: MutableList<ImgContainer> = mutableListOf()
     private val textContainers: MutableList<TextContainer> = mutableListOf()
+    private val listContainers: MutableList<ListContainer> = mutableListOf()
 
     /** Fixed pool of container IDs the page protocol expects. */
     private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
+    private val listContainerIDPool: List<Int> = listOf(7, 8)
 
     /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
     private val defaultImgX = 188
@@ -1994,6 +2088,121 @@ class G2 : SGCManager() {
         }
     }
 
+    override fun sendSelectableList(
+        items: List<String>,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderColor: Int,
+        borderRadius: Int,
+        paddingLength: Int,
+        itemWidth: Int,
+        showSelectionBorder: Boolean
+    ) {
+        displayScope.launch {
+            sendSelectableList2(
+                items,
+                x,
+                y,
+                width,
+                height,
+                borderWidth,
+                borderColor,
+                borderRadius,
+                paddingLength,
+                itemWidth,
+                showSelectionBorder
+            )
+        }
+    }
+
+    private suspend fun sendSelectableList2(
+        items: List<String>,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderColor: Int,
+        borderRadius: Int,
+        paddingLength: Int,
+        itemWidth: Int,
+        showSelectionBorder: Boolean
+    ) {
+        val useNativeDashboard =
+            DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard && dashboardShowing > 0) {
+            return
+        }
+
+        val normalizedItems =
+            if (items.isEmpty()) {
+                listOf(" ")
+            } else {
+                items.take(20).map { item ->
+                    val clipped = item.take(64)
+                    if (clipped.isEmpty()) " " else clipped
+                }
+            }
+        val rx = x
+        val ry = y
+        val rw = width
+        val rh = height
+        val rBorderWidth = borderWidth
+        val rBorderColor = borderColor
+        val rBorderRadius = borderRadius
+        val rPaddingLength = paddingLength
+        val rItemWidth = itemWidth
+
+        val existingIndex =
+            listContainers.indexOfFirst {
+                it.matches(
+                    rx,
+                    ry,
+                    rw,
+                    rh,
+                    rBorderWidth,
+                    rBorderColor,
+                    rBorderRadius,
+                    rPaddingLength,
+                    rItemWidth,
+                    showSelectionBorder,
+                    normalizedItems
+                )
+            }
+        if (existingIndex >= 0 && textContainers.isEmpty() && imageContainers.isEmpty() && pageCreated) {
+            return
+        }
+
+        textContainers.clear()
+        imageContainers.clear()
+        listContainers.clear()
+        val id = listContainerIDPool.first()
+        listContainers.add(
+            ListContainer(
+                id = id,
+                x = rx,
+                y = ry,
+                width = rw,
+                height = rh,
+                borderWidth = rBorderWidth,
+                borderColor = rBorderColor,
+                borderRadius = rBorderRadius,
+                paddingLength = rPaddingLength,
+                itemWidth = rItemWidth,
+                showSelectionBorder = showSelectionBorder,
+                items = normalizedItems
+            )
+        )
+
+        if (pageCreated) {
+            rebuildPage()
+        }
+        rebuildState()
+    }
+
     private suspend fun sendText2(
         text: String,
         x: Int? = null,
@@ -2012,6 +2221,11 @@ class G2 : SGCManager() {
             DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
         if (useNativeDashboard && dashboardShowing > 0) {
             return
+        }
+
+        val hadListContainers = listContainers.isNotEmpty()
+        if (hadListContainers) {
+            listContainers.clear()
         }
 
         val rx = x ?: defaultTextX
@@ -2053,6 +2267,11 @@ class G2 : SGCManager() {
             signalDisplayDirty()
             if (!pageCreated) {
                 Bridge.log("G2: sendText() - page down, buffering latest content for container ${container.id} (rebuild deferred to reconcile)")
+                return
+            }
+            if (hadListContainers) {
+                Bridge.log("G2: sendText() - replacing list page with text container ${container.id}")
+                rebuildPage()
                 return
             }
             Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
@@ -2107,7 +2326,14 @@ class G2 : SGCManager() {
             imageContainers[i].bmpData = ByteArray(0)
             imageContainers[i].dirty = false
         }
+        val hadListContainers = listContainers.isNotEmpty()
+        if (hadListContainers) {
+            listContainers.clear()
+        }
         signalDisplayDirty()
+        if (hadListContainers && pageCreated) {
+            displayScope.launch { rebuildPage() }
+        }
     }
 
     /**
@@ -2153,6 +2379,11 @@ class G2 : SGCManager() {
                     return false
                 }
 
+        val hadListContainers = listContainers.isNotEmpty()
+        if (hadListContainers) {
+            listContainers.clear()
+        }
+
         // Pure state mutation: update the target container's bytes and mark it dirty. The reconcile
         // loop is the sole sender, so two displayBitmap calls can never overlap a sendImageData and
         // clobber the single-slot image ACK — no lock needed. Reuse an existing container if the rect
@@ -2167,7 +2398,7 @@ class G2 : SGCManager() {
             Bridge.log("G2: displayBitmap() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
-            if (!pageCreated) {
+            if (!pageCreated || hadListContainers) {
                 displayScope.launch { rebuildPage() }
             }
             return true
@@ -2344,7 +2575,10 @@ class G2 : SGCManager() {
             // that would let a clear burst churn the page back up pointlessly.
             val hasPendingText = textContainers.any { it.pendingSends > 0 && it.content.isNotBlank() }
             val hasPendingImage = imageContainers.any { it.dirty && it.bmpData.isNotEmpty() }
-            if ((hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0)) {
+            val hasPendingList = listContainers.isNotEmpty()
+            if ((hasPendingText || hasPendingImage || hasPendingList) &&
+                !(useNativeDashboard && dashboardShowing > 0)
+            ) {
                 Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
                 rebuildState()
             }
@@ -2645,6 +2879,35 @@ class G2 : SGCManager() {
     // ---------- Private Display Helpers ----------
 
     private fun createPageWithContainers() {
+        val listContainerProps: List<ByteArray> = ArrayList<ByteArray>(listContainers.size).apply {
+            for (i in listContainers.indices) {
+                val c = listContainers[i]
+                val itemContainer =
+                    EvenHubProto.listItemContainerProperty(
+                        itemCount = c.items.size,
+                        itemWidth = c.itemWidth,
+                        isItemSelectBorderEn = c.showSelectionBorder,
+                        itemName = c.items
+                    )
+                add(
+                    EvenHubProto.listContainerProperty(
+                        x = c.x,
+                        y = c.y,
+                        width = c.width,
+                        height = c.height,
+                        borderWidth = c.borderWidth,
+                        borderColor = c.borderColor,
+                        borderRadius = c.borderRadius,
+                        paddingLength = c.paddingLength,
+                        containerID = c.id,
+                        containerName = c.name,
+                        itemContainer = itemContainer,
+                        isEventCapture = i == 0
+                    )
+                )
+            }
+        }
+
         // build the page's text containers from the live tracked list.
         val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size).apply {
             for (i in textContainers.indices) {
@@ -2661,7 +2924,7 @@ class G2 : SGCManager() {
                         paddingLength = c.paddingLength,
                         containerID = c.id,
                         containerName = c.name,
-                        isEventCapture = i == 0,// the first container is the event capture container
+                        isEventCapture = listContainers.isEmpty() && i == 0,
                         content = c.content
                     )
                 )
@@ -2702,6 +2965,7 @@ class G2 : SGCManager() {
             Bridge.log("G2: using createPageMessage (first time)")
             msg =
                 EvenHubProto.createPageMessage(
+                    listContainers = listContainerProps,
                     textContainers = textContainerProps,
                     imageContainers = imageContainerProps,
                     magicRandom = sendManager.nextMagicRandom(),
@@ -2711,6 +2975,7 @@ class G2 : SGCManager() {
             Bridge.log("G2: using rebuildPageMessage")
             msg =
                 EvenHubProto.rebuildPageMessage(
+                    listContainers = listContainerProps,
                     textContainers = textContainerProps,
                     imageContainers = imageContainerProps,
                     magicRandom = sendManager.nextMagicRandom(),
@@ -4116,12 +4381,11 @@ class G2 : SGCManager() {
             }
 
             if (eventType == OsEventType.DOUBLE_CLICK) {
-                // trigger dashboard:
                 val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
 
                 val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
                 if (useNativeDashboard) {
-                    showDashboard()
+                    Bridge.log("G2: native dashboard double-click shortcut disabled")
                 } else {
                     // toggle head up:
                     DeviceStore.apply("glasses", "headUp", !isHeadUp)
@@ -4162,7 +4426,42 @@ class G2 : SGCManager() {
             return
         }
 
-        // ListEvent (field 1) - interaction with list container (not currently handled)
+        // ListEvent (field 1) - interaction with list container
+        (fields[1] as? ByteArray)?.let { listData ->
+            val listReader = ProtobufReader(listData)
+            val listFields = listReader.parseFields()
+            val eventTypeRaw = listFields[5] as? Int
+            val eventType =
+                if (eventTypeRaw != null) OsEventType.fromInt(eventTypeRaw) else OsEventType.CLICK
+
+            if (eventType == null) {
+                Bridge.log("G2: unknown list event type: $listFields")
+                return@let
+            }
+
+            val gestureName = mapEventTypeToGesture(eventType)
+            if (gestureName == null) {
+                Bridge.log("G2: no gesture mapping for $eventType $listFields")
+                return@let
+            }
+
+            val extra = mutableMapOf<String, Any>()
+            (listFields[1] as? Int)?.let { extra["containerId"] = it }
+            (listFields[2] as? ByteArray)?.let {
+                val containerName = String(it, Charsets.UTF_8)
+                if (containerName.isNotBlank()) {
+                    extra["containerName"] = containerName
+                }
+            }
+            (listFields[3] as? ByteArray)?.let {
+                extra["selectedItemName"] = String(it, Charsets.UTF_8)
+            }
+            (listFields[4] as? Int)?.let { extra["selectedItemIndex"] = it }
+
+            Bridge.sendTouchEvent(DeviceTypes.G2, gestureName, timestamp, extra = extra)
+            Bridge.log("G2: ListEvent → $gestureName $extra")
+            return
+        }
     }
 
     private fun mapEventTypeToGesture(eventType: OsEventType): String? {
