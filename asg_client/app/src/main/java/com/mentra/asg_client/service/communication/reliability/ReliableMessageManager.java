@@ -44,7 +44,11 @@ public class ReliableMessageManager {
      * Implemented by the class that has access to Bluetooth.
      */
     public interface IMessageSender {
-        boolean sendData(byte[] data);
+        boolean sendData(byte[] data, SendCompletionCallback callback);
+    }
+
+    public interface SendCompletionCallback {
+        void onComplete(boolean success);
     }
 
     /**
@@ -103,15 +107,23 @@ public class ReliableMessageManager {
             long messageId = generateMessageId();
             message.put("mId", messageId);
 
-            // Track the message
-            trackMessage(messageId, message);
-
-            // Send immediately
-            boolean sent = sendDirectly(message);
-            if (sent) {
-                totalMessagesSent++;
+            // Send immediately, then start ACK tracking only after the queued transport send
+            // actually completes.
+            boolean accepted =
+                    sendDirectly(
+                            message,
+                            success -> {
+                                if (success) {
+                                    trackMessage(messageId, message, 0, ACK_TIMEOUT_MS);
+                                    totalMessagesSent++;
+                                } else {
+                                    totalFailures++;
+                                }
+                            });
+            if (!accepted) {
+                totalFailures++;
             }
-            return sent;
+            return accepted;
 
         } catch (JSONException e) {
             Log.e(TAG, "Error adding message ID", e);
@@ -167,15 +179,16 @@ public class ReliableMessageManager {
      * @param messageId The message ID to track
      * @param message The message content
      */
-    private void trackMessage(long messageId, JSONObject message) {
+    private void trackMessage(
+            long messageId, JSONObject message, int retryCount, long timeoutMs) {
         Runnable timeoutRunnable = () -> handleTimeout(messageId);
 
-        PendingMessage pending = new PendingMessage(message, 0, timeoutRunnable);
+        PendingMessage pending = new PendingMessage(message, retryCount, timeoutRunnable);
 
         pendingMessages.put(messageId, pending);
 
         // Schedule timeout check
-        retryHandler.postDelayed(timeoutRunnable, ACK_TIMEOUT_MS);
+        retryHandler.postDelayed(timeoutRunnable, timeoutMs);
     }
 
     /**
@@ -209,21 +222,29 @@ public class ReliableMessageManager {
      * @param pending The pending message information
      */
     private void retryMessage(long messageId, PendingMessage pending) {
-        // Create updated pending message with incremented retry count
-        PendingMessage updated = new PendingMessage(
-            pending.message,
-            pending.retryCount + 1,
-            pending.timeoutRunnable
-        );
-
-        pendingMessages.put(messageId, updated);
-
-        // Send again
-        sendDirectly(pending.message);
-
-        // Reschedule timeout with exponential backoff
+        int nextRetryCount = pending.retryCount + 1;
         long backoffDelay = ACK_TIMEOUT_MS * (1L << pending.retryCount);
-        retryHandler.postDelayed(pending.timeoutRunnable, backoffDelay);
+
+        // Send again, then restart the ACK timeout only after the queued retry actually completes.
+        boolean accepted =
+                sendDirectly(
+                        pending.message,
+                        success -> {
+                            if (success && pendingMessages.containsKey(messageId)) {
+                                trackMessage(
+                                        messageId,
+                                        pending.message,
+                                        nextRetryCount,
+                                        backoffDelay);
+                            } else if (!success) {
+                                pendingMessages.remove(messageId);
+                                totalFailures++;
+                            }
+                        });
+        if (!accepted) {
+            pendingMessages.remove(messageId);
+            totalFailures++;
+        }
     }
 
     /**
@@ -232,9 +253,13 @@ public class ReliableMessageManager {
      * @return true if sent successfully, false otherwise
      */
     private boolean sendDirectly(JSONObject message) {
+        return sendDirectly(message, null);
+    }
+
+    private boolean sendDirectly(JSONObject message, SendCompletionCallback callback) {
         try {
             String jsonString = message.toString();
-            return messageSender.sendData(jsonString.getBytes());
+            return messageSender.sendData(jsonString.getBytes(), callback);
         } catch (Exception e) {
             Log.e(TAG, "Error sending message", e);
             return false;

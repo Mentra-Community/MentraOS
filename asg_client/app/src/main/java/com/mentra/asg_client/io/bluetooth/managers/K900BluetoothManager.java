@@ -930,7 +930,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @return true if transfer started successfully
      */
     @Override
-    public boolean sendFile(String filePath) {
+    protected boolean sendFileInternal(String filePath) {
         if (!isSerialOpen) {
             Log.e(TAG, "Cannot send file - serial port not open");
 

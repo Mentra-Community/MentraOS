@@ -14,8 +14,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,12 +33,15 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     private static final long SIGNIFICANT_QUEUE_DELAY_MS = 250;
     private static final long SIGNIFICANT_SEND_DURATION_MS = 250;
     private static final int SIGNIFICANT_QUEUE_SIZE = 5;
+    private static final long OUTBOUND_FILE_START_TIMEOUT_MS = 30000;
 
     protected final Context context;
     protected final List<TransportListener> listeners = new ArrayList<>();
     protected boolean isConnected = false;
     private final ThreadPoolExecutor outboundBleExecutor;
     private final AtomicLong outboundBleSequence = new AtomicLong(1);
+    private final ThreadLocal<Boolean> outboundBleWorkerThread =
+            ThreadLocal.withInitial(() -> false);
 
     /**
      * Create a new BaseBluetoothManager
@@ -116,6 +123,12 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     /** Queue an outbound message so BLE chunk pacing never blocks app/camera handler threads. */
     @Override
     public final boolean sendMessage(byte[] data) {
+        return sendMessage(data, null);
+    }
+
+    /** Queue an outbound message and notify once the queued send attempt finishes. */
+    @Override
+    public final boolean sendMessage(byte[] data, SendMessageCallback callback) {
         if (data == null || data.length == 0) {
             return false;
         }
@@ -127,7 +140,15 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
         try {
             outboundBleExecutor.execute(
-                    () -> sendQueuedMessage(payload, sequence, queuedAtMs, traceInfo));
+                    () ->
+                            runOnOutboundBleWorker(
+                                    () ->
+                                            sendQueuedMessage(
+                                                    payload,
+                                                    sequence,
+                                                    queuedAtMs,
+                                                    traceInfo,
+                                                    callback)));
             logOutboundQueueEvent(
                     "queued",
                     sequence,
@@ -157,7 +178,11 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     }
 
     private void sendQueuedMessage(
-            byte[] data, long sequence, long queuedAtMs, OutboundTraceInfo traceInfo) {
+            byte[] data,
+            long sequence,
+            long queuedAtMs,
+            OutboundTraceInfo traceInfo,
+            SendMessageCallback callback) {
         long dequeuedAtMs = System.currentTimeMillis();
         logOutboundQueueEvent(
                 "dequeued",
@@ -191,6 +216,47 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                     data.length,
                     outboundBleExecutor.getQueue().size(),
                     error);
+            notifySendMessageCallback(callback, success);
+        }
+    }
+
+    private void runOnOutboundBleWorker(Runnable runnable) {
+        boolean wasWorker = Boolean.TRUE.equals(outboundBleWorkerThread.get());
+        outboundBleWorkerThread.set(true);
+        try {
+            runnable.run();
+        } finally {
+            if (wasWorker) {
+                outboundBleWorkerThread.set(true);
+            } else {
+                outboundBleWorkerThread.remove();
+            }
+        }
+    }
+
+    private <T> T callOnOutboundBleWorker(Callable<T> callable) throws Exception {
+        boolean wasWorker = Boolean.TRUE.equals(outboundBleWorkerThread.get());
+        outboundBleWorkerThread.set(true);
+        try {
+            return callable.call();
+        } finally {
+            if (wasWorker) {
+                outboundBleWorkerThread.set(true);
+            } else {
+                outboundBleWorkerThread.remove();
+            }
+        }
+    }
+
+    private static void notifySendMessageCallback(
+            SendMessageCallback callback, boolean success) {
+        if (callback == null) {
+            return;
+        }
+        try {
+            callback.onSendComplete(success);
+        } catch (Exception e) {
+            Log.w(TAG, "Queued send callback failed", e);
         }
     }
 
@@ -426,7 +492,44 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         return false;
     }
 
-    public boolean sendFile(String path) {
+    public final boolean sendFile(String path) {
+        if (path == null || path.isEmpty()) {
+            return false;
+        }
+
+        if (Boolean.TRUE.equals(outboundBleWorkerThread.get())) {
+            return sendFileInternal(path);
+        }
+
+        Future<Boolean> future = null;
+        try {
+            future =
+                    outboundBleExecutor.submit(
+                            () -> callOnOutboundBleWorker(() -> sendFileInternal(path)));
+            return future.get(OUTBOUND_FILE_START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            Log.e(TAG, "Rejected outbound BLE file transfer start", e);
+            return false;
+        } catch (TimeoutException e) {
+            if (future != null) {
+                future.cancel(false);
+            }
+            Log.e(TAG, "Timed out waiting for outbound BLE file transfer start", e);
+            return false;
+        } catch (InterruptedException e) {
+            if (future != null) {
+                future.cancel(false);
+            }
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "Interrupted waiting for outbound BLE file transfer start", e);
+            return false;
+        } catch (ExecutionException e) {
+            Log.e(TAG, "Outbound BLE file transfer start failed", e);
+            return false;
+        }
+    }
+
+    protected boolean sendFileInternal(String path) {
         Log.w(TAG, "sendFile not implemented in " + getClass().getSimpleName());
         return false;
     }

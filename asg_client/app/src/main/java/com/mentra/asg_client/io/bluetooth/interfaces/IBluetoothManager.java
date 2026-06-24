@@ -23,6 +23,10 @@ public interface IBluetoothManager {
     /** Disconnect from the currently connected device */
     void disconnect();
 
+    interface SendMessageCallback {
+        void onSendComplete(boolean success);
+    }
+
     /**
      * Queue a message to send to the connected device.
      *
@@ -32,10 +36,20 @@ public interface IBluetoothManager {
     boolean sendMessage(byte[] data);
 
     /**
+     * Queue a message to send to the connected device and notify when the queued send attempt
+     * completes.
+     *
+     * @param data The data to send
+     * @param callback Optional callback invoked after the queued send attempt completes
+     * @return true if the data was accepted for outbound delivery, false otherwise
+     */
+    boolean sendMessage(byte[] data, SendMessageCallback callback);
+
+    /**
      * Send a file to the connected device.
      *
      * @param filePath path to the file
-     * @return true if transfer started or completed successfully
+     * @return true if transfer start was accepted after earlier outbound messages drained
      */
     boolean sendFile(String filePath);
 

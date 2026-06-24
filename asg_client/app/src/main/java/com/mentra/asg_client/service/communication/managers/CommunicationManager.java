@@ -34,9 +34,10 @@ public class CommunicationManager
 
         this.reliableManager =
                 new ReliableMessageManager(
-                        data -> {
+                        (data, callback) -> {
                             if (this.transport != null) {
-                                return this.transport.sendMessage(data);
+                                return this.transport.sendMessage(
+                                        data, callback != null ? callback::onComplete : null);
                             }
                             return false;
                         });

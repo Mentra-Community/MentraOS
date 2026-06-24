@@ -8,6 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -20,6 +21,8 @@ public class ChunkedMessageProtocolStrategy
     private static final String TAG = "ChunkedMessageStrategy";
     private static final AtomicLong CHUNK_TRACE_SEQUENCE = new AtomicLong(1);
     private static final long SIGNIFICANT_CHUNK_REASSEMBLY_MS = 250;
+    private static final long CHUNK_TRACE_SESSION_TIMEOUT_MS = 30000;
+    private static final int MAX_CHUNK_TRACE_SESSIONS = 10;
 
     private final ChunkReassembler chunkReassembler;
     private final ConcurrentHashMap<String, InboundChunkTraceSession> chunkTraceSessions =
@@ -235,6 +238,7 @@ public class ChunkedMessageProtocolStrategy
 
     private InboundChunkTraceSession noteInboundChunk(
             String chunkId, int chunkIndex, int totalChunks) {
+        pruneInboundChunkTraceSessions(chunkId);
         return chunkTraceSessions.compute(
                 chunkId,
                 (id, existing) -> {
@@ -246,6 +250,34 @@ public class ChunkedMessageProtocolStrategy
                     session.lastChunkAtMs = System.currentTimeMillis();
                     return session;
                 });
+    }
+
+    private void pruneInboundChunkTraceSessions(String incomingChunkId) {
+        long now = System.currentTimeMillis();
+        chunkTraceSessions
+                .entrySet()
+                .removeIf(
+                        entry ->
+                                now - entry.getValue().lastChunkAtMs
+                                        > CHUNK_TRACE_SESSION_TIMEOUT_MS);
+
+        if (chunkTraceSessions.size() < MAX_CHUNK_TRACE_SESSIONS
+                || chunkTraceSessions.containsKey(incomingChunkId)) {
+            return;
+        }
+
+        String oldestChunkId = null;
+        long oldestChunkAtMs = Long.MAX_VALUE;
+        for (Map.Entry<String, InboundChunkTraceSession> entry : chunkTraceSessions.entrySet()) {
+            long lastChunkAtMs = entry.getValue().lastChunkAtMs;
+            if (lastChunkAtMs < oldestChunkAtMs) {
+                oldestChunkAtMs = lastChunkAtMs;
+                oldestChunkId = entry.getKey();
+            }
+        }
+        if (oldestChunkId != null) {
+            chunkTraceSessions.remove(oldestChunkId);
+        }
     }
 
     private static void logInboundBleChunk(
