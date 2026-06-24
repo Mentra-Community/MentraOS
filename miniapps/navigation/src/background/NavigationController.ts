@@ -647,8 +647,21 @@ export class NavigationController {
 
     // Resolve the destination: explicit coordinates win; otherwise look up the query.
     let dest: {lat: number; lng: number; name?: string} | null = null
-    if (typeof params.latitude === "number" && typeof params.longitude === "number") {
-      dest = {lat: params.latitude, lng: params.longitude, name: explicitName || undefined}
+    if (typeof params.latitude === "number" || typeof params.longitude === "number") {
+      // Validate both as finite, in-range coordinates — `typeof NaN === "number"`,
+      // so a bare typeof check would let NaN/Infinity flow into the native start.
+      const {latitude, longitude} = params
+      if (
+        typeof latitude !== "number" ||
+        typeof longitude !== "number" ||
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        Math.abs(latitude) > 90 ||
+        Math.abs(longitude) > 180
+      ) {
+        return {ok: false, error: "latitude and longitude must both be finite coordinates (|lat| ≤ 90, |lng| ≤ 180)."}
+      }
+      dest = {lat: latitude, lng: longitude, name: explicitName || undefined}
     } else if (typeof params.query === "string" && params.query.trim()) {
       dest = await this.resolveDestination(params.query.trim())
       if (!dest) return {ok: false, error: `Couldn't find a place matching "${params.query}".`}
