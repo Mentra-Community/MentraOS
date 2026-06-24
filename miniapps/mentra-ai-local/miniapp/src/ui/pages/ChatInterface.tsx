@@ -17,6 +17,7 @@ import Header from '../components/Header';
 import BottomHeader from '../components/BottomHeader';
 import { ChromaticBorder } from '../components/ChromaticBorder';
 import { fetchUserSettings } from '../api/settings.api';
+import { usePageStack } from '../lib/usePageStack';
 
 interface Message {
   id: string;
@@ -169,10 +170,10 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('mentra-dark-mode');
-    return saved ? JSON.parse(saved) : false;
-  });
+  // Light-only app: theme toggle was removed, so dark mode is hard-off. Keeping
+  // the setter as a no-op so the few callers still referencing it compile.
+  const isDarkMode = false;
+  const setIsDarkMode = (_: boolean) => {};
   const [chatHistoryEnabled, setChatHistoryEnabled] = useState(false);
   const [sessionActive, setSessionActive] = useState<boolean | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -203,7 +204,9 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
     };
   }, []);
 
-  const [currentPage, setCurrentPage] = useState<'chat' | 'settings'>('chat');
+  // History-backed page stack so the OS back gesture (iOS swipe / Android back)
+  // pops settings → chat, and exits the app only from chat. See usePageStack.
+  const { page: currentPage, push: pushPage, back: popPage } = usePageStack<'chat' | 'settings'>('chat');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Track whether next scroll should be instant (history load) vs smooth (live message)
@@ -231,15 +234,10 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
     }
   }, [currentPage]);
 
-  // Save dark mode preference
+  // Light-only app: keep the root in light mode regardless of any stale state.
   useEffect(() => {
-    localStorage.setItem('mentra-dark-mode', JSON.stringify(isDarkMode));
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [isDarkMode]);
+    document.documentElement.classList.remove('dark');
+  }, []);
 
   // Load user settings on mount
   useEffect(() => {
@@ -320,7 +318,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
   if (currentPage === 'settings') {
     return (
       <Settings
-        onBack={() => setCurrentPage('chat')}
+        onBack={popPage}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
         onChatHistoryToggle={(enabled) => setChatHistoryEnabled(enabled)}
@@ -367,7 +365,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode, debugMode, safe
         <Header
           isDarkMode={isDarkMode}
           onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-          onSettingsClick={() => setCurrentPage('settings')}
+          onSettingsClick={() => pushPage('settings')}
         />
 
         {/* Main Content Area */}

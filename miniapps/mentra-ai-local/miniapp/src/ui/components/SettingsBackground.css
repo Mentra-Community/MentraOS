@@ -1,0 +1,84 @@
+/**
+ * SettingsBackground — subtle living gradient backdrop for the Settings page.
+ *
+ * The colorful blobs are split across two layers (warm + cool) that very slowly
+ * drift, scale, and counter-rotate on long, offset loops. Everything sits under
+ * a heavy blur, so even a few px of motion reads as a soft, organic "breathing"
+ * glow rather than anything that draws the eye. Honors reduced-motion.
+ */
+
+.settings-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background-color: #ffffff;
+  pointer-events: none;
+}
+
+.settings-bg__layer {
+  position: absolute;
+  /* Oversize each layer so its motion never reveals a hard edge. */
+  inset: -25%;
+  filter: blur(34px) saturate(104%);
+  will-change: transform, opacity;
+}
+
+/* Warm blobs (pink / coral / peach) — drift up-right while gently breathing. */
+.settings-bg__warm {
+  background-image:
+    radial-gradient(ellipse 72% 72% at 82% 98% in oklab, oklab(70.8% 0.198 0.009 / 82%) 0%, oklab(70.8% 0.198 0.009 / 0%) 60%),
+    radial-gradient(ellipse 92% 84% at 52% 114% in oklab, oklab(77.2% 0.094 0.116 / 88%) 0%, oklab(77.2% 0.094 0.116 / 0%) 56%);
+  animation: settings-bg-warm 18s ease-in-out infinite alternate;
+}
+
+/* Cool blobs (blue / violet) — drift the opposite way on a different period. */
+.settings-bg__cool {
+  background-image:
+    radial-gradient(ellipse 80% 75% at 26% 102% in oklab, oklab(69.7% -0.002 -0.158 / 80%) 0%, oklab(69.7% -0.002 -0.158 / 0%) 60%),
+    radial-gradient(ellipse 58% 66% at 60% 86% in oklab, oklab(70.7% 0.096 -0.157 / 48%) 0%, oklab(70.7% 0.096 -0.157 / 0%) 62%);
+  animation: settings-bg-cool 23s ease-in-out infinite alternate;
+}
+
+@keyframes settings-bg-warm {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    opacity: 0.92;
+  }
+  50% {
+    transform: translate3d(2.5%, -2%, 0) scale(1.06) rotate(2deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(-1.5%, -3.5%, 0) scale(1.03) rotate(-1.5deg);
+    opacity: 0.95;
+  }
+}
+
+@keyframes settings-bg-cool {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1.04) rotate(0deg);
+    opacity: 0.95;
+  }
+  50% {
+    transform: translate3d(-3%, 1.5%, 0) scale(1) rotate(-2.5deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(2%, 3%, 0) scale(1.07) rotate(1.5deg);
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-bg__warm,
+  .settings-bg__cool {
+    animation: none;
+  }
+}
+
+/* Freeze the drifting blobs while a bottom sheet is open — a moving blurred
+   layer behind the sheet's backdrop-blur is expensive and makes the open lag. */
+body.sheet-open .settings-bg__warm,
+body.sheet-open .settings-bg__cool {
+  animation-play-state: paused;
+}
