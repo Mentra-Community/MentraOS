@@ -1827,7 +1827,7 @@ class G2: NSObject, SGCManager {
         let timeSync = DevSettingsProto.timeSync(
             magicRandom: self.sendManager.nextMagicRandom()
         )
-        self.sendDevSettingsCommand(timeSync)
+        self.sendDevSettingsCommand(timeSync, left: true, right: true)
 
         // Skip onboarding on connect
         try? await Task.sleep(nanoseconds: 200_000_000)
