@@ -297,6 +297,13 @@ export class TranslationController {
       this.subscribeTranslation()
     }
 
+    // subscribeTranslation swallows subscribe failures (it logs and leaves
+    // translationCleanup null). Don't claim "translating" if nothing attached —
+    // surface it as an action error so the caller (e.g. Mentra AI) knows.
+    if (!this.translationCleanup) {
+      throw new Error("Failed to start translation — no active subscription")
+    }
+
     return {targetLanguage: this.settings.targetLanguage, status: "translating"}
   }
 

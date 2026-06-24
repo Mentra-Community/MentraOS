@@ -597,21 +597,37 @@ export class NavigationController {
       const res = await this.navigation.start(withPivotDefaults(startOpts))
       if (!res.ok) {
         this.appendLog(`START failed: ${res.error ?? "unknown"}`)
-        this.trip = {...this.trip, status: "idle", running: false}
-        this.ui.send("nav:trip-state", this.trip)
-        this.refreshHUD()
+        this.rollbackTripToIdle()
       }
       return res
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
       this.appendLog(`START error: ${error}`)
-      this.trip = {...this.trip, status: "idle", running: false}
-      this.ui.send("nav:trip-state", this.trip)
-      this.refreshHUD()
+      this.rollbackTripToIdle()
       return {ok: false, error}
     } finally {
       this.starting = false
     }
+  }
+
+  /**
+   * Roll the optimistic "navigating" trip state back to idle after a failed
+   * start. Clears the destination and route fields too — otherwise the phone
+   * map keeps a pin on a destination we never actually started routing to.
+   */
+  private rollbackTripToIdle(): void {
+    this.trip = {
+      ...this.trip,
+      status: "idle",
+      running: false,
+      activeDestination: null,
+      activeDestinationName: null,
+      maneuver: null,
+      routePoints: null,
+      routeSteps: null,
+    }
+    this.ui.send("nav:trip-state", this.trip)
+    this.refreshHUD()
   }
 
   // ── Actions (cross-miniapp / AI) ─────────────────────────────────────
@@ -645,26 +661,33 @@ export class NavigationController {
     const mode = MODES.has(params.travel_mode as TravelMode) ? (params.travel_mode as TravelMode) : "walking"
     const explicitName = typeof params.destination_name === "string" ? params.destination_name.trim() : ""
 
-    // Resolve the destination: explicit coordinates win; otherwise look up the query.
+    // Resolve the destination. A full coordinate pair wins; otherwise fall back
+    // to the place query (so a query still works even when a stray/partial
+    // coordinate is also present); a lone coordinate with no query is an error.
+    const hasLat = typeof params.latitude === "number"
+    const hasLng = typeof params.longitude === "number"
+    const query = typeof params.query === "string" && params.query.trim() ? params.query.trim() : null
+
     let dest: {lat: number; lng: number; name?: string} | null = null
-    if (typeof params.latitude === "number" || typeof params.longitude === "number") {
-      // Validate both as finite, in-range coordinates — `typeof NaN === "number"`,
-      // so a bare typeof check would let NaN/Infinity flow into the native start.
-      const {latitude, longitude} = params
+    if (hasLat && hasLng) {
+      // Validate as finite, in-range coordinates — `typeof NaN === "number"`, so
+      // a bare typeof check would let NaN/Infinity flow into the native start.
+      const latitude = params.latitude as number
+      const longitude = params.longitude as number
       if (
-        typeof latitude !== "number" ||
-        typeof longitude !== "number" ||
         !Number.isFinite(latitude) ||
         !Number.isFinite(longitude) ||
         Math.abs(latitude) > 90 ||
         Math.abs(longitude) > 180
       ) {
-        return {ok: false, error: "latitude and longitude must both be finite coordinates (|lat| ≤ 90, |lng| ≤ 180)."}
+        return {ok: false, error: "latitude and longitude must be finite coordinates (|lat| ≤ 90, |lng| ≤ 180)."}
       }
       dest = {lat: latitude, lng: longitude, name: explicitName || undefined}
-    } else if (typeof params.query === "string" && params.query.trim()) {
-      dest = await this.resolveDestination(params.query.trim())
-      if (!dest) return {ok: false, error: `Couldn't find a place matching "${params.query}".`}
+    } else if (query) {
+      dest = await this.resolveDestination(query)
+      if (!dest) return {ok: false, error: `Couldn't find a place matching "${query}".`}
+    } else if (hasLat || hasLng) {
+      return {ok: false, error: "Provide both latitude and longitude, or a destination query."}
     } else {
       return {ok: false, error: "Provide a destination query, or latitude and longitude."}
     }
