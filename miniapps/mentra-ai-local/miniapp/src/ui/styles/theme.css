@@ -167,6 +167,17 @@
     @apply bg-background text-foreground;
   }
 
+  /* The app is a fixed-height flex layout (App is h-screen). Lock the document
+     to the viewport so only intended inner regions scroll — never the page. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   html {
     font-size: var(--font-size);
   }

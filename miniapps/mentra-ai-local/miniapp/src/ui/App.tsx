@@ -91,8 +91,12 @@ export default function App() {
   return (
     <ThemeContext.Provider value={{ theme, isDarkMode: false, toggleTheme }}>
       <div
-        className="font-sans bg-background text-foreground min-h-screen"
+        className="font-sans bg-background text-foreground h-screen overflow-hidden flex flex-col"
         style={{
+          // box-sizing: border-box keeps the safe-area padding INSIDE the
+          // 100vh height instead of adding to it — otherwise an h-screen child
+          // + these insets overflow the viewport and the whole page scrolls.
+          boxSizing: 'border-box',
           paddingTop: insets.top,
           paddingBottom: insets.bottom,
           paddingLeft: insets.left,

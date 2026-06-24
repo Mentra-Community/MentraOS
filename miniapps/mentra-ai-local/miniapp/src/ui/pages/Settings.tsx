@@ -228,7 +228,7 @@ function Settings({ onBack, onEnableDebugMode }: SettingsProps) {
 
   return (
     <div
-      className="h-screen flex flex-col overflow-clip relative bg-white antialiased text-[#0B0B0F] [font-synthesis:none]"
+      className="flex-1 min-h-0 flex flex-col overflow-clip relative bg-white antialiased text-[#0B0B0F] [font-synthesis:none]"
       style={{ fontFamily: FONT_STACK }}
     >
       {/* Colorful blurred gradient backdrop — subtly animated (from the Paper
