@@ -70,7 +70,7 @@ type AgentVisual = {bg: string; fg: string; glyph: ReactNode}
 const AGENT_VISUALS: Record<string, AgentVisual> = {
   QuestionAnswerer: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
   FactChecker: {bg: "#ECEAFE", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
-  Definer: {bg: "#E2F4FB", fg: MERGE_COLORS.sky, glyph: <BookGlyph />},
+  Definer: {bg: "#ECEAFE", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
   Initial: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
 }
 const STANDBY_AGENTS = ["QuestionAnswerer", "FactChecker", "Definer"]
@@ -1266,15 +1266,6 @@ function CheckGlyph() {
   return (
     <svg aria-hidden="true" className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="m5 12 4.5 4.5L19 7" />
-    </svg>
-  )
-}
-
-function BookGlyph() {
-  return (
-    <svg aria-hidden="true" className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2Z" />
-      <path d="M4 19a2 2 0 0 1 2-2h12" />
     </svg>
   )
 }
