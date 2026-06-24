@@ -105,6 +105,37 @@ export enum MiniappRequestType {
   /** Download a file (triggers OS share sheet for save location). */
   DOWNLOAD = "miniapp_download",
 
+  /**
+   * Phone-local persistent binary blob storage, scoped to (userId, packageName).
+   * Unlike STORAGE_* (small string KV in MMKV), blobs are arbitrary bytes written
+   * to the phone filesystem. Large payloads are moved in chunks (BLOB_WRITE /
+   * BLOB_READ) so a single bridge message never carries a multi-MB string.
+   */
+  BLOB_CREATE = "miniapp_blob_create",
+  BLOB_WRITE = "miniapp_blob_write",
+  BLOB_COMMIT = "miniapp_blob_commit",
+  BLOB_ABORT = "miniapp_blob_abort",
+  BLOB_GET = "miniapp_blob_get",
+  BLOB_LIST = "miniapp_blob_list",
+  BLOB_STAT = "miniapp_blob_stat",
+  BLOB_DELETE = "miniapp_blob_delete",
+  BLOB_CLEAR = "miniapp_blob_clear",
+  BLOB_USAGE = "miniapp_blob_usage",
+  BLOB_OPEN_READ = "miniapp_blob_open_read",
+  BLOB_READ = "miniapp_blob_read",
+  BLOB_CLOSE_READ = "miniapp_blob_close_read",
+  /** Share/export a stored blob from disk (no bytes cross the bridge). */
+  BLOB_EXPORT = "miniapp_blob_export",
+
+  /**
+   * Host-side audio capture straight to a blob. The phone taps the PCM it
+   * already has (no audio bytes cross the bridge) and writes a WAV/PCM file;
+   * only control + progress flow over the bridge. Requires MICROPHONE.
+   */
+  BLOB_RECORD_START = "miniapp_blob_record_start",
+  BLOB_RECORD_STOP = "miniapp_blob_record_stop",
+  BLOB_RECORD_CANCEL = "miniapp_blob_record_cancel",
+
   /** Phone → miniapp liveness probe. Miniapp SDK auto-replies with PONG. */
   PING = "miniapp_ping",
 
@@ -257,6 +288,9 @@ export enum MiniappStreamType {
   // Photos, streaming
   PHOTO_TAKEN = "photo_taken",
   STREAM_STATUS = "stream_status",
+
+  /** Progress for an in-flight `session.recorder` capture (elapsed ms, bytes, level). */
+  BLOB_RECORD_PROGRESS = "blob_record_progress",
 }
 
 // ============================================================================
@@ -301,4 +335,20 @@ export enum MiniappErrorCode {
   ACTION_TIMEOUT = "ACTION_TIMEOUT",
   /** Action params or result exceeded the 256 KB size cap. */
   PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE",
+
+  // ----- Blob storage / recorder -----
+  /** No blob with the given id in this miniapp's namespace. */
+  BLOB_NOT_FOUND = "BLOB_NOT_FOUND",
+  /** Writing this blob would exceed the per-app blob quota. */
+  BLOB_QUOTA_EXCEEDED = "BLOB_QUOTA_EXCEEDED",
+  /** Blob is larger than the requested in-memory read can hold. */
+  BLOB_TOO_LARGE = "BLOB_TOO_LARGE",
+  /** Write/read handle is unknown, already settled, or belongs to another app. */
+  BLOB_HANDLE_INVALID = "BLOB_HANDLE_INVALID",
+  /** Filesystem write failed (out of disk, permissions, etc.). */
+  BLOB_WRITE_FAILED = "BLOB_WRITE_FAILED",
+  /** No active recording with the given recordingId. */
+  RECORDING_NOT_FOUND = "RECORDING_NOT_FOUND",
+  /** A recording is already active for this miniapp (one at a time in v1). */
+  RECORDING_ACTIVE = "RECORDING_ACTIVE",
 }

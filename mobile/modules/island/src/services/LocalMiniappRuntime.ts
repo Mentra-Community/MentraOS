@@ -37,6 +37,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {BlobStore} from "./BlobStore"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
@@ -696,6 +697,12 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
+    // Tear down this app's blob state: abort in-flight uploads, close readers,
+    // and finalize any active recorder capture so a recording isn't lost when
+    // the JSContext dies. Runs before the recomputeMicRequirements() below so
+    // the PCM mic turns off once the recording is finalized.
+    this.blobStore.onAppGone(packageName)
+
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
     // so glasses publishing and managed Cloudflare inputs do not leak.
@@ -934,6 +941,59 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
+      // Persistent binary blob storage + host-side audio recorder
+      case MiniappRequestType.BLOB_CREATE:
+        this.blobStore.handleCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_WRITE:
+        this.blobStore.handleWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_COMMIT:
+        this.blobStore.handleCommit(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_ABORT:
+        this.blobStore.handleAbort(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_GET:
+        this.blobStore.handleGet(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_STAT:
+        this.blobStore.handleGet(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_LIST:
+        this.blobStore.handleList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_USAGE:
+        this.blobStore.handleUsage(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_DELETE:
+        this.blobStore.handleDelete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLEAR:
+        this.blobStore.handleClear(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_OPEN_READ:
+        this.blobStore.handleOpenRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_READ:
+        this.blobStore.handleRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLOSE_READ:
+        this.blobStore.handleCloseRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_EXPORT:
+        void this.blobStore.handleExport(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_RECORD_START:
+        this.blobStore.handleRecordStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_RECORD_STOP:
+        this.blobStore.handleRecordStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_RECORD_CANCEL:
+        this.blobStore.handleRecordCancel(packageName, payload, requestId)
+        break
+
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
@@ -992,7 +1052,11 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private async handleConnect(packageName: string, _payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleConnect(
+    packageName: string,
+    _payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
     // Register if not already
@@ -1059,7 +1123,11 @@ class LocalMiniappRuntime {
     return auth.getToken(packageName, opts)
   }
 
-  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleAuthRefresh(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
       if (!auth) {
@@ -1490,9 +1558,7 @@ class LocalMiniappRuntime {
 
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
-        !voiceExplicit ||
-        voice === "default" ||
-        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+        !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
       const cloud = hooks.cloud
@@ -1716,6 +1782,33 @@ class LocalMiniappRuntime {
     (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
     (packageName, requestId, ok, result, error) => this.sendResult(packageName, requestId, ok, result, error),
   )
+
+  /**
+   * `session.blob` (persistent binary storage) + `session.recorder` (host-side
+   * audio capture → blob). Like NavigationHandlers, the BLOB_* / BLOB_RECORD_*
+   * dispatcher cases delegate here. Audio bytes are fed in via
+   * {@link feedRecorderPcm} from the mic_pcm path — never across the bridge.
+   */
+  private readonly blobStore = new BlobStore({
+    sendToMiniapp: (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
+    sendResult: (packageName, requestId, ok, result, error) =>
+      this.sendResult(packageName, requestId, ok, result, error),
+    getUserId: () => getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
+    hasMicPermission: (packageName) =>
+      this.connectedApps.get(packageName)?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE") ??
+      false,
+    onActiveRecordingsChange: () => this.recomputeMicRequirements(),
+  })
+
+  /**
+   * Feed raw glasses-mic PCM into any active `session.recorder` capture. Called
+   * from MantleManager's `mic_pcm` listener (host-side) so audio bytes are
+   * written straight to disk without crossing the JSContext bridge. Cheap no-op
+   * when nothing is recording.
+   */
+  public feedRecorderPcm(pcm: ArrayBuffer | Uint8Array, sampleRate?: number): void {
+    this.blobStore.feedPcm(pcm, sampleRate)
+  }
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -2223,15 +2316,7 @@ class LocalMiniappRuntime {
 
     try {
       const result = await photo.takePhoto(packageName, {
-        size: payload.size as
-          | "low"
-          | "medium"
-          | "high"
-          | "max"
-          | "small"
-          | "large"
-          | "full"
-          | undefined,
+        size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
@@ -2512,6 +2597,8 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
+    // An active session.recorder capture needs PCM even with no audio_chunk subscriber.
+    if (this.blobStore.hasActiveRecordings()) anyPcm = true
     micStateCoordinator.setLocalRequirements({pcm: anyPcm, lc3: anyLc3})
   }
 

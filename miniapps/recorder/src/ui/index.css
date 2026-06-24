@@ -1,0 +1,105 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+/* Light theme is the DEFAULT. The `.dark` class (toggled from useColorScheme,
+   i.e. what the Mentra host reports) flips to the dark palette. */
+:root {
+  --radius: 0.875rem;
+
+  --bg: #f4f4f5; /* zinc-100 */
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --text: #18181b; /* zinc-900 */
+  --text-muted: #71717a; /* zinc-500 */
+  --border: #e4e4e7; /* zinc-200 */
+
+  /* Brand accent — the orange→red recorder waveform. */
+  --accent: #f4511e;
+  --accent-2: #e53935;
+  --accent-fg: #ffffff;
+  --rec: #ef4444; /* recording red */
+
+  font-family:
+    "Red Hat Display",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}
+
+.dark {
+  --bg: #0b0b0d;
+  --surface: #18181b; /* zinc-900 */
+  --surface-2: #212124;
+  --text: #fafafa;
+  --text-muted: #a1a1aa; /* zinc-400 */
+  --border: #2a2a2e;
+
+  --accent: #ff5a2c;
+  --accent-2: #ff3b30;
+  --accent-fg: #ffffff;
+  --rec: #ff4d4d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  font-family: "Red Hat Display", -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native feel: chrome can't be long-press selected. */
+:root {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.rec-pulse {
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion) {
+  .rec-pulse {
+    animation: none;
+  }
+}

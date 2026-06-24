@@ -1089,6 +1089,11 @@ class MantleManager {
             sampleRate: event.sampleRate,
             format: event.encoding,
           })
+
+          // Host-side recorder tap: write raw PCM straight to any active
+          // session.recorder capture's file (no bridge, no base64). The audio
+          // bytes never enter the JSContext. Cheap no-op when nothing records.
+          localMiniappRuntime.feedRecorderPcm(event.pcm, event.sampleRate)
         }),
       )
 
