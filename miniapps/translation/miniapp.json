@@ -30,5 +30,20 @@
       "description": "Captures speech for translation"
     }
   ],
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "actions": [
+    {
+      "id": "start_translation",
+      "description": "Start live translation on the glasses. It listens to ANY spoken language around the user and translates it into one chosen target language, showing the result on the glasses in real time — so the user understands speech in a language they don't speak. Use when the user wants to translate what they're hearing, understand a foreign-language conversation, or 'translate to <language>'. Pass targetLanguage to set the language they want to read; omit it to keep their saved choice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targetLanguage": {
+            "type": "string",
+            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi'). Omit to keep the user's saved target language."
+          }
+        }
+      }
+    }
+  ]
 }
