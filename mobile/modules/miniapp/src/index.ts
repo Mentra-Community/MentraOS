@@ -64,6 +64,8 @@ export type {
   Layout,
   LayoutType,
   ReferenceCard,
+  SelectableList,
+  SelectableListOptions,
   TextWall,
   ViewType,
 } from "./modules/display"

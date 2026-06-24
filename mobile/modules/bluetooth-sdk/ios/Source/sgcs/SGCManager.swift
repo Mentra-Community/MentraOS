@@ -62,6 +62,11 @@ protocol SGCManager {
         _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
         borderWidth: Int32, borderRadius: Int32
     ) async
+    func sendSelectableList(
+        _ items: [String], x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderColor: Int32, borderRadius: Int32, paddingLength: Int32,
+        itemWidth: Int32, showSelectionBorder: Bool
+    ) async
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
     /// Default implementation sends both via [setDashboardPosition]; Nex overrides to one protobuf.
@@ -155,6 +160,14 @@ extension SGCManager {
         _: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
         borderWidth _: Int32, borderRadius _: Int32
     ) async {}
+
+    func sendSelectableList(
+        _ items: [String], x _: Int32, y _: Int32, width _: Int32, height _: Int32,
+        borderWidth _: Int32, borderColor _: Int32, borderRadius _: Int32, paddingLength _: Int32,
+        itemWidth _: Int32, showSelectionBorder _: Bool
+    ) async {
+        await sendTextWall(items.joined(separator: "\n"))
+    }
 
     // MARK: - Video recording (default: ignore custom settings, use saved defaults)
 

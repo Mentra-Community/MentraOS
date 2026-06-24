@@ -112,6 +112,55 @@ describe("MiniappSession queue-before-ACK", () => {
     session.display.showTextWall("hello post-ack")
     expect(transport.sent.length).toBe(before + 1)
   })
+
+  test("showSelectableList sends native list layout options", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.list",
+      capabilities: null,
+    })
+    await connectPromise
+
+    session.display.showSelectableList(["One", "Two"], {
+      x: 12,
+      y: 24,
+      width: 320,
+      height: 160,
+      borderWidth: 2,
+      borderColor: 11,
+      borderRadius: 8,
+      paddingLength: 6,
+      itemWidth: 300,
+      showSelectionBorder: false,
+      durationMs: 5000,
+    })
+
+    const outbound = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    expect(outbound).not.toBeNull()
+    expect(outbound!.payload).toEqual({
+      type: MiniappRequestType.DISPLAY,
+      view: "main",
+      durationMs: 5000,
+      layout: {
+        layoutType: "selectable_list",
+        items: ["One", "Two"],
+        x: 12,
+        y: 24,
+        width: 320,
+        height: 160,
+        borderWidth: 2,
+        borderColor: 11,
+        borderRadius: 8,
+        paddingLength: 6,
+        itemWidth: 300,
+        showSelectionBorder: false,
+      },
+    })
+  })
 })
 
 describe("MiniappSession auto-PONG", () => {

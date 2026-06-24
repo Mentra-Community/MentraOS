@@ -204,6 +204,37 @@ function normalizeCameraRoiPosition(value: unknown): CameraRoiPosition {
   return "center"
 }
 
+function normalizeTouchEventData(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data
+  const record = data as Record<string, unknown>
+  if (typeof record.kind === "string" && record.kind.length > 0) return data
+
+  const gestureName = typeof record.gestureName === "string" ? record.gestureName : ""
+  const kind = normalizeTouchGestureKind(gestureName)
+  if (!kind) return data
+  return {...record, kind}
+}
+
+function normalizeTouchGestureKind(gestureName: string): string | null {
+  switch (gestureName) {
+    case "click":
+    case "tap":
+    case "single_tap":
+      return "click"
+    case "double_click":
+    case "double_tap":
+      return "double_click"
+    case "scroll_top":
+    case "swipe_up":
+      return "scroll_top"
+    case "scroll_bottom":
+    case "swipe_down":
+      return "scroll_bottom"
+    default:
+      return gestureName || null
+  }
+}
+
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
 
 /**
@@ -2759,6 +2790,8 @@ class LocalMiniappRuntime {
   public forwardEvent(streamType: string, data: unknown): void {
     // Translate cloud event names to miniapp protocol stream types
     const normalizedStream = this.normalizeStreamType(streamType)
+    const eventData =
+      normalizedStream === MiniappStreamType.TOUCH_EVENT ? normalizeTouchEventData(data) : data
 
     // Collect all subscribers: exact match, plus wildcard matches for streams
     // that carry a language tag. A miniapp subscribed to "transcription:auto"
@@ -2809,7 +2842,7 @@ class LocalMiniappRuntime {
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
-      const kind = (data as {kind?: string} | null)?.kind
+      const kind = (eventData as {kind?: string} | null)?.kind
       if (typeof kind === "string" && kind.length > 0) {
         perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${kind}`
       }
@@ -2836,7 +2869,7 @@ class LocalMiniappRuntime {
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
-        data,
+        data: eventData,
       })
     }
 
@@ -2849,7 +2882,7 @@ class LocalMiniappRuntime {
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,
             streamType: perGestureStream,
-            data,
+            data: eventData,
           })
         }
       }
