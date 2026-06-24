@@ -31,7 +31,7 @@ COPY cloud-v2/test/test-client/package.json ./test/test-client/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/
 COPY cloud-v2/websites/console/package.json ./websites/console/
 COPY cloud-v2/websites/portal/package.json ./websites/portal/
-COPY sdk/miniapp-cli/package.json ../sdk/miniapp-cli/
+COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
 # Install (frozen lockfile so reproducible deploys).
 RUN bun install --frozen-lockfile
@@ -39,7 +39,6 @@ RUN bun install --frozen-lockfile
 # Now the source. Comes after install so dependency changes don't invalidate
 # the install layer.
 COPY cloud-v2/ ./
-COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
 # Typecheck as a build-time gate so we don't deploy broken type code.
 RUN bun run typecheck
