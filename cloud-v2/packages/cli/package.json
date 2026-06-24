@@ -6,11 +6,16 @@
   "bin": {
     "mentra": "./src/index.ts"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "scripts": {
     "dev": "bun src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
     "commander": "^14.0.2"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import crypto from "node:crypto";
 import {
   afterAll,
   beforeAll,
@@ -30,10 +31,15 @@ import {
 import { MiniAppAssetModel } from "../packages/core/src/models/miniapp-asset.model";
 import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
 import { MiniAppReleaseModel } from "../packages/core/src/models/miniapp-release.model";
+import { DeveloperSigningKeyModel } from "../packages/core/src/models/developer-signing-key.model";
 import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstalled-registry.model";
 import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
 import type { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
 import type { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
+import type {
+  DeveloperJwk,
+  DeveloperSigningService,
+} from "../packages/core/src/services/miniapps/developer-signing.service";
 
 const developer = {
   developerId: "dev_test_user",
@@ -44,6 +50,7 @@ const developer = {
 
 let miniapps: MiniAppService;
 let registries: PreinstalledRegistryService;
+let signing: DeveloperSigningService;
 
 beforeAll(async () => {
   await connectMongo(
@@ -53,6 +60,7 @@ beforeAll(async () => {
   await Promise.all([
     MiniAppModel.syncIndexes(),
     MiniAppReleaseModel.syncIndexes(),
+    DeveloperSigningKeyModel.syncIndexes(),
     MiniAppAssetModel.syncIndexes(),
     PreinstalledRegistryModel.syncIndexes(),
     PreinstalledRegistryRevisionModel.syncIndexes(),
@@ -63,8 +71,12 @@ beforeAll(async () => {
   const { PreinstalledRegistryService } = await import(
     "../packages/core/src/services/miniapps/preinstalled-registry.service"
   );
+  const { DeveloperSigningService } = await import(
+    "../packages/core/src/services/miniapps/developer-signing.service"
+  );
   miniapps = new MiniAppService();
   registries = new PreinstalledRegistryService();
+  signing = new DeveloperSigningService();
 });
 
 afterAll(async () => {
@@ -75,6 +87,7 @@ beforeEach(async () => {
   await Promise.all([
     MiniAppModel.deleteMany({ orgId: developer.orgId }),
     MiniAppReleaseModel.deleteMany({ orgId: developer.orgId }),
+    DeveloperSigningKeyModel.deleteMany({ orgId: developer.orgId }),
     MiniAppAssetModel.deleteMany({ orgId: developer.orgId }),
     PreinstalledRegistryModel.deleteMany({ createdBy: "admin@mentraglass.com" }),
     PreinstalledRegistryRevisionModel.deleteMany({ createdBy: "admin@mentraglass.com" }),
@@ -133,6 +146,32 @@ describe("miniapp release lifecycle", () => {
       packageName: "com.example.weather",
     }).lean();
     expect(savedApp?.activeReleaseId).toBe(release.id);
+  });
+
+  test("developer signing key authorizes dev attestation only for owned package", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.devtool",
+      displayName: "Dev Tool",
+    });
+
+    const pair = crypto.generateKeyPairSync("ed25519");
+    const privateKeyJwk = pair.privateKey.export({ format: "jwk" }) as DeveloperJwk;
+    const publicKeyJwk = pair.publicKey.export({ format: "jwk" }) as DeveloperJwk;
+    const { id: signingKeyId } = await signing.registerKey(developer, { publicKeyJwk });
+    const payload = {
+      packageName: "com.example.devtool",
+      devServerUrl: "http://127.0.0.1:3000",
+      nonce: crypto.randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      signingKeyId,
+    };
+    const privateKey = crypto.createPrivateKey({ key: privateKeyJwk as crypto.JsonWebKeyInput, format: "jwk" });
+    const signature = crypto.sign(null, Buffer.from(canonicalJson(payload)), privateKey).toString("base64url");
+
+    await expect(signing.verifyDevAttestation("com.example.devtool", { ...payload, signature })).resolves.toBeUndefined();
+    await expect(signing.verifyDevAttestation("com.example.other", { ...payload, signature })).rejects.toThrow(
+      "attestation packageName does not match request",
+    );
   });
 
   test("accepted releases can be promoted into the client preinstall registry", async () => {
@@ -201,4 +240,68 @@ describe("miniapp release lifecycle", () => {
       "https://core.dev.example/api/client/miniapps/bundles/",
     );
   });
+
+  test("preinstall registry rejects multiple releases for the same miniapp", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.duplicate",
+      displayName: "Duplicate",
+    });
+    const first = await miniapps.createRelease(developer, {
+      packageName: "com.example.duplicate",
+      version: "1.0.0",
+      manifest: {
+        packageName: "com.example.duplicate",
+        name: "Duplicate",
+        version: "1.0.0",
+      },
+      bundle: new TextEncoder().encode("first bundle bytes"),
+      fileName: "first.zip",
+    });
+    const second = await miniapps.createRelease(developer, {
+      packageName: "com.example.duplicate",
+      version: "1.0.1",
+      manifest: {
+        packageName: "com.example.duplicate",
+        name: "Duplicate",
+        version: "1.0.1",
+      },
+      bundle: new TextEncoder().encode("second bundle bytes"),
+      fileName: "second.zip",
+    });
+    await miniapps.submitRelease(developer, "com.example.duplicate", first.id);
+    await miniapps.submitRelease(developer, "com.example.duplicate", second.id);
+    await miniapps.approveRelease({
+      releaseId: first.id,
+      adminId: "admin@mentraglass.com",
+    });
+    await miniapps.approveRelease({
+      releaseId: second.id,
+      adminId: "admin@mentraglass.com",
+    });
+
+    const registry = await registries.ensureRegistry(
+      { adminId: "admin@mentraglass.com" },
+      { environment: "dev" },
+    );
+    await expect(registries.createRevision(
+      { adminId: "admin@mentraglass.com" },
+      registry.id,
+      {
+        entries: [
+          { releaseId: first.id },
+          { releaseId: second.id },
+        ],
+      },
+    )).rejects.toThrow("can only include one release per miniapp");
+  });
 });
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}

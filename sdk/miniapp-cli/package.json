@@ -6,7 +6,12 @@
   "bin": {
     "mentra-miniapp": "./src/index.ts"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "exports": {
+    ".": "./src/api.ts",
     "./build-helpers": "./src/build-helpers.ts",
     "./package.json": "./package.json"
   },

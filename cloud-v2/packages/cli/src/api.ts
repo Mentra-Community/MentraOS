@@ -3,6 +3,13 @@ import type { CliCredentials } from "./credentials";
 
 const DEVICE_AUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
+export type CliJwk = Record<string, unknown> & {
+  kty?: string;
+  crv?: string;
+  x?: string;
+  d?: string;
+};
+
 export interface DeviceAuthorizationResponse {
   device_code: string;
   user_code: string;
@@ -57,8 +64,96 @@ export interface DeveloperRelease {
   releaseBundleAssetId: string | null;
   bundleSha256: string | null;
   bundleSizeBytes: number | null;
+  manifestSha256?: string | null;
+  signingKeyId?: string | null;
+  signedAt?: string | null;
   reviewedBy?: string | null;
   reviewNotes?: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface DeveloperOrg {
+  id: string;
+  ownerUserId: string;
+  workosOrgId: string | null;
+  name: string;
+  packagePrefix: string;
+  packagePrefixStatus: "unverified" | "verified" | "rejected";
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface DeveloperSigningKey {
+  id: string;
+  orgId: string;
+  workosUserId: string;
+  publicKeyJwk: CliJwk;
+  status: "active" | "revoked";
+  lastUsedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface SignedBundleMetadata {
+  signingKeyId: string;
+  signature: string;
+  payload: {
+    packageName: string;
+    version: string;
+    bundleSha256: string;
+    manifestSha256: string;
+    createdAt: string;
+  };
+}
+
+export type PreinstallEnvironment = "debug" | "dev" | "staging" | "prod";
+export type PreinstallPolicy = "install_once" | "keep_updated" | "mandatory";
+
+export interface AdminUser {
+  developerId: string;
+  email: string;
+}
+
+export interface AdminRegistry {
+  id: string;
+  name: string;
+  environment: PreinstallEnvironment;
+  tenantId: string | null;
+  status: "draft" | "active" | "archived";
+  activeRevisionId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface AdminReleaseSummary {
+  id: string;
+  miniAppId?: string;
+  packageName: string;
+  displayName: string;
+  version: string;
+  status: DeveloperRelease["status"];
+  bundleSha256: string | null;
+  bundleSizeBytes: number | null;
+  createdAt: string | null;
+}
+
+export interface AdminRegistryRevision {
+  id: string;
+  registryId: string;
+  status: "draft" | "active" | "archived";
+  reason: string | null;
+  entries: Array<{
+    id: string;
+    miniAppId: string;
+    releaseId: string;
+    required: boolean;
+    installPolicy: PreinstallPolicy;
+    minMobileVersion: string | null;
+    maxMobileVersion: string | null;
+    priority: number;
+  }>;
+  promotedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -100,8 +195,108 @@ export async function pollLoginToken(
   return (await response.json()) as LoginTokenResponse;
 }
 
+export async function refreshLoginToken(
+  config: CliConfig,
+  refreshToken: string,
+  organizationId?: string | null,
+): Promise<LoginTokenResponse> {
+  assertWorkosClientId(config);
+  const body: Record<string, string> = {
+    client_id: config.workosClientId,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  };
+  if (organizationId) body.organization_id = organizationId;
+
+  const response = await fetch(`${config.workosApiBaseUrl}/user_management/authenticate`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return (await response.json()) as LoginTokenResponse;
+}
+
 export async function listApps(credentials: CliCredentials): Promise<{ apps: DeveloperApp[] }> {
   return coreRequest(credentials, "/api/console/apps");
+}
+
+export async function getAdminMe(credentials: CliCredentials): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
+  return coreRequest(credentials, "/api/admin/me");
+}
+
+export async function listAdminRegistries(credentials: CliCredentials): Promise<{ registries: AdminRegistry[] }> {
+  return coreRequest(credentials, "/api/admin/preinstalled/registries");
+}
+
+export async function ensureAdminRegistry(
+  credentials: CliCredentials,
+  input: { environment: PreinstallEnvironment; name?: string; tenantId?: string | null },
+): Promise<{ registry: AdminRegistry }> {
+  return coreRequest(credentials, "/api/admin/preinstalled/registries", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listAdminPreinstallReleases(
+  credentials: CliCredentials,
+): Promise<{ releases: AdminReleaseSummary[] }> {
+  return coreRequest(credentials, "/api/admin/preinstalled/releases");
+}
+
+export async function listAdminRegistryRevisions(
+  credentials: CliCredentials,
+  registryId: string,
+): Promise<{ revisions: AdminRegistryRevision[] }> {
+  return coreRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`);
+}
+
+export async function createAdminRegistryRevision(
+  credentials: CliCredentials,
+  registryId: string,
+  input: {
+    reason?: string | null;
+    entries: Array<{
+      releaseId: string;
+      required?: boolean;
+      installPolicy?: PreinstallPolicy;
+      minMobileVersion?: string | null;
+      maxMobileVersion?: string | null;
+      priority?: number;
+    }>;
+  },
+): Promise<{ revision: AdminRegistryRevision }> {
+  return coreRequest(credentials, `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function promoteAdminRegistryRevision(
+  credentials: CliCredentials,
+  registryId: string,
+  revisionId: string,
+): Promise<{ registry: AdminRegistry; revision: AdminRegistryRevision }> {
+  return coreRequest(
+    credentials,
+    `/api/admin/preinstalled/registries/${encodeURIComponent(registryId)}/revisions/${encodeURIComponent(revisionId)}/promote`,
+    { method: "POST" },
+  );
+}
+
+export async function getOrg(credentials: CliCredentials): Promise<{ org: DeveloperOrg | null }> {
+  return coreRequest(credentials, "/api/console/org");
+}
+
+export async function upsertOrg(
+  credentials: CliCredentials,
+  input: { displayName: string; packagePrefix: string },
+): Promise<{ org: DeveloperOrg }> {
+  return coreRequest(credentials, "/api/console/org", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function createApp(
@@ -135,9 +330,24 @@ export async function createRelease(
     manifest: Record<string, unknown>;
     bundleBase64: string;
     fileName?: string;
+    signedBundle: SignedBundleMetadata;
   },
 ): Promise<{ release: DeveloperRelease }> {
   return coreRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listSigningKeys(credentials: CliCredentials): Promise<{ keys: DeveloperSigningKey[] }> {
+  return coreRequest(credentials, "/api/console/signing-keys");
+}
+
+export async function registerSigningKey(
+  credentials: CliCredentials,
+  input: { publicKeyJwk: CliJwk },
+): Promise<{ key: DeveloperSigningKey }> {
+  return coreRequest(credentials, "/api/console/signing-keys", {
     method: "POST",
     body: JSON.stringify(input),
   });

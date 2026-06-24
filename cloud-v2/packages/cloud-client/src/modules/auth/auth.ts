@@ -54,7 +54,10 @@ export interface AuthModule {
   // current Core token, refreshing as needed (Core-backed mode only).
   getCoreToken(opts?: { forceRefresh?: boolean }): Promise<string>;
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
-  getMiniappToken(packageName: string, opts?: { minTtlMs?: number }): Promise<{ token: string; expiresAt: number }>;
+  getMiniappToken(
+    packageName: string,
+    opts?: { minTtlMs?: number; devAttestation?: string },
+  ): Promise<{ token: string; expiresAt: number }>;
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
   readonly identity: { mentraUserId: string; tenantId: string };
@@ -217,7 +220,10 @@ export class Auth implements AuthModule {
    * one request. The access token is the Bearer here and is never exposed to the
    * miniapp; only the returned miniapp-scoped token is.
    */
-  async getMiniappToken(packageName: string, opts?: { minTtlMs?: number }): Promise<{ token: string; expiresAt: number }> {
+  async getMiniappToken(
+    packageName: string,
+    opts?: { minTtlMs?: number; devAttestation?: string },
+  ): Promise<{ token: string; expiresAt: number }> {
     const marginSeconds = this.tokenMarginSeconds(opts?.minTtlMs);
     const cached = this.miniappCache.get(packageName);
     if (cached && !this.isExpiring(cached.expiresAt, marginSeconds)) {
@@ -236,7 +242,10 @@ export class Auth implements AuthModule {
       const http = this.requireCoreHttp();
       const res = await http.post<MiniappTokenEntry>(
         MINIAPP_TOKEN_PATH,
-        { packageName },
+        {
+          packageName,
+          ...(opts?.devAttestation ? { devAttestation: opts.devAttestation } : {}),
+        },
         { bearer: accessToken },
       );
 

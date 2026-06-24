@@ -51,6 +51,7 @@ lands.
 | **[013-console2](./013-console2/)** | Draft | new developer console product boundary, WorkOS direction, screens, Console2 data ownership and CLI authorization |
 | **[014-enterprise-portal](./014-enterprise-portal/)** | Draft | separate enterprise/OEM portal with `EnterpriseOrg`, `EnterpriseMembership`, and standards-aligned `TrustedIssuer` model |
 | **[015-internal-admin](./015-internal-admin/)** | Draft | internal admin site and admin CLI for reviews, incidents, preinstalled registry, admin audit logs |
+| **[016-miniapp-signing-and-dev-attestation](./016-miniapp-signing-and-dev-attestation/)** | In progress | PRD and implementation issue for `@mentra/cli` developer signing keys, signed release metadata, and signed dev attestations for miniapp auto-auth |
 
 ## Open decisions
 

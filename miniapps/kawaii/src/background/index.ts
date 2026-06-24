@@ -1,12 +1,12 @@
 import {registerMiniapp} from "@mentra/miniapp/background"
 
 const FACES = [
-  "(づ｡◕‿‿◕｡)づ",
-  "(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧",
-  "ʕっ•ᴥ•ʔっ",
-  "(´｡• ᵕ •｡`)",
-  "(≧◡≦)",
-  "٩(◕‿◕｡)۶",
+  "づ(^_^)づ",
+  "ᕕ(^_^)ᕗ",
+  "ᕙ(^_^)ᕗ",
+  "٩(^‿^)۶",
+  "\\(^o^)/",
+  "b(^_^)d",
 ]
 
 registerMiniapp((session) => {
@@ -21,8 +21,15 @@ registerMiniapp((session) => {
 
   const showFace = (face: string) => {
     index = Math.max(0, FACES.indexOf(face))
+    console.log(`[kawaii] showing face ${index + 1}/${FACES.length}: ${FACES[index]}`)
     session.display.showTextWall(face)
     ui.send("kawaii:face", {face})
+  }
+
+  const advanceFace = (source: string) => {
+    index = (index + 1) % FACES.length
+    console.log(`[kawaii] ${source} advanced to face ${index + 1}/${FACES.length}`)
+    showFace(FACES[index])
   }
 
   showFace(FACES[index])
@@ -36,7 +43,10 @@ registerMiniapp((session) => {
   })
 
   session.input.onButtonPress(() => {
-    index = (index + 1) % FACES.length
-    showFace(FACES[index])
+    advanceFace("button press")
+  })
+
+  session.input.onTouch((data) => {
+    advanceFace(`touch ${data.kind}`)
   })
 })

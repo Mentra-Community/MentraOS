@@ -82,13 +82,32 @@
         min-height: 132px;
         display: grid;
         place-items: center;
+        overflow: hidden;
         border-radius: 24px;
         background: linear-gradient(135deg, rgba(255, 109, 168, 0.15), rgba(57, 217, 138, 0.16));
         color: #111612;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-        font-size: clamp(42px, 13vw, 72px);
+        font-size: clamp(36px, 11vw, 58px);
         font-weight: 900;
         letter-spacing: 0;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .face.bump {
+        animation: bump 180ms ease-out;
+      }
+
+      @keyframes bump {
+        0% {
+          transform: scale(0.96) rotate(-1deg);
+        }
+        60% {
+          transform: scale(1.04) rotate(1deg);
+        }
+        100% {
+          transform: scale(1) rotate(0);
+        }
       }
 
       button {
@@ -121,26 +140,30 @@
       <section class="card" aria-label="Kawaii miniapp">
         <span class="badge">Preinstall canary</span>
         <h1>Kawaii</h1>
-        <p>Tap the button and the face changes. Tiny, cute, and perfect for update testing.</p>
-        <div class="face" id="face">(づ｡◕‿‿◕｡)づ</div>
+        <p>Tap the button and the hands change. Tiny, cute, and perfect for update testing.</p>
+        <div class="face" id="face">づ(^_^)づ</div>
         <button id="next" type="button">New face</button>
         <div class="version">com.mentra.kawaii · v__KAWAII_VERSION__</div>
       </section>
     </main>
     <script>
       const faces = [
-        "(づ｡◕‿‿◕｡)づ",
-        "(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧",
-        "ʕっ•ᴥ•ʔっ",
-        "(´｡• ᵕ •｡`)",
-        "(≧◡≦)",
-        "٩(◕‿◕｡)۶",
+        "づ(^_^)づ",
+        "ᕕ(^_^)ᕗ",
+        "ᕙ(^_^)ᕗ",
+        "٩(^‿^)۶",
+        "\\(^o^)/",
+        "b(^_^)d",
       ]
       let index = 0
       const showFace = (face) => {
         const nextIndex = faces.indexOf(face)
         if (nextIndex >= 0) index = nextIndex
-        document.getElementById("face").textContent = face
+        const faceEl = document.getElementById("face")
+        faceEl.textContent = face
+        faceEl.classList.remove("bump")
+        void faceEl.offsetWidth
+        faceEl.classList.add("bump")
       }
       document.getElementById("next").addEventListener("click", () => {
         index = (index + 1) % faces.length

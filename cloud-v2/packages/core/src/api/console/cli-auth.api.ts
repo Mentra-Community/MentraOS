@@ -13,6 +13,13 @@ import {
   MiniAppServiceError,
   type DeveloperIdentity,
 } from "../../services/miniapps/miniapp.service";
+import {
+  DeveloperSigningService,
+  DeveloperSigningServiceError,
+  canonicalJson,
+  type DeveloperJwk,
+} from "../../services/miniapps/developer-signing.service";
+import { sha256Hex } from "../../services/storage/storage.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest, OauthServerError } from "../../types/oauth.types";
 
@@ -22,6 +29,7 @@ const STATE_COOKIE = "mentra_console_state";
 const RETURN_TO_COOKIE = "mentra_console_return_to";
 const developerOrgs = new DeveloperOrgService();
 const miniapps = new MiniAppService();
+const signing = new DeveloperSigningService();
 
 const upsertDeveloperOrgSchema = z.object({
   displayName: z.string().min(1),
@@ -44,6 +52,21 @@ const createReleaseSchema = z.object({
   manifest: z.record(z.string(), z.unknown()),
   bundleBase64: z.string().min(1),
   fileName: z.string().min(1).optional(),
+  signedBundle: z.object({
+    signingKeyId: z.string().min(1),
+    signature: z.string().min(1),
+    payload: z.object({
+      packageName: z.string().min(1),
+      version: z.string().min(1),
+      bundleSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      createdAt: z.string().min(1),
+    }),
+  }),
+});
+
+const registerSigningKeySchema = z.object({
+  publicKeyJwk: z.record(z.string(), z.unknown()),
 });
 
 const createApiTokenSchema = z.object({
@@ -67,6 +90,8 @@ app.delete("/apps/:packageName", deleteApp);
 app.get("/apps/:packageName/releases", getReleases);
 app.post("/apps/:packageName/releases", postRelease);
 app.post("/apps/:packageName/releases/:releaseId/submit", postSubmitRelease);
+app.get("/signing-keys", getSigningKeys);
+app.post("/signing-keys", postSigningKey);
 app.get("/tokens", getTokens);
 app.post("/tokens", postToken);
 app.delete("/tokens/:tokenId", deleteToken);
@@ -423,14 +448,70 @@ async function postRelease(c: AppContext) {
 
   try {
     const bundle = Uint8Array.from(Buffer.from(parsed.data.bundleBase64, "base64"));
+    assertSignedReleaseMatchesUpload(parsed.data.signedBundle.payload, {
+      packageName: parsed.data.packageName,
+      version: parsed.data.version,
+      manifest: parsed.data.manifest,
+      bundle,
+    });
+    await signing.verifyBundleSignature(developer.value, parsed.data.signedBundle);
     const release = await miniapps.createRelease(developer.value, {
       packageName: parsed.data.packageName,
       version: parsed.data.version,
       manifest: parsed.data.manifest,
       bundle,
       fileName: parsed.data.fileName,
+      signedBundle: parsed.data.signedBundle,
     });
     return c.json({ release }, 201);
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+function assertSignedReleaseMatchesUpload(
+  payload: { packageName: string; version: string; bundleSha256: string; manifestSha256: string },
+  input: { packageName: string; version: string; manifest: Record<string, unknown>; bundle: Uint8Array },
+): void {
+  if (payload.packageName !== input.packageName) {
+    throw new InvalidRequest("signed packageName does not match release packageName");
+  }
+  if (payload.version !== input.version) {
+    throw new InvalidRequest("signed version does not match release version");
+  }
+  const actualBundleSha = sha256Hex(input.bundle);
+  if (payload.bundleSha256 !== actualBundleSha) {
+    throw new InvalidRequest("signed bundleSha256 does not match uploaded bundle");
+  }
+  const actualManifestSha = sha256Hex(Buffer.from(canonicalJson(input.manifest)));
+  if (payload.manifestSha256 !== actualManifestSha) {
+    throw new InvalidRequest("signed manifestSha256 does not match uploaded manifest");
+  }
+}
+
+async function getSigningKeys(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+
+  try {
+    return c.json({ keys: await signing.listKeys(developer.value) });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function postSigningKey(c: AppContext) {
+  const developer = await requireDeveloper(c);
+  if (!developer.ok) return developer.response;
+
+  const parsed = registerSigningKeySchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid signing key payload");
+
+  try {
+    const key = await signing.registerKey(developer.value, {
+      publicKeyJwk: parsed.data.publicKeyJwk as DeveloperJwk,
+    });
+    return c.json({ key }, 201);
   } catch (error) {
     return serviceError(error);
   }
@@ -950,6 +1031,15 @@ function serviceError(error: unknown): Response {
     );
   }
   if (error instanceof DeveloperOrgServiceError) {
+    return new Response(
+      JSON.stringify({ error: error.code, error_description: error.message }),
+      {
+        status: error.status,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+  if (error instanceof DeveloperSigningServiceError) {
     return new Response(
       JSON.stringify({ error: error.code, error_description: error.message }),
       {

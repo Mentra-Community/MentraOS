@@ -27,6 +27,7 @@
  */
 
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   InvalidRequest,
   UnsupportedGrantType,
@@ -38,6 +39,11 @@ import {
   issueMiniappToken,
   issueRuntimeToken,
 } from "../../services/session.service";
+import {
+  DeveloperSigningService,
+  DeveloperSigningServiceError,
+  type DevMiniappAttestation,
+} from "../../services/miniapps/developer-signing.service";
 import { userAuth } from "../middleware/user-auth.middleware";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 
@@ -45,6 +51,7 @@ const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
 
 const app = new Hono<AppEnv>();
+const developerSigning = new DeveloperSigningService();
 
 // === Routes ===
 
@@ -116,6 +123,22 @@ async function postMiniappToken(c: AppContext) {
     throw new InvalidRequest("packageName is required");
   }
 
+  const devAttestation =
+    typeof body.devAttestation === "string" ? parseDevAttestation(body.devAttestation) : null;
+  if (devAttestation) {
+    try {
+      await developerSigning.verifyDevAttestation(packageName, devAttestation);
+    } catch (error) {
+      if (error instanceof DeveloperSigningServiceError) {
+        return c.json(
+          { error: error.code, error_description: error.message },
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  }
+
   const { token, expiresAt } = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
@@ -167,6 +190,25 @@ async function readJsonBody(c: AppContext): Promise<Record<string, unknown>> {
     // fall through to the InvalidRequest below
   }
   throw new InvalidRequest("request body must be a JSON object");
+}
+
+function parseDevAttestation(value: string): DevMiniappAttestation {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (
+      typeof parsed.packageName === "string" &&
+      typeof parsed.devServerUrl === "string" &&
+      typeof parsed.nonce === "string" &&
+      typeof parsed.expiresAt === "string" &&
+      typeof parsed.signingKeyId === "string" &&
+      typeof parsed.signature === "string"
+    ) {
+      return parsed as unknown as DevMiniappAttestation;
+    }
+  } catch {
+    // fall through to InvalidRequest below
+  }
+  throw new InvalidRequest("devAttestation must be a signed mentra dev attestation");
 }
 
 export default app;

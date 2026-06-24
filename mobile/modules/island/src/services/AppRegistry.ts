@@ -918,6 +918,12 @@ export interface DevAppRecord {
    * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
    */
   sourcePackageName?: string
+  /**
+   * Short-lived Core-verifiable proof emitted by `mentra dev`. This lets the
+   * single `com.dev` slot request auto-auth for the real package without
+   * letting arbitrary dev URLs claim any package name.
+   */
+  devAttestation?: string
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
@@ -1056,6 +1062,17 @@ export function getDevAppSourcePackage(): string | null {
   try {
     const rec = JSON.parse(res.value) as DevAppRecord
     return rec.sourcePackageName ?? null
+  } catch {
+    return null
+  }
+}
+
+export function getDevAppAttestation(): string | null {
+  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    const rec = JSON.parse(res.value) as DevAppRecord
+    return rec.devAttestation ?? null
   } catch {
     return null
   }

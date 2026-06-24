@@ -343,7 +343,10 @@ export const cloudClient = {
     return c.core.miniapps.getRegistry()
   },
 
-  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(
+    packageName: string,
+    opts?: {minTtlMs?: number; devAttestation?: string},
+  ): Promise<MiniappAuthToken> {
     if (!client) {
       this.init()
     }

@@ -113,6 +113,7 @@ export class PreinstalledRegistryService {
     const entries = await Promise.all(
       input.entries.map((entry, index) => this.resolveEntry(entry, index)),
     );
+    assertOneReleasePerMiniApp(entries);
 
     const revision = await PreinstalledRegistryRevisionModel.create({
       registryId: registry._id.toString(),
@@ -246,6 +247,21 @@ export class PreinstalledRegistryService {
       maxMobileVersion: input.maxMobileVersion ?? null,
       priority: input.priority ?? index,
     };
+  }
+}
+
+function assertOneReleasePerMiniApp(entries: Array<{ miniAppId: string; releaseId: string }>): void {
+  const seen = new Map<string, string>();
+  for (const entry of entries) {
+    const previousReleaseId = seen.get(entry.miniAppId);
+    if (previousReleaseId) {
+      throw new PreinstalledRegistryServiceError(
+        "duplicate_miniapp_release",
+        `preinstall registry can only include one release per miniapp; ${entry.miniAppId} includes ${previousReleaseId} and ${entry.releaseId}`,
+        400,
+      );
+    }
+    seen.set(entry.miniAppId, entry.releaseId);
   }
 }
 

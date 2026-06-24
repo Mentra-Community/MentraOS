@@ -3,6 +3,7 @@ import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
 import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { createStorageService, sha256Hex } from "../storage/storage.service";
+import type { SignedBundleMetadata } from "./developer-signing.service";
 
 export interface DeveloperIdentity {
   developerId: string;
@@ -23,6 +24,7 @@ export interface CreateReleaseInput {
   manifest: Record<string, unknown>;
   bundle: Uint8Array;
   fileName?: string;
+  signedBundle?: SignedBundleMetadata;
 }
 
 export interface AdminReleaseDecisionInput {
@@ -224,6 +226,11 @@ export class MiniAppService {
       version: input.version,
       status: "draft",
       manifest: input.manifest,
+      manifestSha256: input.signedBundle?.payload.manifestSha256 ?? null,
+      signedBundlePayload: input.signedBundle?.payload ?? null,
+      signingKeyId: input.signedBundle?.signingKeyId ?? null,
+      bundleSignature: input.signedBundle?.signature ?? null,
+      signedAt: input.signedBundle?.payload.createdAt ? new Date(input.signedBundle.payload.createdAt) : null,
       createdBy: developer.developerId,
     });
 
@@ -349,6 +356,9 @@ function serializeRelease(release: {
   releaseBundleAssetId?: string | null;
   bundleSha256?: string | null;
   bundleSizeBytes?: number | null;
+  manifestSha256?: string | null;
+  signingKeyId?: string | null;
+  signedAt?: Date | null;
   reviewedBy?: string | null;
   reviewNotes?: string | null;
   createdAt?: Date;
@@ -361,6 +371,9 @@ function serializeRelease(release: {
     releaseBundleAssetId: release.releaseBundleAssetId ?? null,
     bundleSha256: release.bundleSha256 ?? null,
     bundleSizeBytes: release.bundleSizeBytes ?? null,
+    manifestSha256: release.manifestSha256 ?? null,
+    signingKeyId: release.signingKeyId ?? null,
+    signedAt: release.signedAt?.toISOString() ?? null,
     reviewedBy: release.reviewedBy ?? null,
     reviewNotes: release.reviewNotes ?? null,
     createdAt: release.createdAt?.toISOString() ?? null,

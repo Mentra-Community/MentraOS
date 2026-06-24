@@ -34,6 +34,7 @@ import {
   micStateCoordinator,
   offlineSpeechModelService,
   DEV_APP_PACKAGE_NAME,
+  getDevAppAttestation,
   getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
@@ -191,11 +192,19 @@ class MantleManager {
       cloud,
       miniappAuth: {
         getToken: (packageName, opts) => {
-          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+          const isDevApp = packageName === DEV_APP_PACKAGE_NAME
+          const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
           if (!authPackageName) {
             throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
           }
-          return cloudClient.getMiniappAuthToken(authPackageName, opts)
+          const devAttestation = isDevApp ? getDevAppAttestation() : undefined
+          if (isDevApp && !devAttestation) {
+            throw new Error("Dev miniapp auth token unavailable without a signed `mentra dev` attestation")
+          }
+          return cloudClient.getMiniappAuthToken(authPackageName, {
+            ...opts,
+            ...(devAttestation ? {devAttestation} : {}),
+          })
         },
       },
       audioPlayback: {

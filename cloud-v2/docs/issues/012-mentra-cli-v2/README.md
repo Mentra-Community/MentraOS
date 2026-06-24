@@ -37,6 +37,12 @@ public developer entrypoint should become `@mentra/cli` with the `mentra` binary
   reusable build, pack, manifest, schema, dev-server helpers
 ```
 
+`@mentra/miniapp-cli` stays usable as a standalone CLI, but standalone usage is
+unsigned. Signed release metadata and signed dev attestations are provided only
+by `@mentra/cli`, which calls the miniapp package through its programmatic API
+instead of shelling out or passing private signing keys through environment
+variables.
+
 The public docs should prefer Bun scripts:
 
 ```json
@@ -52,6 +58,10 @@ The public docs should prefer Bun scripts:
   }
 }
 ```
+
+Publish safety: packages that are still in beta/preview must set
+`publishConfig.tag = "alpha"` so `npm publish` and compatible publish tooling do
+not accidentally move the public `latest` dist-tag.
 
 ## Commands
 
@@ -82,6 +92,8 @@ mentra miniapp publish ./path/to/miniapp
 - Starts the local miniapp dev server.
 - Prints QR/deep link for the phone.
 - Signs a short-lived dev attestation if the developer is logged in.
+- Calls the `@mentra/miniapp-cli` dev API with a signing callback; the SDK tool
+  selects the final reachable dev URL and `@mentra/cli` signs it.
 - Keeps working without login for purely local unauthenticated miniapps, but
   `session.auth.getToken()` remains unavailable.
 
@@ -113,6 +125,24 @@ iteration should use presigned upload URLs for larger bundles:
 ```txt
 POST upload-intent -> PUT bundle.zip -> POST finalize
 ```
+
+### Local E2E Against Dev-Like Auth
+
+The safest way to test CLI auth and signing changes before deploying to shared
+dev is:
+
+1. Run Core/Runtime locally from the branch under test.
+2. Use Doppler dev WorkOS settings so local Core verifies the same WorkOS-issued
+   CLI tokens as the hosted dev environment.
+3. Keep Mongo/R2 isolated unless explicitly doing a shared-dev data migration
+   test.
+
+That gives local code the same auth shape as dev without mutating the shared dev
+database or interrupting teammates. Pointing local Core at shared dev Mongo can
+be useful for one-off reproduction, but it should be treated as a risky
+break-glass technique because local code can mutate shared records.
+
+Do not use `cloud-debug` for this flow when another developer is relying on it.
 
 ### `mentra miniapps`
 
@@ -217,6 +247,10 @@ Mobile/Core must not mint a miniapp backend token for a claimed package unless a
 dev attestation is valid and the signing key belongs to an org allowed to develop
 that package.
 
+If the attestation expires while the miniapp is still running, the next token
+mint or refresh fails. The developer should rescan a fresh `mentra dev` QR. The
+system must not silently mint a token from the unsigned `com.dev` package claim.
+
 ## User Stories
 
 1. A new developer runs `bunx @mentra/cli login` and authorizes in the browser.
@@ -242,7 +276,4 @@ that package.
 
 ## Open Decisions
 
-- Whether `@mentra/miniapp-cli` remains a public binary or becomes a compatibility
-  wrapper around `@mentra/cli`.
-- Key algorithm for developer signing keys.
 - Presigned upload route shape and retry/resume semantics.
