@@ -3,8 +3,6 @@ import type { User } from "../session/User";
 import type { StoredPhoto } from "./PhotoManager";
 import { detectWakeWord, removeWakeWord, stripWakeWordResidue } from "../utils/wake-word";
 import { broadcastChatEvent } from "../api/chat";
-import { agentBridge } from "./AgentBridge";
-import { isDelegationEnabled } from "../constants/config";
 
 /**
  * URL the glasses fetch for the short "I heard you" cue that plays the
@@ -160,12 +158,6 @@ export class TranscriptionManager {
       // Wake word detected! Start listening
       console.log(`⏱️ [WAKE] Wake word detected: "${text}" (isFinal=${isFinal ?? false})`);
       broadcastChatEvent(this.user.userId, { type: "wake_word" });
-      // Predictive wake: warm the user's giga-agent container now, while STT
-      // and the fast model decide whether to delegate. Fire-and-forget — the
-      // container cold-start (~25–30s) overlaps the rest of the turn.
-      if (isDelegationEnabled()) {
-        void agentBridge.wake(this.user.userId);
-      }
       this.startListening(speakerId);
     }
 

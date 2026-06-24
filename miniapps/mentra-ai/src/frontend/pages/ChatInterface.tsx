@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { useMentraAuth } from '@mentra/react';
-import { X, ArrowUp, Loader2, Mic } from 'lucide-react';
+import { X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { createAuthFetch, withAuthSseUrl } from '../lib/authFetch';
+import { withAuthSseUrl } from '../lib/authFetch';
 // @ts-ignore - Bun bundler doesn't resolve `export { X as default }` re-exports correctly
 import LottieImport from 'lottie-react';
 const Lottie: typeof LottieImport = (LottieImport as any)?.default ?? LottieImport;
@@ -14,15 +14,9 @@ import { MiraBackgroundAnimation } from '../components/MiraBackgroundAnimation';
 import ColorMiraLogo from '../../public/figma-parth-assets/icons/color-mira-logo.svg';
 import Settings from './Settings';
 import Header from '../components/Header';
+import BottomHeader from '../components/BottomHeader';
 import { ChromaticBorder } from '../components/ChromaticBorder';
 import { fetchUserSettings } from '../api/settings.api';
-
-/** A tappable action attached to a message (e.g. an OAuth "Connect" link). */
-interface MessageAction {
-  type: 'open_url';
-  kind: 'oauth_connect' | 'link';
-  url: string;
-}
 
 interface Message {
   id: string;
@@ -31,29 +25,6 @@ interface Message {
   content: string;
   timestamp: Date;
   image?: string;
-  actions?: MessageAction[];
-}
-
-/** Friendly label for an action button, derived from its kind/host. */
-function actionLabel(action: MessageAction): string {
-  if (action.kind === 'oauth_connect') {
-    try {
-      // connect.composio.dev/.../gmail?... → "Connect Gmail"
-      const m = action.url.toLowerCase().match(/(gmail|googlecalendar|calendar|google|slack|github|notion|linear)/);
-      if (m) {
-        const svc = m[1] === 'googlecalendar' ? 'Google Calendar' : m[1].charAt(0).toUpperCase() + m[1].slice(1);
-        return `Connect ${svc}`;
-      }
-    } catch {
-      /* fall through */
-    }
-    return 'Connect account';
-  }
-  try {
-    return new URL(action.url).host.replace(/^www\./, '');
-  } catch {
-    return 'Open link';
-  }
 }
 
 interface ChatInterfaceProps {
@@ -163,24 +134,6 @@ const ChatBubble = memo(function ChatBubble({
             </Markdown>
           )}
         </div>
-        {/* Action buttons (e.g. an OAuth "Connect Gmail" link from the agent).
-            Opened in the system browser via target=_blank — the host webview
-            routes external navigations out. */}
-        {!isOwnMessage && message.actions && message.actions.length > 0 && (
-          <div className="flex flex-col gap-2 mt-2 w-full">
-            {message.actions.map((action, i) => (
-              <a
-                key={`${message.id}-action-${i}`}
-                href={action.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[14px] font-semibold bg-[var(--primary)] text-[var(--primary-foreground)] no-underline active:opacity-80 transition-opacity"
-              >
-                {actionLabel(action)}
-              </a>
-            ))}
-          </div>
-        )}
         <div
           className={`text-[12px] ml-[15px] mt-1.5 ${isOwnMessage ? 'text-right' : 'text-left'} w-full text-gray-400`}
         >
@@ -232,9 +185,6 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
     };
   }, []);
   const [currentPage, setCurrentPage] = useState<'chat' | 'settings'>('chat');
-  // Webview chat box — type a message to test the assistant without speaking.
-  const [inputText, setInputText] = useState('');
-  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
@@ -248,31 +198,6 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
     requestAnimationFrame(() => {
       container.scrollTo({ top: container.scrollHeight, behavior: instant ? 'instant' : 'smooth' });
     });
-  };
-
-  // Send a typed message to the assistant. The user + assistant bubbles render
-  // via the SSE stream (the backend broadcasts both), so we don't insert
-  // optimistically here — we just fire the request and let the stream update.
-  const handleSendMessage = async () => {
-    const text = inputText.trim();
-    if (!text || isSending) return;
-    setInputText('');
-    setIsSending(true);
-    try {
-      const authFetch = createAuthFetch(frontendToken);
-      const res = await authFetch('/api/chat/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) {
-        console.error('chat send failed:', res.status, await res.text().catch(() => ''));
-      }
-    } catch (err) {
-      console.error('chat send error:', err);
-    } finally {
-      setIsSending(false);
-    }
   };
 
   useEffect(() => {
@@ -369,7 +294,6 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                   content: data.content,
                   timestamp: new Date(data.timestamp),
                   image: data.image,
-                  actions: Array.isArray(data.actions) ? data.actions : undefined,
                 },
               ]);
             }
@@ -463,7 +387,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
       <Settings
         onBack={() => setCurrentPage('chat')}
         isDarkMode={isDarkMode}
-        onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
+        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
         onChatHistoryToggle={(enabled) => setChatHistoryEnabled(enabled)}
         onEnableDebugMode={onEnableDebugMode}
       />
@@ -507,7 +431,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
         {/* Header */}
         <Header
           isDarkMode={isDarkMode}
-          onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
+          onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
           onSettingsClick={() => setCurrentPage('settings')}
         />
 
@@ -625,7 +549,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                     }}
                     className="text-[14px] text-[#A3A3A3] mt-[8px]"
                   >
-                    Then ask a question — or type below.
+                    Then ask a question.
                   </motion.div>
                 </div>
               </motion.div>
@@ -684,56 +608,14 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                   </motion.div>
                 )}
 
-                {/* Spacer so the last message clears the fixed input bar. */}
-                <div className="h-28 shrink-0" />
                 <div ref={messagesEndRef} />
               </div>
             </motion.div>
           )}
         </div>
 
-        {/* Bottom input area — hint chip (when a conversation exists) + the chat
-            input bar. Pinned to the bottom; works with or without glasses. This
-            replaces the old fixed bottom logo banner (which overlapped here). */}
-        <div className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center gap-2.5 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
-          {messages.length > 0 && (
-            <div className="flex items-center gap-1.5 rounded-full border border-black/5 bg-white/80 px-3.5 py-1.5 text-[12px] font-medium text-gray-500 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/10 dark:text-gray-300">
-              <Mic className="h-3.5 w-3.5" />
-              Say “Hey Mentra” or type below
-            </div>
-          )}
-
-          <div className="pointer-events-auto flex w-full max-w-[460px] items-center gap-2.5">
-            <div className="flex flex-1 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-3 shadow-[0_2px_16px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#1c1c1e]">
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-                placeholder="Ask Mentra…"
-                enterKeyHint="send"
-                aria-label="Message Mentra"
-                className="flex-1 bg-transparent text-[16px] text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
-              />
-              {/* Decorative mic — voice input happens through the glasses ("Hey Mentra"). */}
-              <Mic className="h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
-            </div>
-            <button
-              type="button"
-              onClick={handleSendMessage}
-              disabled={!inputText.trim() || isSending}
-              aria-label="Send message"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-black text-white shadow-md transition-transform active:scale-95 disabled:opacity-40 dark:bg-white dark:text-black"
-            >
-              {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowUp className="h-5 w-5" strokeWidth={2.5} />}
-            </button>
-          </div>
-        </div>
+        {/* Bottom Header */}
+        <BottomHeader isDarkMode={isDarkMode} isVisible={messages.length > 0} />
       </motion.div>
 
       {/* Image Zoom Modal */}

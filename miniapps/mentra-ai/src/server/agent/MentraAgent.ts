@@ -6,7 +6,6 @@
 
 import { Agent } from "@mastra/core/agent";
 import { searchTool, calculatorTool, thinkingTool } from "./tools";
-import { createAskAgentTool, type DelegateFn } from "./tools/askAgent.tool";
 import { buildSystemPrompt, classifyResponseMode, type AgentContext } from "./prompt";
 import { ResponseMode, AGENT_SETTINGS } from "../constants/config";
 import type { LocationContext } from "../manager/LocationManager";
@@ -38,17 +37,8 @@ export interface GenerateOptions {
     timezone?: string;
     notifications: string;
     conversationHistory: ConversationTurn[];
-    /** "glasses" (default) or "chat" (webview text box — relaxed length). */
-    channel?: 'glasses' | 'chat';
   };
   onToolCall?: (toolName: string) => void;
-  /**
-   * Optional escalation path to the user's giga-agent. When provided, the
-   * agent gains the `ask_agent` tool and the prompt's delegation rules.
-   */
-  delegate?: DelegateFn;
-  /** Override the Mastra model string (from the user's Settings → Model). */
-  model?: string;
 }
 
 /**
@@ -60,28 +50,19 @@ export interface GenerateResult {
 }
 
 /**
- * Create a Mentra agent with the given context.
- *
- * When a `delegate` is supplied, the agent also gets the `ask_agent` tool so
- * it can escalate multi-step / personal-account work to the user's giga-agent.
+ * Create a Mentra agent with the given context
  */
-export function createMentraAgent(context: AgentContext, delegate?: DelegateFn, model?: string): Agent {
-  const tools: Record<string, ReturnType<typeof createAskAgentTool>> | Record<string, unknown> = {
-    search: searchTool,
-    calculator: calculatorTool,
-    thinking: thinkingTool,
-  };
-
-  if (delegate) {
-    (tools as Record<string, unknown>).ask_agent = createAskAgentTool(delegate);
-  }
-
+export function createMentraAgent(context: AgentContext): Agent {
   return new Agent({
     id: "mentra-ai",
     name: "Mentra AI",
-    model: model || AGENT_SETTINGS.model,
+    model: AGENT_SETTINGS.model,
     instructions: buildSystemPrompt(context),
-    tools: tools as any,
+    tools: {
+      search: searchTool,
+      calculator: calculatorTool,
+      thinking: thinkingTool,
+    },
   });
 }
 
@@ -108,12 +89,10 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
     timezone: context.timezone,
     notifications: context.notifications,
     conversationHistory: context.conversationHistory,
-    agentEnabled: Boolean(options.delegate),
-    channel: context.channel ?? 'glasses',
   };
 
-  // Create agent with context (delegation tool added when a delegate is given)
-  const agent = createMentraAgent(agentContext, options.delegate, options.model);
+  // Create agent with context
+  const agent = createMentraAgent(agentContext);
 
   // Build content array
   const content: ContentPart[] = [

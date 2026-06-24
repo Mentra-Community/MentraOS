@@ -16,9 +16,8 @@
 
 import { Hono } from "hono";
 
-import { agentWebhook } from "../api/agentWebhook";
 import { speak, stopAudio } from "../api/audio";
-import { chatSend, chatStream } from "../api/chat";
+import { chatStream } from "../api/chat";
 import { killSession, playPoppingSound, playStartSound } from "../api/debug";
 import { getHealth } from "../api/health";
 import { getLatestPhoto, getPhotoData, getPhotoBase64 } from "../api/photo";
@@ -47,10 +46,6 @@ const sseHeaders = async (c: any, next: any) => {
 const publicApi = new Hono();
 publicApi.get("/health", getHealth);
 
-// Giga-agent delegation callback (server-to-server). Public by design — it
-// carries no SDK user token; the handler verifies the shared x-api-key instead.
-publicApi.post("/agent/webhook", agentWebhook);
-
 // ── Auth-only ──────────────────────────────────────────────────────
 //
 // Authenticated, but does not require glasses to be connected.
@@ -61,12 +56,6 @@ protectedApi.use("*", requireAuth);
 
 protectedApi.get("/settings", getSettings);
 protectedApi.patch("/settings", updateSettings);
-
-// Chat works without glasses (webview text box for testing + reading history),
-// so the stream and send live here, not behind requireSession.
-protectedApi.use("/chat/stream", sseHeaders);
-protectedApi.get("/chat/stream", chatStream);
-protectedApi.post("/chat/send", chatSend);
 
 // ── Session-required ───────────────────────────────────────────────
 //
@@ -82,9 +71,11 @@ sessionApi.use("*", requireSession);
 
 sessionApi.use("/photo-stream", sseHeaders);
 sessionApi.use("/transcription-stream", sseHeaders);
+sessionApi.use("/chat/stream", sseHeaders);
 
 sessionApi.get("/photo-stream", photoStream);
 sessionApi.get("/transcription-stream", transcriptionStream);
+sessionApi.get("/chat/stream", chatStream);
 
 sessionApi.post("/speak", speak);
 sessionApi.post("/stop-audio", stopAudio);

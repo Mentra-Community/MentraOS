@@ -30,14 +30,6 @@ export interface AgentContext {
   timezone?: string;
   notifications: string;
   conversationHistory: ConversationTurn[];
-
-  // Whether the ask_agent (giga-agent) delegation tool is available this turn
-  agentEnabled?: boolean;
-
-  // Where the query came from. "glasses" (default) = voice, tight length limits,
-  // HUD/speaker formatting. "chat" = the webview text box: no device, relaxed
-  // length, markdown OK. Used for testing and longer-form answers.
-  channel?: 'glasses' | 'chat';
 }
 
 /**
@@ -50,45 +42,31 @@ const LLM_PROVIDER = process.env.LLM_PROVIDER || "Google";
  * Build the complete system prompt
  */
 export function buildSystemPrompt(context: AgentContext): string {
-  const isChat = context.channel === 'chat';
-
-  const sections = [buildIdentitySection()];
-
-  // Device capabilities + vision are glasses concerns; the chat box has none.
-  if (!isChat) {
-    sections.push(buildDeviceCapabilitiesSection(context));
-  }
-
-  sections.push(buildResponseFormatSection(context));
-  sections.push(buildToolUsageSection());
-
-  // Delegation rules — only when the giga-agent escalation tool is available
-  if (context.agentEnabled) {
-    sections.push(buildDelegationSection());
-  }
+  const sections = [
+    buildIdentitySection(),
+    buildDeviceCapabilitiesSection(context),
+    buildResponseFormatSection(context),
+    buildToolUsageSection(),
+  ];
 
   // Vision section — depends on camera AND whether photo was actually captured
-  if (!isChat && context.hasCamera && context.hasPhotos) {
+  if (context.hasCamera && context.hasPhotos) {
     sections.push(buildVisionSection());
-  } else if (!isChat && context.hasCamera && !context.hasPhotos) {
+  } else if (context.hasCamera && !context.hasPhotos) {
     sections.push(buildVisionFailedSection());
   }
 
   // Context sections
   sections.push(buildContextSection(context));
 
-  if (isChat) {
-    // The webview renders markdown and has room — no TTS/HUD constraints.
-    sections.push(buildChatFormatSection());
-  } else {
-    // TTS formatting only for speaker glasses (no display)
-    if (context.hasSpeakers && !context.hasDisplay) {
-      sections.push(buildTTSFormatSection());
-    }
-    // Display formatting for HUD glasses
-    if (context.hasDisplay) {
-      sections.push(buildDisplayFormatSection());
-    }
+  // TTS formatting only for speaker glasses (no display)
+  if (context.hasSpeakers && !context.hasDisplay) {
+    sections.push(buildTTSFormatSection());
+  }
+
+  // Display formatting for HUD glasses
+  if (context.hasDisplay) {
+    sections.push(buildDisplayFormatSection());
   }
 
   return sections.join("\n\n");
@@ -163,17 +141,6 @@ IMPORTANT: When the user asks "what can you do?" or "what can I do with these gl
  * Response format section based on mode and device
  */
 function buildResponseFormatSection(context: AgentContext): string {
-  // Chat box (webview): no tight glasses limit — the user is reading on a phone
-  // screen and typed their question, so longer, fuller answers are welcome.
-  if (context.channel === 'chat') {
-    return `## Response Length
-
-You're answering in a chat window the user typed into, so be as long as the
-question warrants — a sentence for simple things, a few short paragraphs for
-explanations. Stay focused and useful; don't pad. (No tight word limit here,
-unlike the glasses voice/HUD experience.)`;
-  }
-
   const limits = context.hasDisplay
     ? WORD_LIMITS.hud
     : WORD_LIMITS.speaker;
@@ -193,19 +160,6 @@ Count your words before responding. Keep it concise.`;
 }
 
 /**
- * Chat (webview) output formatting — markdown is rendered, so use it.
- */
-function buildChatFormatSection(): string {
-  return `## Chat Output Formatting
-
-The user is reading your reply in a chat window that renders Markdown:
-- Use Markdown where it helps: **bold**, lists, \`code\`, short headers.
-- Lead with the answer, then add detail.
-- This is a typed conversation, not voice — write naturally, no need to spell
-  out numbers/units or strip symbols.`;
-}
-
-/**
  * Tool usage guidelines
  */
 function buildToolUsageSection(): string {
@@ -218,40 +172,6 @@ function buildToolUsageSection(): string {
 3. **Calculator for math**: Use the calculator tool for any arithmetic, conversions, or calculations.
 
 4. **Think through complex problems**: Use the thinking tool to reason step-by-step about complex questions before answering.`;
-}
-
-/**
- * Delegation rules — when to escalate to the user's personal giga-agent.
- * Only included when the ask_agent tool is wired up for this turn.
- */
-function buildDelegationSection(): string {
-  return `## Personal Agent (ask_agent)
-
-I have one more tool: **ask_agent**. It reaches the user's personal agent — an
-autonomous assistant with their long-term memory, their connected accounts
-(email, calendar, and more), and the ability to do real multi-step work. It is
-powerful but NOT instant.
-
-WHEN TO USE ask_agent:
-- The task needs the user's PERSONAL data or accounts: their email, their
-  calendar, their saved memories, anything tied to *their* connected services.
-- The task is MULTI-STEP or open-ended: research, planning, comparing across
-  sources, or anything that takes several actions to complete.
-
-WHEN NOT TO USE ask_agent (answer these myself, or with web search):
-- Single public lookups: one price, today's weather, a sports score, a fact.
-- Math, definitions, general knowledge, greetings, quick chat.
-
-HOW IT BEHAVES:
-- If it returns status "done", I relay its reply to the user, summarized for
-  voice within my word limit. I drop any URLs from speech (they appear on the
-  phone automatically).
-- If it returns status "working", I say ONE short, natural line letting the user
-  know I'm on it, tailored to the task (e.g. "Checking your inbox — one sec.").
-  I never invent the answer — the real result is delivered to the user when the
-  agent finishes. I follow the tool's "note" for exactly how to phrase this.
-
-I pass ask_agent the full task with all the context it needs, in one call.`;
 }
 
 /**
