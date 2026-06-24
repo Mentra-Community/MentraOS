@@ -41,12 +41,7 @@ export type {
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
-export {
-  MiniappRequestType,
-  MiniappResponseType,
-  MiniappStreamType,
-  MiniappErrorCode,
-} from "../protocol"
+export {MiniappRequestType, MiniappResponseType, MiniappStreamType, MiniappErrorCode} from "../protocol"
 
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
@@ -78,6 +73,9 @@ export type {NavigationModule} from "../modules/navigation"
 export type {PermissionsModule} from "../modules/permissions"
 export type {PhoneModule} from "../modules/phone"
 export type {SimpleStorage} from "../modules/storage"
+export {BlobModule, BlobWriter, BlobReader, BLOB_WRITE_CHUNK_BYTES, BLOB_READ_ALL_MAX_BYTES} from "../modules/blob"
+export type {BlobMeta, BlobSetOptions, BlobSetFromUrlOptions, BlobImportOptions} from "../modules/blob"
+export {bytesToBase64, base64ToBytes} from "../modules/base64"
 export type {SpeakerModule} from "../modules/speaker"
 export type {StreamModule} from "../modules/stream"
 export type {SystemModule} from "../modules/system"
@@ -107,19 +105,8 @@ export type {
   ClearView,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
-export type {
-  PlayAudioOptions,
-  SpeakOptions,
-  SpeakResult,
-  SpeakerState,
-  SpeakerStateEvent,
-} from "../modules/speaker"
-export type {
-  ShareOptions,
-  ShareResult,
-  DownloadOptions,
-  DownloadResult,
-} from "../modules/system"
+export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
+export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
 export type {TranscriptionConfig} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
