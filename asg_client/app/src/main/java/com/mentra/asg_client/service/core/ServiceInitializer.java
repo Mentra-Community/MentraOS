@@ -23,6 +23,7 @@ import com.mentra.asg_client.service.core.handlers.subscribers.BesOtaAuthEventSu
 import com.mentra.asg_client.service.core.handlers.subscribers.BesVersionEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.BtMacEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.ButtonEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.FactoryResetEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.FileTransferAckEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.HotspotEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.ShutdownEventSubscriber;
@@ -100,6 +101,7 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(
                 new ButtonEventSubscriber(serviceManager, hardwareManager, stateManager));
         peripheralBus.subscribe(new ShutdownEventSubscriber(serviceManager, context));
+        peripheralBus.subscribe(new FactoryResetEventSubscriber(serviceManager, context));
         peripheralBus.subscribe(new BesVersionEventSubscriber(serviceManager));
         peripheralBus.subscribe(new BtMacEventSubscriber(context));
         peripheralBus.subscribe(new BesOtaAuthEventSubscriber(serviceManager));
