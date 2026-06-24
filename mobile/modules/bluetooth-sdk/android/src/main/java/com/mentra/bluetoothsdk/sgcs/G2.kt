@@ -1316,11 +1316,12 @@ class G2 : SGCManager() {
     private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
-    // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
-    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
-    // Cleared on every page teardown WITHOUT touching intent, so recovery can re-arm iff intent
-    // still says the mic should be on. See the iOS G2.swift counterpart.
-    private var evenHubMicActive: Boolean = false
+    // App/user INTENT: does the app want the mic on. DISTINCT from the glasses/micEnabled
+    // DeviceStore flag, which is hardware STATE (the actual/last-commanded mic state of the
+    // glasses). Intent is NOT cleared on page teardown (the firmware kills the mic with the
+    // page, which clears STATE only), so recovery can re-arm iff intent still says mic-on.
+    // See the iOS G2.swift counterpart.
+    private var evenHubMicIntent: Boolean = false
     private var currentTextContent: String = ""
     private var textContainerID: Int = 1
     private var imageSessionCounter: Int = 0
@@ -2300,9 +2301,9 @@ class G2 : SGCManager() {
      */
     private fun recoverPageAndMic(reason: String) {
         val now = System.currentTimeMillis()
-        // Page alive and mic matches intent → phantom firmware event, nothing to recover.
-        val micIntent = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-        if (pageCreated && evenHubMicActive == micIntent) {
+        // Page alive and mic STATE matches INTENT → phantom firmware event, nothing to recover.
+        val micState = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+        if (pageCreated && evenHubMicIntent == micState) {
             return
         }
         if (recoveryInFlight) {
@@ -2497,7 +2498,9 @@ class G2 : SGCManager() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        evenHubMicActive = false // dashboard takes EvenHub focus; firmware kills the mic
+        // dashboard takes EvenHub focus; firmware kills the mic -> STATE off. Leave intent untouched;
+        // recovery re-arms from intent on dashboard close.
+        DeviceStore.apply("glasses", "micEnabled", false)
         currentBitmapBase64 = ""
         mainHandler.postDelayed({
             // activate the dashboard by setting depth to the current setting:
@@ -2867,8 +2870,9 @@ class G2 : SGCManager() {
     // ---------- SGCManager: Audio Control ----------
 
     private fun restartMicIfAlreadyEnabled() {
-        val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-        if (currentEnabled) {
+        // Re-arm from INTENT (not stale STATE): after a page rebuild the firmware killed the mic,
+        // so STATE is off — but if the app still wants the mic, intent says so.
+        if (evenHubMicIntent) {
             restartMic()
         }
     }
@@ -2876,8 +2880,8 @@ class G2 : SGCManager() {
     fun restartMic() {
         // Intent is "mic on". The mic only exists inside a live EvenHub page, so we toggle it
         // off then back on (the firmware needs the off→on edge to re-arm).
+        evenHubMicIntent = true
         DeviceStore.apply("glasses", "micEnabled", true)
-        evenHubMicActive = false
         val msg = EvenHubProto.audioControlMessage(false)
         sendEvenHubCommand(msg)
         mainHandler.postDelayed({
@@ -2899,7 +2903,7 @@ class G2 : SGCManager() {
             }
             val msg = EvenHubProto.audioControlMessage(true)
             sendEvenHubCommand(msg)
-            evenHubMicActive = true
+            DeviceStore.apply("glasses", "micEnabled", true) // STATE: mic on after the on-edge
         }, 500)
     }
 
@@ -2909,16 +2913,16 @@ class G2 : SGCManager() {
             restartMic()
             return
         }
-        val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-        if (enabled && currentEnabled) {
+        val currentState = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+        if (enabled && currentState) {
             restartMic()
             return
         }
 
-        DeviceStore.apply("glasses", "micEnabled", enabled)
+        DeviceStore.apply("glasses", "micEnabled", enabled) // STATE: commanded value
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
-        evenHubMicActive = enabled
+        evenHubMicIntent = enabled // INTENT: caller's desire
     }
 
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> {
@@ -3966,7 +3970,8 @@ class G2 : SGCManager() {
             if (cmdValue == 9 || cmdValue == 10) {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
-                evenHubMicActive = false // mic dies with the page
+                // mic dies with the page -> STATE off (intent preserved)
+                DeviceStore.apply("glasses", "micEnabled", false)
             }
 
             // Scan response fields for a shutdown/error code regardless of the debounce window.
@@ -3984,7 +3989,8 @@ class G2 : SGCManager() {
                             "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                         )
                         pageCreated = false
-                        evenHubMicActive = false // mic dies with the page
+                        // mic dies with the page -> STATE off (intent preserved)
+                        DeviceStore.apply("glasses", "micEnabled", false)
                     }
                 }
             }
@@ -4132,11 +4138,13 @@ class G2 : SGCManager() {
             // NOT rebuild here. systemExit is fired alongside the dashboard-close (08011A00) event
             // for the same transition — if both rebuilt, the fresh page gets torn down again →
             // rebuild→exit→rebuild loop. Recovery is owned by one place: the dashboard-close
-            // handler (and the reconcile page-down path). Don't touch micEnabled (user intent) —
-            // recovery reads it to re-arm; clobbering it strands the mic.
+            // handler (and the reconcile page-down path). Don't touch evenHubMicIntent (user
+            // intent) — recovery reads it to re-arm; clobbering it strands the mic. Only mark
+            // hardware STATE dead.
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
                 pageCreated = false
-                evenHubMicActive = false // firmware killed the mic with the page
+                // firmware killed the mic with the page -> STATE off (intent preserved)
+                DeviceStore.apply("glasses", "micEnabled", false)
             }
             return
         }

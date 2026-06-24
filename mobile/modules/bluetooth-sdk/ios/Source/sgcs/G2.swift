@@ -1520,11 +1520,11 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
-    // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
-    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
-    // Cleared on every page teardown (the firmware kills the mic with the page) WITHOUT touching
-    // intent, so recovery can re-arm iff intent still says the mic should be on.
-    private var evenHubMicActive: Bool = false
+    // App/user INTENT: does the app want the mic on. DISTINCT from the glasses/micEnabled
+    // DeviceStore flag, which is hardware STATE (the actual/last-commanded mic state of the
+    // glasses). Intent is NOT cleared on page teardown (the firmware kills the mic with the
+    // page, which clears STATE only), so recovery can re-arm iff intent still says mic-on.
+    private var evenHubMicIntent: Bool = false
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -2510,9 +2510,9 @@ class G2: NSObject, SGCManager {
         // If the page is already alive and the mic matches intent, there's nothing to recover —
         // this is a spurious/phantom firmware event (it spams close/exit even when our page is
         // healthy). Rebuilding here is what created the churn, so skip it.
-        let micIntent = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if pageCreated && evenHubMicActive == micIntent {
-            // Bridge.log("G2: recover(\(reason)) skipped — page alive, mic matches intent")
+        let micState = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        if pageCreated && evenHubMicIntent == micState {
+            // Bridge.log("G2: recover(\(reason)) skipped — page alive, mic STATE matches INTENT")
             return
         }
         if recoveryInFlight {
@@ -2771,7 +2771,9 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        evenHubMicActive = false  // dashboard takes EvenHub focus; firmware kills the mic
+        // dashboard takes EvenHub focus; firmware kills the mic -> STATE off. Leave intent untouched;
+        // recovery re-arms from intent on dashboard close.
+        DeviceStore.shared.apply("glasses", "micEnabled", false)
         currentBitmapBase64 = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
@@ -2989,8 +2991,9 @@ class G2: NSObject, SGCManager {
     }
 
     private func restartMicIfAlreadyEnabled() {
-        let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if currentEnabled {
+        // Re-arm from INTENT (not stale STATE): after a page rebuild the firmware killed the mic,
+        // so STATE is off — but if the app still wants the mic, intent says so.
+        if evenHubMicIntent {
             restartMic()
         }
     }
@@ -2998,8 +3001,8 @@ class G2: NSObject, SGCManager {
     func restartMic() {
         // Intent is "mic on". The mic only exists inside a live EvenHub page, so we
         // toggle it off then back on (the firmware needs the off→on edge to re-arm).
+        evenHubMicIntent = true
         DeviceStore.shared.apply("glasses", "micEnabled", true)
-        evenHubMicActive = false
         let msg = EvenHubProto.audioControlMessage(enable: false)
         sendEvenHubCommand(msg)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -3024,7 +3027,7 @@ class G2: NSObject, SGCManager {
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
-            self.evenHubMicActive = true
+            DeviceStore.shared.apply("glasses", "micEnabled", true)  // STATE: mic on after the on-edge
         }
     }
 
@@ -3036,16 +3039,16 @@ class G2: NSObject, SGCManager {
             restartMic()
             return
         }
-        let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if enabled && currentEnabled {
+        let currentState = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        if enabled && currentState {
             restartMic()
             return
         }
 
-        DeviceStore.shared.apply("glasses", "micEnabled", enabled)
+        DeviceStore.shared.apply("glasses", "micEnabled", enabled)  // STATE: commanded value
         let msg = EvenHubProto.audioControlMessage(enable: enabled)
         sendEvenHubCommand(msg)
-        evenHubMicActive = enabled
+        evenHubMicIntent = enabled  // INTENT: caller's desire
     }
 
     func sortMicRanking(list: [String]) -> [String] {
@@ -3854,7 +3857,8 @@ class G2: NSObject, SGCManager {
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
                             pageCreated = false
-                            evenHubMicActive = false  // mic dies with the page
+                            // mic dies with the page -> STATE off (intent preserved)
+                            DeviceStore.shared.apply("glasses", "micEnabled", false)
                         }
                     }
                     // if let errorCode = resFields[8] as? Int32 {
@@ -3872,7 +3876,8 @@ class G2: NSObject, SGCManager {
             if cmdValue == 9 || cmdValue == 10 {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
-                evenHubMicActive = false  // mic dies with the page
+                // mic dies with the page -> STATE off (intent preserved)
+                DeviceStore.shared.apply("glasses", "micEnabled", false)
             }
         }
     }
@@ -4037,10 +4042,12 @@ class G2: NSObject, SGCManager {
             // event for the same transition — if both rebuilt, the fresh page gets torn down
             // again → rebuild→exit→rebuild loop. Recovery is owned by one place: the
             // dashboard-close handler (and the reconcile page-down path). Don't touch
-            // micEnabled (user intent) — recovery reads it to re-arm; clobbering it strands the mic.
+            // evenHubMicIntent (user intent) — recovery reads it to re-arm; clobbering it strands the
+            // mic. Only mark hardware STATE dead.
             if eventType == .systemExit || eventType == .abnormalExit {
                 pageCreated = false
-                evenHubMicActive = false  // firmware killed the mic with the page
+                // firmware killed the mic with the page -> STATE off (intent preserved)
+                DeviceStore.shared.apply("glasses", "micEnabled", false)
             }
             return
         }

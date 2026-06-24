@@ -467,12 +467,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -1178,7 +1175,7 @@ class MantleManager {
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }
 
-  private async sendCalendarEvents() {
+  public async sendCalendarEvents() {
     try {
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
@@ -1216,10 +1213,16 @@ class MantleManager {
         return {
           title: ev.title ?? "",
           ...(ev.location ? {location: ev.location} : {}),
-          time,
+          time: time,
+          startDate: Math.floor(start.getTime() / 1000),
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
+      // Keep the JS settings store in sync with what we push to the glasses. Otherwise the bulk
+      // snapshot push (getBluetoothSettings) reads calendar_events's empty default and clobbers
+      // these events in the native DeviceStore. calendar_events is persist:false/saveOnServer:false,
+      // so this only updates the in-memory store.
+      void useSettingsStore.getState().setSetting(SETTINGS.calendar_events.key, shapedEvents)
       void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
       })
