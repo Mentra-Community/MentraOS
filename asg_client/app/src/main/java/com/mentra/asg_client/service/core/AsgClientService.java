@@ -18,7 +18,6 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
-import com.mentra.asg_client.audio.AudioRecorder;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
@@ -33,6 +32,7 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.audio.AudioRecorder;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -215,7 +215,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 applySavedCameraTuningOnStart();
             }
 
-            // Schedule a 30-second test recording that starts 10 seconds after service init.
+            // Start a test recording 20 seconds after service init to verify mic availability.
             scheduleStartupTestRecording();
 
             // Initialize WiFi debouncing
@@ -1051,12 +1051,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // ---------------------------------------------
 
     /**
-     * Schedules a 30-second test recording that begins 10 seconds after service startup.
-     * Uses the AudioRecorder already owned by the CommandProcessor so only one AudioRecord
-     * instance ever holds the microphone at a time.
+     * Schedules a 30-second test recording that begins 20 seconds after service startup.
+     * Uses the AudioRecorder owned by the CommandProcessor so only one AudioRecord instance
+     * holds the microphone at a time. Failure is logged and swallowed — the app continues normally.
      */
     private void scheduleStartupTestRecording() {
-        final long START_DELAY_MS = 10_000L;
+        final long START_DELAY_MS = 20_000L;
         final long RECORD_DURATION_MS = 30_000L;
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -1070,7 +1070,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             AudioRecorder recorder = commandProcessor.getAudioRecorder();
             boolean started = recorder.start();
             if (!started) {
-                Log.e(TAG, "Startup test recording: AudioRecorder.start() failed");
+                Log.e(TAG, "Startup test recording: AudioRecorder.start() failed — mic unavailable");
                 return;
             }
 
