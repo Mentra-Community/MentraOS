@@ -14,7 +14,7 @@
 import type {MiniappSession} from "@mentra/miniapp/background"
 import {generateResponse, pollDelegation, type GenerateResult} from "../agent/MentraAgent"
 import {formatForTTS} from "../lib/tts-formatter"
-import type {ChatEvent} from "../../shared/types"
+import type {AvailableApp, ChatEvent, DeviceAction} from "../../shared/types"
 import type {AudioManager} from "./AudioManager"
 import type {ChatHistoryManager} from "./ChatHistoryManager"
 import type {DisplayManager} from "./DisplayManager"
@@ -139,6 +139,8 @@ export class QueryProcessor {
       timezone: this.deps.location.getTimezone() ?? undefined,
       notifications: this.deps.notifications.formatForPrompt(),
       conversationHistory: this.deps.chatHistory.getRecentTurns(),
+      // Other miniapps the agent can control (Mentra AI is a system app).
+      apps: await this.listApps(),
     }
     lap("BUILD-CONTEXT")
 
@@ -180,6 +182,12 @@ export class QueryProcessor {
     this.deps.audio.stopProcessingSound()
     this.outputResponse(response, hasSpeakers, hasDisplay)
     lap("OUTPUT-TO-GLASSES")
+
+    // Execute any deferred app-control actions the agent chose (start/stop/invoke
+    // another miniapp). Fire-and-forget — the agent already confirmed to the user.
+    if (result.deviceActions?.length) {
+      void this.executeDeviceActions(result.deviceActions)
+    }
 
     // Step 7: history (+ follow-up for a delegated turn). When the giga-agent
     // ran long, `response` is the ack; the real answer is recorded by the
@@ -234,6 +242,54 @@ export class QueryProcessor {
         timestamp: new Date().toISOString(),
       })
       this.outputResponse(msg, hasSpeakers, hasDisplay)
+    }
+  }
+
+  /**
+   * List the other miniapps the agent can control (system-only). Returns [] if
+   * Mentra AI isn't a system app or the host rejects — the agent then simply has
+   * no app-control tools that turn.
+   */
+  private async listApps(): Promise<AvailableApp[]> {
+    try {
+      const apps = await this.deps.session.miniapps.list()
+      return apps
+        .filter((a) => a.packageName !== "com.mentra.ai.local") // don't list self
+        .map((a) => ({
+          packageName: a.packageName,
+          name: a.name,
+          running: a.running,
+          actions: a.actions.map((act) => ({
+            id: act.id,
+            description: act.description,
+            parameters: act.parameters,
+          })),
+        }))
+    } catch (error) {
+      console.warn("Failed to list miniapps (not a system app?):", error)
+      return []
+    }
+  }
+
+  /**
+   * Execute the agent's deferred app-control actions on-device. Each runs
+   * independently; a failure (app gone, action unknown) is logged and skipped.
+   */
+  private async executeDeviceActions(actions: DeviceAction[]): Promise<void> {
+    const {session} = this.deps
+    for (const action of actions) {
+      try {
+        if (action.type === "start_app") {
+          await session.miniapps.start(action.packageName)
+        } else if (action.type === "stop_app") {
+          await session.miniapps.stop(action.packageName)
+        } else {
+          await session.actions.invoke(action.packageName, action.actionId, action.params)
+        }
+        console.log(`🎛️ executed ${action.type} ${action.packageName}`)
+      } catch (error) {
+        console.warn(`🎛️ device action failed (${action.type} ${action.packageName}):`, error)
+      }
     }
   }
 

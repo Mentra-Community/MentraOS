@@ -7,7 +7,7 @@
  * from device capabilities, response mode, and environment context.
  */
 
-import {ResponseMode, type AgentRequestContext} from "./types"
+import {ResponseMode, type AgentRequestContext, type AvailableApp} from "./types"
 
 /** Word limits for each response mode. */
 export const WORD_LIMITS = {
@@ -52,6 +52,11 @@ export function buildSystemPrompt(context: AgentContext): string {
   // Delegation rules — only when the giga-agent escalation tool is available
   if (context.agentEnabled) {
     sections.push(buildDelegationSection())
+  }
+
+  // App control — only when controllable apps were sent in context
+  if (context.apps && context.apps.length > 0) {
+    sections.push(buildAppControlSection(context.apps))
   }
 
   // Vision section — depends on camera AND whether photo was actually captured
@@ -193,6 +198,48 @@ HOW IT BEHAVES:
   answer — the real result is delivered to the user when the agent finishes.
 
 I pass ask_agent the full task with all the context it needs, in one call.`
+}
+
+/**
+ * App-control section — lists the other miniapps I can start/stop and the
+ * actions I can trigger inside them. Only included when apps are in context.
+ */
+function buildAppControlSection(apps: AvailableApp[]): string {
+  const appLines = apps
+    .map((app) => {
+      const status = app.running ? "running" : "stopped"
+      const header = `- **${app.name}** (\`${app.packageName}\`, ${status})`
+      if (!app.actions.length) return header
+      const actions = app.actions
+        .map((a) => {
+          const params = a.parameters ? ` — params: ${JSON.stringify(a.parameters)}` : ""
+          return `    - action \`${a.id}\`: ${a.description}${params}`
+        })
+        .join("\n")
+      return `${header}\n${actions}`
+    })
+    .join("\n")
+
+  return `## Controlling Other Apps
+
+I can control other apps on the user's glasses with three tools:
+- **start_app(packageName)** — open an app.
+- **stop_app(packageName)** — close an app.
+- **invoke_app_action(packageName, actionId, params)** — trigger a specific action inside an app.
+
+Rules:
+- Only use the exact packageName / actionId from the list below — never invent one.
+- When the user asks to do something an app provides (e.g. "translate to Spanish",
+  "start navigation home", "load my script"), pick the matching app + action and call
+  invoke_app_action with params matching its declared parameters. start_app is for just
+  opening an app with no specific action.
+- These run in the background and the action takes effect right after I reply, so I
+  confirm in ONE short, natural spoken line (e.g. "Starting translation to Spanish.").
+  I never claim it failed or succeeded beyond that — I just did it.
+- If no listed app matches the request, I say so instead of guessing.
+
+Available apps:
+${appLines}`
 }
 
 function buildVisionSection(): string {

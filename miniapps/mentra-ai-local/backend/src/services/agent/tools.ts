@@ -15,6 +15,7 @@ import {Parser} from "expr-eval"
 import {webSearch} from "../search/search.service"
 import type {ToolDef} from "../openrouter"
 import {delegateMessage, isDelegationEnabled, type AgentAction} from "./delegation"
+import type {DeviceAction} from "./types"
 
 /** Function declarations (name/description/JSON-schema parameters). */
 export const TOOL_DECLARATIONS = [
@@ -89,12 +90,60 @@ function toToolDef(d: {name: string; description: string; parameters: unknown}):
   }
 }
 
+/**
+ * App-control tools — operate OTHER miniapps (Mentra AI is a system app). Only
+ * advertised when at least one controllable app is in context. The device op is
+ * deferred: each call records a DeviceAction the background executes after the
+ * response (the agent already knows the apps + their actions from context).
+ */
+export const APP_CONTROL_DECLARATIONS = [
+  {
+    name: "start_app",
+    description:
+      "Start (open) another miniapp on the glasses by its exact packageName from the available-apps " +
+      "list. Starting an already-running app is harmless.",
+    parameters: {
+      type: "object",
+      properties: {packageName: {type: "string", description: "The app's exact packageName."}},
+      required: ["packageName"],
+    },
+  },
+  {
+    name: "stop_app",
+    description: "Stop (close) another running miniapp by its exact packageName from the available-apps list.",
+    parameters: {
+      type: "object",
+      properties: {packageName: {type: "string", description: "The app's exact packageName."}},
+      required: ["packageName"],
+    },
+  },
+  {
+    name: "invoke_app_action",
+    description:
+      "Trigger a specific declared action inside another miniapp (e.g. start translation, load a " +
+      "teleprompter script). Use the packageName and actionId exactly as listed for that app, and pass " +
+      "params matching the action's declared parameters.",
+    parameters: {
+      type: "object",
+      properties: {
+        packageName: {type: "string", description: "The target app's exact packageName."},
+        actionId: {type: "string", description: "The action's id, as declared by that app."},
+        params: {type: "object", description: "Parameters for the action (match its declared schema)."},
+      },
+      required: ["packageName", "actionId"],
+    },
+  },
+] as const
+
 /** Base tools always advertised to the model. */
 export const OPENAI_TOOLS: ToolDef[] = TOOL_DECLARATIONS.map(toToolDef)
 
-/** Tools for a request — adds ask_agent when delegation is configured. */
-export function buildOpenAITools(includeAskAgent: boolean): ToolDef[] {
-  return includeAskAgent ? [...OPENAI_TOOLS, toToolDef(ASK_AGENT_DECLARATION)] : OPENAI_TOOLS
+/** Tools for a request — adds ask_agent / app-control when each is available. */
+export function buildOpenAITools(opts: {askAgent: boolean; appControl: boolean}): ToolDef[] {
+  const tools = [...OPENAI_TOOLS]
+  if (opts.askAgent) tools.push(toToolDef(ASK_AGENT_DECLARATION))
+  if (opts.appControl) tools.push(...APP_CONTROL_DECLARATIONS.map(toToolDef))
+  return tools
 }
 
 /**
@@ -112,6 +161,8 @@ export interface DelegationHolder {
 export interface ToolExecContext {
   userId?: string
   delegation?: DelegationHolder
+  /** App-control tools push their deferred device actions here. */
+  deviceActions?: DeviceAction[]
 }
 
 const parser = new Parser()
@@ -132,9 +183,42 @@ export async function executeTool(
       return {acknowledged: true}
     case "ask_agent":
       return askAgent(String(args.task ?? ""), ctx)
+    case "start_app":
+      return appControl({type: "start_app", packageName: String(args.packageName ?? "")}, ctx)
+    case "stop_app":
+      return appControl({type: "stop_app", packageName: String(args.packageName ?? "")}, ctx)
+    case "invoke_app_action":
+      return appControl(
+        {
+          type: "invoke_action",
+          packageName: String(args.packageName ?? ""),
+          actionId: String(args.actionId ?? ""),
+          params: args.params && typeof args.params === "object" ? (args.params as Record<string, unknown>) : undefined,
+        },
+        ctx,
+      )
     default:
       return {error: `Unknown tool: ${name}`}
   }
+}
+
+/**
+ * Record a deferred app-control action for the background to execute, and return
+ * an optimistic confirmation to the model. We don't execute here (that happens
+ * on-device) — fire-and-forget fits a voice assistant, and the agent already has
+ * the app list from context.
+ */
+function appControl(action: DeviceAction, ctx?: ToolExecContext): Record<string, unknown> {
+  if (!action.packageName) return {status: "error", note: "Missing packageName."}
+  if (action.type === "invoke_action" && !action.actionId) {
+    return {status: "error", note: "Missing actionId."}
+  }
+  if (!ctx?.deviceActions) {
+    return {status: "unavailable", note: "App control isn't available right now."}
+  }
+  ctx.deviceActions.push(action)
+  console.log(`🎛️ [app-control] queued ${action.type} ${action.packageName}${"actionId" in action ? `#${action.actionId}` : ""}`)
+  return {status: "queued", note: "Done — confirm the action to the user in one short, natural line."}
 }
 
 /**

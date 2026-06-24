@@ -13,7 +13,7 @@
 import {buildOpenAITools, executeTool, type DelegationHolder, type ToolExecContext} from "./tools"
 import {isDelegationEnabled} from "./delegation"
 import {buildSystemPrompt, classifyResponseMode, MAX_STEPS, type AgentContext} from "./prompt"
-import {type AgentRequest, type AgentResult} from "./types"
+import {type AgentRequest, type AgentResult, type DeviceAction} from "./types"
 import {hasLLMKey, DEFAULT_LLM_MODEL} from "../ai-config"
 import {resolveModel} from "../models"
 import {
@@ -62,6 +62,8 @@ export async function generateResponse(request: AgentRequest, userId?: string): 
 
   // Delegation is offered only when configured AND we know who the user is.
   const delegationEnabled = isDelegationEnabled() && Boolean(userId)
+  // App-control is offered when the background sent a list of controllable apps.
+  const appControlEnabled = (context.apps?.length ?? 0) > 0
 
   const agentContext: AgentContext = {
     ...context,
@@ -75,12 +77,14 @@ export async function generateResponse(request: AgentRequest, userId?: string): 
   }
 
   const systemPrompt = buildSystemPrompt(agentContext)
-  const tools = buildOpenAITools(delegationEnabled)
+  const tools = buildOpenAITools({askAgent: delegationEnabled, appControl: appControlEnabled})
 
-  // Out-of-band channel for the delegation outcome (the tool's return goes to
-  // the model; we also need the actions + any pending taskId here).
+  // Out-of-band channels for tool outcomes (the tool's return goes to the model;
+  // the caller also needs the structured results — delegation actions/taskId and
+  // the deferred app-control device actions).
   const delegation: DelegationHolder = {}
-  const toolCtx: ToolExecContext = {userId, delegation}
+  const deviceActions: DeviceAction[] = []
+  const toolCtx: ToolExecContext = {userId, delegation, deviceActions}
 
   // Build the initial user turn: query text + labeled photos as image_url parts.
   const userContent: ContentPart[] = [{type: "text", text: query}]
@@ -126,7 +130,7 @@ export async function generateResponse(request: AgentRequest, userId?: string): 
         // No tool calls — this is the final answer (or a delegation ack).
         const text = (assistant.content ?? "").trim()
         console.log(`✅ Response generated (${text.length} chars, ${toolCallCount} tool calls)`)
-        return finalize(text, toolCallCount, delegation)
+        return finalize(text, toolCallCount, delegation, deviceActions)
       }
 
       // Append the model's tool-call turn, then execute and append each result.
@@ -156,16 +160,22 @@ export async function generateResponse(request: AgentRequest, userId?: string): 
 
   // Hit the step cap without a final text answer.
   console.warn("⚠️ Agent hit maxSteps without a final answer")
-  return finalize("I wasn't able to finish that. Could you try rephrasing?", toolCallCount, delegation)
+  return finalize("I wasn't able to finish that. Could you try rephrasing?", toolCallCount, delegation, deviceActions)
 }
 
-/** Assemble the AgentResult, attaching any delegation outcome (actions / pending). */
-function finalize(response: string, toolCalls: number, delegation: DelegationHolder): AgentResult {
+/** Assemble the AgentResult, attaching delegation outcome + deferred app actions. */
+function finalize(
+  response: string,
+  toolCalls: number,
+  delegation: DelegationHolder,
+  deviceActions: DeviceAction[],
+): AgentResult {
   return {
     response,
     toolCalls,
     ...(delegation.pendingTaskId ? {pendingTaskId: delegation.pendingTaskId} : {}),
     ...(delegation.actions?.length ? {actions: delegation.actions} : {}),
+    ...(deviceActions.length ? {deviceActions} : {}),
   }
 }
 

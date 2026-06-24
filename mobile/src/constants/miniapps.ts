@@ -7,6 +7,7 @@ export const simulatedPackageName = "com.mentra.simulated"
 export const mirrorPackageName = "com.mentra.mirror"
 export const lmaInstallerPackageName = "com.mentra.miniappdev"
 export const mentraAiPackageName = "com.mentra.ai"
+export const mentraAiLocalPackageName = "com.mentra.ai.local"
 export const feedbackPackageName = "com.mentra.feedback"
 export const notifyPackageName = "cloud.augmentos.notify"
 
@@ -20,6 +21,7 @@ export const SYSTEM_APPS = [
   simulatedPackageName,
   mirrorPackageName,
   mentraAiPackageName,
+  mentraAiLocalPackageName,
   notifyPackageName,
   feedbackPackageName,
   lmaInstallerPackageName,

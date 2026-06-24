@@ -14,7 +14,7 @@
 import type {MiniappSession} from "@mentra/miniapp/background"
 
 import {BACKEND_ROUTES} from "../lib/ai-config"
-import type {AgentAction} from "../../shared/types"
+import type {AgentAction, AvailableApp, DeviceAction} from "../../shared/types"
 import type {LocationContext} from "../managers/LocationManager"
 import type {ConversationTurn} from "../managers/ChatHistoryManager"
 
@@ -36,6 +36,8 @@ export interface GenerateOptions {
     timezone?: string
     notifications: string
     conversationHistory: ConversationTurn[]
+    /** Other miniapps the agent can control (Mentra AI is a system app). */
+    apps?: AvailableApp[]
   }
   onToolCall?: (toolName: string) => void
 }
@@ -47,6 +49,8 @@ export interface GenerateResult {
   pendingTaskId?: string
   /** Action buttons (e.g. an OAuth connect link) from a fast delegation. */
   actions?: AgentAction[]
+  /** App-control actions to execute on-device after the response. */
+  deviceActions?: DeviceAction[]
 }
 
 interface BackendAgentResponse {
@@ -54,6 +58,7 @@ interface BackendAgentResponse {
   toolCalls?: number
   pendingTaskId?: string
   actions?: AgentAction[]
+  deviceActions?: DeviceAction[]
   error?: string
 }
 
@@ -121,6 +126,7 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
     toolCalls,
     pendingTaskId: body.pendingTaskId,
     actions: body.actions,
+    deviceActions: body.deviceActions,
   }
 }
 

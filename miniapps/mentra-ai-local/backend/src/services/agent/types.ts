@@ -50,7 +50,36 @@ export interface AgentRequestContext {
   timezone?: string
   notifications: string
   conversationHistory: ConversationTurn[]
+  /**
+   * Other miniapps the agent can control (Mentra AI is a system app). Gathered
+   * by the background via session.miniapps.list(); enables the app-control tools.
+   */
+  apps?: AvailableApp[]
 }
+
+/** A declared action another miniapp exposes (mirrors the SDK's MiniappActionInfo). */
+export interface AvailableAction {
+  id: string
+  description: string
+  parameters?: Record<string, unknown>
+}
+
+/** A miniapp the agent can control, with its declared actions. */
+export interface AvailableApp {
+  packageName: string
+  name: string
+  running: boolean
+  actions: AvailableAction[]
+}
+
+/**
+ * An app-control action the agent decided on; the background executes it after
+ * the response (deferred + fire-and-forget, like the open_url AgentAction).
+ */
+export type DeviceAction =
+  | {type: "start_app"; packageName: string}
+  | {type: "stop_app"; packageName: string}
+  | {type: "invoke_action"; packageName: string; actionId: string; params?: Record<string, unknown>}
 
 /** POST /api/agent request body. Photos are data-URL strings, current-first. */
 export interface AgentRequest {
@@ -84,4 +113,9 @@ export interface AgentResult {
   pendingTaskId?: string
   /** Action buttons (e.g. an OAuth connect link) from a fast delegation. */
   actions?: AgentAction[]
+  /**
+   * App-control actions (start/stop/invoke another miniapp) the agent decided
+   * on. The background executes them after the response.
+   */
+  deviceActions?: DeviceAction[]
 }

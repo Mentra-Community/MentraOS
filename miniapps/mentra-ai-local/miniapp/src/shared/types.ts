@@ -14,6 +14,34 @@ export interface AgentAction {
   url: string
 }
 
+// ── App control (Mentra AI as a system app) ──────────────────────
+
+/** A declared action another miniapp exposes (mirrors the SDK's MiniappActionInfo). */
+export interface AvailableAction {
+  id: string
+  description: string
+  /** JSON-Schema input descriptor; undefined for no-param actions. */
+  parameters?: Record<string, unknown>
+}
+
+/** A miniapp the agent can control, with its declared actions. Sent in context. */
+export interface AvailableApp {
+  packageName: string
+  name: string
+  running: boolean
+  actions: AvailableAction[]
+}
+
+/**
+ * An app-control action the BACKEND agent decided on and the BACKGROUND executes
+ * after the response (via session.miniapps.* / session.actions.invoke). Deferred
+ * + fire-and-forget, like the open_url AgentAction.
+ */
+export type DeviceAction =
+  | {type: "start_app"; packageName: string}
+  | {type: "stop_app"; packageName: string}
+  | {type: "invoke_action"; packageName: string; actionId: string; params?: Record<string, unknown>}
+
 /** A single chat message rendered in the webview. */
 export interface ChatMessage {
   id: string
