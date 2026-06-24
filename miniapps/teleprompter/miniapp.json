@@ -34,7 +34,7 @@
   "actions": [
     {
       "id": "load_script",
-      "description": "Load text into the teleprompter and show it on the glasses, ready to read. Use when the user wants to put a speech, talking points, lines, or any notes up on their glasses — e.g. 'put my toast on the teleprompter' or 'teleprompt this'. Replaces the current script and resets to the top. Set autostart to begin scrolling immediately (it follows the user's voice when a mic is available, otherwise scrolls at their saved words-per-minute); leave it off to just show the opening lines so the user can start when ready.",
+      "description": "Load text into the teleprompter and start reading it on the glasses. Use when the user wants to put a speech, talking points, lines, or any notes up on their glasses — e.g. 'put my toast on the teleprompter' or 'teleprompt this'. Replaces the current script and resets to the top. By default it begins scrolling immediately (following the user's voice when a mic is available, otherwise at their saved words-per-minute); set autostart false to just show the opening lines so the user can start when ready.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -44,7 +44,7 @@
           },
           "autostart": {
             "type": "boolean",
-            "description": "When true, start scrolling from the top right away. When false or omitted, load the script and show the opening lines without scrolling."
+            "description": "Defaults to true — start scrolling from the top right away. Set false to load the script and show the opening lines without scrolling, so the user can start when ready."
           }
         },
         "required": ["script"]

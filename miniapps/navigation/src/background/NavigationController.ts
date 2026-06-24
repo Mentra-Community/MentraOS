@@ -14,6 +14,7 @@ import type {
   NavUpdate,
   Pivot,
   StartNavigationOptions,
+  TravelMode,
   UIModule,
 } from "@mentra/miniapp/background"
 
@@ -221,6 +222,7 @@ export class NavigationController {
     this.wireSensorSubscriptions()
     this.wireRpcHandlers()
     this.wireUIBroadcasts()
+    this.registerActions()
     this.wireHUDPump()
     this.wireTouchGestures()
     this.primeNavigationPermission()
@@ -516,94 +518,175 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("storage:add-recent", (p) => this.storage.addRecentSearch(p)))
   }
 
+  // ── Trip start (shared by the UI's nav:start and the start_navigation action) ──
+
+  /**
+   * Begin a turn-by-turn trip. Drives both the UI's `nav:start` broadcast and
+   * the `start_navigation` action so they share one path: optimistic trip
+   * state, glasses HUD repaint, then `navigation.start()`, rolling back to idle
+   * if the native start fails. Resolves `{ok, error?}` for the action; the UI
+   * listener ignores the return.
+   */
+  private async beginTrip(opts: StartNavigationOptions & {destinationName?: string}): Promise<{ok: boolean; error?: string}> {
+    // Re-entrancy guard: ignore a second start while one is already in flight
+    // (the duplicate's start() would stop() the session the first just created
+    // and freeze the puck).
+    if (this.starting) {
+      this.appendLog("START ignored — already starting")
+      return {ok: false, error: "A navigation start is already in progress"}
+    }
+    this.starting = true
+    const {destinationName, ...startOpts} = opts
+    // Clear the previous trip's route polyline immediately so the
+    // off-route threshold check doesn't run against a stale route
+    // between nav:start and the new onRoute event landing. Without
+    // this, the user can be e.g. 500m from the prior route's
+    // polyline at start, instantly trigger the >30m bucket, flip
+    // status to "rerouting", and fire a redundant auto-rebuild.
+    this.trip = {
+      ...this.trip,
+      status: "navigating",
+      running: true,
+      activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
+      activeDestinationName: destinationName ?? null,
+      maneuver: null,
+      routePoints: null,
+      routeSteps: null,
+      offRouteAt: null,
+      arrivalSide: null,
+    }
+    // Snapshot the trip-start context so an auto-rebuild can re-
+    // fire start() with the same shape, and so we can gate
+    // rebuilds on "user has actually moved away from start".
+    this.lastStartOpts = opts
+    this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    // Reset the movement-vector heading so this trip's "you" arrow measures
+    // direction of travel fresh (anchor re-seeds on the next fix).
+    this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    this.moveBearingDeg = null
+    this.lastAutoRebuildAt = 0
+    this.lastOffRouteBucket = 0
+    this.offRouteAdvisory = false
+    this.offRouteAdvisoryDistanceM = null
+    // Clear any pivots left over from a previous trip. Without this, a new
+    // start with stale activePivot/upcomingPivot would make refreshHUD take
+    // a pivot branch and show the OLD trip's instruction instead of
+    // "Starting…" — the HUD must read "Starting…" until THIS trip's first
+    // real maneuver/pivot lands.
+    this.activePivot = null
+    this.upcomingPivot = null
+    // Cancel any in-flight delayed rebuild — a fresh start
+    // supersedes the old "are we still off-route?" timer.
+    this.cancelPendingRebuild()
+    this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
+    this.ui.send("nav:trip-state", this.trip)
+    // Repaint the glasses HUD immediately so the left text flips from the
+    // idle "Welcome to Mentra Maps!" frame to "Starting…" the instant the
+    // user starts — instead of the welcome frame lingering until the next
+    // GPS tick / HUD pump (~1s). running is already true above, so refreshHUD
+    // takes the "Starting…" branch and showManeuver overwrites the welcome
+    // text in place.
+    this.refreshHUD()
+    try {
+      // start() resolves `{ok:false}` (it never throws) for
+      // permission, GPS, REST, or native failures — on those the
+      // native trip never began and no synthetic onRoute will land,
+      // so we must roll the optimistic "navigating" state set above
+      // back to idle. Inspecting only `catch` left the UI stuck on a
+      // routeless trip with no recovery but a manual stop.
+      const res = await this.navigation.start(withPivotDefaults(startOpts))
+      if (!res.ok) {
+        this.appendLog(`START failed: ${res.error ?? "unknown"}`)
+        this.trip = {...this.trip, status: "idle", running: false}
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+      }
+      return res
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      this.appendLog(`START error: ${error}`)
+      this.trip = {...this.trip, status: "idle", running: false}
+      this.ui.send("nav:trip-state", this.trip)
+      this.refreshHUD()
+      return {ok: false, error}
+    } finally {
+      this.starting = false
+    }
+  }
+
+  // ── Actions (cross-miniapp / AI) ─────────────────────────────────────
+
+  /**
+   * Declared in miniapp.json. A system miniapp (e.g. Mentra AI) invokes
+   * start_navigation to "navigate to X" — the host headless-wakes us if we're
+   * stopped, then delivers the call once start() registers the handler. The
+   * destination may be a place query (looked up via Places, biased to the
+   * current location) or explicit coordinates.
+   */
+  private registerActions(): void {
+    try {
+      this.unsubs.push(
+        this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)),
+      )
+    } catch (err) {
+      // actions module unavailable on this host, or already registered — the
+      // miniapp still runs, it just can't be started via the action.
+      this.appendLog(`actions register failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  private async startNavigationAction(
+    params: Record<string, unknown>,
+  ): Promise<{ok: boolean; error?: string; destination?: {lat: number; lng: number; name?: string}}> {
+    if (!this.navigation.hasPermission) {
+      return {ok: false, error: "Location permission is required for navigation."}
+    }
+
+    const mode = MODES.has(params.travel_mode as TravelMode) ? (params.travel_mode as TravelMode) : "walking"
+    const explicitName = typeof params.destination_name === "string" ? params.destination_name.trim() : ""
+
+    // Resolve the destination: explicit coordinates win; otherwise look up the query.
+    let dest: {lat: number; lng: number; name?: string} | null = null
+    if (typeof params.latitude === "number" && typeof params.longitude === "number") {
+      dest = {lat: params.latitude, lng: params.longitude, name: explicitName || undefined}
+    } else if (typeof params.query === "string" && params.query.trim()) {
+      dest = await this.resolveDestination(params.query.trim())
+      if (!dest) return {ok: false, error: `Couldn't find a place matching "${params.query}".`}
+    } else {
+      return {ok: false, error: "Provide a destination query, or latitude and longitude."}
+    }
+
+    const res = await this.beginTrip({
+      stops: [{lat: dest.lat, lng: dest.lng}],
+      mode,
+      destinationName: explicitName || dest.name,
+    })
+    if (!res.ok) return {ok: false, error: res.error ?? "Failed to start navigation."}
+    return {ok: true, destination: dest}
+  }
+
+  /**
+   * Geocode a place name/address to coordinates via the Places facade, biased
+   * to the user's current location. Mirrors the UI's autocomplete → details
+   * pick. Returns null when there's no match or the lookup fails.
+   */
+  private async resolveDestination(query: string): Promise<{lat: number; lng: number; name?: string} | null> {
+    try {
+      const near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
+      const suggestions = await this.places.autocomplete(query, near)
+      if (!suggestions.length) return null
+      const details = await this.places.details(suggestions[0].placeId)
+      return {lat: details.lat, lng: details.lng, name: details.name}
+    } catch (err) {
+      this.appendLog(`resolveDestination failed: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
+  }
+
   // ── UI broadcast listeners ───────────────────────────────────────────
 
   private wireUIBroadcasts(): void {
-    this.unsubs.push(
-      this.ui.on("nav:start", async (opts) => {
-        // Re-entrancy guard: ignore a second nav:start while one is already
-        // in flight (the duplicate's start() would stop() the session the
-        // first just created and freeze the puck).
-        if (this.starting) {
-          this.appendLog("START ignored — already starting")
-          return
-        }
-        this.starting = true
-        const {destinationName, ...startOpts} = opts
-        // Clear the previous trip's route polyline immediately so the
-        // off-route threshold check doesn't run against a stale route
-        // between nav:start and the new onRoute event landing. Without
-        // this, the user can be e.g. 500m from the prior route's
-        // polyline at start, instantly trigger the >30m bucket, flip
-        // status to "rerouting", and fire a redundant auto-rebuild.
-        this.trip = {
-          ...this.trip,
-          status: "navigating",
-          running: true,
-          activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
-          activeDestinationName: destinationName ?? null,
-          maneuver: null,
-          routePoints: null,
-          routeSteps: null,
-          offRouteAt: null,
-          arrivalSide: null,
-        }
-        // Snapshot the trip-start context so an auto-rebuild can re-
-        // fire start() with the same shape, and so we can gate
-        // rebuilds on "user has actually moved away from start".
-        this.lastStartOpts = opts
-        this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-        // Reset the movement-vector heading so this trip's "you" arrow measures
-        // direction of travel fresh (anchor re-seeds on the next fix).
-        this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-        this.moveBearingDeg = null
-        this.lastAutoRebuildAt = 0
-        this.lastOffRouteBucket = 0
-        this.offRouteAdvisory = false
-        this.offRouteAdvisoryDistanceM = null
-        // Clear any pivots left over from a previous trip. Without this, a new
-        // start with stale activePivot/upcomingPivot would make refreshHUD take
-        // a pivot branch and show the OLD trip's instruction instead of
-        // "Starting…" — the HUD must read "Starting…" until THIS trip's first
-        // real maneuver/pivot lands.
-        this.activePivot = null
-        this.upcomingPivot = null
-        // Cancel any in-flight delayed rebuild — a fresh start
-        // supersedes the old "are we still off-route?" timer.
-        this.cancelPendingRebuild()
-        this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
-        this.ui.send("nav:trip-state", this.trip)
-        // Repaint the glasses HUD immediately so the left text flips from the
-        // idle "Welcome to Mentra Maps!" frame to "Starting…" the instant the
-        // user starts — instead of the welcome frame lingering until the next
-        // GPS tick / HUD pump (~1s). running is already true above, so refreshHUD
-        // takes the "Starting…" branch and showManeuver overwrites the welcome
-        // text in place.
-        this.refreshHUD()
-        try {
-          // start() resolves `{ok:false}` (it never throws) for
-          // permission, GPS, REST, or native failures — on those the
-          // native trip never began and no synthetic onRoute will land,
-          // so we must roll the optimistic "navigating" state set above
-          // back to idle. Inspecting only `catch` left the UI stuck on a
-          // routeless trip with no recovery but a manual stop.
-          const res = await this.navigation.start(withPivotDefaults(startOpts))
-          if (!res.ok) {
-            this.appendLog(`START failed: ${res.error ?? "unknown"}`)
-            this.trip = {...this.trip, status: "idle", running: false}
-            this.ui.send("nav:trip-state", this.trip)
-            this.refreshHUD()
-          }
-        } catch (err) {
-          this.appendLog(`START error: ${err instanceof Error ? err.message : String(err)}`)
-          this.trip = {...this.trip, status: "idle", running: false}
-          this.ui.send("nav:trip-state", this.trip)
-          this.refreshHUD()
-        } finally {
-          this.starting = false
-        }
-      }),
-    )
+    this.unsubs.push(this.ui.on("nav:start", (opts) => void this.beginTrip(opts)))
     this.unsubs.push(
       this.ui.on("nav:stop", () => {
         this.appendLog("STOP")
@@ -1977,6 +2060,9 @@ function arrowFor(maneuver: string | null | undefined, direction: "left" | "righ
  * (block length ≈ 80m). Set as a single static value because the SDK
  * has no runtime radius setter — same value used for enter and exit.
  */
+/** Valid travel modes for the start_navigation action (mirrors TravelMode). */
+const MODES = new Set<TravelMode>(["walking", "driving", "cycling", "two_wheeler"])
+
 const PIVOT_RADIUS_M_WALKING = 14
 
 // Distance at which the HUD's directional arrow flips from ↑

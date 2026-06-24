@@ -245,7 +245,8 @@ export class TeleprompterController {
       this.unsubs.push(
         this.session.actions.handle("load_script", (params) => {
           const script = typeof params.script === "string" ? params.script : ""
-          const autostart = params.autostart === true
+          // Default on: opening the teleprompter with text should start reading.
+          const autostart = params.autostart !== false
           return this.loadScript(script, autostart)
         }),
       )
