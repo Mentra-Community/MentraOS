@@ -18,6 +18,13 @@ import BottomHeader from '../components/BottomHeader';
 import { ChromaticBorder } from '../components/ChromaticBorder';
 import { fetchUserSettings } from '../api/settings.api';
 
+/** A tappable action attached to a message (e.g. an OAuth "Connect" link). */
+interface MessageAction {
+  type: 'open_url';
+  kind: 'oauth_connect' | 'link';
+  url: string;
+}
+
 interface Message {
   id: string;
   senderId: string;
@@ -25,6 +32,29 @@ interface Message {
   content: string;
   timestamp: Date;
   image?: string;
+  actions?: MessageAction[];
+}
+
+/** Friendly label for an action button, derived from its kind/host. */
+function actionLabel(action: MessageAction): string {
+  if (action.kind === 'oauth_connect') {
+    try {
+      // connect.composio.dev/.../gmail?... → "Connect Gmail"
+      const m = action.url.toLowerCase().match(/(gmail|googlecalendar|calendar|google|slack|github|notion|linear)/);
+      if (m) {
+        const svc = m[1] === 'googlecalendar' ? 'Google Calendar' : m[1].charAt(0).toUpperCase() + m[1].slice(1);
+        return `Connect ${svc}`;
+      }
+    } catch {
+      /* fall through */
+    }
+    return 'Connect account';
+  }
+  try {
+    return new URL(action.url).host.replace(/^www\./, '');
+  } catch {
+    return 'Open link';
+  }
 }
 
 interface ChatInterfaceProps {
@@ -134,6 +164,24 @@ const ChatBubble = memo(function ChatBubble({
             </Markdown>
           )}
         </div>
+        {/* Action buttons (e.g. an OAuth "Connect Gmail" link from the agent).
+            Opened in the system browser via target=_blank — the host webview
+            routes external navigations out. */}
+        {!isOwnMessage && message.actions && message.actions.length > 0 && (
+          <div className="flex flex-col gap-2 mt-2 w-full">
+            {message.actions.map((action, i) => (
+              <a
+                key={`${message.id}-action-${i}`}
+                href={action.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center rounded-full px-4 py-2 text-[14px] font-semibold bg-[var(--primary)] text-[var(--primary-foreground)] no-underline active:opacity-80 transition-opacity"
+              >
+                {actionLabel(action)}
+              </a>
+            ))}
+          </div>
+        )}
         <div
           className={`text-[12px] ml-[15px] mt-1.5 ${isOwnMessage ? 'text-right' : 'text-left'} w-full text-gray-400`}
         >
@@ -294,6 +342,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                   content: data.content,
                   timestamp: new Date(data.timestamp),
                   image: data.image,
+                  actions: Array.isArray(data.actions) ? data.actions : undefined,
                 },
               ]);
             }

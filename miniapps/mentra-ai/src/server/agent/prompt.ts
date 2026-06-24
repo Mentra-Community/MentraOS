@@ -30,6 +30,9 @@ export interface AgentContext {
   timezone?: string;
   notifications: string;
   conversationHistory: ConversationTurn[];
+
+  // Whether the ask_agent (giga-agent) delegation tool is available this turn
+  agentEnabled?: boolean;
 }
 
 /**
@@ -48,6 +51,11 @@ export function buildSystemPrompt(context: AgentContext): string {
     buildResponseFormatSection(context),
     buildToolUsageSection(),
   ];
+
+  // Delegation rules — only when the giga-agent escalation tool is available
+  if (context.agentEnabled) {
+    sections.push(buildDelegationSection());
+  }
 
   // Vision section — depends on camera AND whether photo was actually captured
   if (context.hasCamera && context.hasPhotos) {
@@ -172,6 +180,40 @@ function buildToolUsageSection(): string {
 3. **Calculator for math**: Use the calculator tool for any arithmetic, conversions, or calculations.
 
 4. **Think through complex problems**: Use the thinking tool to reason step-by-step about complex questions before answering.`;
+}
+
+/**
+ * Delegation rules — when to escalate to the user's personal giga-agent.
+ * Only included when the ask_agent tool is wired up for this turn.
+ */
+function buildDelegationSection(): string {
+  return `## Personal Agent (ask_agent)
+
+I have one more tool: **ask_agent**. It reaches the user's personal agent — an
+autonomous assistant with their long-term memory, their connected accounts
+(email, calendar, and more), and the ability to do real multi-step work. It is
+powerful but NOT instant.
+
+WHEN TO USE ask_agent:
+- The task needs the user's PERSONAL data or accounts: their email, their
+  calendar, their saved memories, anything tied to *their* connected services.
+- The task is MULTI-STEP or open-ended: research, planning, comparing across
+  sources, or anything that takes several actions to complete.
+
+WHEN NOT TO USE ask_agent (answer these myself, or with web search):
+- Single public lookups: one price, today's weather, a sports score, a fact.
+- Math, definitions, general knowledge, greetings, quick chat.
+
+HOW IT BEHAVES:
+- If it returns status "done", I relay its reply to the user, summarized for
+  voice within my word limit. I drop any URLs from speech (they appear on the
+  phone automatically).
+- If it returns status "working", I say ONE short, natural line letting the user
+  know I'm on it, tailored to the task (e.g. "Checking your inbox — one sec.").
+  I never invent the answer — the real result is delivered to the user when the
+  agent finishes. I follow the tool's "note" for exactly how to phrase this.
+
+I pass ask_agent the full task with all the context it needs, in one call.`;
 }
 
 /**

@@ -6,6 +6,7 @@
 
 import { Agent } from "@mastra/core/agent";
 import { searchTool, calculatorTool, thinkingTool } from "./tools";
+import { createAskAgentTool, type DelegateFn } from "./tools/askAgent.tool";
 import { buildSystemPrompt, classifyResponseMode, type AgentContext } from "./prompt";
 import { ResponseMode, AGENT_SETTINGS } from "../constants/config";
 import type { LocationContext } from "../manager/LocationManager";
@@ -39,6 +40,11 @@ export interface GenerateOptions {
     conversationHistory: ConversationTurn[];
   };
   onToolCall?: (toolName: string) => void;
+  /**
+   * Optional escalation path to the user's giga-agent. When provided, the
+   * agent gains the `ask_agent` tool and the prompt's delegation rules.
+   */
+  delegate?: DelegateFn;
 }
 
 /**
@@ -50,19 +56,28 @@ export interface GenerateResult {
 }
 
 /**
- * Create a Mentra agent with the given context
+ * Create a Mentra agent with the given context.
+ *
+ * When a `delegate` is supplied, the agent also gets the `ask_agent` tool so
+ * it can escalate multi-step / personal-account work to the user's giga-agent.
  */
-export function createMentraAgent(context: AgentContext): Agent {
+export function createMentraAgent(context: AgentContext, delegate?: DelegateFn): Agent {
+  const tools: Record<string, ReturnType<typeof createAskAgentTool>> | Record<string, unknown> = {
+    search: searchTool,
+    calculator: calculatorTool,
+    thinking: thinkingTool,
+  };
+
+  if (delegate) {
+    (tools as Record<string, unknown>).ask_agent = createAskAgentTool(delegate);
+  }
+
   return new Agent({
     id: "mentra-ai",
     name: "Mentra AI",
     model: AGENT_SETTINGS.model,
     instructions: buildSystemPrompt(context),
-    tools: {
-      search: searchTool,
-      calculator: calculatorTool,
-      thinking: thinkingTool,
-    },
+    tools: tools as any,
   });
 }
 
@@ -89,10 +104,11 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
     timezone: context.timezone,
     notifications: context.notifications,
     conversationHistory: context.conversationHistory,
+    agentEnabled: Boolean(options.delegate),
   };
 
-  // Create agent with context
-  const agent = createMentraAgent(agentContext);
+  // Create agent with context (delegation tool added when a delegate is given)
+  const agent = createMentraAgent(agentContext, options.delegate);
 
   // Build content array
   const content: ContentPart[] = [

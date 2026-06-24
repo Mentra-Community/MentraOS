@@ -16,6 +16,7 @@
 
 import { Hono } from "hono";
 
+import { agentWebhook } from "../api/agentWebhook";
 import { speak, stopAudio } from "../api/audio";
 import { chatStream } from "../api/chat";
 import { killSession, playPoppingSound, playStartSound } from "../api/debug";
@@ -45,6 +46,10 @@ const sseHeaders = async (c: any, next: any) => {
 
 const publicApi = new Hono();
 publicApi.get("/health", getHealth);
+
+// Giga-agent delegation callback (server-to-server). Public by design — it
+// carries no SDK user token; the handler verifies the shared x-api-key instead.
+publicApi.post("/agent/webhook", agentWebhook);
 
 // ── Auth-only ──────────────────────────────────────────────────────
 //

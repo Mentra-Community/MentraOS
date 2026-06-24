@@ -10,6 +10,18 @@ import type { StoredPhoto } from "./PhotoManager";
 import { generateResponse, type GenerateOptions } from "../agent/MentraAgent";
 import { broadcastChatEvent } from "../api/chat";
 import { formatForTTS } from "../utils/tts-formatter";
+import { agentBridge, type AgentAction, type AgentContextPayload, type AgentTaskResult } from "./AgentBridge";
+import { delegations } from "./DelegationManager";
+import { isDelegationEnabled, AGENT_DELEGATION } from "../constants/config";
+import type { DelegateOutcome } from "../agent/tools/askAgent.tool";
+
+/**
+ * Where the control plane POSTs a delegation result when it runs long.
+ * Derived from PUBLIC_URL; null disables the webhook (poll backstop still runs).
+ */
+const AGENT_WEBHOOK_URL = process.env.PUBLIC_URL
+  ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/agent/webhook`
+  : undefined;
 
 /**
  * URL the glasses fetch for the looping "thinking" sound while a query is
@@ -154,15 +166,39 @@ export class QueryProcessor {
 
     // Step 5: Generate response
     this.showStatus("Thinking...", hasDisplay);
+
+    // Wire up giga-agent delegation for this turn (only if configured). The
+    // closure captures this query's photo + device context so the ask_agent
+    // tool can forward them. `pendingDelegation` tells the history step to
+    // defer: when a delegation goes async the turn's response is just the ack,
+    // and the real answer is recorded later in deliverFollowUp().
+    const hadPhoto = photos.length > 0;
+    let pendingDelegation = false;
+    let delegatedActions: AgentAction[] = [];
+    const delegate = isDelegationEnabled()
+      ? async (task: string): Promise<DelegateOutcome> => {
+          const outcome = await this.delegateToAgent(task, { query, photoDataUrl, hadPhoto, context });
+          if (outcome.status === "pending") {
+            pendingDelegation = true;
+            return { status: "working" };
+          }
+          delegatedActions = outcome.actions;
+          return { status: "done", reply: outcome.reply };
+        }
+      : undefined;
+
     let response: string;
     try {
       const result = await generateResponse({
         query,
         photos: photos.length > 0 ? photos : undefined,
         context,
+        delegate,
         onToolCall: (toolName) => {
           if (toolName === 'search') {
             this.showStatus("Searching...", hasDisplay);
+          } else if (toolName === 'ask_agent') {
+            this.showStatus("On it...", hasDisplay);
           }
         },
       });
@@ -173,7 +209,8 @@ export class QueryProcessor {
     }
     lap('AI-GENERATE-RESPONSE');
 
-    // Broadcast AI response to frontend
+    // Broadcast AI response to frontend (with any action buttons from a fast
+    // delegation, e.g. an OAuth "Connect Gmail" link).
     broadcastChatEvent(this.user.userId, {
       type: "message",
       id: `ai-${Date.now()}`,
@@ -181,6 +218,7 @@ export class QueryProcessor {
       recipientId: this.user.userId,
       content: response,
       timestamp: new Date().toISOString(),
+      ...(delegatedActions.length ? { actions: delegatedActions } : {}),
     });
 
     // Broadcast idle state
@@ -194,14 +232,138 @@ export class QueryProcessor {
     this.outputResponse(response, context.hasSpeakers, context.hasDisplay);
     lap('OUTPUT-TO-GLASSES');
 
-    // Step 8: Save to chat history
-    const hadPhoto = photos.length > 0;
-    await this.user.chatHistory.addTurn(query, response, hadPhoto, photoDataUrl);
+    // Step 8: Save to chat history. For a pending delegation the turn's
+    // "response" is only the ack — the final answer is recorded later in
+    // deliverFollowUp(), so we skip recording here to keep history coherent.
+    if (!pendingDelegation) {
+      await this.user.chatHistory.addTurn(query, response, hadPhoto, photoDataUrl);
+    }
     lap('SAVE-HISTORY');
 
     console.log(`⏱️ [PIPELINE-DONE] Total: ${Date.now() - pipelineStart}ms`);
 
     return response;
+  }
+
+  /**
+   * Delegate a task to the user's giga-agent via the control plane.
+   *
+   * Blocks up to the grace window for a fast answer; otherwise registers the
+   * pending task so deliverFollowUp() runs when it completes (webhook primary,
+   * poll backstop). Returns a shape the ask_agent tool can act on.
+   */
+  private async delegateToAgent(
+    task: string,
+    turn: { query: string; photoDataUrl?: string; hadPhoto: boolean; context: GenerateOptions["context"] },
+  ): Promise<{ status: "done"; reply: string; actions: AgentAction[] } | { status: "pending"; taskId: string }> {
+    const userId = this.user.userId;
+    const result = await agentBridge.message({
+      userId,
+      text: task,
+      image: turn.photoDataUrl,
+      context: this.buildAgentContext(turn.context),
+      waitMs: AGENT_DELEGATION.graceMs,
+      webhookUrl: AGENT_WEBHOOK_URL,
+    });
+
+    if (result.status === "done") {
+      return { status: "done", reply: result.reply, actions: result.actions };
+    }
+    if (result.status === "working") {
+      // Register the follow-up: when the agent finishes, deliver it as a
+      // second turn through the normal output path.
+      delegations.register(result.taskId, userId, (final) =>
+        this.deliverFollowUp(turn.query, final, { photoDataUrl: turn.photoDataUrl, hadPhoto: turn.hadPhoto }),
+      );
+      return { status: "pending", taskId: result.taskId };
+    }
+
+    // Failed synchronously — surface it as a spoken answer rather than hanging.
+    console.error(`🤝 [Delegation] message failed for ${userId}: ${result.error}`);
+    return { status: "done", reply: "I couldn't reach your agent just now. Please try again.", actions: [] };
+  }
+
+  /**
+   * Deliver a completed delegation back to the user as a follow-up turn.
+   *
+   * Re-enters the SAME output path a normal answer uses (HUD / speaker decided
+   * by capabilities) when the glasses session is still live, always mirrors it
+   * into the webview chat thread, and records the FINAL answer in history so
+   * the fast agent's next turn reflects what the agent actually said.
+   */
+  async deliverFollowUp(
+    originalQuery: string,
+    result: AgentTaskResult,
+    opts: { photoDataUrl?: string; hadPhoto: boolean },
+  ): Promise<void> {
+    const userId = this.user.userId;
+
+    if (result.status !== "done" || !result.reply) {
+      // Failed/timed-out delegation: tell the user something went wrong, in the
+      // chat thread and on the glasses if they're still connected.
+      const msg = "Sorry — that one didn't go through. Want me to try again?";
+      broadcastChatEvent(userId, {
+        type: "message",
+        id: `ai-${Date.now()}`,
+        senderId: "mentra-ai",
+        recipientId: userId,
+        content: msg,
+        timestamp: new Date().toISOString(),
+      });
+      if (this.user.appSession) {
+        const session = this.user.appSession;
+        this.outputResponse(msg, session.capabilities?.hasSpeaker ?? false, session.capabilities?.hasDisplay ?? false);
+      }
+      return;
+    }
+
+    const reply = result.reply;
+    const actions = result.actions ?? [];
+    console.log(`🤝 [Delegation] delivering follow-up to ${userId} (${reply.length} chars, ${actions.length} actions)`);
+
+    // Always land it in the webview chat thread (durable record + the surface
+    // for any action buttons). Queues if no SSE client is connected.
+    broadcastChatEvent(userId, {
+      type: "message",
+      id: `ai-${Date.now()}`,
+      senderId: "mentra-ai",
+      recipientId: userId,
+      content: reply,
+      timestamp: new Date().toISOString(),
+      ...(actions.length ? { actions } : {}),
+    });
+
+    // Record the FINAL answer (not the earlier ack) so history stays in sync.
+    await this.user.chatHistory.addTurn(originalQuery, reply, opts.hadPhoto, opts.photoDataUrl);
+
+    // Speak / show on the glasses if the session is still live; if not, the
+    // chat-thread broadcast above is the fallback (no separate push needed).
+    const session = this.user.appSession;
+    if (session) {
+      this.outputResponse(reply, session.capabilities?.hasSpeaker ?? false, session.capabilities?.hasDisplay ?? false);
+    } else {
+      console.log(`🤝 [Delegation] session gone for ${userId}; follow-up left in chat thread only`);
+    }
+  }
+
+  /**
+   * Map this turn's device context into the flat shape the control plane
+   * prepends for the agent (so it never re-asks for what the device knows).
+   */
+  private buildAgentContext(context: GenerateOptions["context"]): AgentContextPayload {
+    const payload: AgentContextPayload = {};
+
+    const loc = context.location;
+    if (loc) {
+      const parts = [loc.neighborhood, loc.city, loc.state, loc.country].filter(Boolean);
+      if (parts.length) payload.location = parts.join(", ");
+    }
+    if (context.localTime) payload.localTime = context.localTime;
+
+    const model = this.user.appSession?.capabilities?.modelName;
+    if (model) payload.device = model;
+
+    return payload;
   }
 
   /**

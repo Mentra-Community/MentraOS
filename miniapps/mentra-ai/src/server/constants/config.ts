@@ -68,3 +68,29 @@ export const AGENT_SETTINGS = {
   // Model identifier (Mastra format: "provider/model")
   model: `google/${process.env.LLM_MODEL || 'gemini-3.1-flash-lite-preview'}`,
 };
+
+/**
+ * Giga-agent delegation settings.
+ *
+ * When configured, the fast agent gains an `ask_agent` tool that hands
+ * multi-step / personal-account / long-running work to the user's
+ * persistent agent (the `testaiassistant` control plane). The feature is
+ * a no-op unless BOTH the base URL and the API key are set — so an
+ * un-provisioned environment simply behaves like the standalone fast agent.
+ *
+ * - baseUrl  Control-plane origin, e.g. https://agents.augmentos.app
+ * - apiKey   Shared server-to-server key (x-api-key). NEVER ships to a device.
+ * - graceMs  How long a delegation blocks the turn before we bail to an
+ *            "I'm on it" ack + a later follow-up (matches the control
+ *            plane's own 2s grace window).
+ */
+export const AGENT_DELEGATION = {
+  baseUrl: process.env.AGENTS_BASE_URL || '',
+  apiKey: process.env.MENTRA_AGENT_API_KEY || '',
+  graceMs: parseInt(process.env.AGENT_DELEGATE_GRACE_MS || '2000', 10),
+};
+
+/** True when delegation is fully configured and should be offered to the agent. */
+export function isDelegationEnabled(): boolean {
+  return Boolean(AGENT_DELEGATION.baseUrl && AGENT_DELEGATION.apiKey);
+}
