@@ -32,34 +32,52 @@ const ANSWER_LANGUAGES: AnswerLanguage[] = [
 ]
 
 const MERGE_COLORS = {
-  ink: "#202431",
-  muted: "#747889",
-  pink: "#F45D8B",
+  ink: "#15171C",
+  muted: "#8A8F9C",
+  pink: "#F5497B",
   coral: "#FF6F7D",
   sky: "#39BFE9",
-  violet: "#8D7BF7",
+  violet: "#7C6FF2",
   peach: "#FF9B62",
   offline: "#4B4B5A",
   surface: "#FFFFFF",
-  surfaceTint: "#FFF6F9",
-  border: "#F1DCE5",
+  border: "#ECECF1",
+  chip: "#F3F3F7",
 }
 
 const MERGE_ACTIVE_STYLE: CSSProperties = {
   backgroundColor: MERGE_COLORS.pink,
   color: "#FFFFFF",
-  boxShadow: "0 8px 20px rgba(244, 93, 139, 0.24)",
+  boxShadow: "0 8px 20px rgba(245, 73, 123, 0.28)",
 }
 
-// Flat white so the safe-area insets match the white app bar below them
-// instead of showing a blue→violet→pink gradient behind the status bar.
+// Soft light gradient. Starts near-white so the safe-area top inset (where the
+// phone status bar sits) reads light, then cools toward the bottom — the header
+// and cards float over it instead of sitting on a hard white bar.
 const MERGE_SHELL_STYLE: CSSProperties = {
-  background: MERGE_COLORS.surface,
+  background: "linear-gradient(180deg, #FFFFFF 0%, #FBFAFC 42%, #F1F1F6 100%)",
 }
+
+const CARD_SHADOW = "0 4px 18px rgba(20, 23, 28, 0.06)"
 
 type MergeTab = "insights" | "settings"
 type InsightsMode = "insights" | "activity"
 type ActivityFilter = "all" | "shown" | "quiet"
+
+// Per-agent presentation: the tinted icon tile + glyph that fronts each card
+// and the "standing by" chips. Unknown agents fall back to a neutral mark.
+type AgentVisual = {bg: string; fg: string; glyph: ReactNode}
+const AGENT_VISUALS: Record<string, AgentVisual> = {
+  QuestionAnswerer: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
+  FactChecker: {bg: "#ECEAFE", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
+  Definer: {bg: "#E2F4FB", fg: MERGE_COLORS.sky, glyph: <BookGlyph />},
+  Initial: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
+}
+const STANDBY_AGENTS = ["QuestionAnswerer", "FactChecker", "Definer"]
+
+function agentVisual(type?: string): AgentVisual {
+  return AGENT_VISUALS[type ?? ""] ?? {bg: MERGE_COLORS.chip, fg: MERGE_COLORS.muted, glyph: <SparkGlyph />}
+}
 
 export function App() {
   const {insets, capsuleMenu} = useSafeArea()
@@ -139,6 +157,9 @@ export function App() {
   const headerPaddingRight = capsuleMenu ? Math.max(20, capsuleMenu.width + 20) : 20
   const latestTranscript = transcripts.slice().reverse().find((entry) => entry.text.trim().length > 0)
   const latestDecision = decisions[decisions.length - 1]
+  const busy = processing || backendStatus === "processing"
+
+  const statusText = busy ? "Thinking…" : insights.length > 0 ? "Listening for useful context" : "Listening"
 
   return (
     <div
@@ -150,20 +171,24 @@ export function App() {
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <div className="min-h-0 flex-1 bg-zinc-100 flex flex-col overflow-hidden">
-        <header
-          className="pt-4 pb-3 pl-5 bg-white border-b border-[#e3e7e6]"
-          style={{paddingRight: headerPaddingRight}}>
-          <div className="flex items-center gap-3 min-w-0">
-            <img src={MergeLogo} alt="" className="h-10 w-10 flex-shrink-0" />
-            <div className="min-w-0">
-              <h1 className="m-0 text-xl font-bold truncate">Merge</h1>
-              <p className="m-0 mt-0.5 text-sm text-[#6b7280] truncate">
-                {processing ? "Thinking..." : insights.length > 0 ? "Listening for useful context" : "Listening"}
-              </p>
+      <div className="relative min-h-0 flex-1 flex flex-col overflow-hidden">
+        {!showDeveloperInfo && (
+          <header className="pt-4 pb-3 pl-5" style={{paddingRight: headerPaddingRight}}>
+            <div className="flex items-center gap-3 min-w-0">
+              <img src={MergeLogo} alt="" className="h-10 w-10 flex-shrink-0" />
+              <div className="min-w-0">
+                <h1 className="m-0 text-xl font-bold text-[#15171c] truncate">Merge</h1>
+                <p className="m-0 mt-0.5 flex items-center gap-1.5 text-sm text-[#8a8f9c] truncate">
+                  <span
+                    className="h-1.5 w-1.5 rounded-full flex-shrink-0"
+                    style={{backgroundColor: busy ? MERGE_COLORS.peach : MERGE_COLORS.pink}}
+                  />
+                  {statusText}
+                </p>
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         {showDeveloperInfo ? (
           <DeveloperInfo
@@ -193,6 +218,7 @@ export function App() {
               <InsightsView
                 insights={insights}
                 decisions={decisions}
+                busy={busy}
                 latestTranscript={latestTranscript}
                 latestDecision={latestDecision}
                 cloudPresentation={cloudPresentation}
@@ -205,11 +231,7 @@ export function App() {
         )}
 
         {!showDeveloperInfo && (
-          <BottomNav
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            settingsHoldHandlers={holdHandlers}
-          />
+          <BottomNav activeTab={activeTab} onTabChange={setActiveTab} settingsHoldHandlers={holdHandlers} />
         )}
       </div>
     </div>
@@ -219,6 +241,7 @@ export function App() {
 function InsightsView({
   insights,
   decisions,
+  busy,
   latestTranscript,
   latestDecision,
   cloudPresentation,
@@ -228,6 +251,7 @@ function InsightsView({
 }: {
   insights: MergeInsight[]
   decisions: MergeDecision[]
+  busy: boolean
   latestTranscript?: MergeTranscript
   latestDecision?: MergeDecision
   cloudPresentation: Presentation
@@ -239,10 +263,12 @@ function InsightsView({
   const [expandedInsightId, setExpandedInsightId] = useState<string | null>(null)
   const [expandedDecisionId, setExpandedDecisionId] = useState<string | null>(null)
 
+  const newestId = insights.length > 0 ? insights[insights.length - 1].id : null
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {developerMode && (
-        <section className="px-4 py-2 bg-white border-b border-[#e3e7e6]">
+        <section className="px-4 py-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
               <StatusPill label={cloudPresentation.label} detail={cloudPresentation.detail} color={cloudPresentation.accentColor} />
@@ -253,7 +279,7 @@ function InsightsView({
         </section>
       )}
 
-      <main className="flex-1 min-h-0 overflow-y-auto px-5 pb-4">
+      <main className="flex-1 min-h-0 overflow-y-auto px-5">
         {mode === "activity" ? (
           <ActivityTimeline
             decisions={decisions}
@@ -261,15 +287,14 @@ function InsightsView({
             onToggleDecision={(id) => setExpandedDecisionId((current) => (current === id ? null : id))}
           />
         ) : insights.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center">
-            <img src={MergeLogo} alt="" className="h-16 w-16 opacity-90" />
-            <h2 className="mt-4 mb-1 text-lg font-bold text-[#202928]">No insights yet</h2>
-            <p className="m-0 max-w-[260px] text-sm leading-5 text-[#6b7280]">
-              Merge stays quiet until it has something useful to add.
-            </p>
-          </div>
+          busy ? (
+            <ThinkingHero quote={latestTranscript?.text} />
+          ) : (
+            <ListeningEmpty />
+          )
         ) : (
-          <div className="flex flex-col gap-3 py-4">
+          <div className="flex flex-col gap-3 pt-3 pb-28">
+            <SectionLabel>Today</SectionLabel>
             {insights
               .slice()
               .reverse()
@@ -280,6 +305,7 @@ function InsightsView({
                     key={insight.id}
                     insight={insight}
                     decision={decision}
+                    isNewest={insight.id === newestId}
                     expanded={expandedInsightId === insight.id}
                     onToggle={() => setExpandedInsightId((current) => (current === insight.id ? null : insight.id))}
                   />
@@ -306,6 +332,89 @@ function InsightsView({
   )
 }
 
+// ── Empty / Thinking hero ────────────────────────────────────────────────
+
+function PulseHero({thinking}: {thinking?: boolean}) {
+  return (
+    <div className="relative flex items-center justify-center" style={{width: 232, height: 232}}>
+      <span className="absolute rounded-full" style={{width: 232, height: 232, border: "1px solid #F2DEE7"}} />
+      <span className="absolute rounded-full" style={{width: 176, height: 176, border: "1px solid #F4D6E2"}} />
+      {thinking ? (
+        <svg
+          className="absolute animate-spin"
+          style={{width: 208, height: 208, animationDuration: "1.4s"}}
+          viewBox="0 0 100 100"
+          fill="none"
+          aria-hidden="true">
+          <circle cx="50" cy="50" r="48" stroke={MERGE_COLORS.pink} strokeWidth="2.5" strokeLinecap="round" strokeDasharray="74 230" />
+        </svg>
+      ) : (
+        <span
+          className="absolute rounded-full animate-pulse"
+          style={{width: 208, height: 208, border: "1px solid #F8CFDE"}}
+        />
+      )}
+      <img src={MergeLogo} alt="" className="relative h-[88px] w-[88px]" />
+    </div>
+  )
+}
+
+function ListeningEmpty() {
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-24">
+      <PulseHero />
+      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c]">No insights yet</h2>
+      <p className="m-0 mt-2 max-w-[280px] text-sm leading-5 text-[#8a8f9c]">
+        Merge stays quiet until it has something useful to add.
+      </p>
+      <p className="m-0 mt-9 text-[11px] font-bold uppercase tracking-[0.16em] text-[#b3b7c2]">Agents standing by</p>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 max-w-[300px]">
+        {STANDBY_AGENTS.map((agent) => (
+          <AgentChip key={agent} type={agent} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ThinkingHero({quote}: {quote?: string}) {
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-24">
+      <PulseHero thinking />
+      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c]">Thinking…</h2>
+      {quote ? (
+        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#3a3f4c]">“{quote}”</p>
+      ) : (
+        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#8a8f9c]">Checking what matters…</p>
+      )}
+    </div>
+  )
+}
+
+function AgentChip({type}: {type: string}) {
+  return (
+    <div
+      className="inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-3.5 border border-[#F0F0F4]"
+      style={{boxShadow: "0 4px 14px rgba(20, 23, 28, 0.06)"}}>
+      <AgentIconTile type={type} size={24} />
+      <span className="text-sm font-semibold text-[#15171c]">{type}</span>
+    </div>
+  )
+}
+
+function AgentIconTile({type, size = 30}: {type?: string; size?: number}) {
+  const visual = agentVisual(type)
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-[9px] flex-shrink-0"
+      style={{width: size, height: size, backgroundColor: visual.bg, color: visual.fg}}>
+      {visual.glyph}
+    </span>
+  )
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────
+
 function SettingsView({
   settings,
   developerMode,
@@ -320,73 +429,80 @@ function SettingsView({
   onOpenDeveloperInfo: () => void
 }) {
   return (
-    <div className="h-full overflow-y-auto px-4 py-6 space-y-6 bg-zinc-100">
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">AI Settings</h2>
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-5">
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <LanguageIcon />
-              <div>
-                <div className="text-base font-medium text-gray-900">Answer language</div>
-                <p className="m-0 text-xs leading-4 text-gray-500">
-                  Merge can listen across languages but answers in this language.
-                </p>
-              </div>
-            </div>
-            <div className="relative">
-              <select
-                aria-label="Answer language"
-                value={settings.answerLanguage}
-                onChange={(event) => onAnswerLanguageChange(event.currentTarget.value as AnswerLanguage)}
-                className="h-12 w-full appearance-none rounded-xl border border-[#f1dce5] bg-[#fff7fa] px-4 pr-11 text-base font-semibold text-[#202431] outline-none">
-                {ANSWER_LANGUAGES.map((language) => (
-                  <option key={language} value={language}>
-                    {language}
-                  </option>
-                ))}
-              </select>
-              <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[#747889]">
-                <ChevronDownIcon />
-              </div>
-            </div>
-          </div>
+    <div className="h-full overflow-y-auto px-5 pt-4 pb-28">
+      <h1 className="m-0 text-[26px] font-bold text-[#15171c]">Settings</h1>
+      <p className="m-0 mt-1 text-sm text-[#8a8f9c]">Tune how Merge listens, thinks, and speaks.</p>
 
-          <div className="h-px bg-gray-100 w-full" />
+      <SectionLabel className="mt-7">Intelligence</SectionLabel>
+      <div
+        className="mt-3 rounded-2xl bg-white border border-[#ECECF1] overflow-hidden"
+        style={{boxShadow: CARD_SHADOW}}>
+        {/* Answer language — native picker overlaid on a row that shows the value. */}
+        <div className="relative flex items-center gap-3 px-4 py-3.5">
+          <SettingIconTile>
+            <LanguageIcon />
+          </SettingIconTile>
+          <span className="flex-1 text-[15px] font-semibold text-[#15171c]">Answer language</span>
+          <span className="flex items-center gap-1 text-[15px] text-[#8a8f9c]">
+            {settings.answerLanguage}
+            <ChevronRightIcon />
+          </span>
+          <select
+            aria-label="Answer language"
+            value={settings.answerLanguage}
+            onChange={(event) => onAnswerLanguageChange(event.currentTarget.value as AnswerLanguage)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
+            {ANSWER_LANGUAGES.map((language) => (
+              <option key={language} value={language}>
+                {language}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
+        <div className="h-px bg-[#F1F1F4] mx-4" />
+
+        {/* Insight frequency */}
+        <div className="px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            <SettingIconTile>
               <FrequencyIcon />
-              <div>
-                <div className="text-base font-medium text-gray-900">Insight frequency</div>
-                <p className="m-0 text-xs leading-4 text-gray-500">Controls how eager Merge is to interrupt.</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {(["low", "medium", "high"] as const).map((frequency) => (
+            </SettingIconTile>
+            <span className="flex-1 text-[15px] font-semibold text-[#15171c]">Insight frequency</span>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {(["low", "medium", "high"] as const).map((frequency) => {
+              const active = settings.frequency === frequency
+              return (
                 <button
                   key={frequency}
                   onClick={() => onFrequencyChange(frequency)}
-                  className={`h-11 rounded-xl text-sm font-semibold capitalize transition-colors ${
-                    settings.frequency === frequency ? "shadow-sm" : "bg-gray-50 text-gray-900 hover:bg-gray-100"
-                  }`}
-                  style={settings.frequency === frequency ? MERGE_ACTIVE_STYLE : {}}>
+                  className="h-11 rounded-xl text-sm font-semibold capitalize transition-colors"
+                  style={active ? MERGE_ACTIVE_STYLE : {backgroundColor: MERGE_COLORS.chip, color: MERGE_COLORS.ink}}>
                   {frequency}
                 </button>
-              ))}
-            </div>
+              )
+            })}
           </div>
         </div>
-      </section>
+      </div>
 
       {developerMode && (
         <button
-          className="w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors"
+          className="mt-6 w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors"
           onClick={onOpenDeveloperInfo}>
           Developer info
         </button>
       )}
     </div>
+  )
+}
+
+function SettingIconTile({children}: {children: ReactNode}) {
+  return (
+    <span className="inline-flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#F3F3F7] text-[#5b6070] flex-shrink-0">
+      {children}
+    </span>
   )
 }
 
@@ -405,9 +521,9 @@ function DeveloperInfo({
 }) {
   const publicEnv = publicEnvVars()
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-zinc-100">
-      <div className="bg-white border-b border-zinc-200 px-5 py-3 flex items-center gap-3">
-        <button className="h-9 w-9 rounded-full bg-zinc-100 flex items-center justify-center" onClick={onBack} aria-label="Back">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="px-5 py-3 flex items-center gap-3">
+        <button className="h-9 w-9 rounded-full bg-white border border-[#ECECF1] flex items-center justify-center" onClick={onBack} aria-label="Back">
           <BackIcon />
         </button>
         <div>
@@ -415,7 +531,7 @@ function DeveloperInfo({
           <p className="m-0 text-xs text-zinc-500">Public build configuration</p>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+      <div className="flex-1 overflow-y-auto px-5 py-3 space-y-4">
         <InfoCard title="Runtime">
           <InfoRow label="Backend URL" value={backendUrl} />
           <InfoRow label="Backend status" value={backendStatus} />
@@ -444,23 +560,29 @@ function BottomNav({
   onTabChange: (tab: MergeTab) => void
   settingsHoldHandlers?: HoldHandlers
 }) {
+  // Floating dock — centered pill that hovers over the scrolling content; the
+  // views reserve bottom padding so nothing hides behind it.
   return (
-    <div className="w-full h-14 bg-white/80 rounded-tl-2xl rounded-tr-2xl backdrop-blur-lg flex justify-center items-stretch">
-      <NavButton active={activeTab === "insights"} label="Insights" onClick={() => onTabChange("insights")}>
-        <InsightsIcon active={activeTab === "insights"} />
-      </NavButton>
-      <NavButton
-        active={activeTab === "settings"}
-        label="Settings"
-        onClick={() => onTabChange("settings")}
-        holdHandlers={settingsHoldHandlers}>
-        <SettingsIcon active={activeTab === "settings"} />
-      </NavButton>
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+      <div
+        className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-white/90 backdrop-blur-lg p-1.5 border border-[#ECECF1]"
+        style={{boxShadow: "0 12px 30px rgba(20, 23, 28, 0.14)"}}>
+        <DockButton active={activeTab === "insights"} label="Insights" onClick={() => onTabChange("insights")}>
+          <InsightsIcon active={activeTab === "insights"} />
+        </DockButton>
+        <DockButton
+          active={activeTab === "settings"}
+          label="Settings"
+          onClick={() => onTabChange("settings")}
+          holdHandlers={settingsHoldHandlers}>
+          <SettingsIcon active={activeTab === "settings"} />
+        </DockButton>
+      </div>
     </div>
   )
 }
 
-function NavButton({
+function DockButton({
   active,
   label,
   onClick,
@@ -473,8 +595,6 @@ function NavButton({
   holdHandlers?: HoldHandlers
   children: ReactNode
 }) {
-  // The button fills its flex cell so the touch target spans the full nav-bar
-  // height and half its width; the active pill stays icon-sized inside it.
   return (
     <button
       aria-label={label}
@@ -483,11 +603,11 @@ function NavButton({
       onPointerUp={holdHandlers?.onPointerUp}
       onPointerLeave={holdHandlers?.onPointerLeave}
       onPointerCancel={holdHandlers?.onPointerCancel}
-      className="flex-1 inline-flex justify-center items-center">
-      <span
-        className="w-12 h-7 p-2 rounded-3xl inline-flex justify-center items-center transition-colors"
-        style={active ? MERGE_ACTIVE_STYLE : {backgroundColor: "transparent"}}>
-        {children}
+      className="inline-flex h-10 items-center gap-2 rounded-full px-4 transition-colors"
+      style={active ? MERGE_ACTIVE_STYLE : {backgroundColor: "transparent"}}>
+      {children}
+      <span className="text-sm font-semibold" style={{color: active ? "#FFFFFF" : MERGE_COLORS.muted}}>
+        {label}
       </span>
     </button>
   )
@@ -520,39 +640,56 @@ function ModeSwitch({
 function InsightCard({
   insight,
   decision,
+  isNewest,
   expanded,
   onToggle,
 }: {
   insight: MergeInsight
   decision?: MergeDecision
+  isNewest: boolean
   expanded: boolean
   onToggle: () => void
 }) {
+  const quote = decision?.chunkText?.trim()
+  const duration = insight.profiling ? formatDuration(insight.profiling.totalMs) : null
   return (
-    <article className="bg-white border border-[#e0e6e4] rounded-lg p-4 shadow-[0_1px_8px_rgba(16,24,24,0.05)]">
+    <article
+      className={`rounded-[20px] bg-white p-4 ${isNewest ? "border-2 border-[#F8B4CC]" : "border border-[#ECECF1]"}`}
+      style={{boxShadow: CARD_SHADOW}}>
       <button className="w-full text-left" onClick={onToggle}>
-        <div className="flex items-start gap-2 mb-2">
-          <img src={MergeLogo} alt="" className="h-7 w-7 flex-shrink-0" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-bold text-[#1e2927] truncate">{insight.agentType || "Merge"}</div>
-              <span className="text-[11px] text-[#9aa4a0] flex-shrink-0">{formatTime(insight.timestamp)}</span>
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-              {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
-              {typeof insight.confidence === "number" ? (
-                <span className="text-[10px] font-bold uppercase text-zinc-400">
-                  {Math.round(insight.confidence * 100)}%
-                </span>
-              ) : null}
-              {insight.profiling ? <ProfilingBadge totalMs={insight.profiling.totalMs} /> : null}
-              {insight.sources?.length ? <SourceCountBadge count={insight.sources.length} /> : null}
-            </div>
-          </div>
+        <div className="flex items-center gap-2.5">
+          <AgentIconTile type={insight.agentType} />
+          <span className="flex-1 text-[15px] font-bold text-[#15171c] truncate">{insight.agentType || "Merge"}</span>
+          {isNewest ? (
+            <NewBadge />
+          ) : (
+            <span className="text-xs text-[#9aa0ad] flex-shrink-0">{formatClockTime(insight.timestamp)}</span>
+          )}
         </div>
-        <p className="selectable-text m-0 text-base leading-6 text-[#202928] whitespace-pre-wrap break-words">
+
+        {quote ? (
+          <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#F4F4F7] px-3 py-2">
+            <WaveformIcon />
+            <span className="min-w-0 flex-1 truncate text-[13px] italic text-[#8a8f9c]">“{quote}”</span>
+          </div>
+        ) : null}
+
+        <p className="selectable-text m-0 mt-3 text-[15px] font-semibold leading-6 text-[#15171c] whitespace-pre-wrap break-words">
           {insight.text}
         </p>
+
+        <div className="mt-3 flex items-center gap-2">
+          {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
+          {typeof insight.confidence === "number" ? (
+            <span className="text-xs font-semibold text-[#8a8f9c]">{Math.round(insight.confidence * 100)}%</span>
+          ) : null}
+          {duration ? (
+            <>
+              <span className="text-[#c4c8d1]">·</span>
+              <span className="text-xs text-[#8a8f9c]">{duration}</span>
+            </>
+          ) : null}
+        </div>
       </button>
 
       {expanded ? (
@@ -585,10 +722,10 @@ function ActivityTimeline({
 
   if (decisions.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center">
+      <div className="h-full flex flex-col items-center justify-center text-center pb-24">
         <img src={MergeLogo} alt="" className="h-14 w-14 opacity-80" />
-        <h2 className="mt-4 mb-1 text-base font-bold text-[#202928]">No AI activity yet</h2>
-        <p className="m-0 max-w-[250px] text-sm leading-5 text-[#6b7280]">
+        <h2 className="mt-4 mb-1 text-base font-bold text-[#15171c]">No AI activity yet</h2>
+        <p className="m-0 max-w-[250px] text-sm leading-5 text-[#8a8f9c]">
           Decisions appear after Merge analyzes speech.
         </p>
       </div>
@@ -596,7 +733,7 @@ function ActivityTimeline({
   }
 
   return (
-    <div className="flex flex-col gap-2 py-4">
+    <div className="flex flex-col gap-2 py-4 pb-28">
       <ActivityFilterBar
         filter={filter}
         onFilterChange={setFilter}
@@ -633,8 +770,8 @@ function ActivityFilterBar({
   counts: Record<ActivityFilter, number>
 }) {
   return (
-    <div className="sticky top-0 z-10 -mx-5 px-5 pb-2 bg-zinc-100/95 backdrop-blur">
-      <div className="grid grid-cols-3 gap-1 rounded-full bg-white p-1 border border-[#e0e6e4] shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
+    <div className="sticky top-0 z-10 -mx-5 px-5 pb-2 bg-[#f6f6fa]/95 backdrop-blur">
+      <div className="grid grid-cols-3 gap-1 rounded-full bg-white p-1 border border-[#ECECF1] shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
         {(["all", "shown", "quiet"] as const).map((item) => (
           <button
             key={item}
@@ -661,14 +798,14 @@ function ActivityRow({
   onToggle: () => void
 }) {
   return (
-    <article className="rounded-lg border border-[#e0e6e4] bg-white px-3 py-2 shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
+    <article className="rounded-lg border border-[#ECECF1] bg-white px-3 py-2 shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
       <button className="w-full text-left" onClick={onToggle}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{backgroundColor: actionColor(decision.action)}} />
-            <span className="text-sm font-bold text-[#202928] truncate">{activityTitle(decision)}</span>
+            <span className="text-sm font-bold text-[#15171c] truncate">{activityTitle(decision)}</span>
           </div>
-          <span className="text-[11px] text-[#9aa4a0] flex-shrink-0">{formatTime(decision.timestamp)}</span>
+          <span className="text-[11px] text-[#9aa0ad] flex-shrink-0">{formatTime(decision.timestamp)}</span>
         </div>
         <p className="m-0 mt-1 text-xs leading-4 text-[#66736f] line-clamp-2">
           {decision.reasoning || decision.insightText || decision.chunkText || "No reasoning recorded"}
@@ -728,9 +865,9 @@ function LiveDebugTray({
   const backendText = lastError ? `${backendPresentation.label} · ${lastError}` : backendPresentation.label
 
   return (
-    <footer className="bg-white border-t border-[#e3e7e6] px-5 py-2">
+    <footer className="px-5 pb-20 pt-2">
       <button
-        className="w-full rounded-lg bg-[#f8faf9] border border-[#e0e6e4] px-3 py-2 text-left"
+        className="w-full rounded-lg bg-white border border-[#ECECF1] px-3 py-2 text-left"
         onClick={onOpenActivity}>
         <div className="flex items-center justify-between gap-3">
           <span className="text-[11px] font-bold uppercase text-[#7a8581]">Live</span>
@@ -757,6 +894,24 @@ function LiveDebugTray({
         </div>
       </button>
     </footer>
+  )
+}
+
+function SectionLabel({children, className}: {children: ReactNode; className?: string}) {
+  return (
+    <p className={`m-0 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#b3b7c2] ${className ?? ""}`}>
+      {children}
+    </p>
+  )
+}
+
+function NewBadge() {
+  return (
+    <span
+      className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase text-white"
+      style={{backgroundColor: MERGE_COLORS.pink}}>
+      New
+    </span>
   )
 }
 
@@ -832,18 +987,10 @@ function ProfilingBlock({profiling}: {profiling?: MergeInsight["profiling"]}) {
   )
 }
 
-function ProfilingBadge({totalMs}: {totalMs: number}) {
-  return <span className="text-[10px] font-bold uppercase text-zinc-400">{formatDuration(totalMs)}</span>
-}
-
-function SourceCountBadge({count}: {count: number}) {
-  return <span className="text-[10px] font-bold uppercase text-zinc-400">{count} src</span>
-}
-
 function ActionBadge({action}: {action: MergeDecision["action"]}) {
   return (
     <span
-      className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+      className="rounded-md px-2 py-0.5 text-[10px] font-bold uppercase"
       style={{backgroundColor: `${actionColor(action)}1A`, color: actionColor(action)}}>
       {action}
     </span>
@@ -852,7 +999,7 @@ function ActionBadge({action}: {action: MergeDecision["action"]}) {
 
 function StatusPill({label, detail, color}: {label: string; detail: string; color: string}) {
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-[#dbe3e0] bg-[#f8faf9] px-2 py-1 flex-shrink-0">
+    <div className="flex items-center gap-1.5 rounded-full border border-[#e3e4ea] bg-white px-2 py-1 flex-shrink-0">
       <span className="h-2 w-2 rounded-full flex-shrink-0" style={{backgroundColor: color}} />
       <span className="text-[11px] font-bold text-[#24302d] whitespace-nowrap">{compactStatusLabel(label)}</span>
       <span className="text-[10px] font-bold uppercase text-[#7a8581] whitespace-nowrap">
@@ -864,7 +1011,7 @@ function StatusPill({label, detail, color}: {label: string; detail: string; colo
 
 function InfoCard({title, children}: {title: string; children: ReactNode}) {
   return (
-    <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+    <section className="bg-white rounded-2xl p-4 border border-[#ECECF1]" style={{boxShadow: CARD_SHADOW}}>
       <h3 className="m-0 mb-3 text-sm font-bold text-zinc-900">{title}</h3>
       <div className="space-y-3">{children}</div>
     </section>
@@ -987,6 +1134,10 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"})
 }
 
+function formatClockTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+}
+
 function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) return "n/a"
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
@@ -1028,13 +1179,12 @@ function decisionMatchesFilter(decision: MergeDecision, filter: ActivityFilter):
   return true
 }
 
-function iconColor(active: boolean): string {
-  return active ? "#FFFFFF" : MERGE_COLORS.ink
-}
+// ── Icons / glyphs ─────────────────────────────────────────────────────────
 
 function InsightsIcon({active}: {active: boolean}) {
+  const color = active ? "#FFFFFF" : MERGE_COLORS.muted
   return (
-    <svg aria-hidden="true" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke={iconColor(active)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 15h8" />
       <path d="M9 19h6" />
       <path d="M12 3a6 6 0 0 0-3.5 10.9c.4.3.5.7.5 1.1h6c0-.4.1-.8.5-1.1A6 6 0 0 0 12 3Z" />
@@ -1043,8 +1193,9 @@ function InsightsIcon({active}: {active: boolean}) {
 }
 
 function SettingsIcon({active}: {active: boolean}) {
+  const color = active ? "#FFFFFF" : MERGE_COLORS.muted
   return (
-    <svg aria-hidden="true" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke={iconColor(active)} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
       <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z" />
     </svg>
@@ -1053,7 +1204,7 @@ function SettingsIcon({active}: {active: boolean}) {
 
 function LanguageIcon() {
   return (
-    <svg className="w-6 h-6 text-gray-900 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="m5 8 6 6" />
       <path d="m4 14 6-6 2-3" />
       <path d="M2 5h12" />
@@ -1066,7 +1217,7 @@ function LanguageIcon() {
 
 function FrequencyIcon() {
   return (
-    <svg className="w-6 h-6 text-gray-900 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 18V8" />
       <path d="M10 18V4" />
       <path d="M16 18v-6" />
@@ -1075,10 +1226,10 @@ function FrequencyIcon() {
   )
 }
 
-function ChevronDownIcon() {
+function ChevronRightIcon() {
   return (
-    <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m6 9 6 6 6-6" />
+    <svg aria-hidden="true" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m9 6 6 6-6 6" />
     </svg>
   )
 }
@@ -1087,6 +1238,43 @@ function BackIcon() {
   return (
     <svg className="w-5 h-5 text-zinc-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="m15 18-6-6 6-6" />
+    </svg>
+  )
+}
+
+function WaveformIcon() {
+  return (
+    <svg aria-hidden="true" className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke={MERGE_COLORS.pink} strokeWidth="2" strokeLinecap="round">
+      <path d="M5 10v4" />
+      <path d="M9 7v10" />
+      <path d="M13 4v16" />
+      <path d="M17 8v8" />
+      <path d="M21 11v2" />
+    </svg>
+  )
+}
+
+function SparkGlyph() {
+  return (
+    <svg aria-hidden="true" className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2c.5 3.6 2.4 5.5 6 6-3.6.5-5.5 2.4-6 6-.5-3.6-2.4-5.5-6-6 3.6-.5 5.5-2.4 6-6Z" />
+    </svg>
+  )
+}
+
+function CheckGlyph() {
+  return (
+    <svg aria-hidden="true" className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m5 12 4.5 4.5L19 7" />
+    </svg>
+  )
+}
+
+function BookGlyph() {
+  return (
+    <svg aria-hidden="true" className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2Z" />
+      <path d="M4 19a2 2 0 0 1 2-2h12" />
     </svg>
   )
 }
