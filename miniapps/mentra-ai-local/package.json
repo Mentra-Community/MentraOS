@@ -15,10 +15,10 @@
     "miniapp:dev": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp dev",
     "miniapp:build": "cd miniapp && bun run build.ts",
     "miniapp:release": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp release",
-    "miniapp:pack": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp pack",
+    "miniapp:pack": "cd miniapp && VERSION=$(node -p \"require('./miniapp.json').version\") && rm -f build/com.mentra.ai.local-$VERSION.zip && mkdir -p build && cd dist && zip -qr ../build/com.mentra.ai.local-$VERSION.zip .",
     "build": "bun run miniapp:build",
     "release": "bun run miniapp:release",
-    "pack": "bun run miniapp:pack"
+    "pack": "bun run miniapp:build && bun run miniapp:pack"
   },
   "dependencies": {
     "@mentra/auth": "workspace:*",

@@ -18,7 +18,7 @@
  * so the backend URL is the only thing that ships.
  */
 
-import {rm} from "fs/promises"
+import {copyFile, rm} from "fs/promises"
 
 const distDir = "./dist"
 
@@ -80,3 +80,9 @@ if (!uiResult.success) {
   for (const log of uiResult.logs) console.error(log)
   process.exit(1)
 }
+
+// Stage the manifest + icon alongside the bundles so `pack` produces a complete
+// zip (background/ + ui/ + miniapp.json + icon.png), matching the host's expectations.
+await copyFile("./miniapp.json", `${distDir}/miniapp.json`)
+await copyFile("./icon.png", `${distDir}/icon.png`)
+console.log("staged miniapp.json + icon.png into dist/")
