@@ -48,6 +48,11 @@ export {
   MiniappErrorCode,
 } from "../protocol"
 
+// Action handler types — for typing `session.actions.handle(id, fn)` handlers
+// (the registering side lives in the background JSContext). `InvokeOptions` is
+// for system miniapps that call other apps' actions via `session.actions.invoke`.
+export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actions"
+
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
