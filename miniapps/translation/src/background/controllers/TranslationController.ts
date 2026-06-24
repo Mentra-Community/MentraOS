@@ -111,12 +111,6 @@ export class TranslationController {
   private translationCleanup: UnsubscribeFn | null = null
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Action-scoped source-language pin. Null = translate any spoken language
-  // (the default and the app's normal mode); a code subscribes to that one
-  // source only. Not persisted and not a UI setting — only the start_translation
-  // action sets it, for the rare case a caller wants to pin the spoken language.
-  private pinnedSource: string | null = null
-
   // session.ui, retyped against this miniapp's channel registry. The SDK types
   // `session.ui` as UIModule<default-channels>; cast through unknown to bind it
   // to our Channels (mirrors the example-miniapp's approach).
@@ -290,24 +284,20 @@ export class TranslationController {
 
   private async startTranslation(
     params: Record<string, unknown>,
-  ): Promise<{targetLanguage: string; sourceLanguage: string; status: string}> {
+  ): Promise<{targetLanguage: string; status: string}> {
     const target =
       typeof params.targetLanguage === "string" && params.targetLanguage.trim() ? params.targetLanguage.trim() : null
-    const source =
-      typeof params.sourceLanguage === "string" && params.sourceLanguage.trim() ? params.sourceLanguage.trim() : null
 
-    this.pinnedSource = source
     if (target && target !== this.settings.targetLanguage) {
-      // setTargetLanguage persists, re-subscribes (reading pinnedSource), and
-      // broadcasts to the UI.
+      // setTargetLanguage persists, re-subscribes, and broadcasts to the UI.
       await this.setTargetLanguage(target)
     } else {
-      // Target unchanged — re-subscribe so a new source pin (or a fresh start on
-      // a just-woken session) takes effect.
+      // Target unchanged — re-subscribe to ensure translation is live (e.g. a
+      // fresh start on a just-woken session).
       this.subscribeTranslation()
     }
 
-    return {targetLanguage: this.settings.targetLanguage, sourceLanguage: source ?? "auto", status: "translating"}
+    return {targetLanguage: this.settings.targetLanguage, status: "translating"}
   }
 
   private sendSnapshot(): void {
@@ -440,12 +430,10 @@ export class TranslationController {
         void this.handleTranslation(data)
       }
 
-      // Default: any source language -> selected target language. When a caller
-      // has pinned a source language (via the start_translation action), narrow
-      // to that specific pair instead.
-      this.translationCleanup = this.pinnedSource
-        ? this.session.translation.fromTo(this.pinnedSource, targetLanguage, handler)
-        : this.session.translation.to(targetLanguage, handler)
+      // Any source language -> selected target language. Translating whatever
+      // is spoken into one chosen language is the app's whole model; the source
+      // is intentionally not configurable (see the file header).
+      this.translationCleanup = this.session.translation.to(targetLanguage, handler)
     } catch (err) {
       console.log(`LocalTranslation: translation subscribe failed for target=${targetLanguage}`, err)
     }
