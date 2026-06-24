@@ -1455,6 +1455,12 @@ class G2: NSObject, SGCManager {
     private var pairingTimeoutTimer: DispatchWorkItem?
     private var useEvenDashboard = true
     private var dashboardShowing = 0
+    // The 08011A00 gesture_ctrl event is ambiguous: the firmware sends it BOTH when the dashboard
+    // opens (it shuts our page down to take the screen) and when it closes (returns to us). When
+    // showDashboard() runs we set this latch; the next 08011A00 is the OPEN confirm — consume it
+    // WITHOUT recovering (else we rebuild our page and snatch the screen back from the dashboard).
+    // The following 08011A00 is the real CLOSE → recover.
+    private var dashboardOpening = false
     // Recovery throttle: the firmware spams systemExit + dashboard-close ~1×/sec on its own.
     // Coalesce so recovery can't storm — one rebuild in flight, one per RECOVERY_DEBOUNCE_MS.
     private var recoveryInFlight = false
@@ -2758,10 +2764,10 @@ class G2: NSObject, SGCManager {
     /// The glasses fall back to the dashboard automatically when no page is up.
     func showDashboard() {
         Bridge.log("G2: showDashboard()")
-        // Dashboard is open: a simple on/off flag, not an accumulating depth. The old
-        // `+= 2` could climb without bound when opens interleaved with dropped close
-        // events, stranding the counter >0 and wedging the mic. Set, don't accumulate.
+        // Dashboard is open: a 0/1 flag (the old +=2/-=1 depth dance drifted >0 and wedged the
+        // mic). dashboardOpening latches so the open-confirm 08011A00 doesn't trigger recovery.
         dashboardShowing = 1
+        dashboardOpening = true
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -3111,6 +3117,7 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         dashboardShowing = 0
+        dashboardOpening = false
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
@@ -4345,13 +4352,18 @@ class G2: NSObject, SGCManager {
         }
         lastGestureCtrlTimestamp = timestamp
 
-        // if we got 08011A00 that means we closed the dashboard, which means the mic is probably dead,
-        // so we need to revive it:
+        // 08011A00 is the dashboard open/close toggle. It fires on BOTH transitions, so we use
+        // the dashboardOpening latch (set by showDashboard) to tell them apart:
+        //   • First event after showDashboard → the OPEN confirm. Consume it, keep the dashboard
+        //     up, and do NOT recover (recovering would rebuild our page and snatch the screen back
+        //     — that's the "double-tap makes captions flicker but never opens the dashboard" bug).
+        //   • Next event → the real CLOSE. Reset state and recover our page + mic.
         if data == Data([0x08, 0x01, 0x1A, 0x00]) {
-            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=\(dashboardShowing)")
-            // Dashboard is gone — always reset to 0 (a 0/1 flag, not a depth count: the old
-            // +=2/-=1 dance drifted >0 when a close frame was deduped, wedging the mic). Then
-            // recover via the coalesced/debounced path so firmware close-spam can't storm.
+            Bridge.log("G2: dashboard toggle - dashboardShowing=\(dashboardShowing) opening=\(dashboardOpening)")
+            if dashboardOpening {
+                dashboardOpening = false  // open confirmed; dashboard now owns the screen
+                return
+            }
             dashboardShowing = 0
             recoverPageAndMic(reason: "dashboard-close")
             return
@@ -4564,6 +4576,7 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.dashboardShowing = 0
+            self.dashboardOpening = false
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
 

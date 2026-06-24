@@ -1352,6 +1352,11 @@ class G2 : SGCManager() {
     private var rightAuthenticated: Boolean = false
     private var currentBitmapBase64: String = ""
     private var dashboardShowing = 0
+    // The 08011A00 gesture_ctrl event is ambiguous: the firmware sends it BOTH when the dashboard
+    // opens (shuts our page down to take the screen) and when it closes. showDashboard() sets this
+    // latch; the next 08011A00 is the OPEN confirm — consume it WITHOUT recovering (else we rebuild
+    // and snatch the screen back). The following 08011A00 is the real CLOSE → recover. See iOS.
+    private var dashboardOpening = false
     // Recovery throttle (see iOS G2.swift): the firmware spams systemExit + dashboard-close
     // ~1×/sec. Coalesce so recovery can't storm — one rebuild in flight, one per RECOVERY_DEBOUNCE_MS.
     private var recoveryInFlight = false
@@ -2485,10 +2490,10 @@ class G2 : SGCManager() {
     /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
         Bridge.log("G2: showDashboard()")
-        // Dashboard is open: a simple on/off flag, not an accumulating depth. The old `+= 2`
-        // could climb without bound when opens interleaved with dropped close events, stranding
-        // the counter >0 and wedging the mic (the dashboardShowing>0 guard in restartMic).
+        // Dashboard is open: a 0/1 flag (the old +=2/-=1 depth dance drifted >0 and wedged the
+        // mic). dashboardOpening latches so the open-confirm 08011A00 doesn't trigger recovery.
         dashboardShowing = 1
+        dashboardOpening = true
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -3020,6 +3025,7 @@ class G2 : SGCManager() {
         imageContainers.clear()
         textContainers.clear()
         dashboardShowing = 0
+        dashboardOpening = false
         heartbeatCounter = 0
         currentBitmapBase64 = ""
         menuAppIdToPackageName.clear()
@@ -3572,6 +3578,7 @@ class G2 : SGCManager() {
                         startupPageCreated = false
                         pageCreated = false
                         dashboardShowing = 0
+                        dashboardOpening = false
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
 
@@ -4297,12 +4304,18 @@ class G2 : SGCManager() {
         }
         lastGestureCtrlTimestamp = timestamp
 
-        // Dashboard close detection: 08011A00 means dashboard closed
+        // 08011A00 is the dashboard open/close toggle — it fires on BOTH transitions. Use the
+        // dashboardOpening latch (set by showDashboard) to tell them apart:
+        //   • First event after showDashboard → OPEN confirm. Consume it, keep the dashboard up,
+        //     do NOT recover (recovering rebuilds our page and snatches the screen back — the
+        //     "double-tap flickers captions but never opens the dashboard" bug).
+        //   • Next event → real CLOSE. Reset state and recover our page + mic.
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
-            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
-            // Dashboard is gone — always reset to 0 (a 0/1 flag, not a depth count: the old
-            // +=2/-=1 dance drifted >0 when a close frame was deduped, wedging the mic). Then
-            // recover via the coalesced/debounced path so firmware close-spam can't storm.
+            Bridge.log("G2: dashboard toggle - dashboardShowing=$dashboardShowing opening=$dashboardOpening")
+            if (dashboardOpening) {
+                dashboardOpening = false // open confirmed; dashboard now owns the screen
+                return
+            }
             dashboardShowing = 0
             recoverPageAndMic("dashboard-close")
             return
