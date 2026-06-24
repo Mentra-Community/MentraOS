@@ -357,6 +357,10 @@ jobs:
     name: Fix
     needs: [resolve-context, plan, aggregate]
     if: |
+      always() &&
+      needs.resolve-context.result == 'success' &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
       needs.aggregate.outputs.should_handoff != 'true' &&
       needs.aggregate.outputs.should_fix == 'true' &&
       needs.resolve-context.outputs.pr_is_fork != 'true' &&
