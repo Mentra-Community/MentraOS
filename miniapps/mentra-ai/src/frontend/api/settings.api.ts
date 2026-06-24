@@ -10,6 +10,8 @@ export interface UserSettings {
   userId: string;
   theme: 'light' | 'dark';
   chatHistoryEnabled: boolean;
+  /** Selected model key (see MODEL_OPTIONS on the server). */
+  model?: string;
   createdAt?: string;
   updatedAt?: string;
 }

@@ -12,7 +12,8 @@ import { broadcastChatEvent } from "../api/chat";
 import { formatForTTS } from "../utils/tts-formatter";
 import { agentBridge, type AgentAction, type AgentContextPayload, type AgentTaskResult } from "./AgentBridge";
 import { delegations } from "./DelegationManager";
-import { isDelegationEnabled, AGENT_DELEGATION } from "../constants/config";
+import { isDelegationEnabled, AGENT_DELEGATION, resolveModel } from "../constants/config";
+import { UserSettings } from "../db/schemas/user-settings.schema";
 import type { DelegateOutcome } from "../agent/tools/askAgent.tool";
 
 /**
@@ -187,6 +188,8 @@ export class QueryProcessor {
         }
       : undefined;
 
+    const model = await this.resolveUserModel();
+
     let response: string;
     try {
       const result = await generateResponse({
@@ -194,6 +197,7 @@ export class QueryProcessor {
         photos: photos.length > 0 ? photos : undefined,
         context,
         delegate,
+        model,
         onToolCall: (toolName) => {
           if (toolName === 'search') {
             this.showStatus("Searching...", hasDisplay);
@@ -297,9 +301,11 @@ export class QueryProcessor {
         }
       : undefined;
 
+    const model = await this.resolveUserModel();
+
     let response: string;
     try {
-      const result = await generateResponse({ query: text, context, delegate });
+      const result = await generateResponse({ query: text, context, delegate, model });
       response = result.response;
     } catch (error) {
       console.error(`Chat agent error for ${userId}:`, error);
@@ -423,6 +429,20 @@ export class QueryProcessor {
       this.outputResponse(reply, session.capabilities?.hasSpeaker ?? false, session.capabilities?.hasDisplay ?? false);
     } else {
       console.log(`🤝 [Delegation] session gone for ${userId}; follow-up left in chat thread only`);
+    }
+  }
+
+  /**
+   * Resolve the Mastra model string from the user's saved Settings → Model
+   * choice. Falls back to the default model on any error or missing setting.
+   */
+  private async resolveUserModel(): Promise<string | undefined> {
+    try {
+      const settings = await UserSettings.findOne({ userId: this.user.userId });
+      return resolveModel(settings?.model);
+    } catch (error) {
+      console.warn(`Failed to load model setting for ${this.user.userId}:`, error);
+      return undefined; // createMentraAgent falls back to AGENT_SETTINGS.model
     }
   }
 

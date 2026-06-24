@@ -47,6 +47,8 @@ export interface GenerateOptions {
    * agent gains the `ask_agent` tool and the prompt's delegation rules.
    */
   delegate?: DelegateFn;
+  /** Override the Mastra model string (from the user's Settings → Model). */
+  model?: string;
 }
 
 /**
@@ -63,7 +65,7 @@ export interface GenerateResult {
  * When a `delegate` is supplied, the agent also gets the `ask_agent` tool so
  * it can escalate multi-step / personal-account work to the user's giga-agent.
  */
-export function createMentraAgent(context: AgentContext, delegate?: DelegateFn): Agent {
+export function createMentraAgent(context: AgentContext, delegate?: DelegateFn, model?: string): Agent {
   const tools: Record<string, ReturnType<typeof createAskAgentTool>> | Record<string, unknown> = {
     search: searchTool,
     calculator: calculatorTool,
@@ -77,7 +79,7 @@ export function createMentraAgent(context: AgentContext, delegate?: DelegateFn):
   return new Agent({
     id: "mentra-ai",
     name: "Mentra AI",
-    model: AGENT_SETTINGS.model,
+    model: model || AGENT_SETTINGS.model,
     instructions: buildSystemPrompt(context),
     tools: tools as any,
   });
@@ -111,7 +113,7 @@ export async function generateResponse(options: GenerateOptions): Promise<Genera
   };
 
   // Create agent with context (delegation tool added when a delegate is given)
-  const agent = createMentraAgent(agentContext, options.delegate);
+  const agent = createMentraAgent(agentContext, options.delegate, options.model);
 
   // Build content array
   const content: ContentPart[] = [

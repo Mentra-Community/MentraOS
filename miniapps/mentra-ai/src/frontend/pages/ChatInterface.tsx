@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { useMentraAuth } from '@mentra/react';
-import { X, ArrowUp, Loader2 } from 'lucide-react';
+import { X, ArrowUp, Loader2, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createAuthFetch, withAuthSseUrl } from '../lib/authFetch';
 // @ts-ignore - Bun bundler doesn't resolve `export { X as default }` re-exports correctly
@@ -14,7 +14,6 @@ import { MiraBackgroundAnimation } from '../components/MiraBackgroundAnimation';
 import ColorMiraLogo from '../../public/figma-parth-assets/icons/color-mira-logo.svg';
 import Settings from './Settings';
 import Header from '../components/Header';
-import BottomHeader from '../components/BottomHeader';
 import { ChromaticBorder } from '../components/ChromaticBorder';
 import { fetchUserSettings } from '../api/settings.api';
 
@@ -464,7 +463,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
       <Settings
         onBack={() => setCurrentPage('chat')}
         isDarkMode={isDarkMode}
-        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+        onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
         onChatHistoryToggle={(enabled) => setChatHistoryEnabled(enabled)}
         onEnableDebugMode={onEnableDebugMode}
       />
@@ -508,7 +507,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
         {/* Header */}
         <Header
           isDarkMode={isDarkMode}
-          onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+          onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
           onSettingsClick={() => setCurrentPage('settings')}
         />
 
@@ -626,7 +625,7 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                     }}
                     className="text-[14px] text-[#A3A3A3] mt-[8px]"
                   >
-                    Then ask a question.
+                    Then ask a question — or type below.
                   </motion.div>
                 </div>
               </motion.div>
@@ -693,14 +692,19 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
           )}
         </div>
 
-        {/* Bottom Header */}
-        <BottomHeader isDarkMode={isDarkMode} isVisible={messages.length > 0} />
+        {/* Bottom input area — hint chip (when a conversation exists) + the chat
+            input bar. Pinned to the bottom; works with or without glasses. This
+            replaces the old fixed bottom logo banner (which overlapped here). */}
+        <div className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center gap-2.5 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
+          {messages.length > 0 && (
+            <div className="flex items-center gap-1.5 rounded-full border border-black/5 bg-white/80 px-3.5 py-1.5 text-[12px] font-medium text-gray-500 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/10 dark:text-gray-300">
+              <Mic className="h-3.5 w-3.5" />
+              Say “Hey Mentra” or type below
+            </div>
+          )}
 
-        {/* Chat input bar — type a message to test the assistant without
-            speaking. Pinned to the bottom; works with or without glasses. */}
-        <div className="fixed bottom-0 left-0 right-0 z-30 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
-          <div className="mx-auto flex w-full max-w-[460px] items-center gap-2.5 pointer-events-auto">
-            <div className="flex flex-1 items-center rounded-full border border-gray-200 bg-white px-5 py-3 shadow-[0_2px_16px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#1c1c1e]">
+          <div className="pointer-events-auto flex w-full max-w-[460px] items-center gap-2.5">
+            <div className="flex flex-1 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-3 shadow-[0_2px_16px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#1c1c1e]">
               <input
                 type="text"
                 value={inputText}
@@ -716,6 +720,8 @@ function ChatInterface({ userId, recipientId, onEnableDebugMode }: ChatInterface
                 aria-label="Message Mentra"
                 className="flex-1 bg-transparent text-[16px] text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
               />
+              {/* Decorative mic — voice input happens through the glasses ("Hey Mentra"). */}
+              <Mic className="h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
             </div>
             <button
               type="button"

@@ -70,6 +70,55 @@ export const AGENT_SETTINGS = {
 };
 
 /**
+ * User-selectable models (Settings → Model). Each entry maps a stable key
+ * (persisted in UserSettings.model) to its display copy and the Mastra model
+ * string the agent runs. `flashLite` is the default and reuses AGENT_SETTINGS.model
+ * (the env-configured, known-good default). The non-default model strings can be
+ * tuned without touching the UI — they all live here.
+ */
+export interface ModelOption {
+  key: string;
+  label: string;
+  description: string;
+  /** Mastra model string ("provider/model"). */
+  model: string;
+  /** Accent color for the picker icon. */
+  accent: string;
+}
+
+export const MODEL_OPTIONS: ModelOption[] = [
+  {
+    key: 'flash',
+    label: 'Gemini Flash',
+    description: 'Fast · best for quick answers',
+    model: 'google/gemini-3.1-flash',
+    accent: '#F0A88B',
+  },
+  {
+    key: 'pro',
+    label: 'Gemini Pro',
+    description: 'Most capable · detailed replies',
+    model: 'google/gemini-3.1-pro',
+    accent: '#A89BF5',
+  },
+  {
+    key: 'flashLite',
+    label: 'Gemini Flash-Lite',
+    description: 'Fastest · lightweight replies',
+    model: AGENT_SETTINGS.model,
+    accent: '#86CFAC',
+  },
+];
+
+export const DEFAULT_MODEL_KEY = 'flashLite';
+
+/** Resolve a persisted model key to a Mastra model string, falling back safely. */
+export function resolveModel(key: string | undefined | null): string {
+  const opt = MODEL_OPTIONS.find((m) => m.key === key);
+  return opt ? opt.model : AGENT_SETTINGS.model;
+}
+
+/**
  * Giga-agent delegation settings.
  *
  * When configured, the fast agent gains an `ask_agent` tool that hands
