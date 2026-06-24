@@ -10,6 +10,7 @@ import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.audio.AudioRecorder;
+import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
@@ -106,6 +107,17 @@ public class CommandProcessor {
         this.rgbLedCommandHandler = rgbLedCommandHandler;
         this.otaCommandHandler = otaCommandHandler;
         this.audioRecorder = new AudioRecorder(context);
+        // Wire I2S gate: Mentra Live routes the mic through the BES MCU's I2S bus.
+        // AudioFlinger cannot open a record track until mh_starti2s is sent to the BES chip.
+        this.audioRecorder.setI2SAudioCallbacks(
+                () -> {
+                    AsgClientService svc = AsgClientService.getInstance();
+                    if (svc != null) svc.handleI2SAudioState(true);
+                },
+                () -> {
+                    AsgClientService svc = AsgClientService.getInstance();
+                    if (svc != null) svc.handleI2SAudioState(false);
+                });
 
         // Initialize components (Single Responsibility Principle)
         Log.d(TAG, "📦 Creating command processing components");
