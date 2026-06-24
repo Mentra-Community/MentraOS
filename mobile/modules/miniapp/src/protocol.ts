@@ -127,15 +127,6 @@ export enum MiniappRequestType {
   /** Share/export a stored blob from disk (no bytes cross the bridge). */
   BLOB_EXPORT = "miniapp_blob_export",
 
-  /**
-   * Host-side audio capture straight to a blob. The phone taps the PCM it
-   * already has (no audio bytes cross the bridge) and writes a WAV/PCM file;
-   * only control + progress flow over the bridge. Requires MICROPHONE.
-   */
-  BLOB_RECORD_START = "miniapp_blob_record_start",
-  BLOB_RECORD_STOP = "miniapp_blob_record_stop",
-  BLOB_RECORD_CANCEL = "miniapp_blob_record_cancel",
-
   /** Phone → miniapp liveness probe. Miniapp SDK auto-replies with PONG. */
   PING = "miniapp_ping",
 
@@ -288,9 +279,6 @@ export enum MiniappStreamType {
   // Photos, streaming
   PHOTO_TAKEN = "photo_taken",
   STREAM_STATUS = "stream_status",
-
-  /** Progress for an in-flight `session.recorder` capture (elapsed ms, bytes, level). */
-  BLOB_RECORD_PROGRESS = "blob_record_progress",
 }
 
 // ============================================================================
@@ -347,8 +335,4 @@ export enum MiniappErrorCode {
   BLOB_HANDLE_INVALID = "BLOB_HANDLE_INVALID",
   /** Filesystem write failed (out of disk, permissions, etc.). */
   BLOB_WRITE_FAILED = "BLOB_WRITE_FAILED",
-  /** No active recording with the given recordingId. */
-  RECORDING_NOT_FOUND = "RECORDING_NOT_FOUND",
-  /** A recording is already active for this miniapp (one at a time in v1). */
-  RECORDING_ACTIVE = "RECORDING_ACTIVE",
 }

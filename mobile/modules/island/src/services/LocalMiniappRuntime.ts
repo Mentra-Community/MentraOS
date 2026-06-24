@@ -697,10 +697,8 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
-    // Tear down this app's blob state: abort in-flight uploads, close readers,
-    // and finalize any active recorder capture so a recording isn't lost when
-    // the JSContext dies. Runs before the recomputeMicRequirements() below so
-    // the PCM mic turns off once the recording is finalized.
+    // Tear down this app's blob state: abort in-flight uploads + close readers
+    // so a crashed/closed miniapp doesn't leak partial files or file handles.
     this.blobStore.onAppGone(packageName)
 
     // Release phone-owned camera streams. If a miniapp closes/crashes without
@@ -983,15 +981,6 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.BLOB_EXPORT:
         void this.blobStore.handleExport(packageName, payload, requestId)
-        break
-      case MiniappRequestType.BLOB_RECORD_START:
-        this.blobStore.handleRecordStart(packageName, payload, requestId)
-        break
-      case MiniappRequestType.BLOB_RECORD_STOP:
-        this.blobStore.handleRecordStop(packageName, payload, requestId)
-        break
-      case MiniappRequestType.BLOB_RECORD_CANCEL:
-        this.blobStore.handleRecordCancel(packageName, payload, requestId)
         break
 
       // Cloud-coordinated features
@@ -1784,31 +1773,16 @@ class LocalMiniappRuntime {
   )
 
   /**
-   * `session.blob` (persistent binary storage) + `session.recorder` (host-side
-   * audio capture → blob). Like NavigationHandlers, the BLOB_* / BLOB_RECORD_*
-   * dispatcher cases delegate here. Audio bytes are fed in via
-   * {@link feedRecorderPcm} from the mic_pcm path — never across the bridge.
+   * `session.blob` — persistent, per-app binary storage. Like NavigationHandlers,
+   * the BLOB_* dispatcher cases delegate here. It's a generic byte store; audio
+   * recording lives entirely in the miniapp (mic.onAudioChunk → chunked
+   * BLOB_WRITE), so nothing audio-specific runs in the host.
    */
   private readonly blobStore = new BlobStore({
-    sendToMiniapp: (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
     getUserId: () => getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
-    hasMicPermission: (packageName) =>
-      this.connectedApps.get(packageName)?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE") ??
-      false,
-    onActiveRecordingsChange: () => this.recomputeMicRequirements(),
   })
-
-  /**
-   * Feed raw glasses-mic PCM into any active `session.recorder` capture. Called
-   * from MantleManager's `mic_pcm` listener (host-side) so audio bytes are
-   * written straight to disk without crossing the JSContext bridge. Cheap no-op
-   * when nothing is recording.
-   */
-  public feedRecorderPcm(pcm: ArrayBuffer | Uint8Array, sampleRate?: number): void {
-    this.blobStore.feedPcm(pcm, sampleRate)
-  }
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -2597,8 +2571,6 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
-    // An active session.recorder capture needs PCM even with no audio_chunk subscriber.
-    if (this.blobStore.hasActiveRecordings()) anyPcm = true
     micStateCoordinator.setLocalRequirements({pcm: anyPcm, lc3: anyLc3})
   }
 

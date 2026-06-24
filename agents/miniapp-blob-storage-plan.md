@@ -1,8 +1,29 @@
 # Miniapp Blob Storage (`session.blob`) + Audio Capture — Phase 2 Spec
 
-Status: proposal. Author: scoped for the local Recorder debug miniapp, but the
-primitive is general-purpose (photos, video, model files, caches, any miniapp
-that needs to persist bytes).
+Status: **shipped** (PR #3236). The primitive is general-purpose (photos, video,
+model files, caches, any miniapp that needs to persist bytes); the Recorder debug
+miniapp is the first consumer.
+
+> **What shipped vs. this proposal — read this first.** The original proposal
+> below included a *host-side* `session.recorder` that tapped PCM natively and
+> wrote the WAV in the mobile app (to avoid the bridge). That was dropped: we do
+> **not** want audio-recorder logic baked into the mobile app, and the audio
+> bytes already cross the bridge today via `session.mic.onAudioChunk` (base64
+> PCM). So the shipped design is:
+>
+> - **Host:** only the generic `session.blob` byte store. No audio code. One extra
+>   generic primitive vs. this doc: `BlobWriter.writeAt(offset, bytes)` (a seek
+>   write) so a miniapp can patch a container header on finalize, and an optional
+>   `meta` arg on commit.
+> - **Miniapp (Recorder):** does all capture itself — subscribes to
+>   `session.mic.onAudioChunk`, buffers + base64-decodes frames, writes a 44-byte
+>   placeholder WAV header, streams PCM into a blob in ~1.5s chunks, then patches
+>   the real header via `writeAt(0, …)` and commits. WAV assembly + level meter +
+>   duration all live in the miniapp.
+>
+> Everything in the `session.blob` API + host implementation sections below is
+> accurate. The `session.recorder` / `BLOB_RECORD_*` / host-PCM-tap parts
+> (the "Companion" subsection and ticket 2d) were **not** built — ignore them.
 
 ## Why this exists
 

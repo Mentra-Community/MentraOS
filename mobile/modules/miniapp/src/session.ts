@@ -46,7 +46,6 @@ import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
 import {BlobModule} from "./modules/blob"
-import {RecorderModule} from "./modules/recorder"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -202,13 +201,10 @@ export class MiniappSession {
   /**
    * Phone-local persistent BINARY storage (`session.blob`) — the binary
    * counterpart to `session.storage`. Files on disk, scoped to this miniapp.
+   * Writes/reads are chunked so large payloads (e.g. captured audio fed in via
+   * `session.mic.onAudioChunk`) never cross the bridge in one message.
    */
   public readonly blob: BlobModule
-  /**
-   * Host-side audio capture straight to a blob (`session.recorder`). Audio bytes
-   * never cross the bridge — the host taps the PCM it already has. Needs MICROPHONE.
-   */
-  public readonly recorder: RecorderModule
   public readonly stream: StreamModule
   public readonly system: SystemModule
   public readonly transcription: TranscriptionModule
@@ -302,7 +298,6 @@ export class MiniappSession {
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)
     this.blob = new BlobModule(this)
-    this.recorder = new RecorderModule(this)
     this.stream = new StreamModule(this)
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)

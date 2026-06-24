@@ -1,15 +1,14 @@
 /**
- * Pure helpers for BlobStore — WAV header assembly, little-endian encoders,
- * path-segment sanitization, and PCM level metering. No React Native / Expo /
- * native imports, so this is unit-testable in isolation (see blobWav.test.ts).
+ * WAV assembly helpers — pure, no SDK imports, so they're unit-testable.
+ *
+ * The Recorder builds the WAV container itself in the miniapp JSContext from the
+ * PCM frames delivered by `session.mic.onAudioChunk`, then streams it to a blob.
+ * The 44-byte header's size fields aren't known until the capture ends, so we
+ * write a placeholder header first and patch the final header in at offset 0 on
+ * stop (via BlobWriter.writeAt).
  */
 
-/** Filesystem-safe path segment. Strips traversal + unsafe chars; never empty. */
-export function sanitizeSegment(s: string): string {
-  const cleaned = (s || "").replace(/[^A-Za-z0-9._-]/g, "_")
-  if (cleaned === "" || cleaned === "." || cleaned === "..") return "_"
-  return cleaned.slice(0, 120)
-}
+export const WAV_HEADER_BYTES = 44
 
 export function u32le(n: number): Uint8Array {
   const b = new Uint8Array(4)
@@ -31,7 +30,7 @@ export function u16le(n: number): Uint8Array {
 export function buildWavHeader(sampleRate: number, dataBytes: number, channels = 1, bitsPerSample = 16): Uint8Array {
   const blockAlign = (channels * bitsPerSample) / 8
   const byteRate = sampleRate * blockAlign
-  const h = new Uint8Array(44)
+  const h = new Uint8Array(WAV_HEADER_BYTES)
   const ascii = (s: string, at: number) => {
     for (let i = 0; i < s.length; i++) h[at + i] = s.charCodeAt(i)
   }
@@ -62,4 +61,10 @@ export function pcmPeakLevel(bytes: Uint8Array): number {
     if (a > peak) peak = a
   }
   return Math.min(1, peak / 32768)
+}
+
+/** ms of 16-bit mono PCM for `pcmBytes` at `sampleRate`. */
+export function pcmDurationMs(pcmBytes: number, sampleRate: number): number {
+  if (sampleRate <= 0) return 0
+  return Math.floor((pcmBytes / (sampleRate * 2)) * 1000)
 }

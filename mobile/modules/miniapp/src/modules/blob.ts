@@ -16,9 +16,9 @@
  * Transfer model — the bridge moves JSON strings through a per-miniapp JS engine
  * (JSC/QuickJS) with a watchdog that kills a context whose single eval blocks
  * too long. So bytes never cross in one shot: writes/reads are CHUNKED
- * (`BLOB_WRITE` / `BLOB_READ`, ≤ ~1 MB raw per call). For audio specifically,
- * prefer `session.recorder` — the host taps the PCM it already has and writes
- * the file natively, so audio bytes never cross the bridge at all.
+ * (`BLOB_WRITE` / `BLOB_READ`, ≤ ~1 MB raw per call). Audio capture buffers
+ * `session.mic.onAudioChunk` frames and streams them here in ~1s chunks — the
+ * host stays a generic byte store with no audio-specific code.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -89,13 +89,29 @@ export class BlobWriter {
     }
   }
 
-  /** Finalize the blob and return its metadata. */
-  async commit(): Promise<BlobMeta> {
+  /**
+   * Overwrite bytes at a fixed offset within the not-yet-committed blob (a seek
+   * write). Must stay within already-written bytes; does not grow the blob.
+   * Used e.g. to patch a WAV header's size fields after the audio is written.
+   */
+  async writeAt(offset: number, chunk: Uint8Array | ArrayBuffer): Promise<void> {
+    if (this.settled) throw new Error("BlobWriter already committed/aborted")
+    await this.session.sendRequest<{bytesWritten: number}>({
+      type: MiniappRequestType.BLOB_WRITE,
+      id: this.id,
+      offset,
+      base64: bytesToBase64(toUint8Array(chunk)),
+    })
+  }
+
+  /** Finalize the blob and return its metadata. Optional `meta` merges into the record. */
+  async commit(meta?: Record<string, string | number | boolean>): Promise<BlobMeta> {
     if (this.settled) throw new Error("BlobWriter already committed/aborted")
     this.settled = true
     return this.session.sendRequest<BlobMeta>({
       type: MiniappRequestType.BLOB_COMMIT,
       id: this.id,
+      meta,
     })
   }
 

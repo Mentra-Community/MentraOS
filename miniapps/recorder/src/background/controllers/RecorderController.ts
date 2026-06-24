@@ -4,25 +4,36 @@
  * Lives in the per-miniapp JSContext (NOT the WebView). Survives WebView
  * open/close so a capture keeps running with the phone pocketed.
  *
- * Responsibilities:
- *   - Capture     — `session.recorder.start/stop` taps the glasses mic PCM
- *                   host-side and writes a WAV blob (bytes never cross the bridge).
- *   - Library     — lists / deletes / clears `session.blob` entries.
- *   - Playback    — plays a saved recording back through `session.speaker` (file:// uri).
- *   - Export      — hands a recording to the OS share sheet via `session.blob.export`.
- *   - Glasses HUD — shows a "● REC m:ss" line on the display while recording.
- *   - UI bus      — mirrors state to the WebView and takes its commands.
+ * Capture is done entirely in the miniapp — the host stays a generic byte store:
+ *   - `session.mic.onAudioChunk` delivers base64 PCM16 frames over the bridge.
+ *   - We decode + buffer them, then stream the bytes into a `session.blob` writer
+ *     in ~1.5s chunks (BLOB_WRITE). A 44-byte placeholder WAV header is written
+ *     first; on stop we know the size and patch the real header in at offset 0
+ *     (writeAt), then commit.
+ *   - Playback uses `session.speaker.play` on the blob's file:// uri; export uses
+ *     `session.blob.export` (OS share sheet).
+ *
+ * The captured PCM is what the audio system produces AFTER LC3 decode (the same
+ * stream that feeds transcription) — i.e. a debugging view of "what audio did we
+ * actually get".
  */
 
-import type {BlobMeta, BlobRecordProgressData, MiniappSession, UnsubscribeFn} from "@mentra/miniapp/background"
+import {base64ToBytes} from "@mentra/miniapp/background"
+import type {AudioChunkData, BlobMeta, BlobWriter, MiniappSession, UnsubscribeFn} from "@mentra/miniapp/background"
 
 import type {Channels} from "../../shared/channels"
 import type {RecorderStatus, RecordingItem, Usage} from "../../shared/types"
+import {buildWavHeader, pcmDurationMs, pcmPeakLevel, WAV_HEADER_BYTES} from "../wav"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
 
 const EMPTY_USAGE: Usage = {bytes: 0, count: 0, quotaBytes: 0}
+const DEFAULT_SAMPLE_RATE = 16000
+/** Flush the PCM buffer to the blob once it reaches ~1.5s of 16kHz mono audio. */
+const FLUSH_BYTES = 48 * 1024
+/** Throttle UI status pushes to ~5/sec (keyed off captured audio ms, not a timer). */
+const PROGRESS_MS = 200
 
 export class RecorderController {
   private started = false
@@ -30,12 +41,25 @@ export class RecorderController {
 
   private ui!: {send: Send; on: On; onOpen: (cb: () => void) => () => void}
 
+  // Capture state
   private recordingId: string | null = null
+  private writer: BlobWriter | null = null
+  private micUnsub: UnsubscribeFn | null = null
+  private chunks: Uint8Array[] = []
+  private bufBytes = 0
+  private pcmBytes = 0
+  private sampleRate = DEFAULT_SAMPLE_RATE
+  private lastLevel = 0
+  private lastEmitMs = 0
+  private writeErrored = false
+  /** Serializes blob writes so chunks land in order, one at a time. */
+  private drainChain: Promise<void> = Promise.resolve()
+
+  // Mirrored UI state
   private lastStatus: RecorderStatus | null = null
   private playingId: string | null = null
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
-  private progressUnsub: UnsubscribeFn | null = null
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -53,11 +77,6 @@ export class RecorderController {
 
     this.registerUiHandlers()
 
-    // Live capture progress (host-side, ~every 250ms).
-    this.progressUnsub = this.session.recorder.onProgress((p) => this.onProgress(p))
-    this.unsubs.push(() => this.progressUnsub?.())
-
-    // Playback finished / errored → clear the playing indicator.
     try {
       this.unsubs.push(
         this.session.speaker.onStateChange((e) => {
@@ -68,14 +87,12 @@ export class RecorderController {
       /* speaker state not available — ignore */
     }
 
-    // On teardown, stop playback. An active recording is finalized host-side.
     try {
       this.unsubs.push(this.session.onBeforeDisconnect(() => this.onTeardown()))
     } catch {
       /* not available — ignore */
     }
 
-    // Reclaim the glasses HUD when we return to the foreground.
     try {
       this.unsubs.push(
         this.session.onVisibilityChange((v) => {
@@ -88,12 +105,17 @@ export class RecorderController {
 
     await this.refreshList()
     this.renderHud()
-    console.log(
-      `Recorder: started (${this.recordings.length} recordings, hasMic=${this.session.recorder.hasPermission})`,
-    )
+    console.log(`Recorder: started (${this.recordings.length} recordings, hasMic=${this.session.mic.hasPermission})`)
   }
 
   private onTeardown(): void {
+    // Best-effort: stop the mic feed and playback. An in-flight capture is left
+    // for the host to clean up (it aborts the partial blob on app teardown).
+    try {
+      this.micUnsub?.()
+    } catch {
+      /* ignore */
+    }
     try {
       this.session.speaker.stop()
     } catch {
@@ -124,62 +146,185 @@ export class RecorderController {
       recordings: this.recordings,
       usage: this.usage,
       playingId: this.playingId,
-      hasMic: this.session.recorder.hasPermission,
+      hasMic: this.session.mic.hasPermission,
     })
   }
 
-  // ── Recording ──────────────────────────────────────────────────────────--
+  // ── Recording (capture in the miniapp) ─────────────────────────────────────
 
   private async startRecording(): Promise<void> {
     if (this.recordingId) return
     try {
-      const {recordingId} = await this.session.recorder.start({format: "wav"})
-      this.recordingId = recordingId
-      this.lastStatus = {recordingId, ms: 0, bytes: 0, level: 0}
+      const writer = await this.session.blob.create({mimeType: "audio/wav", name: makeName()})
+      // Placeholder header — patched with real sizes on stop.
+      await writer.write(new Uint8Array(WAV_HEADER_BYTES))
+
+      this.writer = writer
+      this.recordingId = writer.id
+      this.chunks = []
+      this.bufBytes = 0
+      this.pcmBytes = 0
+      this.sampleRate = DEFAULT_SAMPLE_RATE
+      this.lastLevel = 0
+      this.lastEmitMs = 0
+      this.writeErrored = false
+      this.drainChain = Promise.resolve()
+
+      this.micUnsub = this.session.mic.onAudioChunk((d) => this.onChunk(d))
+      this.unsubs.push(() => this.micUnsub?.())
+
+      this.lastStatus = {recordingId: writer.id, ms: 0, bytes: WAV_HEADER_BYTES, level: 0}
       this.ui.send("rec:status", this.lastStatus)
       this.renderHud()
     } catch (err) {
       console.log("Recorder: start failed", err)
-      this.recordingId = null
-      this.lastStatus = null
+      await this.resetCapture(true)
       this.ui.send("rec:stopped", {})
     }
   }
 
-  private onProgress(p: BlobRecordProgressData): void {
-    if (!this.recordingId || p.recordingId !== this.recordingId) return
-    this.lastStatus = {recordingId: p.recordingId, ms: p.ms, bytes: p.bytes, level: p.level ?? 0}
+  private onChunk(d: AudioChunkData): void {
+    if (!this.recordingId || this.writeErrored) return
+    if (d.sampleRate && d.sampleRate > 0) this.sampleRate = d.sampleRate
+    const bytes = base64ToBytes(d.data || "")
+    if (bytes.length === 0) return
+    this.chunks.push(bytes)
+    this.bufBytes += bytes.length
+    this.lastLevel = pcmPeakLevel(bytes)
+    this.maybeEmitProgress()
+    if (this.bufBytes >= FLUSH_BYTES) this.scheduleDrain()
+  }
+
+  /** Queue a drain after any in-flight one — keeps writes ordered + single-flight. */
+  private scheduleDrain(): void {
+    this.drainChain = this.drainChain.then(() => this.drainOnce()).catch(() => {})
+  }
+
+  private async drainOnce(): Promise<void> {
+    if (!this.writer || this.writeErrored) return
+    while (this.chunks.length > 0) {
+      const buf = this.takeBuffer()
+      try {
+        await this.writer.write(buf)
+        this.pcmBytes += buf.length
+      } catch (err) {
+        console.log("Recorder: blob write failed; stopping append", err)
+        this.writeErrored = true
+        break
+      }
+    }
+  }
+
+  private takeBuffer(): Uint8Array {
+    if (this.chunks.length === 1) {
+      const only = this.chunks[0]
+      this.chunks = []
+      this.bufBytes = 0
+      return only
+    }
+    const out = new Uint8Array(this.bufBytes)
+    let at = 0
+    for (const c of this.chunks) {
+      out.set(c, at)
+      at += c.length
+    }
+    this.chunks = []
+    this.bufBytes = 0
+    return out
+  }
+
+  private maybeEmitProgress(): void {
+    const captured = this.pcmBytes + this.bufBytes
+    const ms = pcmDurationMs(captured, this.sampleRate)
+    if (ms - this.lastEmitMs < PROGRESS_MS) return
+    this.lastEmitMs = ms
+    this.lastStatus = {
+      recordingId: this.recordingId!,
+      ms,
+      bytes: WAV_HEADER_BYTES + captured,
+      level: this.lastLevel,
+    }
     this.ui.send("rec:status", this.lastStatus)
     this.renderHud()
   }
 
   private async stopRecording(): Promise<void> {
-    const id = this.recordingId
-    if (!id) return
+    const writer = this.writer
+    if (!this.recordingId || !writer) return
+    // Stop the feed first so no more chunks arrive, then flush + finalize.
+    try {
+      this.micUnsub?.()
+    } catch {
+      /* ignore */
+    }
+    this.micUnsub = null
     this.recordingId = null
     this.lastStatus = null
     this.ui.send("rec:stopped", {})
+
     try {
-      await this.session.recorder.stop(id)
+      await this.drainChain // queued writes
+      await this.drainOnce() // anything still buffered
+      // Patch the real WAV header now that the size is known.
+      await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
+      await writer.commit({
+        durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
+        sampleRate: this.sampleRate,
+        channels: 1,
+        bitsPerSample: 16,
+      })
     } catch (err) {
-      console.log("Recorder: stop failed", err)
+      console.log("Recorder: finalize failed", err)
+      try {
+        await writer.abort()
+      } catch {
+        /* ignore */
+      }
     }
+    await this.resetCapture(false)
     await this.refreshList()
     this.renderHud()
   }
 
   private async cancelRecording(): Promise<void> {
-    const id = this.recordingId
-    if (!id) return
+    const writer = this.writer
+    if (!this.recordingId || !writer) return
+    try {
+      this.micUnsub?.()
+    } catch {
+      /* ignore */
+    }
+    this.micUnsub = null
     this.recordingId = null
     this.lastStatus = null
     this.ui.send("rec:stopped", {})
     try {
-      await this.session.recorder.cancel(id)
+      await this.drainChain
+      await writer.abort()
     } catch {
       /* ignore */
     }
+    await this.resetCapture(false)
     this.renderHud()
+  }
+
+  /** Drop capture state. When `abortWriter`, also abort the open blob writer. */
+  private async resetCapture(abortWriter: boolean): Promise<void> {
+    if (abortWriter && this.writer) {
+      try {
+        await this.writer.abort()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.writer = null
+    this.recordingId = null
+    this.micUnsub = null
+    this.chunks = []
+    this.bufBytes = 0
+    this.pcmBytes = 0
+    this.writeErrored = false
+    this.lastStatus = null
   }
 
   // ── Library ──────────────────────────────────────────────────────────────
@@ -231,8 +376,6 @@ export class RecorderController {
     } catch (err) {
       console.log("Recorder: playback failed", err)
     } finally {
-      // play() resolves when playback ends; the state listener may have cleared
-      // this already, but make sure the indicator is reset.
       if (this.playingId === id) this.setPlaying(null)
     }
   }
@@ -287,6 +430,15 @@ function toItem(m: BlobMeta): RecordingItem {
     sampleRate: Number(m.meta?.sampleRate ?? 0),
     truncated: m.meta?.truncated === true,
   }
+}
+
+/** A filesystem-friendly default name, e.g. "recording-20260624-153012.wav". */
+function makeName(): string {
+  const d = new Date()
+  const p = (n: number) => n.toString().padStart(2, "0")
+  return `recording-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(
+    d.getMinutes(),
+  )}${p(d.getSeconds())}.wav`
 }
 
 /** ms → m:ss. */

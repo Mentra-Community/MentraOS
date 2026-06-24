@@ -36,7 +36,6 @@ export type {
   CalendarEventData,
   HeadingData,
   TouchData,
-  BlobRecordProgressData,
   UnsubscribeFn,
 } from "../modules/events"
 
@@ -76,8 +75,6 @@ export type {PhoneModule} from "../modules/phone"
 export type {SimpleStorage} from "../modules/storage"
 export {BlobModule, BlobWriter, BlobReader, BLOB_WRITE_CHUNK_BYTES, BLOB_READ_ALL_MAX_BYTES} from "../modules/blob"
 export type {BlobMeta, BlobCreateOptions} from "../modules/blob"
-export {RecorderModule} from "../modules/recorder"
-export type {RecorderStartOptions, RecordingHandle} from "../modules/recorder"
 export {bytesToBase64, base64ToBytes} from "../modules/base64"
 export type {SpeakerModule} from "../modules/speaker"
 export type {StreamModule} from "../modules/stream"

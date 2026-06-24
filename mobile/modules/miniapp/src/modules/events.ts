@@ -158,17 +158,6 @@ export interface AudioChunkData {
   format?: string
 }
 
-export interface BlobRecordProgressData {
-  /** The recording this progress belongs to (session.recorder.start → recordingId). */
-  recordingId: string
-  /** Elapsed capture time in milliseconds. */
-  ms: number
-  /** Bytes of audio written to the blob so far (incl. WAV header). */
-  bytes: number
-  /** Coarse 0–1 input level for a live meter, when the host computes one. */
-  level?: number
-}
-
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
