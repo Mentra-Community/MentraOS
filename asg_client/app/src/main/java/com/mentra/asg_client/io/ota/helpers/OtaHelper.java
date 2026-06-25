@@ -759,7 +759,11 @@ public class OtaHelper {
                 if (!installNow) {
                     stage[0] = "build_cache_ready_info";
                     JSONObject cacheReadyInfo = buildCacheReadyUpdateInfo(json);
-                    if (cacheReadyInfo != null && cacheReadyInfo.optBoolean("available", false) && isPhoneConnected()) {
+                    boolean pendingInstallQueued = hasPendingPhoneInstall();
+                    if (cacheReadyInfo != null && cacheReadyInfo.optBoolean("available", false)
+                            && pendingInstallQueued) {
+                        Log.i(TAG, "📱 Background manifest check found update, but queued ota_start will run next - suppressing stale availability notification");
+                    } else if (cacheReadyInfo != null && cacheReadyInfo.optBoolean("available", false) && isPhoneConnected()) {
                         stage[0] = "notify_phone_cache_ready";
                         notifyPhoneUpdateAvailable(cacheReadyInfo);
                         Log.i(TAG, "📱 Background manifest check found update - prompted phone to install");
