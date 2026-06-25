@@ -13,6 +13,11 @@
  *   - Playback uses `session.speaker.play` on the blob's file:// uri; export uses
  *     `session.blob.share` (OS share sheet).
  *
+ * Alongside the audio, a live Soniox transcript is captured via
+ * `session.transcription` while recording (pushed to the UI in real time and
+ * persisted into the blob's metadata on stop). Pause suspends both the mic feed
+ * and transcription so the saved audio and transcript stay aligned.
+ *
  * The captured PCM is what the audio system produces AFTER LC3 decode (the same
  * stream that feeds transcription) — i.e. a debugging view of "what audio did we
  * actually get".
@@ -45,6 +50,7 @@ export class RecorderController {
   private recordingId: string | null = null
   private writer: BlobWriter | null = null
   private micUnsub: UnsubscribeFn | null = null
+  private transcriptUnsub: UnsubscribeFn | null = null
   private chunks: Uint8Array[] = []
   private bufBytes = 0
   private pcmBytes = 0
@@ -52,6 +58,14 @@ export class RecorderController {
   private lastLevel = 0
   private lastEmitMs = 0
   private writeErrored = false
+  /** True while the capture is paused (mic + transcription feed suspended). */
+  private paused = false
+  /** Committed transcript text (final results), accumulated across the capture. */
+  private finalTranscript = ""
+  /** In-progress transcript tail (interim result), replaced as it firms up. */
+  private interimTranscript = ""
+  /** Detected/active transcription language tag (e.g. "en-US"). */
+  private lang = ""
   /** True while a stop/cancel is finalizing the blob — blocks a new start from racing its state. */
   private finalizing = false
   /** Serializes blob writes so chunks land in order, one at a time. */
@@ -111,13 +125,15 @@ export class RecorderController {
   }
 
   private onTeardown(): void {
-    // Best-effort: stop the mic feed and playback. An in-flight capture is left
-    // for the host to clean up (it aborts the partial blob on app teardown).
+    // Best-effort: stop the mic feed, transcription, and playback. An in-flight
+    // capture is left for the host to clean up (it aborts the partial blob on
+    // app teardown).
     try {
       this.micUnsub?.()
     } catch {
       /* ignore */
     }
+    this.unsubscribeTranscription()
     try {
       this.session.speaker.stop()
     } catch {
@@ -134,10 +150,13 @@ export class RecorderController {
     this.unsubs.push(this.ui.on("rec:start", () => void this.startRecording()))
     this.unsubs.push(this.ui.on("rec:stop", () => void this.stopRecording()))
     this.unsubs.push(this.ui.on("rec:cancel", () => void this.cancelRecording()))
+    this.unsubs.push(this.ui.on("rec:pause", () => this.pauseRecording()))
+    this.unsubs.push(this.ui.on("rec:resume", () => this.resumeRecording()))
 
     this.unsubs.push(this.ui.on("rec:play", ({id}) => void this.play(id)))
     this.unsubs.push(this.ui.on("rec:stop-play", () => this.stopPlay()))
     this.unsubs.push(this.ui.on("rec:export", ({id}) => void this.exportRecording(id)))
+    this.unsubs.push(this.ui.on("rec:export-transcript", ({id}) => void this.exportTranscript(id)))
     this.unsubs.push(this.ui.on("rec:delete", ({id}) => void this.remove(id)))
     this.unsubs.push(this.ui.on("rec:clear", () => void this.clearAll()))
   }
@@ -170,12 +189,17 @@ export class RecorderController {
       this.lastLevel = 0
       this.lastEmitMs = 0
       this.writeErrored = false
+      this.paused = false
+      this.finalTranscript = ""
+      this.interimTranscript = ""
+      this.lang = ""
       this.drainChain = Promise.resolve()
 
       this.micUnsub = this.session.mic.onAudioChunk((d) => this.onChunk(d))
       this.unsubs.push(() => this.micUnsub?.())
+      this.subscribeTranscription()
 
-      this.lastStatus = {recordingId: writer.key, ms: 0, bytes: WAV_HEADER_BYTES, level: 0}
+      this.lastStatus = {recordingId: writer.key, ms: 0, bytes: WAV_HEADER_BYTES, level: 0, paused: false}
       this.ui.send("rec:status", this.lastStatus)
       this.renderHud()
     } catch (err) {
@@ -245,9 +269,88 @@ export class RecorderController {
       ms,
       bytes: WAV_HEADER_BYTES + captured,
       level: this.lastLevel,
+      paused: false,
     }
     this.ui.send("rec:status", this.lastStatus)
     this.renderHud()
+  }
+
+  // ── Pause / resume ─────────────────────────────────────────────────────────
+
+  /** Suspend the mic + transcription feeds; the partial blob stays open. */
+  private pauseRecording(): void {
+    if (!this.recordingId || this.paused) return
+    try {
+      this.micUnsub?.()
+    } catch {
+      /* ignore */
+    }
+    this.micUnsub = null
+    this.unsubscribeTranscription()
+    this.paused = true
+    this.lastLevel = 0
+    this.emitStatus()
+  }
+
+  /** Re-arm the mic + transcription feeds and continue appending. */
+  private resumeRecording(): void {
+    if (!this.recordingId || !this.paused) return
+    this.paused = false
+    this.micUnsub = this.session.mic.onAudioChunk((d) => this.onChunk(d))
+    this.subscribeTranscription()
+    this.emitStatus()
+  }
+
+  /** Push the current capture state to the UI (used on pause/resume edges). */
+  private emitStatus(): void {
+    if (!this.recordingId) return
+    const captured = this.pcmBytes + this.bufBytes
+    this.lastStatus = {
+      recordingId: this.recordingId,
+      ms: pcmDurationMs(captured, this.sampleRate),
+      bytes: WAV_HEADER_BYTES + captured,
+      level: this.paused ? 0 : this.lastLevel,
+      paused: this.paused,
+    }
+    this.ui.send("rec:status", this.lastStatus)
+    this.renderHud()
+  }
+
+  // ── Live transcription ──────────────────────────────────────────────────────
+
+  private subscribeTranscription(): void {
+    try {
+      this.transcriptUnsub = this.session.transcription.on((d) => this.onTranscript(d))
+    } catch {
+      // Transcription unavailable on this host — capture audio only.
+      this.transcriptUnsub = null
+    }
+  }
+
+  private unsubscribeTranscription(): void {
+    try {
+      this.transcriptUnsub?.()
+    } catch {
+      /* ignore */
+    }
+    this.transcriptUnsub = null
+  }
+
+  private onTranscript(d: {text: string; isFinal: boolean; language?: string}): void {
+    if (!this.recordingId) return
+    if (d.language) this.lang = d.language
+    if (d.isFinal) {
+      const t = d.text.trim()
+      if (t) this.finalTranscript = this.finalTranscript ? `${this.finalTranscript} ${t}` : t
+      this.interimTranscript = ""
+    } else {
+      this.interimTranscript = d.text
+    }
+    this.ui.send("rec:transcript", {
+      final: this.finalTranscript,
+      interim: this.interimTranscript,
+      lang: this.lang || undefined,
+    })
   }
 
   private async stopRecording(): Promise<void> {
@@ -257,13 +360,15 @@ export class RecorderController {
     // (pcmBytes/sampleRate/buffers) while we flush + write the header.
     this.finalizing = true
     try {
-      // Stop the feed first so no more chunks arrive, then flush + finalize.
+      // Stop the feeds first so no more chunks/transcript arrive, then finalize.
       try {
         this.micUnsub?.()
       } catch {
         /* ignore */
       }
       this.micUnsub = null
+      this.unsubscribeTranscription()
+      const transcript = `${this.finalTranscript} ${this.interimTranscript}`.trim()
       this.recordingId = null
       this.lastStatus = null
       this.ui.send("rec:stopped", {})
@@ -273,12 +378,17 @@ export class RecorderController {
         await this.drainOnce() // anything still buffered
         // Patch the real WAV header now that the size is known.
         await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
-        await writer.close({
+        const meta: Record<string, string | number | boolean> = {
           durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
           sampleRate: this.sampleRate,
           channels: 1,
           bitsPerSample: 16,
-        })
+        }
+        // A failed append means we ran into the storage quota — flag it so the
+        // UI can show a "capped" badge.
+        if (this.writeErrored) meta.truncated = true
+        if (transcript) meta.transcript = transcript
+        await writer.close(meta)
       } catch (err) {
         console.log("Recorder: finalize failed", err)
         try {
@@ -306,6 +416,7 @@ export class RecorderController {
         /* ignore */
       }
       this.micUnsub = null
+      this.unsubscribeTranscription()
       this.recordingId = null
       this.lastStatus = null
       this.ui.send("rec:stopped", {})
@@ -334,10 +445,15 @@ export class RecorderController {
     this.writer = null
     this.recordingId = null
     this.micUnsub = null
+    this.transcriptUnsub = null
     this.chunks = []
     this.bufBytes = 0
     this.pcmBytes = 0
     this.writeErrored = false
+    this.paused = false
+    this.finalTranscript = ""
+    this.interimTranscript = ""
+    this.lang = ""
     this.lastStatus = null
   }
 
@@ -386,7 +502,11 @@ export class RecorderController {
     } catch {
       meta = null
     }
-    if (!meta) return
+    if (!meta) {
+      // Stored audio is gone/unreadable — tell the UI instead of a dead tap.
+      this.ui.send("rec:audio-missing", {id})
+      return
+    }
     this.setPlaying(id)
     try {
       await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true})
@@ -422,12 +542,35 @@ export class RecorderController {
     }
   }
 
+  /** Share a recording's transcript as text via the OS share sheet. */
+  private async exportTranscript(id: string): Promise<void> {
+    let meta: BlobMeta | null = null
+    try {
+      meta = await this.session.blob.get(id)
+    } catch {
+      meta = null
+    }
+    const transcript = typeof meta?.meta?.transcript === "string" ? meta.meta.transcript : ""
+    if (!transcript.trim()) return
+    const name = meta?.name ?? id
+    const durationMs = Number(meta?.meta?.durationMs ?? 0)
+    const createdAt = meta?.createdAt ?? Date.now()
+    try {
+      await this.session.system.share({
+        text: `${name}\n${fmtClock(durationMs)} · ${new Date(createdAt).toLocaleString()}\n\n${transcript}`,
+      })
+    } catch (err) {
+      console.log("Recorder: export transcript failed", err)
+    }
+  }
+
   // ── Glasses HUD ──────────────────────────────────────────────────────────
 
   private renderHud(): void {
     try {
       if (this.recordingId && this.lastStatus) {
-        this.session.display.showTextWall(`● REC   ${fmtClock(this.lastStatus.ms)}`, {view: "main"})
+        const tag = this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"
+        this.session.display.showTextWall(`${tag}   ${fmtClock(this.lastStatus.ms)}`, {view: "main"})
       } else {
         this.session.display.showTextWall("Recorder ready", {view: "main"})
       }
@@ -446,6 +589,7 @@ function toItem(m: BlobMeta): RecordingItem {
     durationMs: Number(m.meta?.durationMs ?? 0),
     sampleRate: Number(m.meta?.sampleRate ?? 0),
     truncated: m.meta?.truncated === true,
+    transcript: typeof m.meta?.transcript === "string" ? m.meta.transcript : undefined,
   }
 }
 
