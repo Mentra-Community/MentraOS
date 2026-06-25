@@ -366,6 +366,7 @@ jobs:
       needs.resolve-context.outputs.pr_is_fork != 'true' &&
       needs.plan.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
