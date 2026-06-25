@@ -802,16 +802,13 @@ public class OtaHelper {
                         + ", isBackgroundPrefetch=" + isBackgroundPrefetchInProgress
                         + ", error=" + e.getClass().getName() + ": " + rootMsg
                         + causeInfo, e);
-                // Cancel any queued install after a failed background check; the queued pass would
-                // otherwise start from a manifest fetch that already failed.
-                synchronized (pendingPhoneInstallLock) {
-                    pendingPhoneInstall = false;
-                    pendingPhoneInstallVersionJsonUrl = null;
-                }
+                boolean pendingInstallQueued = hasPendingPhoneInstall();
                 // Send failure to phone with semantic error classification
                 String errorCode = classifyDownloadError(e);
                 if (isPhoneInitiatedOta) {
                     sendProgressToPhone(currentUpdateStage, 0, 0, 0, "FAILED", errorCode);
+                } else if (pendingInstallQueued) {
+                    Log.i(TAG, "📱 Background version check failed, but queued ota_start will run next: " + errorCode);
                 } else if (phoneConnectionProvider != null && isPhoneConnected()) {
                     // Autonomous/background version check failed (e.g. DNS while user is on OTA screen).
                     // Still notify the phone so the UI can show no_internet / download_failed — not only
