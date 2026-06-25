@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.selectable_list_demo",
+  "version": "0.1.0",
+  "name": "Selectable List Demo",
+  "description": "Minimal local miniapp that renders a native scrollable selectable list on G2 and reports selected rows back through touch events.",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3150,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Shows the native selectable list on display glasses"
+    }
+  ]
+}

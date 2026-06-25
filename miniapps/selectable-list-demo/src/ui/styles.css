@@ -1,0 +1,159 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: #f4f6f8;
+  color: #17202a;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.screen {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 12px;
+  padding: 18px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #487089;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 25px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.mode {
+  flex: 0 0 auto;
+  min-width: 70px;
+  padding: 7px 10px;
+  border: 1px solid #cbd7df;
+  border-radius: 8px;
+  background: white;
+  color: #27485c;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.panel {
+  min-width: 0;
+  border: 1px solid #d8e0e5;
+  border-radius: 8px;
+  background: white;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(27, 40, 51, 0.05);
+}
+
+.label {
+  margin: 0 0 8px;
+  color: #617789;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.selected {
+  margin: 0;
+  color: #102433;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.event {
+  margin: 8px 0 0;
+  color: #536879;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.list-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.items {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  list-style: none;
+}
+
+.items li {
+  padding: 10px;
+  border: 1px solid #e1e7eb;
+  border-radius: 8px;
+  background: #f9fbfc;
+}
+
+.items li.active {
+  border-color: #147d85;
+  background: #e8f8f8;
+}
+
+.items span {
+  display: block;
+  color: #183040;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.items small {
+  display: block;
+  margin-top: 3px;
+  color: #617789;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.actions button {
+  min-height: 46px;
+  border: 0;
+  border-radius: 8px;
+  background: #147d85;
+  color: white;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.actions button:last-child {
+  background: #28384a;
+}

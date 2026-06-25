@@ -1,0 +1,17 @@
+{
+  "name": "selectable-list-demo",
+  "private": true,
+  "description": "Minimal MentraOS miniapp demonstrating native selectable lists on G2",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun run build.ts",
+    "pack": "mentra-miniapp pack",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*"
+  }
+}

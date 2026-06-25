@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Selectable List Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="screen">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">G2 Native List</p>
+          <h1>Selectable List Demo</h1>
+        </div>
+        <span id="mode" class="mode">Waiting</span>
+      </header>
+
+      <section class="panel">
+        <p class="label">Selected row</p>
+        <p id="selected" class="selected">Waiting for background...</p>
+        <p id="event" class="event">Open this miniapp on glasses to show the list.</p>
+      </section>
+
+      <section class="panel list-panel">
+        <p class="label">Rows sent to glasses</p>
+        <ol id="items" class="items"></ol>
+      </section>
+
+      <nav class="actions" aria-label="Demo controls">
+        <button id="show-list" type="button">Show List</button>
+        <button id="show-detail" type="button">Show Detail</button>
+      </nav>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
