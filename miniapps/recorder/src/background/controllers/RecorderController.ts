@@ -210,7 +210,11 @@ export class RecorderController {
   }
 
   private onChunk(d: AudioChunkData): void {
-    if (!this.recordingId || this.writeErrored) return
+    // `paused` is authoritative: a frame already in flight on the bridge can
+    // still land here after pauseRecording() tore down the subscription, so
+    // drop it here too — otherwise it would extend the WAV and flip the UI out
+    // of the paused state via maybeEmitProgress.
+    if (!this.recordingId || this.writeErrored || this.paused) return
     if (d.sampleRate && d.sampleRate > 0) this.sampleRate = d.sampleRate
     const bytes = base64ToBytes(d.data || "")
     if (bytes.length === 0) return

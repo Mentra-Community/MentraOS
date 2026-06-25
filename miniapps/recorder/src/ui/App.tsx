@@ -27,7 +27,9 @@ export function App() {
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
     const filtered = q
-      ? rec.recordings.filter((r) => fmtRelative(r.createdAt).toLowerCase().includes(q))
+      ? rec.recordings.filter((r) =>
+          [r.name, r.transcript, fmtRelative(r.createdAt)].some((s) => s?.toLowerCase().includes(q)),
+        )
       : rec.recordings
     const map = new Map<string, RecordingItem[]>()
     for (const r of filtered) {
