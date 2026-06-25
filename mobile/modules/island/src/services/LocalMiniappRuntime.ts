@@ -2742,12 +2742,21 @@ class LocalMiniappRuntime {
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
-    // exact streamType, so per-gesture subscribers (`touch_event:click`,
+    // exact streamType, so per-gesture subscribers (`touch_event:single_tap`,
     // etc.) need their own EVENT envelope with the gesture-tagged streamType.
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
+    //
+    // The native bridge delivers the gesture in `gestureName` (e.g. "swipe_up"),
+    // but the miniapp SDK's TouchData is keyed on `kind`. Backfill `kind` from
+    // `gestureName` so both the SDK's `data.kind` and the per-gesture stream
+    // (`onTouch("swipe_up")`) resolve. Mutates `data` in place before it's sent.
     let perGestureStream: string | null = null
-    if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
-      const kind = (data as {kind?: string} | null)?.kind
+    if (normalizedStream === MiniappStreamType.TOUCH_EVENT && data && typeof data === "object") {
+      const touch = data as {kind?: string; gestureName?: string}
+      if (!touch.kind && typeof touch.gestureName === "string") {
+        touch.kind = touch.gestureName
+      }
+      const kind = touch.kind
       if (typeof kind === "string" && kind.length > 0) {
         perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${kind}`
       }
