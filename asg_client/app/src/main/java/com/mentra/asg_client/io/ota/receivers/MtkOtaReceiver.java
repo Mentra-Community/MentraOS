@@ -75,10 +75,6 @@ public class MtkOtaReceiver extends BroadcastReceiver {
                 Log.e(TAG, "MTK OTA error: " + msg);
                 // Clear in-progress flag on error
                 OtaHelper.setMtkOtaInProgress(false);
-                OtaHelper helper = OtaHelper.getInstance();
-                if (helper != null) {
-                    helper.clearCachedArtifactsForType("mtk");
-                }
                 break;
                 
             case RESULT_CMD_SUCCESS:

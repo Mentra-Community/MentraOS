@@ -67,9 +67,6 @@ public class OtaService extends Service {
         // Initialize OTA helper singleton
         otaHelper = OtaHelper.initialize(this);
 
-        // Clean up old firmware files from previous updates
-        cleanupOldFirmwareFiles();
-
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
 
@@ -268,7 +265,6 @@ public class OtaService extends Service {
                 // Send FAILED to phone so user knows something went wrong
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FAILED", 0, event.getMessage());
-                    otaHelper.clearCachedArtifactsForType("mtk");
                 }
                 break;
         }
@@ -327,25 +323,8 @@ public class OtaService extends Service {
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
-                    otaHelper.clearCachedArtifactsForType("bes");
                 }
                 break;
-        }
-    }
-
-    /**
-     * Clean up old firmware files from previous OTA updates.
-     * Called on service startup to remove any leftover files.
-     */
-    private void cleanupOldFirmwareFiles() {
-        try {
-            if (otaHelper != null) {
-                otaHelper.pruneInvalidCachedArtifactsOnStartup();
-            } else {
-                Log.w(TAG, "OtaHelper unavailable for cache pruning on startup");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error cleaning up old firmware files", e);
         }
     }
 
@@ -410,7 +389,7 @@ public class OtaService extends Service {
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
                 if (otaHelper != null) {
-                    Log.i(TAG, "📱 Triggering background OTA pre-download check (first boot or update from old version)");
+                    Log.i(TAG, "📱 Triggering background OTA manifest check (first boot or update from old version)");
                     otaHelper.startVersionCheck(this);
                 }
             } else if (currentVersion > previousVersion) {
@@ -418,7 +397,7 @@ public class OtaService extends Service {
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
                 if (otaHelper != null) {
-                    Log.i(TAG, "📱 Auto-resuming background OTA pre-download check for MTK/BES updates");
+                    Log.i(TAG, "📱 Auto-resuming background OTA manifest check for MTK/BES updates");
                     otaHelper.startVersionCheck(this);
                 }
             } else {

@@ -3,7 +3,6 @@ package com.mentra.asg_client.io.ota.helpers;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -106,17 +105,6 @@ public class OtaHelper {
     private static final String UPDATE_TYPE_MTK = "mtk";
     private static final String UPDATE_TYPE_BES = "bes";
     private static final String[] UPDATE_ORDER = {UPDATE_TYPE_APK, UPDATE_TYPE_MTK, UPDATE_TYPE_BES};
-    private static final String CACHE_PREFS_NAME = "ota_cache_state";
-    private static final String CACHE_FLAG_READY = "ready";
-    private static final String CACHE_FIELD_PATH = "path";
-    private static final String CACHE_FIELD_SHA256 = "sha256";
-    private static final String CACHE_FIELD_VERSION = "version";
-    private static final String CACHE_FIELD_TIMESTAMP = "timestamp";
-    private static final String CACHE_FIELD_SIZE = "size";
-    private static final String CACHE_KEY_APK_ASG = "apk_com.mentra.asg_client";
-    private static final String CACHE_KEY_APK_UPDATER = "apk_com.augmentos.otaupdater";
-    private static final String CACHE_KEY_MTK = "mtk_main";
-    private static final String CACHE_KEY_BES = "bes_main";
     
     // ⚠️ DEBUG FLAG: Set to true to skip all checks and install MTK firmware from local file
     // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/mtk_firmware.zip
@@ -147,10 +135,6 @@ public class OtaHelper {
     // the prefetch→install retry loop re-uses the same URL instead of
     // falling back to the compiled-in default (which would break test flows).
     private volatile String lastVersionJsonUrl = OtaConstants.VERSION_JSON_URL;
-
-    // Cached version JSON from the last successful prefetch. Allows ota_start
-    // to skip the network re-fetch when all artifacts are already cached.
-    private volatile JSONObject cachedVersionJson = null;
 
     /**
      * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
@@ -186,6 +170,8 @@ public class OtaHelper {
     private volatile boolean rebootAfterMtkInstall = false;
 
     private volatile boolean pendingPhoneInstall = false;
+    private volatile String pendingPhoneInstallVersionJsonUrl = null;
+    private final Object pendingPhoneInstallLock = new Object();
 
     /** Snapshot for {@link #buildMinimalOtaStatusJson()} when no OTA session exists (aligns with {@link #sendMtkInstallProgress} shape). */
     private String lastOtaPhoneStage;
@@ -380,192 +366,8 @@ public class OtaHelper {
         Log.d(TAG, "Phone disconnected - reset OTA notification flag");
     }
 
-    private SharedPreferences getCachePrefs() {
-        return context.getSharedPreferences(CACHE_PREFS_NAME, Context.MODE_PRIVATE);
-    }
-
-    private String cacheField(String cacheKey, String field) {
-        return cacheKey + "_" + field;
-    }
-
     private String getApkFilename(String packageName) {
         return packageName.equals("com.mentra.asg_client") ? "asg_client_update.apk" : "ota_updater_update.apk";
-    }
-
-    private String getApkCacheKey(String packageName) {
-        return packageName.equals("com.mentra.asg_client") ? CACHE_KEY_APK_ASG : CACHE_KEY_APK_UPDATER;
-    }
-
-    private void markCachedArtifactReady(String cacheKey, String updateType, String localPath, JSONObject metadata) {
-        try {
-            SharedPreferences.Editor editor = getCachePrefs().edit();
-            editor.putBoolean(cacheField(cacheKey, CACHE_FLAG_READY), true);
-            editor.putString(cacheField(cacheKey, CACHE_FIELD_PATH), localPath);
-            editor.putString(cacheField(cacheKey, CACHE_FIELD_SHA256), metadata.optString("sha256", ""));
-            editor.putString(cacheField(cacheKey, CACHE_FIELD_VERSION), metadata.optString("versionName", ""));
-            editor.putLong(cacheField(cacheKey, CACHE_FIELD_TIMESTAMP), System.currentTimeMillis());
-            editor.putLong(cacheField(cacheKey, CACHE_FIELD_SIZE), new File(localPath).length());
-            editor.putString(cacheField(cacheKey, "type"), updateType);
-            editor.apply();
-            Log.i(TAG, "📦 Cache ready: " + cacheKey + " at " + localPath);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to mark cached artifact ready: " + cacheKey, e);
-        }
-    }
-
-    private String getCachedPath(String cacheKey) {
-        return getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_PATH), null);
-    }
-
-    private boolean isCachedReady(String cacheKey) {
-        return getCachePrefs().getBoolean(cacheField(cacheKey, CACHE_FLAG_READY), false);
-    }
-
-    private boolean isCachedArtifactValid(String cacheKey, String updateType, String localPath, JSONObject metadata) {
-        try {
-            if (!isCachedReady(cacheKey)) {
-                return false;
-            }
-            File file = new File(localPath);
-            if (!file.exists() || !file.canRead()) {
-                return false;
-            }
-
-            // Fast path: if the stored SHA256 matches the expected hash from metadata AND the file
-            // has not been modified since it was verified, skip the expensive full re-hash.
-            // This avoids re-reading large firmware files on every 30-minute periodic check.
-            String storedHash = getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_SHA256), "");
-            long storedTimestamp = getCachePrefs().getLong(cacheField(cacheKey, CACHE_FIELD_TIMESTAMP), 0);
-            String expectedHash = metadata.optString("sha256", "");
-
-            if (!storedHash.isEmpty()
-                    && storedHash.equalsIgnoreCase(expectedHash)
-                    && file.lastModified() <= storedTimestamp) {
-                Log.d(TAG, "Cache fast-path hit for " + cacheKey + " - skipping re-hash");
-                return true;
-            }
-
-            // Slow path: stored hash absent, mismatched, or file was modified — full verify.
-            boolean hashOk;
-            switch (updateType) {
-                case UPDATE_TYPE_APK:
-                    hashOk = verifyApkFile(localPath, metadata);
-                    break;
-                case UPDATE_TYPE_MTK:
-                    hashOk = verifyMtkFirmwareChecksum(localPath, metadata);
-                    break;
-                case UPDATE_TYPE_BES:
-                    hashOk = verifyFirmwareFile(localPath, metadata);
-                    break;
-                default:
-                    hashOk = false;
-                    break;
-            }
-            if (!hashOk) {
-                Log.w(TAG, "Cached artifact failed verification: " + cacheKey);
-            }
-            return hashOk;
-        } catch (Exception e) {
-            Log.e(TAG, "Error validating cache for " + cacheKey, e);
-            return false;
-        }
-    }
-
-    public void clearCachedArtifact(String cacheKey, String updateType) {
-        try {
-            String path = getCachedPath(cacheKey);
-            if (path != null) {
-                File file = new File(path);
-                if (file.exists() && !file.delete()) {
-                    Log.w(TAG, "Failed deleting cached artifact file: " + path);
-                }
-            }
-
-            SharedPreferences.Editor editor = getCachePrefs().edit();
-            editor.remove(cacheField(cacheKey, CACHE_FLAG_READY));
-            editor.remove(cacheField(cacheKey, CACHE_FIELD_PATH));
-            editor.remove(cacheField(cacheKey, CACHE_FIELD_SHA256));
-            editor.remove(cacheField(cacheKey, CACHE_FIELD_VERSION));
-            editor.remove(cacheField(cacheKey, CACHE_FIELD_TIMESTAMP));
-            editor.remove(cacheField(cacheKey, CACHE_FIELD_SIZE));
-            editor.remove(cacheField(cacheKey, "type"));
-            editor.apply();
-            Log.i(TAG, "🧹 Cleared cached artifact: " + cacheKey + " (" + updateType + ")");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed clearing cached artifact: " + cacheKey, e);
-        }
-    }
-
-    public void clearCachedArtifactsForType(String updateType) {
-        if (UPDATE_TYPE_APK.equals(updateType)) {
-            clearCachedArtifact(CACHE_KEY_APK_ASG, UPDATE_TYPE_APK);
-            clearCachedArtifact(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK);
-            return;
-        }
-        if (UPDATE_TYPE_MTK.equals(updateType)) {
-            clearCachedArtifact(CACHE_KEY_MTK, UPDATE_TYPE_MTK);
-            File backup = new File(OtaConstants.MTK_BACKUP_PATH);
-            if (backup.exists() && !backup.delete()) {
-                Log.w(TAG, "Failed deleting MTK backup cache: " + OtaConstants.MTK_BACKUP_PATH);
-            }
-            return;
-        }
-        if (UPDATE_TYPE_BES.equals(updateType)) {
-            clearCachedArtifact(CACHE_KEY_BES, UPDATE_TYPE_BES);
-            File backup = new File(OtaConstants.BES_BACKUP_PATH);
-            if (backup.exists() && !backup.delete()) {
-                Log.w(TAG, "Failed deleting BES backup cache: " + OtaConstants.BES_BACKUP_PATH);
-            }
-        }
-    }
-
-    public void clearAllCachedArtifacts() {
-        clearCachedArtifactsForType(UPDATE_TYPE_APK);
-        clearCachedArtifactsForType(UPDATE_TYPE_MTK);
-        clearCachedArtifactsForType(UPDATE_TYPE_BES);
-    }
-
-    public void pruneInvalidCachedArtifactsOnStartup() {
-        try {
-            pruneOneCacheEntry(CACHE_KEY_APK_ASG, UPDATE_TYPE_APK);
-            pruneOneCacheEntry(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK);
-            pruneOneCacheEntry(CACHE_KEY_MTK, UPDATE_TYPE_MTK);
-            if (!BesOtaManager.isBesOtaInProgress) {
-                pruneOneCacheEntry(CACHE_KEY_BES, UPDATE_TYPE_BES);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed pruning invalid cached artifacts", e);
-        }
-    }
-
-    private void pruneOneCacheEntry(String cacheKey, String updateType) {
-        if (!isCachedReady(cacheKey)) {
-            return;
-        }
-        String path = getCachedPath(cacheKey);
-        if (path == null) {
-            clearCachedArtifact(cacheKey, updateType);
-            return;
-        }
-        File file = new File(path);
-        if (!file.exists() || file.length() <= 0) {
-            clearCachedArtifact(cacheKey, updateType);
-            return;
-        }
-        long storedSize = getCachePrefs().getLong(cacheField(cacheKey, CACHE_FIELD_SIZE), -1);
-        if (storedSize > 0 && file.length() != storedSize) {
-            Log.w(TAG, "Size mismatch for " + cacheKey + ": expected " + storedSize + " but got " + file.length() + " — clearing corrupt entry");
-            file.delete();
-            clearCachedArtifact(cacheKey, updateType);
-            return;
-        }
-        String storedHash = getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_SHA256), "");
-        if (storedHash.isEmpty()) {
-            Log.w(TAG, "No stored hash for " + cacheKey + " — clearing stale entry");
-            clearCachedArtifact(cacheKey, updateType);
-            return;
-        }
-        Log.i(TAG, "Keeping valid cached artifact on startup: " + cacheKey);
     }
 
     // Wakelock timeout for OTA process (10 minutes)
@@ -675,18 +477,28 @@ public class OtaHelper {
      * Called by OtaCommandHandler when phone sends ota_start command.
      */
     public void startOtaFromPhone() {
+        startOtaFromPhone(null);
+    }
+
+    /**
+     * Start OTA update from phone command using a caller-supplied version JSON URL when provided.
+     */
+    public void startOtaFromPhone(String versionJsonUrl) {
+        String requestedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
         Log.i(TAG, "📱 Starting OTA from phone request");
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
 
-        // If OTA already in progress, queue the install to fire immediately after prefetch completes.
+        // If an OTA check is already in progress, queue the install to fire immediately after it completes.
         // We cannot change the running thread's local installNow variable, so we set a flag that
-        // the finally block detects and uses to kick off a fresh install pass from the cache.
+        // the finally block detects and uses to kick off a fresh install pass with the requested URL.
         if (versionCheckLock.isLocked()) {
-            Log.i(TAG, "📱 OTA prefetch in progress - queuing install to fire after prefetch completes");
-            pendingPhoneInstall = true;
-            isPhoneInitiatedOta = true;
+            Log.i(TAG, "📱 OTA check in progress - queuing install to fire after check completes");
+            synchronized (pendingPhoneInstallLock) {
+                pendingPhoneInstall = true;
+                pendingPhoneInstallVersionJsonUrl = requestedVersionJsonUrl;
+            }
             // Acquire wakelock early so CPU stays awake for the queued install pass
             WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
             Log.i(TAG, "📱 OTA wakelock acquired for queued install (" + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + "s)");
@@ -706,58 +518,22 @@ public class OtaHelper {
         lastProgressSentTime = 0;
         lastProgressSentPercent = 0;
 
-        // Fast-path: if background prefetch already fetched and cached the version JSON,
-        // skip the network round-trip entirely and jump straight to install.
-        if (cachedVersionJson != null) {
-            Log.i(TAG, "📱 Cache fast-path: reusing prefetched version JSON (skipping network re-fetch)");
-            startInstallFromCachedJson(context, cachedVersionJson);
-            return;
-        }
-
         Log.i(TAG, "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
 
-        startVersionCheck(context);
+        startVersionCheckWithUrl(context, requestedVersionJsonUrl);
     }
 
-    /**
-     * Run the install pass using the version JSON that was already fetched by the
-     * background prefetch.  This avoids a redundant network round-trip and the
-     * pre-flight internet check when all artifacts are already cached.
-     */
-    private void startInstallFromCachedJson(Context context, JSONObject json) {
-        new Thread(() -> {
-            try {
-                if (!versionCheckLock.tryLock()) {
-                    Log.w(TAG, "📱 Cache fast-path: version check lock held — falling back to full check");
-                    startVersionCheck(context);
-                    return;
-                }
-                try {
-                    Log.i(TAG, "📱 Cache fast-path: processing cached version JSON (installNow=true)");
-                    if (json.has("apps")) {
-                        processAppsSequentially(json, context, true);
-                    } else {
-                        Log.d(TAG, "Using legacy version.json format (cache fast-path)");
-                        boolean apkUpdated = checkAndUpdateApp("com.mentra.asg_client", json, context, true);
-                        if (!apkUpdated) {
-                            sendProgressToPhone("download", 0, 0, 0, "FAILED",
-                                    "APK update failed after retries. Please check WiFi and try again.");
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Exception during cache fast-path install", e);
-                    String errorCode = classifyDownloadError(e);
-                    sendProgressToPhone(currentUpdateStage, 0, 0, 0, "FAILED", errorCode);
-                } finally {
-                    cachedVersionJson = null;
-                    isPhoneInitiatedOta = false;
-                    versionCheckLock.unlock();
-                    Log.d(TAG, "Version check completed (cache fast-path), ready for next check");
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to acquire lock for cache fast-path", e);
-            }
-        }).start();
+    private String resolveVersionJsonUrl(String versionJsonUrl) {
+        if (versionJsonUrl == null || versionJsonUrl.trim().isEmpty()) {
+            return OtaConstants.VERSION_JSON_URL;
+        }
+        return versionJsonUrl.trim();
+    }
+
+    private boolean hasPendingPhoneInstall() {
+        synchronized (pendingPhoneInstallLock) {
+            return pendingPhoneInstall;
+        }
     }
 
     private void startPeriodicChecks() {
@@ -888,7 +664,7 @@ public class OtaHelper {
             return;
         }
         Log.i(TAG, "⏰ Retrying OTA version check after clock sync from phone");
-        startVersionCheck(context);
+        startVersionCheckWithUrl(context, lastVersionJsonUrl);
     }
 
     public void startVersionCheck(Context context) {
@@ -902,6 +678,7 @@ public class OtaHelper {
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
      */
     public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
+        String resolvedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", autonomousEnabled=" + AUTONOMOUS_OTA_ENABLED
@@ -909,7 +686,7 @@ public class OtaHelper {
                 + ", isUpdating=" + isUpdating
                 + ", mtkInProgress=" + isMtkOtaInProgress
                 + ", besInProgress=" + BesOtaManager.isBesOtaInProgress
-                + ", versionJsonUrl=" + versionJsonUrl);
+                + ", versionJsonUrl=" + resolvedVersionJsonUrl);
 
         // if (!isNetworkAvailable(context)) {
         //     Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
@@ -936,7 +713,7 @@ public class OtaHelper {
 
             // Store the URL under the lock so a concurrent caller can't overwrite it
             // before this check finishes (used by the pendingPhoneInstall retry).
-            lastVersionJsonUrl = versionJsonUrl;
+            lastVersionJsonUrl = resolvedVersionJsonUrl;
 
             // Check if update is in progress (separate from version check)
             if (isUpdating) {
@@ -949,7 +726,7 @@ public class OtaHelper {
             final boolean[] otaCheckReachedSuccessLog = {false};
 
             try {
-                // For autonomous/background prefetch, require WiFi before any network fetch.
+                // For autonomous/background checks, require WiFi before any network fetch.
                 // This avoids noisy fetch exceptions when glasses are offline.
                 if (!isPhoneInitiatedOta) {
                     stage[0] = "background_wifi_gate";
@@ -961,7 +738,7 @@ public class OtaHelper {
 
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
-                String versionInfo = fetchVersionInfo(versionJsonUrl);
+                String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
                 stage[0] = "parse_version_json";
                 JSONObject json = new JSONObject(versionInfo);
 
@@ -969,17 +746,31 @@ public class OtaHelper {
                         + ", mtk_patches=" + json.has("mtk_patches")
                         + ", bes_firmware=" + json.has("bes_firmware"));
 
-                cachedVersionJson = json;
-
                 if (!isPhoneInitiatedOta) {
                     stage[0] = "background_prefetch_gate";
                     isBackgroundPrefetchInProgress = true;
-                    Log.i(TAG, "📦 Starting background OTA pre-download pass");
+                    Log.i(TAG, "📦 Starting background OTA manifest-only pass");
                 }
 
                 // Check if new format (multiple apps) or legacy format
                 boolean installNow = isPhoneInitiatedOta;
                 Log.i(TAG, "OTA execution mode -> installNow=" + installNow);
+
+                if (!installNow) {
+                    stage[0] = "build_cache_ready_info";
+                    JSONObject cacheReadyInfo = buildCacheReadyUpdateInfo(json);
+                    if (cacheReadyInfo != null && cacheReadyInfo.optBoolean("available", false) && isPhoneConnected()) {
+                        stage[0] = "notify_phone_cache_ready";
+                        notifyPhoneUpdateAvailable(cacheReadyInfo);
+                        Log.i(TAG, "📱 Background manifest check found update - prompted phone to install");
+                    } else {
+                        Log.i(TAG, "📦 Background manifest check found no available OTA update");
+                    }
+                    otaCheckReachedSuccessLog[0] = true;
+                    Log.i(TAG, "OTA check completed successfully");
+                    return;
+                }
+
                 stage[0] = "process_updates";
                 if (json.has("apps")) {
                     processAppsSequentially(json, context, installNow);
@@ -994,21 +785,10 @@ public class OtaHelper {
                     }
                 }
 
-                if (!isPhoneInitiatedOta) {
-                    stage[0] = "build_cache_ready_info";
-                    JSONObject cacheReadyInfo = buildCacheReadyUpdateInfo(json);
-                    if (cacheReadyInfo != null && cacheReadyInfo.optBoolean("available", false) && isPhoneConnected()) {
-                        stage[0] = "notify_phone_cache_ready";
-                        notifyPhoneUpdateAvailable(cacheReadyInfo);
-                        Log.i(TAG, "📱 Background pre-download ready - prompted phone to install");
-                    } else {
-                        Log.i(TAG, "📦 Background pre-download complete - updates not fully cache-ready yet");
-                    }
-                }
                 otaCheckReachedSuccessLog[0] = true;
                 Log.i(TAG, "OTA check completed successfully");
             } catch (Exception e) {
-                String urlForLog = versionJsonUrl != null ? versionJsonUrl : lastVersionJsonUrl;
+                String urlForLog = resolvedVersionJsonUrl != null ? resolvedVersionJsonUrl : lastVersionJsonUrl;
                 String rootMsg = e.getMessage() != null ? e.getMessage() : "";
                 String causeInfo = "";
                 if (e.getCause() != null) {
@@ -1022,10 +802,12 @@ public class OtaHelper {
                         + ", isBackgroundPrefetch=" + isBackgroundPrefetchInProgress
                         + ", error=" + e.getClass().getName() + ": " + rootMsg
                         + causeInfo, e);
-                cachedVersionJson = null;
-                // Cancel any queued install — triggering an install pass after a failed prefetch
-                // would attempt to install a potentially corrupt or incomplete cache.
-                pendingPhoneInstall = false;
+                // Cancel any queued install after a failed background check; the queued pass would
+                // otherwise start from a manifest fetch that already failed.
+                synchronized (pendingPhoneInstallLock) {
+                    pendingPhoneInstall = false;
+                    pendingPhoneInstallVersionJsonUrl = null;
+                }
                 // Send failure to phone with semantic error classification
                 String errorCode = classifyDownloadError(e);
                 if (isPhoneInitiatedOta) {
@@ -1043,20 +825,28 @@ public class OtaHelper {
                     Log.i(TAG, "📱 Notified phone of version-check OTA failure (background path): " + errorCode);
                 }
             } finally {
-                // Capture before resetting — if the user tapped Install while prefetch was running,
-                // we need to fire a fresh install pass now that the cache is fully populated.
-                boolean shouldInstallNow = pendingPhoneInstall;
+                // Capture before resetting — if the user tapped Install while a background check was
+                // running, fire a fresh phone-initiated pass now that the lock is free.
+                boolean shouldInstallNow;
+                String pendingVersionJsonUrl;
+                synchronized (pendingPhoneInstallLock) {
+                    shouldInstallNow = pendingPhoneInstall;
+                    pendingVersionJsonUrl = pendingPhoneInstallVersionJsonUrl;
+                    pendingPhoneInstall = false;
+                    pendingPhoneInstallVersionJsonUrl = null;
+                }
                 isBackgroundPrefetchInProgress = false;
                 isPhoneInitiatedOta = false;
-                pendingPhoneInstall = false;
                 versionCheckLock.unlock();
                 Log.d(TAG, "Version check thread finished (reachedSuccessLog=" + otaCheckReachedSuccessLog[0]
                         + ", lastStage=" + stage[0] + "), lock released, ready for next check");
 
                 if (shouldInstallNow) {
-                    Log.i(TAG, "📱 Phone-initiated install was queued during prefetch - firing install pass now");
+                    Log.i(TAG, "📱 Phone-initiated install was queued during background check - firing install pass now");
                     isPhoneInitiatedOta = true;
-                    startVersionCheckWithUrl(context, lastVersionJsonUrl); // fresh pass: same URL, installNow=true, files served from cache
+                    startVersionCheckWithUrl(
+                            context,
+                            pendingVersionJsonUrl != null ? pendingVersionJsonUrl : lastVersionJsonUrl);
                 }
             }
         }).start();
@@ -1132,38 +922,6 @@ public class OtaHelper {
             // "com.augmentos.otaupdater"      // Then OTA updater
         };
 
-        // PHASE 0: Pre-download firmware artifacts BEFORE any APK install.
-        // APK install kills the app process, so MTK/BES firmware files must be cached
-        // beforehand. After restart the install phase can serve files from cache.
-        {
-            try {
-                if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
-                    String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
-                    JSONObject mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion);
-                    if (mtkPatch != null) {
-                        Log.i(TAG, "📦 Phase 0: Pre-downloading MTK firmware before APK install");
-                        checkAndUpdateMtkFirmware(mtkPatch, context, false);
-                    }
-                }
-                if (rootJson.has("bes_firmware")) {
-                    String currentBesVersion = "";
-                    try {
-                        AsgSettings asgSettings = new AsgSettings(context);
-                        currentBesVersion = asgSettings.getBesFirmwareVersion();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
-                    }
-                    boolean besNeeded = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
-                    if (besNeeded) {
-                        Log.i(TAG, "📦 Phase 0: Pre-downloading BES firmware before APK install");
-                        checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context, false);
-                    }
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Phase 0 firmware prefetch failed (non-fatal) - will retry later", e);
-            }
-        }
-        
         boolean apkUpdateNeeded = false;
         boolean apkUpdateFailed = false;
         String failedApkPackage = null;
@@ -1186,7 +944,7 @@ public class OtaHelper {
                 boolean success = checkAndUpdateApp(packageName, appInfo, context, installNow);
                 
                 if (success) {
-                    Log.i(TAG, (installNow ? "Successfully updated " : "Successfully pre-downloaded ") + packageName);
+                    Log.i(TAG, (installNow ? "Successfully updated " : "Update available for ") + packageName);
                     if (installNow) {
                         apkUpdateNeeded = true;
                     }
@@ -1302,12 +1060,6 @@ public class OtaHelper {
                         } else {
                             Log.e(TAG, "MTK firmware update failed to start");
                         }
-                    } else {
-                        // Prefetch mode: download/cache BOTH artifacts now so prompt can be shown as cache-ready.
-                        Log.i(TAG, "Both MTK and BES updates available - pre-downloading both artifacts");
-                        boolean mtkPrefetched = checkAndUpdateMtkFirmware(mtkPatch, context, false);
-                        boolean besPrefetched = checkAndUpdateBesFirmware(rootJson.getJSONObject("bes_firmware"), context, false);
-                        Log.i(TAG, "Prefetch results -> mtk=" + mtkPrefetched + ", bes=" + besPrefetched);
                     }
                 } else if (mtkPatch != null) {
                     // Only MTK - apply normally (stages, needs manual reboot)
@@ -1352,7 +1104,7 @@ public class OtaHelper {
                 }
             }
         } else {
-            Log.i(TAG, "APK update performed - firmware already pre-downloaded in Phase 0, install will happen after restart");
+            Log.i(TAG, "APK update performed - any firmware update will be fetched fresh after restart");
         }
         
         Log.d(TAG, "Sequential updates completed (APK → MTK → BES)");
@@ -1398,48 +1150,31 @@ public class OtaHelper {
             
             if (serverVersion > currentVersion) {
                 String filename = getApkFilename(packageName);
-                String cacheKey = getApkCacheKey(packageName);
                 String localPath = OtaConstants.BASE_DIR + "/" + filename;
 
-                boolean hasValidCache = isCachedArtifactValid(cacheKey, UPDATE_TYPE_APK, localPath, appInfo);
-                if (!hasValidCache) {
-                    if (installNow) {
-                        isUpdating = true;
-                        Log.i(TAG, "Starting update process for " + packageName);
-                    } else {
-                        Log.i(TAG, "📦 Prefetching APK for " + packageName);
-                    }
-
-                    File apkFile = new File(localPath);
-                    if (apkFile.exists() && !apkFile.delete()) {
-                        Log.w(TAG, "Failed deleting old APK before refresh: " + apkFile.getName());
-                    }
-
-                    // Create backup before update install
-                    if (installNow) {
-                        createAppBackup(packageName, context);
-                    }
-
-                    boolean downloadOk = downloadApk(apkUrl, appInfo, context, filename);
-                    if (!downloadOk) {
-                        clearCachedArtifact(cacheKey, UPDATE_TYPE_APK);
-                        isUpdating = false;
-                        Log.d(TAG, "Download failed, cleared isUpdating for next OTA attempt");
-                        return false;
-                    }
-                    markCachedArtifactReady(cacheKey, UPDATE_TYPE_APK, localPath, appInfo);
-                } else {
-                    Log.i(TAG, "📦 Cache hit for " + packageName + " - APK already downloaded, skipping download stage entirely");
-                    if (installNow) {
-                        Log.i(TAG, "⚡ Cache hit + installNow: jumping straight to install (no download UI shown to user)");
-                    }
-                }
-
                 if (!installNow) {
+                    Log.i(TAG, "Manifest-only check - skipping APK download for " + packageName);
                     return true;
                 }
 
-                Log.i(TAG, "📲 Proceeding to install " + packageName + " (source: " + (hasValidCache ? "cache" : "fresh download") + ")");
+                isUpdating = true;
+                Log.i(TAG, "Starting update process for " + packageName);
+
+                File apkFile = new File(localPath);
+                if (apkFile.exists() && !apkFile.delete()) {
+                    Log.w(TAG, "Failed deleting old APK before refresh: " + apkFile.getName());
+                }
+
+                createAppBackup(packageName, context);
+
+                boolean downloadOk = downloadApk(apkUrl, appInfo, context, filename);
+                if (!downloadOk) {
+                    isUpdating = false;
+                    Log.d(TAG, "Download failed, cleared isUpdating for next OTA attempt");
+                    return false;
+                }
+
+                Log.i(TAG, "📲 Proceeding to install " + packageName + " (fresh download)");
                 currentUpdateStage = "install";
                 sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
 
@@ -1463,13 +1198,15 @@ public class OtaHelper {
                         sessionManager.clearRestartGuard();
                     }
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
-                    clearCachedArtifact(cacheKey, UPDATE_TYPE_APK);
                     return false;
                 }
 
-                // Clean up cached update file after install attempt
+                // Clean up the update file after install attempt.
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                    clearCachedArtifact(cacheKey, UPDATE_TYPE_APK);
+                    File installedApkFile = new File(localPath);
+                    if (installedApkFile.exists() && !installedApkFile.delete()) {
+                        Log.w(TAG, "Failed deleting APK update file after install: " + installedApkFile.getName());
+                    }
                 }, 30000);
 
                 return true;
@@ -1580,8 +1317,7 @@ public class OtaHelper {
         currentUpdateType = "apk";
 
         // Now that we have the real file size, tell the phone the download is starting.
-        // This is deferred from startOtaFromPhone() so cache hits never send this event.
-        Log.i(TAG, "📥 Sending download STARTED to phone (actual download, not cache hit)");
+        Log.i(TAG, "📥 Sending download STARTED to phone");
         sendProgressToPhone("download", 0, 0, fileSize, "STARTED", null);
 
         // Emit download started event
@@ -2103,21 +1839,16 @@ public class OtaHelper {
                 Log.e(TAG, "BES firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
                 return false;
             }
-            boolean hasValidCache = isCachedArtifactValid(CACHE_KEY_BES, UPDATE_TYPE_BES, OtaConstants.BES_FIRMWARE_PATH, firmwareInfo);
-            if (!hasValidCache) {
-                boolean downloaded = downloadBesFirmware(firmwareUrl, firmwareInfo, context);
-                if (!downloaded) {
-                    Log.e(TAG, "Failed to download BES firmware");
-                    clearCachedArtifact(CACHE_KEY_BES, UPDATE_TYPE_BES);
-                    return false;
-                }
-                markCachedArtifactReady(CACHE_KEY_BES, UPDATE_TYPE_BES, OtaConstants.BES_FIRMWARE_PATH, firmwareInfo);
-            } else {
-                Log.i(TAG, "📦 Cache hit for BES firmware - using pre-downloaded artifact");
-            }
 
             if (!installNow) {
+                Log.i(TAG, "Manifest-only check - skipping BES firmware download");
                 return true;
+            }
+
+            boolean downloaded = downloadBesFirmware(firmwareUrl, firmwareInfo, context);
+            if (!downloaded) {
+                Log.e(TAG, "Failed to download BES firmware");
+                return false;
             }
 
             if (!isPhoneInitiatedOta) {
@@ -2135,15 +1866,12 @@ public class OtaHelper {
                     return true;
                 } else {
                     Log.e(TAG, "Failed to start BES firmware update");
-                    clearCachedArtifact(CACHE_KEY_BES, UPDATE_TYPE_BES);
                 }
             } else {
                 Log.e(TAG, "BesOtaManager not available");
-                clearCachedArtifact(CACHE_KEY_BES, UPDATE_TYPE_BES);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to update BES firmware", e);
-            clearCachedArtifact(CACHE_KEY_BES, UPDATE_TYPE_BES);
         }
         return false;
     }
@@ -2385,21 +2113,16 @@ public class OtaHelper {
                 Log.e(TAG, "MTK firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
                 return false;
             }
-            boolean hasValidCache = isCachedArtifactValid(CACHE_KEY_MTK, UPDATE_TYPE_MTK, OtaConstants.MTK_FIRMWARE_PATH, firmwareInfo);
-            if (!hasValidCache) {
-                boolean downloaded = downloadMtkFirmware(firmwareUrl, firmwareInfo, context);
-                if (!downloaded) {
-                    Log.e(TAG, "Failed to download MTK firmware");
-                    clearCachedArtifact(CACHE_KEY_MTK, UPDATE_TYPE_MTK);
-                    return false;
-                }
-                markCachedArtifactReady(CACHE_KEY_MTK, UPDATE_TYPE_MTK, OtaConstants.MTK_FIRMWARE_PATH, firmwareInfo);
-            } else {
-                Log.i(TAG, "📦 Cache hit for MTK firmware - using pre-downloaded artifact");
-            }
 
             if (!installNow) {
+                Log.i(TAG, "Manifest-only check - skipping MTK firmware download");
                 return true;
+            }
+
+            boolean downloaded = downloadMtkFirmware(firmwareUrl, firmwareInfo, context);
+            if (!downloaded) {
+                Log.e(TAG, "Failed to download MTK firmware");
+                return false;
             }
 
             if (!isPhoneInitiatedOta) {
@@ -2448,7 +2171,6 @@ public class OtaHelper {
         } catch (Exception e) {
             Log.e(TAG, "Failed to update MTK firmware", e);
             isMtkOtaInProgress = false;
-            clearCachedArtifact(CACHE_KEY_MTK, UPDATE_TYPE_MTK);
         }
         return false;
     }
@@ -2754,76 +2476,11 @@ public class OtaHelper {
                 return updateInfo;
             }
 
-            if (!allArtifactsCachedForUpdates(rootJson, updates)) {
-                updateInfo.put("available", false);
-                return updateInfo;
-            }
-
             updateInfo.put("cache_ready", true);
             return updateInfo;
         } catch (Exception e) {
             Log.e(TAG, "Error building cache-ready update info", e);
             return null;
-        }
-    }
-
-    private boolean allArtifactsCachedForUpdates(JSONObject rootJson, JSONArray updates) {
-        try {
-            for (int i = 0; i < updates.length(); i++) {
-                String updateType = updates.optString(i, "");
-                if (UPDATE_TYPE_APK.equals(updateType)) {
-                    JSONObject apps = rootJson.optJSONObject("apps");
-                    if (apps == null) {
-                        return false;
-                    }
-
-                    JSONObject asgInfo = apps.optJSONObject("com.mentra.asg_client");
-                    if (asgInfo != null && asgInfo.optLong("versionCode", 0) > getInstalledVersion("com.mentra.asg_client", context)) {
-                        String asgPath = OtaConstants.BASE_DIR + "/" + getApkFilename("com.mentra.asg_client");
-                        if (!isCachedArtifactValid(CACHE_KEY_APK_ASG, UPDATE_TYPE_APK, asgPath, asgInfo)) {
-                            return false;
-                        }
-                    }
-
-                    JSONObject updaterInfo = apps.optJSONObject("com.augmentos.otaupdater");
-                    if (updaterInfo != null && updaterInfo.optLong("versionCode", 0) > getInstalledVersion("com.augmentos.otaupdater", context)) {
-                        String updaterPath = OtaConstants.BASE_DIR + "/" + getApkFilename("com.augmentos.otaupdater");
-                        if (!isCachedArtifactValid(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK, updaterPath, updaterInfo)) {
-                            return false;
-                        }
-                    }
-                    continue;
-                }
-
-                if (UPDATE_TYPE_MTK.equals(updateType)) {
-                    if (!rootJson.has("mtk_patches")) {
-                        return false;
-                    }
-                    String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
-                    JSONObject mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion);
-                    if (mtkPatch == null) {
-                        continue;
-                    }
-                    if (!isCachedArtifactValid(CACHE_KEY_MTK, UPDATE_TYPE_MTK, OtaConstants.MTK_FIRMWARE_PATH, mtkPatch)) {
-                        return false;
-                    }
-                    continue;
-                }
-
-                if (UPDATE_TYPE_BES.equals(updateType)) {
-                    JSONObject besInfo = rootJson.optJSONObject("bes_firmware");
-                    if (besInfo == null) {
-                        return false;
-                    }
-                    if (!isCachedArtifactValid(CACHE_KEY_BES, UPDATE_TYPE_BES, OtaConstants.BES_FIRMWARE_PATH, besInfo)) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error validating cache readiness for updates", e);
-            return false;
         }
     }
 
@@ -2861,12 +2518,12 @@ public class OtaHelper {
         
         updateSessionFromProgress(stage, progress, status, errorMessage);
 
-        // Suppress FINISHED while an install pass is queued. The prefetch thread sends
+        // Suppress FINISHED while an install pass is queued. The background-check thread sends
         // FINISHED(download) for each artifact it completes, but no install follows — only
         // the pending install pass will do that. Letting FINISHED through here would cause
         // the phone UI to prematurely transition to "completed" or start a 12s timer before
         // the real install has begun. The install pass sends its own STARTED/PROGRESS/FINISHED.
-        if (pendingPhoneInstall && "FINISHED".equals(status)) {
+        if (hasPendingPhoneInstall() && "FINISHED".equals(status)) {
             Log.d(TAG, "Suppressing FINISHED - install pass is pending, will send its own completion");
             return;
         }
