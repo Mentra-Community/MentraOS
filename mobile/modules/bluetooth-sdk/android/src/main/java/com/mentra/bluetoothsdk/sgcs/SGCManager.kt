@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk.sgcs
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
 abstract class SGCManager {
@@ -15,23 +16,11 @@ abstract class SGCManager {
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media
-    abstract fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
 
     /**
      * Start video recording with optional per-recording resolution/fps. A width,
@@ -43,27 +32,38 @@ abstract class SGCManager {
     open fun startVideoRecording(
         requestId: String,
         save: Boolean,
-        flash: Boolean,
         sound: Boolean,
         width: Int,
         height: Int,
         fps: Int,
+        maxRecordingTimeMinutes: Int,
     ) {
-        startVideoRecording(requestId, save, flash, sound)
+        startVideoRecording(requestId, save, sound)
     }
 
     abstract fun stopVideoRecording(requestId: String)
+
+    /**
+     * Stop recording and upload the result to [webhookUrl] (multipart) using
+     * [authToken]. These are supplied at stop time so the token is fresh when
+     * the upload runs. The base implementation ignores the upload target and
+     * just stops; devices that support webhook upload (e.g. Mentra Live)
+     * override this. An empty/null [webhookUrl] means "keep the video on device".
+     */
+    open fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        stopVideoRecording(requestId)
+    }
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
     abstract fun sendCameraFovSetting()
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
     abstract fun clearDisplay()
+    abstract fun sendText(text: String)
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
     /**
@@ -77,6 +77,20 @@ abstract class SGCManager {
             width: Int? = null,
             height: Int? = null
     ): Boolean
+
+    /**
+     * Show text in a positioned container with an optional rounded border.
+     * G2-only capability; default no-op so other glasses ignore it.
+     */
+    open fun sendPositionedText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int = 0,
+            borderRadius: Int = 0
+    ) {}
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

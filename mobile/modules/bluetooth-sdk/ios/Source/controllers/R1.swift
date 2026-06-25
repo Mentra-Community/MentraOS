@@ -504,11 +504,8 @@ class R1: NSObject, ControllerManager {
     }
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
-    ) {}
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func requestPhoto(_: PhotoRequest) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
     func stopVideoRecording(requestId _: String) {}
     func startStream(_: [String: Any]) {}
     func stopStream() {}
@@ -516,7 +513,6 @@ class R1: NSObject, ControllerManager {
     func sendButtonPhotoSettings() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
-    func sendButtonCameraLedSetting() {}
     func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
     func sendTextWall(_: String) {}

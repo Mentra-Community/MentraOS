@@ -56,9 +56,6 @@ public class OtaService extends Service {
 
         stopLegacyOtaUpdaterIfPresent();
 
-        // Clean up old firmware files from previous updates
-        cleanupOldFirmwareFiles();
-
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
 
@@ -265,7 +262,7 @@ public class OtaService extends Service {
                 // Send FAILED to phone so user knows something went wrong
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FAILED", 0, event.getMessage());
-                    otaHelper.clearCachedArtifactsForType("mtk");
+                    otaHelper.deleteDownloadedArtifactForType("mtk");
                 }
                 break;
         }
@@ -324,25 +321,9 @@ public class OtaService extends Service {
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
-                    otaHelper.clearCachedArtifactsForType("bes");
+                    otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;
-        }
-    }
-
-    /**
-     * Clean up old firmware files from previous OTA updates. Called on service startup to remove
-     * any leftover files.
-     */
-    private void cleanupOldFirmwareFiles() {
-        try {
-            if (otaHelper != null) {
-                otaHelper.pruneInvalidCachedArtifactsOnStartup();
-            } else {
-                Log.w(TAG, "OtaHelper unavailable for cache pruning on startup");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error cleaning up old firmware files", e);
         }
     }
 

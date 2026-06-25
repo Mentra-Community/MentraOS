@@ -63,6 +63,38 @@ export interface ManifestEntry {
   ui?: string;
 }
 
+// Action parameter types — the MCP-compatible subset. "number" (not
+// "integer") since the runtime is JavaScript; arrays of primitives allowed.
+export const ALLOWED_ACTION_PARAM_TYPES = ['string', 'number', 'boolean', 'array'] as const;
+export type AllowedActionParamType = (typeof ALLOWED_ACTION_PARAM_TYPES)[number];
+
+export interface ManifestActionParameter {
+  type: AllowedActionParamType;
+  description?: string;
+  enum?: Array<string | number | boolean>;
+  /** For type: "array" — the primitive item type. */
+  items?: { type: 'string' | 'number' | 'boolean' };
+}
+
+/** JSON-Schema input descriptor for an action. Maps to an MCP tool inputSchema. */
+export interface ManifestActionParameters {
+  type: 'object';
+  properties?: Record<string, ManifestActionParameter>;
+  required?: string[];
+}
+
+/**
+ * A declared action this miniapp exposes for other (system) miniapps to invoke
+ * via session.actions. Shape maps 1:1 onto an MCP tool.
+ */
+export interface ManifestAction {
+  /** Unique-within-app id, ^[a-z][a-z0-9_]*$, ≤64 chars. */
+  id: string;
+  /** AI-facing contract — when to use the action. Required, non-empty. */
+  description: string;
+  parameters?: ManifestActionParameters;
+}
+
 export interface MiniappManifestV1 {
   packageName: string;
   version: string;
@@ -80,6 +112,57 @@ export interface MiniappManifestV1 {
   entry?: ManifestEntry;
   /** Miniapp shape — defaults to "standard" (background + on-demand UI). */
   type?: "standard" | "background";
+  /** Actions other (system) miniapps can invoke via session.actions. */
+  actions?: ManifestAction[];
+}
+
+const ACTION_ID_RE = /^[a-z][a-z0-9_]*$/;
+
+function validateActionParameters(parameters: unknown, actionIndex: number, errors: string[]): void {
+  if (typeof parameters !== 'object' || parameters === null || Array.isArray(parameters)) {
+    errors.push(`actions[${actionIndex}].parameters must be a JSON-Schema object with "type": "object"`);
+    return;
+  }
+  const p = parameters as Record<string, unknown>;
+  if (p.type !== 'object') {
+    errors.push(`actions[${actionIndex}].parameters.type must be "object"`);
+  }
+  if (p.properties !== undefined) {
+    if (typeof p.properties !== 'object' || p.properties === null || Array.isArray(p.properties)) {
+      errors.push(`actions[${actionIndex}].parameters.properties must be an object`);
+    } else {
+      for (const [key, prop] of Object.entries(p.properties as Record<string, unknown>)) {
+        if (typeof prop !== 'object' || prop === null) {
+          errors.push(`actions[${actionIndex}].parameters.properties.${key} must be an object`);
+          continue;
+        }
+        const pr = prop as Record<string, unknown>;
+        if (typeof pr.type !== 'string' || !(ALLOWED_ACTION_PARAM_TYPES as readonly string[]).includes(pr.type)) {
+          errors.push(
+            `actions[${actionIndex}].parameters.properties.${key}.type must be one of: ${ALLOWED_ACTION_PARAM_TYPES.join(', ')} (use "number", not "integer")`,
+          );
+        }
+        if (pr.type === 'array') {
+          const items = pr.items as Record<string, unknown> | undefined;
+          const itemType = items?.type;
+          if (typeof itemType !== 'string' || !['string', 'number', 'boolean'].includes(itemType)) {
+            errors.push(
+              `actions[${actionIndex}].parameters.properties.${key}.items.type must be "string" | "number" | "boolean" for an array param`,
+            );
+          }
+        }
+        if (pr.description !== undefined && typeof pr.description !== 'string') {
+          errors.push(`actions[${actionIndex}].parameters.properties.${key}.description must be a string if set`);
+        }
+        if (pr.enum !== undefined && !Array.isArray(pr.enum)) {
+          errors.push(`actions[${actionIndex}].parameters.properties.${key}.enum must be an array if set`);
+        }
+      }
+    }
+  }
+  if (p.required !== undefined && (!Array.isArray(p.required) || !p.required.every((x) => typeof x === 'string'))) {
+    errors.push(`actions[${actionIndex}].parameters.required must be an array of strings if set`);
+  }
 }
 
 export function validateManifest(manifest: unknown): { valid: boolean; errors: string[] } {
@@ -202,6 +285,42 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
   if (m.type !== undefined) {
     if (m.type !== 'standard' && m.type !== 'background') {
       errors.push('type must be "standard" or "background" when set');
+    }
+  }
+
+  // actions — optional array of {id, description, parameters?}. The MCP-shaped
+  // capability surface other (system) miniapps invoke via session.actions.
+  if (m.actions !== undefined) {
+    if (!Array.isArray(m.actions)) {
+      errors.push('actions must be an array of {id, description, parameters?} objects');
+    } else {
+      const seenIds = new Set<string>();
+      m.actions.forEach((action, i) => {
+        if (typeof action !== 'object' || action === null) {
+          errors.push(`actions[${i}] must be an object like {"id": "add_todo", "description": "..."}`);
+          return;
+        }
+        const a = action as Record<string, unknown>;
+        if (typeof a.id !== 'string' || !ACTION_ID_RE.test(a.id)) {
+          errors.push(
+            `actions[${i}].id must match ^[a-z][a-z0-9_]*$ (lowercase, start with a letter). Got: ${JSON.stringify(a.id)}`,
+          );
+        } else if (a.id.length > 64) {
+          errors.push(`actions[${i}].id must be 64 characters or fewer`);
+        } else if (seenIds.has(a.id)) {
+          errors.push(`actions[${i}].id "${a.id}" is duplicated — action ids must be unique within a miniapp`);
+        } else {
+          seenIds.add(a.id);
+        }
+        if (typeof a.description !== 'string' || !a.description.trim()) {
+          errors.push(
+            `actions[${i}].description is required and must be a non-empty string (it's the AI-facing contract — say when to use the action)`,
+          );
+        }
+        if (a.parameters !== undefined) {
+          validateActionParameters(a.parameters, i, errors);
+        }
+      });
     }
   }
 

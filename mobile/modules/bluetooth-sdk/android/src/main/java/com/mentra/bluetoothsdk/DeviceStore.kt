@@ -126,8 +126,7 @@ object DeviceStore {
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
         store.set("bluetooth", "button_video_width", 1280)
@@ -286,9 +285,6 @@ object DeviceStore {
             }
             "bluetooth" to "button_photo_size" -> {
                 DeviceManager.getInstance().sgc?.sendButtonPhotoSettings()
-            }
-            "bluetooth" to "button_camera_led" -> {
-                DeviceManager.getInstance().sgc?.sendButtonCameraLedSetting()
             }
             "bluetooth" to "button_max_recording_time" -> {
                 DeviceManager.getInstance().sgc?.sendButtonMaxRecordingTime()

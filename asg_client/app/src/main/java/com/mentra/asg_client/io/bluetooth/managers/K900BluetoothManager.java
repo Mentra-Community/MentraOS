@@ -45,8 +45,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final int PHONE_CONFIRMATION_TIMEOUT_MS = 5000; // 5 seconds
     private static final int MAX_TRANSFER_RETRIES = 3; // Max full transfer retries
     private ScheduledFuture<?> phoneConfirmationTimeout = null;
-    private ScheduledFuture<?> fileTransferAckTimeout = null;
-    private BleTransferStats currentStats = null;
 
     // BES2700 BLE flow control - tracks consecutive failures for exponential backoff
     private static final int MAX_CONSECUTIVE_FAILURES =
@@ -66,7 +64,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         int fakeFileSize; // Inflated file size to tell BES firmware (totalPackets * 400)
         int totalPackets;
         int currentPacketIndex;
-        byte[] packetBuffer;
         boolean isActive;
         long startTime;
         boolean waitingForPhoneConfirmation;
@@ -91,7 +88,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // We want BES to get our totalPackets, so: fakeFileSize = totalPackets * 400
             this.fakeFileSize = totalPackets * BES_HARDCODED_PACK_SIZE;
             this.currentPacketIndex = 0;
-            this.packetBuffer = new byte[BesWireFormat.getFilePacketSize(BesWireFormat.getFilePackSize())];
             this.isActive = true;
             this.startTime = System.currentTimeMillis();
             this.waitingForPhoneConfirmation = false;
@@ -121,21 +117,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
-    /** Per-transfer stats collected for telemetry comparison (OPTIMIZED vs LEGACY). */
-    private static class BleTransferStats {
-        final String mode;
-        final int preDelayMs;
-        int packetRetries = 0;  // single-packet resends
-        int state0Count   = 0;  // flow-control / buffer-full NAKs
-        int timeoutCount  = 0;  // ACK watchdog fires
-        int uartFailures  = 0;  // UART write errors
-
-        BleTransferStats() {
-            this.mode       = BleTransferMode.get().name();
-            this.preDelayMs = BleTransferMode.preTransferDelayMs();
-        }
-    }
-
     /**
      * Create a new K900BluetoothManager
      *
@@ -158,9 +139,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Initialize file transfer executor
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
-
-        // Register ADB-toggleable transfer mode receiver
-        BleTransferMode.registerReceiver(context);
     }
 
     @Override
@@ -346,8 +324,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Clear pending packets
         pendingPackets.clear();
-        cancelFilePacketAckTimeout();
-        cancelPhoneConfirmationTimeout();
 
         // Shutdown file transfer executor
         if (fileTransferExecutor != null) {
@@ -563,6 +539,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     for (byte[] message : completeMessages) {
                         BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
 
+                        // Check for file transfer acknowledgments first
+                        processReceivedMessage(message);
+
                         // Extract payload from K900 protocol message for listeners
                         if (BesWireFormat.isK900ProtocolFormat(message)) {
                             // Try to extract payload (big-endian first, then little-endian)
@@ -739,8 +718,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         currentFileTransfer = new FileTransferSession(filePath, fileName, fileData);
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
-        currentStats = new BleTransferStats();
-        Log.i(TAG, "📊 Transfer mode: " + currentStats.mode + ", preDelay=" + currentStats.preDelayMs + "ms");
 
         Log.d(
                 TAG,
@@ -779,7 +756,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (currentFileTransfer.currentPacketIndex >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
-            cancelFilePacketAckTimeout();
             long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
             Log.d(TAG, "📤 All packets sent and ACKed by MCU: " + currentFileTransfer.fileName);
             Log.d(
@@ -818,15 +794,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         int packSize =
                 Math.min(BesWireFormat.getFilePackSize(), currentFileTransfer.fileSize - offset);
 
+        // Extract packet data
+        byte[] packetData = new byte[packSize];
+        System.arraycopy(currentFileTransfer.fileData, offset, packetData, 0, packSize);
+
         // Pack the file packet
         // NOTE: We use fakeFileSize to lie to BES firmware about total file size.
         // BES hardcodes 400-byte pack size when calculating totalPack, so we inflate
         // fileSize to make BES expect the correct number of our smaller packets.
-        int packetLength =
-                BesWireFormat.packFilePacketInto(
-                        currentFileTransfer.packetBuffer,
-                        currentFileTransfer.fileData,
-                        offset,
+        byte[] packet =
+                BesWireFormat.packFilePacket(
+                        packetData,
                         packetIndex,
                         packSize,
                         currentFileTransfer.fakeFileSize,
@@ -834,29 +812,29 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         0, // flags = 0
                         BesWireFormat.CMD_TYPE_PHOTO);
 
-        if (packetLength <= 0) {
+        if (packet == null) {
             Log.e(TAG, "Failed to pack file packet " + packetIndex);
             notifyTransferFailedToPhone("packet_pack_failed");
-            comManager.setFastMode(false);
             currentFileTransfer = null;
-            pendingPackets.clear();
-            cancelFilePacketAckTimeout();
             return;
         }
 
         // Send the packet using sendFile (no logging)
         long sendStartTime = System.currentTimeMillis();
-        boolean sent = comManager.sendFile(currentFileTransfer.packetBuffer, packetLength);
+        boolean sent = comManager.sendFile(packet);
         long sendEndTime = System.currentTimeMillis();
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
-            if (currentStats != null) currentStats.uartFailures++;
+            BluetoothReporting.reportFileTransferFailure(
+                    context, currentFileTransfer.filePath, "send_file", "uart_write_failed", null);
+            notificationManager.showDebugNotification(
+                    "File Transfer Failed", "UART write failed at packet " + packetIndex);
             notifyTransferFailedToPhone("uart_write_failed");
-            emitTransferTelemetry(false);
             comManager.setFastMode(false);
+            currentFileTransfer.isActive = false;
             currentFileTransfer = null;
             pendingPackets.clear();
-            cancelFilePacketAckTimeout();
+            consecutiveFailures = 0;
             return;
         }
 
@@ -869,61 +847,42 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             existingState.lastSendTime = System.currentTimeMillis();
         }
 
-        if (packetIndex == 0
-                || packetIndex == currentFileTransfer.totalPackets - 1
-                || packetIndex % 50 == 0) {
-            long totalMethodTime = System.currentTimeMillis() - methodStartTime;
-            Log.d(
-                    TAG,
-                    "📊 Sent file packet "
-                            + packetIndex
-                            + "/"
-                            + (currentFileTransfer.totalPackets - 1)
-                            + " ("
-                            + packSize
-                            + " bytes) - UART send took "
-                            + (sendEndTime - sendStartTime)
-                            + "ms, total method time: "
-                            + totalMethodTime
-                            + "ms");
-        }
+        long totalMethodTime = System.currentTimeMillis() - methodStartTime;
+        Log.d(
+                TAG,
+                "📊 Sent file packet "
+                        + packetIndex
+                        + "/"
+                        + (currentFileTransfer.totalPackets - 1)
+                        + " ("
+                        + packSize
+                        + " bytes) - UART send took "
+                        + (sendEndTime - sendStartTime)
+                        + "ms, total method time: "
+                        + totalMethodTime
+                        + "ms");
 
-        scheduleFilePacketAckTimeout(packetIndex);
-    }
-
-    private void scheduleFilePacketAckTimeout(int packetIndex) {
-        cancelFilePacketAckTimeout();
-        fileTransferAckTimeout =
-                fileTransferExecutor.schedule(
-                        () -> checkFilePacketAck(packetIndex),
-                        FILE_TRANSFER_ACK_TIMEOUT_MS,
-                        TimeUnit.MILLISECONDS);
-    }
-
-    private void cancelFilePacketAckTimeout() {
-        if (fileTransferAckTimeout != null) {
-            fileTransferAckTimeout.cancel(false);
-            fileTransferAckTimeout = null;
-        }
+        // Schedule acknowledgment timeout check
+        fileTransferExecutor.schedule(
+                () -> checkFilePacketAck(packetIndex),
+                FILE_TRANSFER_ACK_TIMEOUT_MS,
+                TimeUnit.MILLISECONDS);
     }
 
     /** Check if file packet acknowledgment was received */
     private void checkFilePacketAck(int packetIndex) {
-        fileTransferAckTimeout = null;
         if (currentFileTransfer == null || !currentFileTransfer.isActive) {
             return;
         }
 
         FilePacketState packetState = pendingPackets.get(packetIndex);
         if (packetState == null) {
-            // Packet was already ACKed — watchdog fired late, not a real timeout
+            // Packet was acknowledged and removed
             return;
         }
 
         long timeSinceLastSend = System.currentTimeMillis() - packetState.lastSendTime;
         if (timeSinceLastSend >= FILE_TRANSFER_ACK_TIMEOUT_MS) {
-            // Only count as a real timeout once we confirm the ACK is genuinely missing
-            if (currentStats != null) currentStats.timeoutCount++;
             packetState.retryCount++;
 
             if (packetState.retryCount >= FILE_TRANSFER_MAX_RETRIES) {
@@ -943,15 +902,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         "File Transfer Failed", "Packet " + packetIndex + " timeout");
 
                 notifyTransferFailedToPhone("packet_timeout");
-                emitTransferTelemetry(false);
 
                 // Cancel transfer
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
                 pendingPackets.clear();
-                cancelFilePacketAckTimeout();
             } else {
-                if (currentStats != null) currentStats.packetRetries++;
                 Log.w(
                         TAG,
                         "File packet "
@@ -978,10 +934,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return;
         }
 
-        // BES success ACK uses index as the next requested packet, so the accepted packet is
-        // index - 1. Failure ACK uses index as the exact 0-based packet to resend.
+        // BES uses 1-based ACK indexing for BOTH success and failure: it sends
+        // index = packet_index + 1 (see agents/ble_file_transfer_implementation.md, "BES ACK
+        // Index Behavior"). Convert to our 0-based packet index. On success this is the accepted
+        // packet; on failure it is the packet to resend.
+        // NOTE: a prior revision treated the failure index as already 0-based (retry = index),
+        // which skipped the failed packet and resent the next one, corrupting flow-control
+        // retries and truncating BLE photos.
         int ackedPacketIndex = index - 1;
-        int retryPacketIndex = index;
+        int retryPacketIndex = index - 1;
         int trackedPacketIndex = state == 1 ? ackedPacketIndex : retryPacketIndex;
 
         // Calculate time since packet was sent
@@ -1018,7 +979,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + ")");
                 return;
             }
-            cancelFilePacketAckTimeout();
 
             // Reset consecutive failure counter on success
             consecutiveFailures = 0;
@@ -1046,8 +1006,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + ")");
                 return;
             }
-            cancelFilePacketAckTimeout();
-            if (currentStats != null) currentStats.state0Count++;
 
             consecutiveFailures++;
 
@@ -1075,14 +1033,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + retryPacketIndex);
 
                 notifyTransferFailedToPhone("ble_tx_stuck_consecutive_failures");
-                emitTransferTelemetry(false);
 
                 // Abort the transfer
                 comManager.setFastMode(false);
                 currentFileTransfer.isActive = false;
                 currentFileTransfer = null;
                 pendingPackets.clear();
-                cancelFilePacketAckTimeout();
                 consecutiveFailures = 0;
                 return;
             }
@@ -1122,6 +1078,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     },
                     backoffMs,
                     java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** Process received message for file transfer acknowledgments */
+    private void processReceivedMessage(byte[] message) {
+        if (message == null || message.length < 4) {
+            return;
+        }
+
+        // Check if this is a file transfer acknowledgment
+        // Format: [CMD_TYPE][STATE][INDEX_HIGH][INDEX_LOW]...
+        if (message[0] == BesWireFormat.CMD_TYPE_PHOTO && message.length >= 4) {
+            int state = message[1] & 0xFF;
+            int index = ((message[2] & 0xFF) << 8) | (message[3] & 0xFF);
+            handleFileTransferAck(state, index);
         }
     }
 
@@ -1188,12 +1159,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             notificationManager.showDebugNotification(
                     "Transfer Success!", currentFileTransfer.fileName + " confirmed by phone");
 
-            emitTransferTelemetry(true);
             deleteFileAfterSuccess();
             comManager.setFastMode(false);
             currentFileTransfer = null;
             pendingPackets.clear();
-            cancelFilePacketAckTimeout();
         } else {
             // FAILURE! Retry transfer
             Log.w(TAG, "❌ Phone reported failure - need to retry transfer");
@@ -1219,7 +1188,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 currentFileTransfer.startTime = System.currentTimeMillis();
                 currentFileTransfer.waitingForPhoneConfirmation = false;
                 pendingPackets.clear();
-                cancelFilePacketAckTimeout();
 
                 // Restart transfer from packet 0
                 Log.d(TAG, "🔄 Restarting transfer from packet 0");
@@ -1237,51 +1205,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 // Clean up but DON'T delete file (might be useful for debugging)
                 notifyTransferFailedToPhone("max_transfer_retries_exceeded");
-                emitTransferTelemetry(false);
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
                 pendingPackets.clear();
-                cancelFilePacketAckTimeout();
             }
         }
-    }
-
-    /**
-     * Emit transfer performance telemetry via {@link BluetoothReporting}.
-     * Safe to call from any thread; no-ops if stats were never initialised.
-     */
-    private void emitTransferTelemetry(boolean success) {
-        if (currentStats == null || currentFileTransfer == null) return;
-        long durationMs = System.currentTimeMillis() - currentFileTransfer.startTime;
-        long bytesPerSec = durationMs > 0
-                ? (currentFileTransfer.fileSize * 1000L / durationMs)
-                : 0;
-        BluetoothReporting.reportFileTransferComplete(
-                context,
-                currentFileTransfer.filePath,
-                currentStats.mode,
-                success,
-                currentFileTransfer.fileSize,
-                currentFileTransfer.totalPackets,
-                BesWireFormat.getFilePackSize(),
-                durationMs,
-                bytesPerSec,
-                currentFileTransfer.retryCount,
-                currentStats.packetRetries,
-                currentStats.state0Count,
-                currentStats.timeoutCount,
-                currentStats.uartFailures,
-                currentStats.preDelayMs);
-        Log.i(TAG, "📊 [" + currentStats.mode + "] transfer=" + (success ? "OK" : "FAIL")
-                + " dur=" + durationMs + "ms"
-                + " rate=" + bytesPerSec + "B/s"
-                + " packs=" + currentFileTransfer.totalPackets
-                + " retries=" + currentFileTransfer.retryCount
-                + " pktRetry=" + currentStats.packetRetries
-                + " state0=" + currentStats.state0Count
-                + " timeouts=" + currentStats.timeoutCount
-                + " uartFail=" + currentStats.uartFailures);
-        currentStats = null;
     }
 
     /** Schedule timeout for phone confirmation */

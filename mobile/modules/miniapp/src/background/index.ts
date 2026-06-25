@@ -41,16 +41,17 @@ export type {
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
-export {
-  MiniappRequestType,
-  MiniappResponseType,
-  MiniappStreamType,
-  MiniappErrorCode,
-} from "../protocol"
+export {MiniappRequestType, MiniappResponseType, MiniappStreamType, MiniappErrorCode} from "../protocol"
+
+// Action handler types — for typing `session.actions.handle(id, fn)` handlers
+// (the registering side lives in the background JSContext). `InvokeOptions` is
+// for system miniapps that call other apps' actions via `session.actions.invoke`.
+export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actions"
 
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
+export type {CanvasManager} from "../modules/canvas"
 export type {
   CameraFovPreset,
   CameraFovRequest,
@@ -59,6 +60,12 @@ export type {
   CameraRoiPosition,
   SetCameraFovOptions,
 } from "../modules/camera"
+export type {
+  CloudClientAudioTransport,
+  CloudClientConnectionStatus,
+  CloudClientStatus,
+  CloudModule,
+} from "../modules/cloud"
 export type {DashboardAPI} from "../modules/dashboard"
 export type {GlassesModule} from "../modules/glasses"
 export type {HeadingModule} from "../modules/heading"
@@ -71,6 +78,9 @@ export type {NavigationModule} from "../modules/navigation"
 export type {PermissionsModule} from "../modules/permissions"
 export type {PhoneModule} from "../modules/phone"
 export type {SimpleStorage} from "../modules/storage"
+export {BlobModule, BlobWriter, BlobReader, BLOB_WRITE_CHUNK_BYTES, BLOB_READ_ALL_MAX_BYTES} from "../modules/blob"
+export type {BlobMeta, BlobSetOptions, BlobSetFromUrlOptions, BlobImportOptions} from "../modules/blob"
+export {bytesToBase64, base64ToBytes} from "../modules/base64"
 export type {SpeakerModule} from "../modules/speaker"
 export type {StreamModule} from "../modules/stream"
 export type {SystemModule} from "../modules/system"
@@ -100,29 +110,21 @@ export type {
   ClearView,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
-export type {
-  PlayAudioOptions,
-  SpeakOptions,
-  SpeakResult,
-  SpeakerState,
-  SpeakerStateEvent,
-} from "../modules/speaker"
-export type {
-  ShareOptions,
-  ShareResult,
-  DownloadOptions,
-  DownloadResult,
-} from "../modules/system"
+export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
+export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
 export type {TranscriptionConfig} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
+  AuthUpdatePayload,
   MiniappVisibility,
   PermissionType,
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  MiniappAuthState,
   MiniappRequestError,
 } from "../session"
+export type {AuthFetchOptions, AuthModule} from "../modules/auth"
 export type {MiniappColorScheme} from "../globals"
 // Navigation — exported as a single block since the types reference each other.
 export type {

@@ -276,10 +276,7 @@ class G1: NSObject, SGCManager {
 
     func sendButtonMaxRecordingTime(_: Int) {}
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
 
     func startStream(_: [String: Any]) {}
 
@@ -287,7 +284,7 @@ class G1: NSObject, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -296,8 +293,6 @@ class G1: NSObject, SGCManager {
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime() {}
-
-    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 
@@ -784,6 +779,10 @@ class G1: NSObject, SGCManager {
         //      CoreCommsService.log("encodedChunks: \(encodedChunks.count)")
         //      self.queueChunks(encodedChunks)
         //    }
+    }
+
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
     }
 
     func sendTextWall(_ text: String) async {

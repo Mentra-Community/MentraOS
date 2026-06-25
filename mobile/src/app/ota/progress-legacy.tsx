@@ -8,7 +8,8 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {LoadingCoverVideo} from "@/components/ota/LoadingCoverVideo"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo, getAsgOtaVersionUrl} from "@/effects/OtaUpdateChecker"
+import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo} from "@/effects/OtaUpdateChecker"
+import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
@@ -81,7 +82,6 @@ export default function OtaProgressScreen() {
 
   // Track the full update sequence and current position.
   // Set sequence once from otaUpdateAvailable so we show "Update X of 3" for the whole session.
-  // Do not overwrite when glasses later send ota_update_available with fewer items (e.g. [mtk, bes] after APK).
   const updateSequenceRef = useRef<string[]>([])
   if (otaUpdateAvailable?.updates?.length && updateSequenceRef.current.length === 0) {
     updateSequenceRef.current = [...otaUpdateAvailable.updates]
@@ -334,8 +334,8 @@ export default function OtaProgressScreen() {
       updateSequenceRef.current = sequence
     }
     // CRITICAL: only clear `otaProgress` on mount if there is no in-flight progress
-    // already in the store. If a background prefetch (or a re-mount during an active
-    // OTA — e.g. user navigated away and back) has already populated otaProgress,
+    // already in the store. If a re-mount during an active OTA (e.g. user navigated
+    // away and back) has already populated otaProgress,
     // wiping it here resets the visible progress bar to 0% and confuses the watchdog.
     const inFlight = otaProgress && otaProgress.status !== "FINISHED" && otaProgress.status !== "FAILED"
     console.log(
@@ -585,7 +585,7 @@ export default function OtaProgressScreen() {
         "OTA_TRACK: send_ota_start",
         JSON.stringify({attempt: retryCount + 1, maxRetries: MAX_RETRIES, sequence: [...updateSequenceRef.current]}),
       )
-      await BluetoothSdk.sendOtaStart(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
+      await BluetoothSdk.startOtaUpdate(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
       setOtaStartTime(Date.now())
 
       // Start global session timeout once (covers whole multi-step OTA)

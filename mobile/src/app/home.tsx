@@ -1,7 +1,6 @@
 import {useFocusEffect} from "@react-navigation/native"
 import {useCallback, useEffect, useRef} from "react"
 import {Platform, ScrollView, View} from "react-native"
-import {useSharedValue} from "react-native-reanimated"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 
@@ -12,6 +11,7 @@ import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {BgTimer, useRefresh} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {appSwitcherProgress} from "@/stores/appSwitcher"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
@@ -29,7 +29,7 @@ export default function Homepage() {
   const glassesConnected = useGlassesStore(selectGlassesConnected)
   const isSearching = useCoreStore((state) => state.searching)
   const hasAttemptedInitialConnect = useRef(false)
-  const swipeProgress = useSharedValue(0)
+  const swipeProgress = appSwitcherProgress
   const insets = useSaferAreaInsets()
   const bottomSheetRef = useRef<BottomSheet>(null)
   const blurTargetRef = useRef<View | null>(null)

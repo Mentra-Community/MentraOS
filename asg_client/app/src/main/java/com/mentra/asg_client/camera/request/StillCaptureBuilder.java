@@ -105,8 +105,17 @@ public final class StillCaptureBuilder {
      * Configure the post-processing pipeline keys (NR/Edge), JPEG quality, and JPEG orientation.
      */
     public static void configureQualityAndOrientation(Sink sink, int jpegQuality, int jpegOrientation) {
+        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation, true);
+    }
+
+    public static void configureQualityAndOrientation(
+            Sink sink, int jpegQuality, int jpegOrientation, boolean edgeEnhancementEnabled) {
         sink.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
-        sink.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
+        sink.set(
+                CaptureRequest.EDGE_MODE,
+                edgeEnhancementEnabled
+                        ? CaptureRequest.EDGE_MODE_HIGH_QUALITY
+                        : CaptureRequest.EDGE_MODE_OFF);
         sink.set(CaptureRequest.JPEG_QUALITY, (byte) jpegQuality);
         sink.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
     }
@@ -126,9 +135,43 @@ public final class StillCaptureBuilder {
                           Size jpegSize,
                           int jpegQuality,
                           int jpegOrientation) {
-        configureExposure(sink, useManual, manualClampedNs, manualIso, manualFrameDurationNs,
-                userExposureCompensation, selectedFpsRange);
+        configure(
+                sink,
+                useManual,
+                manualClampedNs,
+                manualIso,
+                manualFrameDurationNs,
+                userExposureCompensation,
+                selectedFpsRange,
+                hasAutoFocus,
+                jpegSize,
+                jpegQuality,
+                jpegOrientation,
+                true);
+    }
+
+    public static void configure(
+            Sink sink,
+            boolean useManual,
+            long manualClampedNs,
+            int manualIso,
+            long manualFrameDurationNs,
+            int userExposureCompensation,
+            Range<Integer> selectedFpsRange,
+            boolean hasAutoFocus,
+            Size jpegSize,
+            int jpegQuality,
+            int jpegOrientation,
+            boolean edgeEnhancementEnabled) {
+        configureExposure(
+                sink,
+                useManual,
+                manualClampedNs,
+                manualIso,
+                manualFrameDurationNs,
+                userExposureCompensation,
+                selectedFpsRange);
         configureFocusAndMetering(sink, hasAutoFocus, jpegSize, useManual);
-        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation);
+        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation, edgeEnhancementEnabled);
     }
 }

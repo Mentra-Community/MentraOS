@@ -2,6 +2,7 @@ package com.mentra.bluetoothsdk.sgcs
 
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
 
 import android.graphics.BitmapFactory
@@ -336,18 +337,19 @@ class MentraNex : SGCManager() {
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?, iso: Int?) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(request: PhotoRequest) {
+        Bridge.log("Nex: requestPhoto operation not supported")
+    }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
     override fun stopVideoRecording(requestId: String) { Bridge.log("Nex: stopVideoRecording operation not supported") }
 
     // Button Settings: Not supported on Nex
     override fun sendButtonPhotoSettings() { Bridge.log("Nex: sendButtonPhotoSettings operation not supported") }
     override fun sendButtonVideoRecordingSettings() { Bridge.log("Nex: sendButtonVideoRecordingSettings operation not supported") }
     override fun sendButtonMaxRecordingTime() { Bridge.log("Nex: sendButtonMaxRecordingTime operation not supported") }
-    override fun sendButtonCameraLedSetting() { Bridge.log("Nex: sendButtonCameraLedSetting operation not supported") }
 
     override fun sendCameraFovSetting() { Bridge.log("Nex: sendCameraFovSetting operation not supported") }
 
@@ -501,6 +503,13 @@ class MentraNex : SGCManager() {
         sendProtobuf(clearDisplayPackets, 10)
         // sendTextWall(" ")
         Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
+    }
+    
+
+    override fun sendText(text: String) {
+        Bridge.log("Nex: sendText() - text: " + text);
+        val textChunks: ByteArray = createTextWallChunksForNex(text)
+        sendProtobuf(textChunks)
     }
 
     override fun sendTextWall(text: String) {

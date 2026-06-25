@@ -4,7 +4,8 @@
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
-    "modules/*"
+    "modules/*",
+    "../cloud-v2/packages/*"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",
@@ -67,6 +68,8 @@
     "@livekit/react-native-expo-plugin": "^1.0.1",
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/crust": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
     "@mentra/island": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
@@ -83,7 +86,6 @@
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
-    "crust": "workspace:*",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "~55.0.24",
@@ -190,7 +192,8 @@
     "react-native-svg-transformer": "^1.5.3",
     "react-test-renderer": "19.2.0",
     "tsx": "^4.21.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "zod": "^3.24.1"
   },
   "engines": {
     "node": "^20.19.4 || ^22.13.0 || ^24.3.0 || ^25.0.0"

@@ -84,11 +84,10 @@ export type RouterLogger = {
 }
 
 const defaultLogger: RouterLogger = {
-  // eslint-disable-next-line no-console
   log: (m, p) => console.log(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   warn: (m, p) => console.warn(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   error: (m, p) => console.error(`[MentraJSRouter] ${m}`, p ?? ""),
 }
 
@@ -160,6 +159,14 @@ export class MentraJSRouter {
         this.logger.error(`outbound handler threw`, {error: String(e), raw})
       }
     })
+    // A background script unregistered for missing liveness pings is dead
+    // weight: its subscriptions are gone (so the mic releases) while the
+    // webview keeps rendering stale state. Route it through the same
+    // respawn machinery as a crash so it comes back automatically, with
+    // the crash controller's backoff + crash-loop protection.
+    this.runtime.onLivenessTimeout = (packageName) => {
+      this.handleCrash(packageName, "liveness: missed pings")
+    }
   }
 
   /**
@@ -265,6 +272,11 @@ export class MentraJSRouter {
    * to respawn (with delay) or leave the context dead.
    */
   private handleCrash(packageName: string, reason: string): void {
+    // The native context is dead the instant a crash is observed — invalidate
+    // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
+    // backoff window instead of resolving immediately against the dead context
+    // (an action invoked mid-backoff would otherwise be delivered to nothing).
+    this.runtime.resetHandshake(packageName)
     const controller = this.crashController
     if (!controller) return
     const cached = this.spawnCache.get(packageName)
@@ -305,9 +317,7 @@ export class MentraJSRouter {
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
-        if (cached.installedManifest) {
-          this.runtime.setInstalledManifest(packageName, cached.installedManifest)
-        }
+        this.registerApp(packageName, cached.installedManifest)
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's
         // `registerMiniapp` handler runs again.
@@ -358,6 +368,17 @@ export class MentraJSRouter {
   /** List packages the router has registered. */
   registeredPackages(): string[] {
     return Array.from(this.registered)
+  }
+
+  /**
+   * Validate that a reused background JSContext is still responsive when its
+   * WebView comes foreground. The runtime owns the ping/timeout mechanics; the
+   * router gates this to registered packages and keeps LocalMiniappView from
+   * reaching into runtime internals.
+   */
+  probeForegroundLiveness(packageName: string, reason = "foreground-open"): void {
+    if (!this.registered.has(packageName)) return
+    this.runtime.probeForegroundLiveness(packageName, reason)
   }
 
   // ----------------------------------------------------------------

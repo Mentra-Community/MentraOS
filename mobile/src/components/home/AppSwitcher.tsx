@@ -1,5 +1,5 @@
 import {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Platform} from "react-native"
+import {View, Dimensions, Pressable, Platform, BackHandler} from "react-native"
 import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -26,6 +26,7 @@ import {
   type ClientApp,
 } from "@mentra/island"
 import AppIcon from "@/components/home/AppIcon"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -293,6 +294,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
+  // JS-thread mirror of swipeProgress open-ness, so the Android hardware back
+  // gesture can dismiss the switcher (the switcher is an overlay, not a route,
+  // so navigation's back handler never sees it). Synced from the swipeProgress
+  // useAnimatedReaction below.
+  const [isOpen, setIsOpen] = useState(false)
   const dotsPanGestureRef = useRef(Gesture.Pan())
 
   // for testing:
@@ -327,9 +333,27 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   useEffect(() => {
     if (prevAppsLength.current === 0 && apps.length > 0) {
       translateX.value = -((apps.length - 2) * CARD_WIDTH)
+      // Opened-before-mount case (see mount-sync effect below): snap to the
+      // most recent card once the async-sorted list lands.
+      if (swipeProgress.value > 0.5) {
+        goToIndex(apps.length - 1, true)
+      }
     }
     prevAppsLength.current = apps.length
   }, [apps.length])
+
+  // The Compositor's bottom swipe-up can commit while home isn't mounted
+  // (clearHistoryAndGoHome remounts this screen with the shared progress
+  // already at 1), so the useAnimatedReaction below never sees the 0→1
+  // crossing — sync the open state on mount instead.
+  useEffect(() => {
+    if (swipeProgress.value > 0.5) {
+      openX.value = 0
+      setBlurPointerEvents("auto")
+      setShowNoAppsMessage(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Derive animations from swipeProgress
   const backdropStyle = useAnimatedStyle(() => ({
@@ -582,12 +606,16 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     [apps.length, translateX.value, apps],
   )
 
+  const goToEnd = useCallback(() => {
+    goToIndex(apps.length-1, true)
+  }, [apps.length])
+
   const goToIndex = useCallback(
     (index: number, instant: boolean = false) => {
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
-      console.log("APPSWITCHER: goToIndex()", index, clamped, instant)
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
       if (clamped === targetIndex.value) {
         // console.log("APPSWITCHER: goToIndex() - already at index", index)
         return
@@ -617,7 +645,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }
 
     // Handle apps with custom routes (offline or online with offlineRoute override)
-    if (applet.offlineRoute) {
+    if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
+      // Registry-hosted offline apps render in the Compositor overlay like
+      // local miniapps (setForeground already saves last-open time).
+      setForeground(applet.packageName)
+    } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
     } else if (applet.webviewUrl && applet.healthy) {
@@ -658,6 +690,19 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }, 250)
   }, [apps.length])
 
+  // Android: the hardware/native back gesture should dismiss the switcher. It's an
+  // overlay (not a route), so navigation never sees it — register a BackHandler
+  // while open and consume the event so it doesn't fall through to navigating away
+  // from home.
+  useEffect(() => {
+    if (Platform.OS !== "android" || !isOpen) return
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleClose()
+      return true
+    })
+    return () => sub.remove()
+  }, [isOpen, handleClose])
+
   useAnimatedReaction(
     () => swipeProgress.value,
     (current, previous) => {
@@ -665,7 +710,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // setTimeout(() => {
         if (apps.length > 1) {
           console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
-          runOnJS(goToIndex)(apps.length - 1, true)
+          runOnJS(goToEnd)()
         }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
         // }, 200)
@@ -675,9 +720,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - closing to last index", apps.length - 1)
-        runOnJS(goToIndex)(apps.length - 1, true)
+        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
+        runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
+        runOnJS(setIsOpen)(true)
         if (apps.length > 0) {
           runOnJS(setShowNoAppsMessage)(false)
         }
@@ -686,6 +732,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // console.log("just closed")
         runOnJS(setBlurPointerEvents)("none")
         runOnJS(setShowNoAppsMessage)(true)
+        runOnJS(setIsOpen)(false)
       }
     },
   )

@@ -39,27 +39,6 @@ data class SpeakingStatusEvent(
     val values: Map<String, Any>,
 )
 
-data class OtaUpdateAvailableEvent(
-    val versionCode: Long?,
-    val versionName: String?,
-    val updates: List<String>,
-    val totalSize: Long?,
-    val cacheReady: Boolean?,
-    val values: Map<String, Any>,
-) {
-    companion object {
-        internal fun fromMap(values: Map<String, Any>): OtaUpdateAvailableEvent =
-            OtaUpdateAvailableEvent(
-                versionCode = longValue(values, "version_code"),
-                versionName = stringValue(values, "version_name"),
-                updates = (values["updates"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                totalSize = longValue(values, "total_size"),
-                cacheReady = boolValue(values, "cache_ready"),
-                values = values,
-            )
-    }
-}
-
 data class OtaStartAckEvent(
     val timestamp: Long?,
     val values: Map<String, Any>,
@@ -154,10 +133,10 @@ interface MentraBluetoothSdkListener {
     fun onPhotoResponse(event: PhotoResponseEvent) {}
     fun onPhotoStatus(event: PhotoStatusEvent) {}
     fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {}
+    fun onMediaUpload(event: MediaUploadEvent) {}
     fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
-    fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {}
     fun onOtaStartAck(event: OtaStartAckEvent) {}
     fun onOtaStatus(event: OtaStatusEvent) {}
     fun onSettingsAck(event: SettingsAckEvent) {}

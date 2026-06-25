@@ -248,6 +248,13 @@ export type PhotoCaptureMetadata = {
   sensorTimestampNs?: number
   totalLightProxy?: number
   mfnrLikely?: boolean
+  mfnrApplied?: boolean
+  width?: number
+  height?: number
+  noiseReductionWarning?: "not_implemented" | string
+  ispDigitalGainWarning?: "not_implemented" | string
+  ispAnalogGainWarning?: "not_implemented" | string
+  [key: string]: unknown
 }
 
 export type PhotoStatusEvent = {
@@ -306,6 +313,24 @@ export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "
 export type VideoRecordingSuccessStatusEvent =
   | VideoRecordingStartedStatusEvent
   | VideoRecordingStoppedStatusEvent
+
+export type MediaUploadSuccessEvent = {
+  type: "media_success"
+  requestId: string
+  mediaUrl: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadErrorEvent = {
+  type: "media_error"
+  requestId: string
+  errorMessage: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadEvent = MediaUploadSuccessEvent | MediaUploadErrorEvent
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
@@ -371,9 +396,9 @@ export type SettingsAckSetting =
   | "gallery_mode"
   | "button_photo"
   | "button_video_recording"
-  | "button_camera_led"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_tuning"
 
 export type SettingsAckEvent = {
   type: "settings_ack"
@@ -391,6 +416,10 @@ export type SettingsAckEvent = {
   fps?: number
   enabled?: boolean
   minutes?: number
+  /** ANR enabled flag; present when setting === "camera_tuning" */
+  anr?: boolean
+  /** Stock-gain flag; present when setting === "camera_tuning" */
+  gain?: boolean
   errorCode?: string
   errorMessage?: string
 }
@@ -403,19 +432,47 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
-export type PhotoSize = "small" | "medium" | "large" | "full"
-export type ButtonPhotoSize = "small" | "medium" | "large" | "max"
+export type PhotoSize = "low" | "medium" | "high" | "max"
+export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
+
+export type PhotoCaptureDefaults = {
+  size?: PhotoSize
+  mfnr?: boolean
+  zsl?: boolean
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
+  aeExposureDivisor?: number
+  isoCap?: number
+  compress?: PhotoCompression
+  sound?: boolean
+  /** When true, clears stored NR/edge/ISP presets on the glasses before applying other fields. */
+  resetCaptureTuning?: boolean
+}
 export type PhotoCompression = "none" | "medium" | "heavy"
+
+export type VideoRecordingDefaults = {
+  width: number
+  height: number
+  fps: number
+}
 
 /**
  * Optional per-recording video settings for {@link startVideoRecording}. When
- * omitted, the glasses fall back to their saved button-video settings. Any
+ * omitted, the glasses fall back to their saved video recording defaults. Any
  * field left undefined is omitted from the BLE command (glasses default applies).
  */
 export interface VideoRecordingSettings {
   width?: number
   height?: number
   fps?: number
+  /**
+   * Optional auto-stop timer in minutes, sent on `start_video_recording`.
+   * `0` (the default) means record until stopped or interrupted
+   * (battery/storage/thermal/error).
+   */
+  maxRecordingTimeMinutes?: number
 }
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
@@ -487,6 +544,17 @@ export type PhotoRequestParams = {
   exposureTimeNs?: number | null
   /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
   iso?: number | null
+  /** After AE convergence, divide metered exposure by this factor (scan mode). */
+  aeExposureDivisor?: number
+  /** Cap ISO after AE metering (scan mode). */
+  isoCap?: number
+  /** Requested on wire; glasses may log not_implemented. */
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  mfnr?: boolean
+  zsl?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
 }
 
 export type StreamVideoConfig = {
@@ -507,8 +575,6 @@ export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
   streamId?: string
-  keepAlive?: boolean
-  keepAliveIntervalSeconds?: number
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
@@ -664,15 +730,6 @@ export type MtkUpdateCompleteEvent = {
   timestamp: number
 }
 
-export type OtaUpdateAvailableEvent = {
-  type: "ota_update_available"
-  version_code?: number
-  version_name?: string
-  updates?: string[]
-  total_size?: number
-  cache_ready?: boolean
-}
-
 /** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and status-store mapping. */
 export type OtaProgressEvent = {
   type: "ota_progress"
@@ -703,7 +760,7 @@ export type OtaStatusEvent = {
   error_message?: string
 }
 
-export type OtaQueryResult = OtaUpdateAvailableEvent | OtaStatusEvent
+export type OtaQueryResult = OtaStatusEvent
 
 /** Nex BLE protobuf trace (NexEventUtils); payload matches native Map keys. */
 export type BleCommandTraceEvent = {
@@ -743,6 +800,8 @@ export type BluetoothSdkModuleEvents = {
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
+  media_success: (event: MediaUploadSuccessEvent) => void
+  media_error: (event: MediaUploadErrorEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -763,7 +822,6 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
-  ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
@@ -818,6 +876,8 @@ export type BluetoothSdkEventMap = {
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   video_recording_status: VideoRecordingStatusEvent
+  media_success: MediaUploadSuccessEvent
+  media_error: MediaUploadErrorEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
@@ -831,7 +891,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -885,11 +944,24 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
+  setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
+  setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   *
+   * The phone sends a {@code camera_tuning_config} BLE command; the glasses relay it as a
+   * {@code camconfig} broadcast to the camera HAL so parameters take effect without a reboot.
+   *
+   * **Scan-mode convention**: call with `(false, false)` when activating scan mode to disable ANR
+   * and pixsmart gain for sharper text/barcode captures. Call with `(true, true)` to restore
+   * defaults when exiting scan mode.
+   *
+   * @param anrOn  `true` = ANR enabled (default), `false` = ANR disabled
+   * @param gainOn `true` = stock gain params (default), `false` = pixsmart gain-off params
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   startVideoRecording(
@@ -898,7 +970,18 @@ export interface BluetoothSdkPublicModule {
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  /**
+   * Stop the active recording. When {@link webhookUrl} is provided, the glasses
+   * upload the recorded video to it (multipart) using {@link authToken}. These
+   * are supplied at stop time (not start) so the token is fresh when the upload
+   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * the video on device (no upload).
+   */
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -920,12 +1003,10 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
-  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-  checkForOtaUpdate(): Promise<OtaQueryResult>
-  /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
-  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-  retryOtaVersionCheck(): Promise<OtaQueryResult>
+  /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
+  checkForOtaUpdate(): Promise<boolean>
+  /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
+  startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -987,7 +1068,6 @@ export interface OtaUpdateInfo {
   versionName: string
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
-  cacheReady?: boolean
 }
 
 export interface OtaProgress {
@@ -1167,7 +1247,6 @@ export type BluetoothSettingsUpdate = Partial<{
   button_video_width: number
   button_video_height: number
   button_video_fps: number
-  button_camera_led: boolean
   button_max_recording_time: number
   camera_fov: NativeCameraFovSetting
   should_send_pcm: boolean

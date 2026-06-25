@@ -22,8 +22,9 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
+import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
+import {getRuntimeHooks} from "../runtime/config"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -63,6 +64,33 @@ export function normalizeManifestPermissions(
           ...(typeof p.description === "string" ? {description: p.description} : {}),
         })
       }
+    }
+  }
+  return out
+}
+
+function normalizeManifestType(raw: unknown): AppletType {
+  return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
+}
+
+/**
+ * Normalize a manifest's `actions` into DeclaredAction[]. Defensive — keeps only
+ * well-formed `{id, description}` entries (installed/dev bundles may be
+ * malformed). Shared by installed (disk) and dev-sideload projection so both
+ * surface declared actions to session.miniapps.list + the invoke gate.
+ */
+export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
+  if (!Array.isArray(raw)) return []
+  const out: DeclaredAction[] = []
+  for (const a of raw as Array<{id?: unknown; description?: unknown; parameters?: unknown}>) {
+    if (a && typeof a.id === "string" && typeof a.description === "string") {
+      out.push({
+        id: a.id,
+        description: a.description,
+        ...(a.parameters && typeof a.parameters === "object"
+          ? {parameters: a.parameters as Record<string, unknown>}
+          : {}),
+      })
     }
   }
   return out
@@ -469,10 +497,10 @@ class AppRegistry {
     this.notify()
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
+  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
     return Res.try_async(async () => {
       const trimmed = baseUrl.replace(/\/$/, "")
-  
+
       const manifestRes = await fetch(`${trimmed}/miniapp.json`)
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
@@ -483,10 +511,10 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
-  
+
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error
-  
+
       return {packageName, version, name}
     })
   }
@@ -706,10 +734,16 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          type?: string
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+        const appType = normalizeManifestType(manifest?.type)
+
+        // Declared actions (for session.miniapps.list + invoke gating).
+        const actions = normalizeManifestActions(manifest?.actions)
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -733,9 +767,13 @@ class AppRegistry {
           name: versionInfo.name,
           webviewUrl: "",
           logoUrl: versionInfo.logoUrl,
-          type: "standard",
+          type: appType,
           permissions,
           hardwareRequirements,
+          // Always project actions (even []) so the invoke gate can enforce
+          // declared-action membership unconditionally — an app with no declared
+          // actions must reject every invoke, not bypass the check.
+          actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
@@ -786,11 +824,13 @@ class AppRegistry {
         name: rec.name,
         webviewUrl: "",
         logoUrl: rec.iconUrl,
-        type: "standard",
+        type: normalizeManifestType(rec.type),
         permissions,
         hardwareRequirements,
+        actions: normalizeManifestActions(rec.actions),
         isMiniappDev: true,
         devUrl: rec.devUrl,
+        devPort: rec.devPort,
         onStart: () => saveLocalAppRunningState(rec.packageName, true),
         onStop: () => saveLocalAppRunningState(rec.packageName, false),
       }
@@ -805,7 +845,7 @@ class AppRegistry {
     return this.offlineApps.map((a) => {
       const running = getLocalAppRunningState(a.packageName)
       const screenshot = getLocalAppScreenshot(a.packageName)
-      
+
       return {...a, running, screenshot}
     })
   }
@@ -867,8 +907,11 @@ export interface DevAppRecord {
   iconUrl: string
   devUrl: string
   devPort?: number
+  type?: AppletType
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
   /**
    * The dev miniapp's real manifest package name. `packageName` is overwritten to
    * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
@@ -878,6 +921,53 @@ export interface DevAppRecord {
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
+
+function configuredDevHost(): string | undefined {
+  // Explicit escape hatch first; otherwise the host-injected Metro host (the
+  // address this dev bundle was served from — always current for the network
+  // the phone is on). Deliberately NOT the EXPO_PUBLIC_CLOUD_* URLs: those are
+  // cloud endpoints, a different machine entirely from the laptop running the
+  // miniapp dev server, and rewriting a dev URL to a cloud host would break it.
+  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
+  if (explicit) {
+    try {
+      return new URL(explicit).hostname
+    } catch {
+      if (/^[\w.-]+$/.test(explicit)) return explicit
+    }
+  }
+  return getRuntimeHooks().devServerHost?.()
+}
+
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  )
+}
+
+function rewriteStaleDevUrl(value: string): string {
+  if (!__DEV__) return value
+  const host = configuredDevHost()
+  if (!host) return value
+
+  try {
+    const url = new URL(value)
+    if (url.hostname === host || !isPrivateLanHost(url.hostname)) return value
+    url.hostname = host
+    return url.toString().replace(/\/$/, "")
+  } catch {
+    return value
+  }
+}
+
+function normalizeDevAppRecord(record: DevAppRecord): DevAppRecord {
+  const devUrl = rewriteStaleDevUrl(record.devUrl)
+  const iconUrl = rewriteStaleDevUrl(record.iconUrl)
+  return devUrl === record.devUrl && iconUrl === record.iconUrl ? record : {...record, devUrl, iconUrl}
+}
 
 /**
  * The one and only package name a dev miniapp is registered under.
@@ -977,7 +1067,13 @@ export function getDevAppRecords(): DevAppRecord[] {
     const res = storage.load<string>(`${pkg}_dev_meta`)
     if (!res.is_ok()) continue
     try {
-      out.push(JSON.parse(res.value) as DevAppRecord)
+      const record = JSON.parse(res.value) as DevAppRecord
+      const normalized = normalizeDevAppRecord(record)
+      if (normalized !== record) {
+        storage.save(`${pkg}_dev_meta`, JSON.stringify(normalized))
+        storage.save(`${pkg}_dev_url`, normalized.devUrl)
+      }
+      out.push(normalized)
     } catch {
       /* corrupt record — skip */
     }

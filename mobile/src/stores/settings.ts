@@ -24,9 +24,10 @@ interface Setting {
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
-  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
+  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
+  debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  public_dev_mode: {key: "public_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -59,6 +60,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  ios_app_switcher_bottom_swipe: {
+    key: "ios_app_switcher_bottom_swipe",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   debug_console: {
     key: "debug_console",
     defaultValue: () => false,
@@ -82,7 +90,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
   // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
-  // captions render on glasses. Synced to core via CORE_SETTINGS_KEYS.
+  // captions render on glasses. Synced to the Bluetooth SDK via BLUETOOTH_SETTING_KEYS.
   nex_chinese_captions: {
     key: "nex_chinese_captions",
     defaultValue: () => false,
@@ -140,6 +148,36 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Cloud V2 endpoint OVERRIDES. Empty = no override; cloudClient's resolveUrl
+  // owns the full precedence (override -> env -> Metro-derived dev default).
+  // The value may be an explicit URL or the METRO_AUTO sentinel ("my dev
+  // laptop", resolved live from Metro so it survives network changes). Never
+  // bake an env var or a personal LAN IP into the default here: that makes the
+  // override branch always-truthy and strands devs on a stale address.
+  cloud_core_url: {
+    key: "cloud_core_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  cloud_runtime_url: {
+    key: "cloud_runtime_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
+  // runtimeUrl} — core + runtime are saved together because they are always
+  // applied as a matched set (presets fill both; Save & Test verifies both).
+  saved_cloud_url_pairs: {
+    key: "saved_cloud_url_pairs",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
     defaultValue: () => [],
@@ -189,26 +227,31 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: false,
   },
+  // Device/pairing identity is per-phone state, not an account setting: a user with
+  // two phones may have each paired to different glasses. These are never synced to the
+  // server (saveOnServer: false) so a stale server copy can't clobber the locally paired
+  // device on relaunch. MantleManager also strips them from any server payload as a guard
+  // against legacy values uploaded before this flag was flipped.
   default_wearable: {
     key: "default_wearable",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
+  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   pending_controller: {
@@ -222,14 +265,14 @@ export const SETTINGS: Record<string, Setting> = {
     key: "controller_device_name",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   controller_address: {
     key: "controller_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   // ui state:
@@ -451,7 +494,7 @@ export const SETTINGS: Record<string, Setting> = {
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
     key: "button_photo_size",
-    defaultValue: () => "large",
+    defaultValue: () => "max",
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -459,13 +502,6 @@ export const SETTINGS: Record<string, Setting> = {
   button_video_settings: {
     key: "button_video_settings",
     defaultValue: () => ({width: 1920, height: 1080, fps: 30}),
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
-  button_camera_led: {
-    key: "button_camera_led",
-    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -627,10 +663,10 @@ export const SETTINGS: Record<string, Setting> = {
 
 export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]
 
-// These settings are automatically synced to core.
+// These settings are automatically synced to the Bluetooth SDK.
 // Keep this list hardware-facing; app/UI/cloud-only preferences should stay in JS/Crust.
-const CORE_SETTINGS_KEYS: string[] = [
-  // core settings:
+const BLUETOOTH_SETTING_KEYS: string[] = [
+  // Bluetooth settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
@@ -655,7 +691,6 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.
   SETTINGS.button_video_settings.key,
-  SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
   SETTINGS.camera_fov.key,
   // device / pairing:
@@ -696,7 +731,7 @@ interface SettingsState {
   // Utility methods
   getRestUrl: () => string
   getWsUrl: () => string
-  getCoreSettings: () => Record<string, any>
+  getBluetoothSettings: () => Record<string, any>
   resetAllSettingsLocally: () => void
 }
 
@@ -910,15 +945,15 @@ export const useSettingsStore = create<SettingsState>()(
       const secure = url.protocol === "https:"
       return `${secure ? "wss" : "ws"}://${url.hostname}:${url.port || (secure ? 443 : 80)}/glasses-ws`
     },
-    getCoreSettings: () => {
+    getBluetoothSettings: () => {
       const state = get()
-      const coreSettings: Record<string, any> = {}
+      const bluetoothSettings: Record<string, any> = {}
       Object.values(SETTINGS).forEach((setting) => {
-        if (CORE_SETTINGS_KEYS.includes(setting.key)) {
-          coreSettings[setting.key] = state.getSetting(setting.key)
+        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
+          bluetoothSettings[setting.key] = state.getSetting(setting.key)
         }
       })
-      return coreSettings
+      return bluetoothSettings
     },
     resetAllSettingsLocally: () => {
       set((_state) => ({

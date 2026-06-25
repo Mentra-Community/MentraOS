@@ -303,6 +303,12 @@ class Bridge {
         Bridge.sendTypedMessage("video_recording_status", body: body)
     }
 
+    static func sendMediaUploadEvent(type: String, values: [String: Any]) {
+        var body = values
+        body["type"] = type
+        Bridge.sendTypedMessage(type, body: body)
+    }
+
     static func sendVersionInfo(_ values: [String: Any]) {
         var body: [String: Any] = [
             "type": "version_info",
@@ -426,22 +432,6 @@ class Bridge {
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ]
         Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
-    }
-
-    /// Send OTA update available notification - glasses have detected an available update (background mode)
-    static func sendOtaUpdateAvailable(
-        versionCode: Int64,
-        versionName: String,
-        updates: [String],
-        totalSize: Int64
-    ) {
-        let eventBody: [String: Any] = [
-            "version_code": versionCode,
-            "version_name": versionName,
-            "updates": updates,
-            "total_size": totalSize,
-        ]
-        Bridge.sendTypedMessage("ota_update_available", body: eventBody)
     }
 
     static func sendOtaStatus(

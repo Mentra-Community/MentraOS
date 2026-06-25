@@ -11,7 +11,7 @@
  *     layout: { layoutType: "text_wall", text: "..." },
  *     durationMs?: number }
  *
- * The phone's LocalMiniappRuntime forwards this to CoreModule.displayEvent,
+ * The phone's LocalMiniappRuntime forwards this to BluetoothSdk.displayEvent,
  * which reads event.view and event.layout.layoutType.
  */
 
@@ -26,23 +26,29 @@ export type LayoutType =
   | "reference_card"
   | "dashboard_card"
   | "bitmap_view"
+  | "positioned_text"
   | "clear_view"
+
+export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
 
 export interface TextWall {
   layoutType: "text_wall"
   text: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface DoubleTextWall {
   layoutType: "double_text_wall"
   topText: string
   bottomText: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface ReferenceCard {
   layoutType: "reference_card"
   title: string
   text: string
+  breakMode?: DisplayBreakMode
 }
 
 export interface DashboardCard {
@@ -65,6 +71,23 @@ export interface BitmapView {
   height?: number
 }
 
+export interface PositionedText {
+  layoutType: "positioned_text"
+  text: string
+  /** Top-left x of the text container on the 576×288 canvas. Omit for default placement. */
+  x?: number
+  /** Top-left y of the text container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
+}
+
 export interface ClearView {
   layoutType: "clear_view"
 }
@@ -75,11 +98,13 @@ export type Layout =
   | ReferenceCard
   | DashboardCard
   | BitmapView
+  | PositionedText
   | ClearView
 
 export interface DisplayOptions {
   view?: ViewType
   durationMs?: number
+  breakMode?: DisplayBreakMode
 }
 
 export interface BitmapOptions extends DisplayOptions {
@@ -93,14 +118,31 @@ export interface BitmapOptions extends DisplayOptions {
   height?: number
 }
 
+export interface TextAtOptions extends DisplayOptions {
+  /** Top-left x of the text container on the 576×288 canvas. */
+  x?: number
+  /** Top-left y of the text container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
+}
+
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
   private send(layout: Layout, options: DisplayOptions = {}): void {
+    const payloadLayout =
+      options.breakMode && supportsBreakMode(layout) ? {...layout, breakMode: options.breakMode} : layout
     this.session.sendOneShot({
       type: MiniappRequestType.DISPLAY,
       view: options.view ?? "main",
-      layout,
+      layout: payloadLayout,
       durationMs: options.durationMs,
     })
   }
@@ -140,8 +182,29 @@ export class DisplayManager {
     this.send({layoutType: "bitmap_view", data, x, y, width, height}, display)
   }
 
+  /**
+   * Show text inside a positioned container (G2 only). Unlike `showTextWall`,
+   * which fills the whole view, this places the text at an arbitrary x/y with an
+   * optional rounded border — e.g. a label next to a bitmap.
+   *
+   * @example
+   * // Label pinned to the bottom-left of the 576×288 canvas, with a rounded border
+   * display.showTextAt("TEST", {x: 0, y: 201, width: 120, height: 87, borderWidth: 2, borderRadius: 6})
+   */
+  showTextAt(text: string, options: TextAtOptions = {}): void {
+    const {x, y, width, height, borderWidth, borderRadius, ...display} = options
+    this.send(
+      {layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius},
+      display,
+    )
+  }
+
   /** Clear the specified view. */
   clear(view: ViewType = "main"): void {
     this.send({layoutType: "clear_view"}, {view})
   }
+}
+
+function supportsBreakMode(layout: Layout): layout is TextWall | DoubleTextWall | ReferenceCard {
+  return layout.layoutType === "text_wall" || layout.layoutType === "double_text_wall" || layout.layoutType === "reference_card"
 }

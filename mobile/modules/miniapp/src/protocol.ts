@@ -18,11 +18,17 @@ export enum MiniappRequestType {
   /** Handshake: miniapp announces itself and asks phone to bind the session. */
   CONNECT = "miniapp_connect",
 
+  /** Request a fresh miniapp-scoped backend auth token. */
+  AUTH_REFRESH = "miniapp_auth_refresh",
+
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 
   /** Push a layout to the glasses display. */
   DISPLAY = "miniapp_display",
+
+  /** Push a canvas command to the glasses canvas. */
+  CANVAS = "miniapp_canvas",
 
   /** Play an arbitrary audio URL through the phone's audio playback service. */
   PLAY_AUDIO = "miniapp_play_audio",
@@ -53,10 +59,19 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
-  /** Reverse-geocode a coordinate to a road name. Backs the engine's
-   *  fallback for pivots whose Routes-API instruction didn't include a
-   *  parseable road. Host calls Google's Geocoding REST API. */
+  /** Reverse-geocode a coordinate to a short road name + full formatted
+   *  address. `road` backs the engine's fallback for pivots whose Routes-API
+   *  instruction didn't include a parseable road; `address` backs UI labels for
+   *  dropped pins / POI taps. Resolved in the v2 cloud maps service (Mapbox
+   *  today) via the host bridge — the miniapp never holds a maps token. */
   NAVIGATION_REVERSE_GEOCODE = "miniapp_navigation_reverse_geocode",
+  /** Type-ahead place search (autocomplete). Resolved in the v2 cloud maps
+   *  service (Mapbox Search Box today) via the host bridge — the miniapp never
+   *  holds a maps token. Pairs with NAVIGATION_PLACE_DETAILS via a sessionToken. */
+  NAVIGATION_PLACE_AUTOCOMPLETE = "miniapp_navigation_place_autocomplete",
+  /** Resolve an autocomplete suggestion (placeId + sessionToken) to coordinates,
+   *  in the v2 cloud maps service via the host bridge. */
+  NAVIGATION_PLACE_DETAILS = "miniapp_navigation_place_details",
   /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
   NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 
@@ -90,6 +105,31 @@ export enum MiniappRequestType {
   /** Download a file (triggers OS share sheet for save location). */
   DOWNLOAD = "miniapp_download",
 
+  /**
+   * Phone-local persistent binary blob storage, scoped to (userId, packageName).
+   * Unlike STORAGE_* (small string KV in MMKV), blobs are arbitrary bytes written
+   * to the phone filesystem. Large payloads are moved in chunks (BLOB_WRITE /
+   * BLOB_READ) so a single bridge message never carries a multi-MB string.
+   */
+  BLOB_CREATE = "miniapp_blob_create",
+  BLOB_WRITE = "miniapp_blob_write",
+  BLOB_COMMIT = "miniapp_blob_commit",
+  BLOB_ABORT = "miniapp_blob_abort",
+  BLOB_GET = "miniapp_blob_get",
+  BLOB_LIST = "miniapp_blob_list",
+  BLOB_DELETE = "miniapp_blob_delete",
+  BLOB_CLEAR = "miniapp_blob_clear",
+  BLOB_USAGE = "miniapp_blob_usage",
+  BLOB_OPEN_READ = "miniapp_blob_open_read",
+  BLOB_READ = "miniapp_blob_read",
+  BLOB_CLOSE_READ = "miniapp_blob_close_read",
+  /** Download a URL straight into a blob, host-side (no bytes cross the bridge). */
+  BLOB_SET_FROM_URL = "miniapp_blob_set_from_url",
+  /** Open the OS file picker and import the chosen file into a blob, host-side. */
+  BLOB_IMPORT = "miniapp_blob_import",
+  /** Share a stored blob from disk via the OS share sheet (no bytes cross the bridge). */
+  BLOB_SHARE = "miniapp_blob_share",
+
   /** Phone → miniapp liveness probe. Miniapp SDK auto-replies with PONG. */
   PING = "miniapp_ping",
 
@@ -113,6 +153,18 @@ export enum MiniappRequestType {
   STREAM_STOP = "miniapp_stream_stop",
   MANAGED_STREAM_START = "miniapp_managed_stream_start",
   MANAGED_STREAM_STOP = "miniapp_managed_stream_stop",
+
+  // ----- Inter-miniapp interop (SYSTEM apps only) -----
+  /** List installed miniapps (compatibility-filtered, with declared actions). */
+  MINIAPPS_LIST = "miniapp_apps_list",
+  /** Start another miniapp (user-tap semantics). */
+  MINIAPPS_START = "miniapp_apps_start",
+  /** Stop another miniapp. */
+  MINIAPPS_STOP = "miniapp_apps_stop",
+  /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
+  ACTION_INVOKE = "miniapp_action_invoke",
+  /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
+  ACTION_RESULT = "miniapp_action_result",
 }
 
 // ============================================================================
@@ -152,8 +204,22 @@ export enum MiniappResponseType {
    */
   PERMISSIONS_UPDATE = "miniapp_permissions_update",
 
+  /**
+   * Push: miniapp-scoped backend auth token changed. Carries a token minted for
+   * this packageName only; it is never a Core or runtime access token.
+   */
+  AUTH_UPDATE = "miniapp_auth_update",
+
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
+
+  /**
+   * Host → target: deliver an action call (from another miniapp's
+   * session.actions.invoke) to this miniapp's session.actions.handle handler.
+   * Carries {callId, actionId, params, callerPackageName}. The SDK runs the
+   * handler and replies with an ACTION_RESULT request keyed by callId.
+   */
+  ACTION_CALL = "miniapp_action_call",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
@@ -242,4 +308,38 @@ export enum MiniappErrorCode {
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",
+
+  // ----- Inter-miniapp interop -----
+  /** Caller is not a system app — interop APIs (list/start/stop/invoke) are SYSTEM-only. */
+  NOT_PERMITTED = "NOT_PERMITTED",
+  /** Target miniapp is not installed. */
+  APP_NOT_FOUND = "APP_NOT_FOUND",
+  /** Target miniapp is incompatible with the connected glasses. */
+  APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
+  /** Target miniapp does not declare the requested action. */
+  ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
+  /** Target connected but never registered a handler for the action (within the buffer window). */
+  NO_ACTION_HANDLER = "NO_ACTION_HANDLER",
+  /** Target failed to wake / complete its CONNECT handshake for an invoke. */
+  WAKE_FAILED = "WAKE_FAILED",
+  /** Action handler did not return within the caller's timeout. */
+  ACTION_TIMEOUT = "ACTION_TIMEOUT",
+  /** Action params or result exceeded the 256 KB size cap. */
+  PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE",
+
+  // ----- Blob storage / recorder -----
+  /** No blob with the given id in this miniapp's namespace. */
+  BLOB_NOT_FOUND = "BLOB_NOT_FOUND",
+  /** Writing this blob would exceed the per-app blob quota. */
+  BLOB_QUOTA_EXCEEDED = "BLOB_QUOTA_EXCEEDED",
+  /** Blob is larger than the requested in-memory read can hold. */
+  BLOB_TOO_LARGE = "BLOB_TOO_LARGE",
+  /** Write/read handle is unknown, already settled, or belongs to another app. */
+  BLOB_HANDLE_INVALID = "BLOB_HANDLE_INVALID",
+  /** Filesystem write failed (out of disk, permissions, etc.). */
+  BLOB_WRITE_FAILED = "BLOB_WRITE_FAILED",
+  /** `blob.setFromUrl` could not download the URL (network / non-2xx). */
+  BLOB_DOWNLOAD_FAILED = "BLOB_DOWNLOAD_FAILED",
+  /** `blob.importFile` failed (not the user cancelling — that resolves to null). */
+  BLOB_IMPORT_FAILED = "BLOB_IMPORT_FAILED",
 }

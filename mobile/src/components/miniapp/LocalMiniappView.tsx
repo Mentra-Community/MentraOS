@@ -1,24 +1,19 @@
-import {File} from "expo-file-system"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, View} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {AppState, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
-import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {
-  appRegistry,
   BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
-  decideDevLaunchRoute,
   DEV_APP_PACKAGE_NAME,
   devServerBridge,
-  type InstalledMiniappManifest,
+  miniappLauncher,
   useAppStatusStore,
 } from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
@@ -47,6 +42,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 // Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
+const UI_RESYNC_INTERVAL_MS = 10_000
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -58,6 +54,7 @@ interface LocalMiniappViewProps {
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
   onShouldCapture?: () => void
+  showCapsule?: boolean
 }
 
 function LocalMiniappView({
@@ -69,6 +66,7 @@ function LocalMiniappView({
   devPort,
   onExit,
   onShouldCapture = () => undefined,
+  showCapsule = false,
 }: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
@@ -79,10 +77,11 @@ function LocalMiniappView({
 
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [loadGatePassed, setLoadGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // ----- Load-state tracking -------------------------------------------------
@@ -126,6 +125,22 @@ function LocalMiniappView({
     clearReadyTimer()
   }, [clearReadyTimer])
 
+  const refreshUiBinding = useCallback(
+    (reason: string, log = true, probeBackground = false) => {
+      if (!packageName) return
+      const mj = getMentraJS()
+      if (!mj?.uiRouter.isBound(packageName)) return
+      if (log) {
+        console.log(`LocalMiniappView: refreshing UI bridge for ${packageName} (${reason})`)
+      }
+      mj.uiRouter.notifyReopen(packageName)
+      if (probeBackground) {
+        mj.router.probeForegroundLiveness(packageName, reason)
+      }
+    },
+    [packageName],
+  )
+
   // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
   const resetLoadState = useCallback(() => {
     connectedRef.current = false
@@ -151,13 +166,36 @@ function LocalMiniappView({
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (Platform.OS !== "android") return
-    // android is slow to start (and doesn't handle opacity properly) so we need to wait for the animation to complete
-    // before attempting to load the webview or we'll get visual jank
+    // if (Platform.OS !== "android") return
+    // delay loading the webview until the animation is complete
     BgTimer.setTimeout(() => {
-      setAndroidGatePassed(true)
+      setLoadGatePassed(true)
     }, 1000)
   }, [])
+
+  // WebView injections can be missed while Android/iOS is resuming or when the
+  // host process thaws after a sleep/network interruption. The background
+  // runtime owns canonical state, so periodically re-announce the mounted UI
+  // while foregrounded; miniapps hydrate from their session.ui.onOpen snapshot.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      const prevState = appStateRef.current
+      appStateRef.current = nextState
+      if (prevState !== "active" && nextState === "active") {
+        refreshUiBinding("app-active", true, true)
+      }
+    })
+
+    const intervalId = BgTimer.setInterval(() => {
+      if (!connectedRef.current || AppState.currentState !== "active") return
+      refreshUiBinding("foreground-resync", false)
+    }, UI_RESYNC_INTERVAL_MS)
+
+    return () => {
+      sub.remove()
+      BgTimer.clearInterval(intervalId)
+    }
+  }, [refreshUiBinding])
 
   const {setForceGestureEnabled} = useNavigationStore.getState()
 
@@ -213,152 +251,55 @@ function LocalMiniappView({
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
 
-    // Guard the long async launch against unmount / prop changes: a stale run
-    // must not point the WebView at another launch's UI, clobber its splash
-    // state, or connect the dev bridge for a package we no longer show.
-    let cancelled = false
-    const failUnlessCancelled = (msg: string) => {
-      if (!cancelled) fail(msg)
+    const ac = new AbortController()
+    const {signal} = ac
+    // RN's AbortSignal doesn't reliably ship throwIfAborted(), so roll our own.
+    const checkpoint = () => {
+      if (signal.aborted) throw Object.assign(new Error("launch superseded"), {name: "AbortError"})
     }
 
-    const launch = async () => {
-      // Entry sources, resolved differently for dev (HTTP, straight off the
-      // running dev server) vs released (file:// from the installed snapshot).
-      //   bgSource : the background JS *text* to feed spawnAndRegister.
-      //   uiEntry  : the WebView source uri (http:// for dev, file:// for release).
-      let bgSource: string | null = null
-      let uiEntry: string | null = null
-      let declaredPermissions: string[] = []
-      let installedManifest: InstalledMiniappManifest | undefined
+    const launch = async (): Promise<void> => {
+      // Background spawn now lives in the runtime's MiniappLauncher (resolve the
+      // bundle → read the manifest → spawn the JSContext, handling dev HTTP vs
+      // released file:// snapshot). This component is render-only: it asks the
+      // launcher to ensure the background context is running (idempotent — a
+      // re-foreground of a live miniapp just rebuilds this WebView half) and
+      // mounts the resolved UI entry it hands back. Errors throw and are caught
+      // by launch().catch below.
+      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort})
 
-      // launching the dev miniapp:
-      if (devUrl) {
-        // Dev miniapps load directly off the local dev server over HTTP — the
-        // normal web-dev-server model. No zip download / file:// snapshot, so
-        // a plain WebView.reload() (and a JSContext respawn) picks up freshly
-        // built code. The bundle.zip / install path stays for store installs.
-        // setLabel("loading")
-        const portNum = resolveDevPort(devPort, packageName)
-        if (portNum === null) {
-          failUnlessCancelled("no dev port configured")
-          return
-        }
-        const base = devUrl.replace(/\/$/, "")
-
-        // Reachability + manifest in one round trip. Callers pre-flight this
-        // before navigating here, so an "offline" result means the server
-        // dropped between pre-flight and mount — surface it as an error.
-        const route = await decideDevLaunchRoute(packageName, devUrl)
-        if (cancelled) return
-        if (route.decision === "offline" || !route.manifest) {
-          failUnlessCancelled("dev server unreachable")
-          return
-        }
-        const manifest = route.manifest
-        const entry = manifest.entry as {background?: string; ui?: string} | undefined
-        if (!entry?.background) {
-          failUnlessCancelled("miniapp.json missing entry.background")
-          return
-        }
-        // entry.* are bundle-root paths (dist/ stripped); the dev server
-        // serves files relative to cwd, so prepend dist/.
-        const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
-        uiEntry = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
-
-        const perms = manifest.permissions as Array<{type?: string} | string> | undefined
-        declaredPermissions = (perms ?? [])
-          .map((p) => (typeof p === "string" ? p : p?.type))
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = {
-          permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-          hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
-        }
-
-        try {
-          const res = await fetch(bgUrl)
-          if (!res.ok) {
-            failUnlessCancelled(`background fetch failed: ${res.status}`)
-            return
-          }
-          bgSource = await res.text()
-        } catch (e) {
-          failUnlessCancelled(`background fetch failed: ${(e as Error).message}`)
-          return
-        }
-        if (cancelled) return
-        devServerBridge.connect(packageName, devUrl, portNum)
-      } else if (version) {
-        console.log("LocalMiniappView: launching released miniapp", packageName, version)
-        // Released local miniapp — resolve from the installed file:// snapshot.
-        const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
-        if (!entryPaths?.background) {
-          failUnlessCancelled(`${version} missing entry.background`)
-          return
-        }
-        const manifest = appRegistry.getMiniappManifest(packageName, version) as {
-          permissions?: Array<{type: string; required?: boolean; description?: string}>
-          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-        } | null
-        declaredPermissions = (manifest?.permissions ?? [])
-          .map((p) => p.type)
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = manifest
-          ? {
-              permissions: manifest.permissions,
-              hardwareRequirements: manifest.hardwareRequirements,
-            }
-          : undefined
-        bgSource = new File(entryPaths.background).textSync()
-        uiEntry = entryPaths.ui
-      } else {
-        failUnlessCancelled("no devUrl or version — cannot launch")
-        return
-      }
-
-      if (cancelled || bgSource === null) return
-
-      const mj = getMentraJS()
-      if (!mj) {
-        failUnlessCancelled("MentraJS runtime not bootstrapped")
-        return
-      }
-
-      // Spawn the JSContext if it isn't already alive. Re-foregrounding a
-      // running miniapp just rebuilds the WebView half.
-      if (!mj.router.registeredPackages().includes(packageName)) {
-        const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
-          permissions: declaredPermissions,
-          installedManifest,
-        })
-        if (!ok) {
-          failUnlessCancelled("spawn failed — see logs")
-          return
-        }
-      }
-
-      // If the user backgrounded the app while we were spawning, leave the
-      // JSContext alive — background miniapps keep running across UI close.
-      // The only cleanup this component owes is unbinding the WebView
+      // Deliberately AFTER the spawn, not before: if we were superseded while
+      // spawning, leave the JSContext alive (background miniapps keep running
+      // across UI close) but don't touch UI state for a view we no longer
+      // show. The only cleanup this component owes is unbinding the WebView
       // (handled by the effect's return).
-      if (cancelled) return
+      checkpoint()
 
       setLabel(undefined)
-
-      if (uiEntry) {
-        setUiUri(uiEntry)
-        setUiBaseDir(uiEntry.replace(/\/[^/]+$/, "/"))
-      }
+      // Set unconditionally: when the launcher resolves no UI entry (e.g. the
+      // dev server dropped, or a re-foreground couldn't re-resolve), clearing
+      // prevents the WebView from continuing to show a stale / previous URL.
+      setUiUri(result.uiUri)
+      setUiBaseDir(result.uiBaseDir)
     }
 
-    launch()
+    launch().catch((e: Error) => {
+      if (e.name === "AbortError") return // stale run — ignore entirely
+      // if (devUrl) {
+      //   // failed to load the dev url (we probably are connected to a different wifi network)
+      //   useAppStatusStore.getState().clearForeground()
+      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
+      //   return
+      // }
+      fail(e.message)
+    })
 
     return () => {
-      cancelled = true
+      ac.abort()
       clearReadyTimer()
-      const mj = getMentraJS()
-      mj?.uiRouter.unbindWebView(packageName)
+      getMentraJS()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer])
+  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
   // ----- WebView bindings ----------------------------------------------------
 
@@ -379,8 +320,13 @@ function LocalMiniappView({
           console.warn(`LocalMiniappView: inject failed for ${packageName}:`, e)
         }
       })
+      BgTimer.setTimeout(() => {
+        if (webViewRef.current === instance) {
+          refreshUiBinding("bind", false, true)
+        }
+      }, 250)
     },
-    [packageName],
+    [packageName, refreshUiBinding],
   )
 
   const handleMessage = useCallback(
@@ -493,13 +439,13 @@ function LocalMiniappView({
     return <Text text="Missing required parameters" />
   }
 
-  // if (Platform.OS === "android" && !androidGatePassed) {
-  //   return (
-  //     <View className="flex-1">
-  //       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-  //     </View>
-  //   )
-  // }
+  if (!loadGatePassed) {
+    return (
+      <View className="flex-1">
+        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
+      </View>
+    )
+  }
 
   let isDevApp = packageName == DEV_APP_PACKAGE_NAME
   if (isDevApp) {
@@ -518,7 +464,7 @@ function LocalMiniappView({
           label={label}
           devApp={isDevApp}
         />
-        <CapsuleMenu forceShow={true} />
+        {showCapsule && <CapsuleMenu forceShow={true} />}
       </View>
     )
   }
@@ -538,65 +484,6 @@ function LocalMiniappView({
   })
   const uiShim = buildMentraUiShim({packageName})
   const injectedJS = `${globalsScript}\n${uiShim}`
-
-  // Loading affordance: the WebView only mounts once entry resolution +
-  // JSContext spawn complete. The splash covers the early frames where the
-  // WebView is mounted but hasn't painted yet.
-  let androidGateNotPassed = Platform.OS === "android" && !androidGatePassed
-
-  if (androidGateNotPassed) {
-    return (
-      <View className="flex-1 bg-transparent" style={{borderRadius: theme.spacing.s12}}>
-        <View className="w-1 h-1">
-          <WebView
-            ref={handleRef}
-            source={{uri: uiUri}}
-            originWhitelist={["*"]}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowingReadAccessToURL={uiBaseDir ?? undefined}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            injectedJavaScriptBeforeContentLoaded={injectedJS}
-            onMessage={handleMessage}
-            onLoadEnd={handleLoadEnd}
-            onContentProcessDidTerminate={handleTerminate}
-            onError={handleError}
-            onNavigationStateChange={handleNavStateChange}
-            allowsBackForwardNavigationGestures={true}
-            bounces={false}
-            overScrollMode="never"
-            automaticallyAdjustContentInsets={false}
-            contentInsetAdjustmentBehavior="never"
-            scalesPageToFit={false}
-            setBuiltInZoomControls={false}
-            setDisplayZoomControls={false}
-            // Android-only: forces the WebView to call
-            // `requestDisallowInterceptTouchEvent(true)` on every touch,
-            // so the React Native parent ViewGroup can't steal multi-touch
-            // events mid-pinch. Without this, fast pinches on JS-driven
-            // maps (Google Maps) lose their second-finger touchend events
-            // and the recognizer stays stuck in zoom mode — surviving
-            // finger keeps zooming. Independently reported as Android
-            // System WebView behavior in flutter#182828,
-            // react-native-webview#1649, manuelstofer/pinchzoom#115.
-            nestedScrollEnabled={true}
-            webviewDebuggingEnabled={__DEV__}
-            style={{flex: 1, borderRadius: theme.spacing.s12}}
-          />
-        </View>
-        <MiniappSplash
-          name={appName}
-          iconUrl={iconUrl}
-          bgColor={theme.colors.background}
-          isLoaded={false}
-          devApp={isDevApp}
-          disableFadeIn={true}
-        />
-        <CapsuleMenu forceShow={true} />
-      </View>
-    )
-  }
 
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, the splash hides;
@@ -657,22 +544,12 @@ function LocalMiniappView({
         disableFadeIn={true}
       />
       {/* <View className="flex-1 bg-red-500"/> */}
-      <CapsuleMenu forceShow={true} />
+      {showCapsule && <CapsuleMenu forceShow={true} />}
     </View>
   )
 }
 
 export default LocalMiniappView
-
-function resolveDevPort(searchParam: string | undefined, packageName: string): number | null {
-  if (searchParam) {
-    const n = parseInt(searchParam, 10)
-    if (Number.isFinite(n)) return n
-  }
-  const stored = storage.load<number>(`${packageName}_dev_port`)
-  if (stored.is_ok()) return stored.value
-  return null
-}
 
 /**
  * True iff `raw` is the WebView shim's `{type:"ready"}` envelope, posted by

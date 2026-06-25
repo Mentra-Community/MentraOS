@@ -73,28 +73,6 @@ public struct SpeakingStatusEvent: CustomStringConvertible {
     }
 }
 
-public struct OtaUpdateAvailableEvent: CustomStringConvertible {
-    public let versionCode: Int?
-    public let versionName: String?
-    public let updates: [String]
-    public let totalSize: Int?
-    public let cacheReady: Bool?
-    public let values: [String: Any]
-
-    public init(values: [String: Any]) {
-        versionCode = intValue(values["version_code"])
-        versionName = stringValue(values, "version_name")
-        updates = values["updates"] as? [String] ?? []
-        totalSize = intValue(values["total_size"])
-        cacheReady = boolValue(values, "cache_ready")
-        self.values = values
-    }
-
-    public var description: String {
-        "OtaUpdateAvailableEvent(versionName: \(versionName ?? "unknown"), updates: \(updates.joined(separator: ",")))"
-    }
-}
-
 public struct OtaStartAckEvent: CustomStringConvertible {
     public let timestamp: Int?
     public let values: [String: Any]
@@ -244,10 +222,10 @@ public enum BluetoothEvent: CustomStringConvertible {
     case photoResponse(PhotoResponseEvent)
     case photoStatus(PhotoStatusEvent)
     case videoRecordingStatus(VideoRecordingStatusEvent)
+    case mediaUpload(MediaUploadEvent)
     case rgbLedControlResponse(RgbLedControlResponseEvent)
     case streamStatus(StreamStatusEvent)
     case keepAliveAck(KeepAliveAckEvent)
-    case otaUpdateAvailable(OtaUpdateAvailableEvent)
     case otaStartAck(OtaStartAckEvent)
     case otaStatus(OtaStatusEvent)
     case settingsAck(SettingsAckEvent)
@@ -277,13 +255,13 @@ public enum BluetoothEvent: CustomStringConvertible {
             event.description
         case let .videoRecordingStatus(event):
             event.description
+        case let .mediaUpload(event):
+            event.description
         case let .rgbLedControlResponse(event):
             event.description
         case let .streamStatus(event):
             event.description
         case let .keepAliveAck(event):
-            event.description
-        case let .otaUpdateAvailable(event):
             event.description
         case let .otaStartAck(event):
             event.description
@@ -314,7 +292,7 @@ public protocol MentraBluetoothSDKDelegate: AnyObject {
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothError)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothSdkError)
 }
 
 @MainActor
@@ -330,5 +308,5 @@ public extension MentraBluetoothSDKDelegate {
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 _: MicLc3Event) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: Device?) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog _: String) {}
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail _: BluetoothError) {}
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail _: BluetoothSdkError) {}
 }

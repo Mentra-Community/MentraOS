@@ -418,6 +418,16 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        fun sendMediaUploadEvent(type: String, values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = type
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage(type, body)
+        }
+
+        @JvmStatic
         fun sendVersionInfo(values: Map<String, Any>) {
             fun stringField(vararg keys: String): String =
                     keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
@@ -575,26 +585,6 @@ public class Bridge private constructor() {
             eventBody["message"] = message
             eventBody["timestamp"] = System.currentTimeMillis()
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
-        }
-
-        /**
-         * Send OTA update available notification - glasses have detected an available update
-         * (background mode)
-         */
-        @JvmStatic
-        fun sendOtaUpdateAvailable(
-                versionCode: Long,
-                versionName: String,
-                updates: List<String>,
-                totalSize: Long
-        ) {
-            val eventBody = HashMap<String, Any>()
-            eventBody["version_code"] = versionCode
-            eventBody["version_name"] = versionName
-            eventBody["updates"] = updates
-            eventBody["total_size"] = totalSize
-
-            sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
         }
 
         /** Send ota_start_ack — glasses confirmed receipt of ota_start command */

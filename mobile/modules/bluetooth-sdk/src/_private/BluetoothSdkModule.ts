@@ -2,10 +2,9 @@ import {NativeModule, requireNativeModule} from "expo"
 
 import {
   BluetoothSettingsUpdate,
-  BluetoothSdkPublicModule,
   BluetoothSdkModuleEvents,
   BluetoothStatus,
-  ButtonPhotoSize,
+  PhotoCaptureDefaults,
   CalendarEvent,
   CAMERA_FOV_DEFAULT,
   CAMERA_FOV_MAX,
@@ -122,21 +121,28 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Gallery Commands
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
+  setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   * Sends a {@code camera_tuning_config} BLE message; the ASG client relays it as a
+   * {@code camconfig} broadcast so the HAL picks up new parameters without a reboot.
+   *
+   * Scan-mode convention: pass `{anr: false, gain: false}` when activating scan mode
+   * (disables ANR and pixsmart gain) and `{anr: true, gain: true}` to restore defaults.
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
-  sendOtaStart(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
-  sendOtaQueryStatus(): Promise<OtaQueryResult>
-  /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
-  retryOtaVersionCheck(): Promise<OtaQueryResult>
-  checkForOtaUpdate(): Promise<OtaQueryResult>
+  setOtaVersionUrl(otaVersionUrl: string): void
+  getOtaVersionUrl(): string
+  checkForOtaUpdate(): Promise<boolean>
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  sendOtaQueryStatus(): Promise<OtaQueryResult>
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -148,7 +154,11 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
@@ -563,12 +573,5 @@ NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
 }
 
-const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
-  return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
-}
-NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
-
 export default NativeBluetoothSdkModule
-export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkPublicModule
+export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

@@ -2,13 +2,13 @@ import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {createAudioPlayer, setAudioModeAsync} from "expo-audio"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import {resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
@@ -33,6 +33,11 @@ function getLatestStatusListener() {
   return statusListener as (status: MockPlaybackStatus) => void
 }
 
+async function flushAsyncVolumeGuard() {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 jest.mock("expo-audio", () => ({
   createAudioPlayer: jest.fn(() => mockPlayer),
   setAudioModeAsync: jest.fn(() => Promise.resolve()),
@@ -42,7 +47,7 @@ describe("AudioPlaybackService", () => {
   beforeEach(() => {
     jest.useFakeTimers()
     jest.clearAllMocks()
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     mockPlayer.volume = 1
     ;(BluetoothSdk.getGlassesMediaVolume as jest.Mock).mockResolvedValue({level: 1, statusCode: 0})
   })
@@ -64,6 +69,7 @@ describe("AudioPlaybackService", () => {
       },
       onComplete,
     )
+    await flushAsyncVolumeGuard()
 
     expect(setAudioModeAsync).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -79,10 +85,14 @@ describe("AudioPlaybackService", () => {
     const statusListener = getLatestStatusListener()
     statusListener({didJustFinish: true, duration: 2})
 
+    expect(mockPlayer.pause).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("audio-1", true, null, 2000)
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
 
-    jest.advanceTimersByTime(500)
+    jest.advanceTimersByTime(900)
+    expect(mockPlayer.pause).toHaveBeenCalled()
+
+    jest.advanceTimersByTime(600)
     await Promise.resolve()
     expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
   })
@@ -92,7 +102,9 @@ describe("AudioPlaybackService", () => {
     const secondComplete = jest.fn()
 
     await audioPlaybackService.play({requestId: "first", audioUrl: "https://example.com/one.mp3"}, firstComplete)
+    await flushAsyncVolumeGuard()
     await audioPlaybackService.play({requestId: "second", audioUrl: "https://example.com/two.mp3"}, secondComplete)
+    await flushAsyncVolumeGuard()
 
     expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number))
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
@@ -103,5 +115,22 @@ describe("AudioPlaybackService", () => {
 
     expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000)
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
+  })
+
+  it("starts playback without waiting for a slow glasses volume response", async () => {
+    const onComplete = jest.fn()
+    ;(BluetoothSdk.getGlassesMediaVolume as jest.Mock).mockReturnValue(new Promise(() => {}))
+
+    await audioPlaybackService.play(
+      {
+        requestId: "slow-volume",
+        audioUrl: "https://example.com/slow.mp3",
+      },
+      onComplete,
+    )
+
+    expect(mockPlayer.replace).toHaveBeenCalledWith({uri: "https://example.com/slow.mp3"})
+    expect(mockPlayer.play).toHaveBeenCalled()
+    expect(BluetoothSdk.setGlassesMediaVolume).not.toHaveBeenCalled()
   })
 })

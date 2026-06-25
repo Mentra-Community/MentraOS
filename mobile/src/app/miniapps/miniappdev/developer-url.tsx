@@ -41,6 +41,21 @@ function resolveIconUrl(baseUrl: string, iconPath: string | undefined): string |
   return `${baseUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
 }
 
+/**
+ * Derive the dev sidecar port from a `mentra-miniapp dev` user-server URL. The
+ * CLI starts the static user server on `port` and the bundle/live-reload sidecar
+ * on `port + 1`, so the sidecar is the URL's port plus one. Returns undefined if
+ * the URL has no explicit port (nothing to derive a sidecar from).
+ */
+function deriveDevPort(url: string): number | undefined {
+  try {
+    const port = Number(new URL(url).port)
+    return Number.isFinite(port) && port > 0 ? port + 1 : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export default function MiniappDeveloperUrlScreen() {
   const {theme} = useAppTheme()
   const {goBack, push} = useNavigationStore.getState()
@@ -98,6 +113,22 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
+    // Re-register the dev slot for THIS entry before foregrounding. There is a
+    // single dev slot (com.dev): without this, setForeground launches whatever
+    // app was last registered into the slot — tapping "Mentra Example" in the
+    // recent list would silently relaunch a different, previously-registered
+    // dev app under the Mentra Example name.
+    registerDevApp({
+      packageName: entry.packageName,
+      name: entry.name,
+      iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
+      devUrl: entry.url,
+      devPort: deriveDevPort(entry.url),
+      type: launchResult.manifest.type as DevAppRecord["type"],
+      permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
+      hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+    })
+
     await useAppStatusStore.getState().refresh()
     // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
     // own install/spawn phase machine inside the overlay). Foreground the single
@@ -109,13 +140,13 @@ export default function MiniappDeveloperUrlScreen() {
   const handleLoadUrl = async () => {
     const trimmed = url.trim().replace(/\/+$/, "")
     if (!trimmed) {
-      showAlert(translate("devSettings:miniappUrlEmptyTitle"), translate("devSettings:miniappUrlEmptyBody"), [
+      showAlert(translate("debugSettings:miniappUrlEmptyTitle"), translate("debugSettings:miniappUrlEmptyBody"), [
         {text: "OK"},
       ])
       return
     }
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      showAlert(translate("devSettings:miniappUrlInvalidTitle"), translate("devSettings:miniappUrlInvalidBody"), [
+      showAlert(translate("debugSettings:miniappUrlInvalidTitle"), translate("debugSettings:miniappUrlInvalidBody"), [
         {text: "OK"},
       ])
       return
@@ -128,8 +159,8 @@ export default function MiniappDeveloperUrlScreen() {
       const launchResult = await decideDevLaunchRoute("", trimmed)
       if (launchResult.decision === "offline") {
         showAlert(
-          translate("devSettings:miniappUrlFetchErrorTitle"),
-          translate("devSettings:miniappUrlFetchErrorBody", {url: trimmed}),
+          translate("debugSettings:miniappUrlFetchErrorTitle"),
+          translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),
           [{text: "OK"}],
         )
         return
@@ -154,8 +185,15 @@ export default function MiniappDeveloperUrlScreen() {
         name: entry.name,
         iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
         devUrl: entry.url,
+        // Two-layer / background miniapps fetch their bundle from the CLI's
+        // sidecar, which `mentra-miniapp dev` starts on userPort + 1. The QR
+        // path carries this as `&dev=<port>`; derive the same here so manual-URL
+        // launches aren't rejected with "no dev port configured".
+        devPort: deriveDevPort(entry.url),
+        type: manifest.type as DevAppRecord["type"],
         permissions: manifest.permissions as DevAppRecord["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+        actions: manifest.actions as DevAppRecord["actions"],
       })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
@@ -169,17 +207,17 @@ export default function MiniappDeveloperUrlScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("devSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title={translate("debugSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6">
-          <Group title={translate("devSettings:miniappUrlGroupTitle")}>
+          <Group title={translate("debugSettings:miniappUrlGroupTitle")}>
             <GlassView className="bg-primary-foreground rounded-2xl px-4 py-4 gap-2">
-              <Text className="text-base text-text" tx="devSettings:miniappUrlLabel" />
+              <Text className="text-base text-text" tx="debugSettings:miniappUrlLabel" />
               <Text className="text-xs text-textDim flex-row flex-wrap">
-                {translate("devSettings:miniappUrlSubtitlePrefix")}
+                {translate("debugSettings:miniappUrlSubtitlePrefix")}
                 <Text className="font-mono text-text" text="/miniapp.json" />
-                {translate("devSettings:miniappUrlSubtitleSuffix")}
+                {translate("debugSettings:miniappUrlSubtitleSuffix")}
               </Text>
               <TextInput
                 className="bg-background border border-primary rounded-lg px-3 py-2 text-sm mt-1 mb-1 text-text"
@@ -193,7 +231,7 @@ export default function MiniappDeveloperUrlScreen() {
                 editable={!loading}
               />
               <Button
-                tx={loading ? "devSettings:miniappUrlLoadingButton" : "devSettings:miniappUrlLoadButton"}
+                tx={loading ? "debugSettings:miniappUrlLoadingButton" : "debugSettings:miniappUrlLoadButton"}
                 onPress={handleLoadUrl}
                 disabled={loading}
                 preset="alternate"
@@ -203,7 +241,7 @@ export default function MiniappDeveloperUrlScreen() {
           </Group>
 
           {recent.length > 0 && (
-            <Group title={translate("devSettings:miniappUrlRecentTitle")}>
+            <Group title={translate("debugSettings:miniappUrlRecentTitle")}>
               {recent.map((item) => (
                 <RouteButton
                   key={item.url}

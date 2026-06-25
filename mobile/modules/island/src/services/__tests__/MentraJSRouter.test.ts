@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, test, jest, mock} from "bun:test"
+import {afterEach, beforeEach, describe, expect, test, jest} from "bun:test"
 
 import type localMiniappRuntime from "../LocalMiniappRuntime"
 import {MentraJSRouter, type MentraJSCrustBinding} from "../MentraJSRouter"
@@ -81,7 +81,9 @@ function buildMockRuntime() {
   }> = []
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
+  const probeCalls: Array<{packageName: string; reason?: string}> = []
   const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
+  const resetHandshakeCalls: string[] = []
   const runtime = {
     registerApp(packageName: string, sendFn: (raw: string) => void, installedManifest?: unknown) {
       registerCalls.push({packageName, sendFn, installedManifest})
@@ -92,11 +94,17 @@ function buildMockRuntime() {
     unregisterApp(packageName: string) {
       unregisterCalls.push(packageName)
     },
+    probeForegroundLiveness(packageName: string, reason?: string) {
+      probeCalls.push({packageName, reason})
+    },
     setInstalledManifest(packageName: string, installedManifest: unknown) {
       setManifestCalls.push({packageName, installedManifest})
     },
+    resetHandshake(packageName: string) {
+      resetHandshakeCalls.push(packageName)
+    },
   } as unknown as LocalMiniappRuntime
-  return {runtime, registerCalls, handleRawCalls, unregisterCalls, setManifestCalls}
+  return {runtime, registerCalls, handleRawCalls, unregisterCalls, probeCalls, setManifestCalls, resetHandshakeCalls}
 }
 
 function silentLogger() {
@@ -140,9 +148,7 @@ describe("MentraJSRouter", () => {
       method: "send",
       args: ['{"type":"DISPLAY","text":"hi"}'],
     })
-    expect(runtimeMock.handleRawCalls).toEqual([
-      {packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'},
-    ])
+    expect(runtimeMock.handleRawCalls).toEqual([{packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'}])
   })
 
   test("__bridge.send (argsJson string form) routes raw envelope into handleRawMessage", () => {
@@ -319,6 +325,16 @@ describe("MentraJSRouter", () => {
     expect(runtimeMock.registerCalls[0]!.installedManifest).toBeUndefined()
   })
 
+  test("probeForegroundLiveness only probes registered packages", async () => {
+    router.probeForegroundLiveness("com.foo", "before-register")
+    expect(runtimeMock.probeCalls).toHaveLength(0)
+
+    await router.spawnAndRegister("com.foo", "console.log(1)")
+    router.probeForegroundLiveness("com.foo", "foreground-open")
+
+    expect(runtimeMock.probeCalls).toEqual([{packageName: "com.foo", reason: "foreground-open"}])
+  })
+
   test("spawnAndRegister returns false when native spawn fails", async () => {
     crust.binding.mentraJsSpawn = () => false
     const ok = await router.spawnAndRegister("com.bad", "junk")
@@ -407,6 +423,34 @@ describe("MentraJSRouter", () => {
     // Give the timer a chance to fire (it shouldn't, because we cancelled it).
     await new Promise((r) => setTimeout(r, 20))
     expect(crust.spawnCalls).toHaveLength(0)
+  })
+
+  test("liveness timeout respawn re-registers the runtime app", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    const controller = new MentraJSCrashController({
+      now: () => 0,
+      backoffMs: [1],
+      maxRetries: 3,
+    })
+    router.crashController = controller
+    router.start()
+
+    const manifest = {permissions: [{type: "MICROPHONE"}]}
+    await router.spawnAndRegister("com.foo", "/* miniapp js */", {
+      permissions: ["MICROPHONE"],
+      installedManifest: manifest,
+    })
+    ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (packageName: string) => void}).onLivenessTimeout("com.foo")
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(crust.killCalls).toEqual(["com.foo"])
+    expect(crust.spawnCalls).toHaveLength(2)
+    expect(runtimeMock.registerCalls.map((c) => c.packageName)).toEqual(["com.foo", "com.foo"])
+    expect(runtimeMock.registerCalls[1]!.installedManifest).toBe(manifest)
+    expect(crust.dispatchCalls.at(-1)).toMatchObject({
+      packageName: "com.foo",
+      envelope: {kind: "init"},
+    })
   })
 
   test("listener throwing does not poison subsequent events", () => {

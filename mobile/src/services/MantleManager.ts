@@ -1,5 +1,5 @@
 import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -18,22 +18,25 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {WebSocketStatus} from "@/services/ws-types"
+import {cloudClient} from "@/services/cloudClient"
+import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
   configureRuntime,
+  getRuntimeHooks,
   displayProcessor,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
+  DEV_APP_PACKAGE_NAME,
+  getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
 import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -175,10 +178,24 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
+    // Construct + connect the cloud client (best-effort) and wire its runtime
+    // adapter. The island/local-miniapp path is powered by this client.
+    const cloud = cloudClient.init()
+
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
+      },
+      cloud,
+      miniappAuth: {
+        getToken: (packageName, opts) => {
+          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+          if (!authPackageName) {
+            throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
+          }
+          return cloudClient.getMiniappAuthToken(authPackageName, opts)
+        },
       },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
@@ -209,22 +226,10 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
-      cloudConnection: {
-        isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
-        // The connection store is plain zustand (no subscribeWithSelector
-        // middleware), so we subscribe to all state changes and dedupe to
-        // the connected boolean ourselves.
-        addListener: (l) => {
-          let lastConnected = useConnectionStore.getState().status === WebSocketStatus.CONNECTED
-          return useConnectionStore.subscribe((state) => {
-            const connected = state.status === WebSocketStatus.CONNECTED
-            if (connected !== lastConnected) {
-              lastConnected = connected
-              l(connected)
-            }
-          })
-        },
-      },
+      // The dev laptop's live address, from Metro. The island runtime uses it
+      // to repair persisted dev-miniapp URLs that froze a previous network's
+      // IP (the bundle host is, by construction, reachable right now).
+      devServerHost: () => devServerHost(),
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
@@ -261,8 +266,8 @@ class MantleManager {
         setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
-        computeRoute: (payload) => navigationService.computeRoute(payload),
-        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
+        // Route compute + reverse geocoding now run in the v2 cloud maps service
+        // (cloud.runtime.maps); the device no longer calls Mapbox REST directly.
       },
       heading: {
         addListener: (l) => headingService.addListener(l),
@@ -294,9 +299,15 @@ class MantleManager {
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       let loadedSettings = res.value
-      // exclude default_wearable and pending_wearable from the settings when pulling from the server:
+      // Device/pairing identity is per-phone state and is now saveOnServer: false, so it
+      // should never come back from the server. These deletes are a migration guard: users
+      // paired before that flag flipped still have stale values persisted server-side, and
+      // restoring them would clobber the locally paired device and point reconnect-on-launch
+      // at the wrong BLE address.
       delete loadedSettings["default_wearable"]
       delete loadedSettings["pending_wearable"]
+      delete loadedSettings["device_name"]
+      delete loadedSettings["device_address"]
       delete loadedSettings["default_controller"]
       delete loadedSettings["pending_controller"]
       delete loadedSettings["controller_device_name"]
@@ -317,10 +328,10 @@ class MantleManager {
 
     offlineSpeechModelService.startBackgroundDownloads()
 
-    // give the core some time to boot before sending all the initial settings:
+    // Give the native Bluetooth SDK some time to boot before sending initial settings.
     BgTimer.setTimeout(() => {
-      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getCoreSettings()) // send settings to core
-      console.log("MANTLE: Settings sent to core")
+      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+      console.log("MANTLE: Bluetooth settings sent to native SDK")
       // settings are now in native; safe to attempt auto-connect
       attemptReconnectToDefaultWearable()
     }, 1000)
@@ -456,9 +467,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -510,20 +524,20 @@ class MantleManager {
       {equalityFn: shallow},
     )
 
-    // Subscribe to settings owned by core and forward changes.
+    // Subscribe to settings forwarded to the Bluetooth SDK.
     useSettingsStore.subscribe(
-      (state) => state.getCoreSettings(),
+      (state) => state.getBluetoothSettings(),
       (state: Record<string, any>, previousState: Record<string, any>) => {
-        const coreSettingsObj: Record<string, any> = {}
+        const bluetoothSettingsObj: Record<string, any> = {}
 
         for (const key in state) {
           const k = key as keyof Record<string, any>
           if (state[k] !== previousState[k]) {
-            coreSettingsObj[k] = state[k] as any
+            bluetoothSettingsObj[k] = state[k] as any
           }
         }
-        // console.log("MANTLE: core settings changed", coreSettingsObj)
-        BluetoothSdk.updateBluetoothSettings(coreSettingsObj)
+        // console.log("MANTLE: Bluetooth settings changed", bluetoothSettingsObj)
+        BluetoothSdk.updateBluetoothSettings(bluetoothSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -543,10 +557,10 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    // Forward core status changes to the zustand core store.
+    // Forward Bluetooth SDK status changes to the zustand core store.
     this.subs.push(
       BluetoothSdk.onBluetoothStatus((changed: Partial<BluetoothStatus>) => {
-        // console.log("MANTLE: Core status changed", changed)
+        // console.log("MANTLE: Bluetooth status changed", changed)
         useCoreStore.getState().setCoreInfo(changed)
       }),
     )
@@ -562,7 +576,7 @@ class MantleManager {
       }),
     )
 
-    // Subscribe to individual core events
+    // Subscribe to individual Bluetooth SDK events.
     {
       this.subs.push(
         BluetoothSdk.addListener("log", (event) => {
@@ -763,10 +777,10 @@ class MantleManager {
         }),
       )
 
-      // Allow core to persist hardware-originated setting changes.
+      // Allow native hardware-originated setting changes to persist.
       this.subs.push(
         BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from core:", event)
+          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
@@ -786,12 +800,6 @@ class MantleManager {
       this.subs.push(
         BluetoothSdk.addListener("battery_status", (event) => {
           socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("local_transcription", (event) => {
-          mantle.handle_local_transcription(event)
         }),
       )
 
@@ -853,6 +861,10 @@ class MantleManager {
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
           const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
+          const dashboardUrl = typeof event.dashboard_url === "string" ? event.dashboard_url : undefined
+          const expectedBehavior = dashboardUrl
+            ? `Captions tester runs should complete without a captions incident. Check live dashboard: ${dashboardUrl}.`
+            : "Captions tester runs should complete without a captions incident."
 
           const actualBehavior = JSON.stringify(
             {
@@ -877,7 +889,7 @@ class MantleManager {
                 triggerArea: "captions_tester",
                 triggerReason: "captions_incident_detected",
               },
-              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              expectedBehavior,
               actualBehavior,
               severityRating: 4,
               dedupeKey,
@@ -922,10 +934,10 @@ class MantleManager {
         }),
       )
 
-      // allow the core to change settings so it can persist state:
+      // Allow native hardware-originated setting changes to persist.
       this.subs.push(
         BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from Core:", event)
+          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
@@ -1039,6 +1051,14 @@ class MantleManager {
           } else {
             socketComms.sendBinary(event.lc3)
           }
+
+          // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
+          // we don't waste UDP bandwidth when nothing is subscribed on v2. The
+          // v1 sends above are unchanged.
+          const cloud = getRuntimeHooks().cloud
+          if (cloud?.isConnected() && cloud.hasAudioSubscriptions()) {
+            cloud.sendAudioFrame(new Uint8Array(event.lc3))
+          }
         }),
       )
 
@@ -1097,30 +1117,6 @@ class MantleManager {
       )
 
       this.subs.push(
-        BluetoothSdk.addListener("ota_update_available", (event) => {
-          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-            console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
-            return
-          }
-          console.log("📱 MANTLE: OTA update available from glasses:", event)
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            available: true,
-            versionCode: event.version_code ?? 0,
-            versionName: event.version_name ?? "",
-            updates: event.updates ?? [],
-            totalSize: event.total_size ?? 0,
-            cacheReady: event.cache_ready === true,
-          })
-          GlobalEventEmitter.emit("ota_update_available", {
-            versionCode: event.version_code,
-            versionName: event.version_name,
-            updates: event.updates,
-            totalSize: event.total_size,
-          })
-        }),
-      )
-
-      this.subs.push(
         BluetoothSdk.addListener("mtk_update_complete", (event) => {
           console.log("MANTLE: MTK firmware update complete:", event.message)
           GlobalEventEmitter.emit("mtk_update_complete", {
@@ -1173,9 +1169,9 @@ class MantleManager {
     }
 
     // one time get all:
-    const coreStatus = await BluetoothSdk.getBluetoothStatus()
-    // console.log("MANTLE: core status:", coreStatus)
-    useCoreStore.getState().setCoreInfo(coreStatus)
+    const bluetoothStatus = await BluetoothSdk.getBluetoothStatus()
+    // console.log("MANTLE: Bluetooth status:", bluetoothStatus)
+    useCoreStore.getState().setCoreInfo(bluetoothStatus)
 
     const glassesStatus = await BluetoothSdk.getGlassesStatus()
     // console.log("MANTLE: glasses status:", glassesStatus)
@@ -1224,7 +1220,7 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch(error => {
+      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
       })
       restComms.sendCalendarData({events, calendars})

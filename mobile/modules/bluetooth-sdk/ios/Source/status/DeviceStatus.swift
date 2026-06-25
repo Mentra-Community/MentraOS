@@ -552,10 +552,6 @@ struct BluetoothStatus: CustomStringConvertible {
         ButtonPhotoSize(rawValue: stringValue(values, "button_photo_size") ?? "") ?? .medium
     }
 
-    var buttonCameraLed: Bool {
-        boolValue(values, "button_camera_led") ?? true
-    }
-
     var buttonMaxRecordingTime: Int {
         intValue(values["button_max_recording_time"]) ?? 10
     }
@@ -921,11 +917,7 @@ struct BluetoothStatusUpdate: CustomStringConvertible {
     }
 
     var buttonPhotoSize: ButtonPhotoSize? {
-        optionalStringValue(values, "button_photo_size").flatMap(ButtonPhotoSize.init(rawValue:))
-    }
-
-    var buttonCameraLed: Bool? {
-        optionalBoolValue(values, "button_camera_led")
+        optionalStringValue(values, "button_photo_size").map { ButtonPhotoSize(normalizedRawValue: $0) }
     }
 
     var buttonMaxRecordingTime: Int? {

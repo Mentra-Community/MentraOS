@@ -1,28 +1,46 @@
 package com.mentra.bluetoothsdk
 
+import org.json.JSONObject
+
 enum class PhotoSize(val value: String) {
-    SMALL("small"),
+    LOW("low"),
     MEDIUM("medium"),
-    LARGE("large"),
-    FULL("full");
-
-    companion object {
-        @JvmStatic
-        fun fromValue(value: String?): PhotoSize =
-            values().firstOrNull { it.value == value } ?: MEDIUM
-    }
-}
-
-enum class ButtonPhotoSize(val value: String) {
-    SMALL("small"),
-    MEDIUM("medium"),
-    LARGE("large"),
+    HIGH("high"),
     MAX("max");
 
     companion object {
         @JvmStatic
-        fun fromValue(value: String?): ButtonPhotoSize =
-            values().firstOrNull { it.value == value } ?: MEDIUM
+        fun normalizeLegacy(value: String?): String =
+            when (value) {
+                "small" -> LOW.value
+                "large" -> HIGH.value
+                "full" -> MAX.value
+                else -> value ?: MEDIUM.value
+            }
+
+        @JvmStatic
+        fun fromValue(value: String?): PhotoSize {
+            val normalized = normalizeLegacy(value)
+            return values().firstOrNull { it.value == normalized } ?: MEDIUM
+        }
+    }
+}
+
+enum class ButtonPhotoSize(val value: String) {
+    LOW("low"),
+    MEDIUM("medium"),
+    HIGH("high"),
+    MAX("max");
+
+    companion object {
+        @JvmStatic
+        fun normalizeLegacy(value: String?): String = PhotoSize.normalizeLegacy(value)
+
+        @JvmStatic
+        fun fromValue(value: String?): ButtonPhotoSize {
+            val normalized = normalizeLegacy(value)
+            return values().firstOrNull { it.value == normalized } ?: MEDIUM
+        }
     }
 }
 
@@ -38,11 +56,22 @@ enum class PhotoCompression(val value: String) {
     }
 }
 
-data class ButtonPhotoSettings(
-    val size: ButtonPhotoSize,
+data class PhotoCaptureDefaults(
+    val size: PhotoSize? = null,
+    val mfnr: Boolean? = null,
+    val zsl: Boolean? = null,
+    val noiseReduction: Boolean? = null,
+    val edgeEnhancement: Boolean? = null,
+    val ispDigitalGain: Int? = null,
+    val ispAnalogGain: String? = null,
+    val aeExposureDivisor: Int? = null,
+    val isoCap: Int? = null,
+    val compress: String? = null,
+    val sound: Boolean? = null,
+    val resetCaptureTuning: Boolean = false,
 )
 
-data class ButtonVideoRecordingSettings(
+data class VideoRecordingDefaults(
     val width: Int,
     val height: Int,
     val fps: Int,
@@ -109,13 +138,13 @@ data class CameraFovResult(
             fallback: CameraFov,
         ): CameraFovResult {
             if (ack.status == "error") {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     ack.errorCode ?: "camera_fov_failed",
                     ack.errorMessage ?: "Camera FOV request failed.",
                 )
             }
             if (!ack.hardwareApplied) {
-                throw BluetoothException(
+                throw BluetoothSdkException(
                     "camera_fov_not_applied",
                     "Camera FOV was saved but not applied to hardware.",
                 )
@@ -138,13 +167,21 @@ data class PhotoRequest @JvmOverloads constructor(
     val webhookUrl: String,
     val authToken: String? = null,
     val compress: PhotoCompression = PhotoCompression.MEDIUM,
-    val flash: Boolean = true,
     val save: Boolean = false,
     val sound: Boolean = true,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
     val exposureTimeNs: Double? = null,
     /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
     val iso: Int? = null,
+    val aeExposureDivisor: Int? = null,
+    val isoCap: Int? = null,
+    val noiseReduction: Boolean? = null,
+    val edgeEnhancement: Boolean? = null,
+    val mfnr: Boolean? = null,
+    val zsl: Boolean? = null,
+    val ispDigitalGain: Int? = null,
+    val ispAnalogGain: String? = null,
+    val resetCaptureTuning: Boolean? = null,
 ) {
     companion object {
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
@@ -167,6 +204,12 @@ data class PhotoRequest @JvmOverloads constructor(
                     }
                     else -> null
                 }
+            val aeDivisor =
+                numberValue(values, "aeExposureDivisor")?.takeIf { it > 1 }
+            val isoCap = numberValue(values, "isoCap")?.takeIf { it > 0 }
+            val ispDigitalGain = numberValue(values, "ispDigitalGain")
+            val ispAnalogGain = stringValue(values, "ispAnalogGain")
+
             return PhotoRequest(
                 requestId = stringValue(values, "requestId", "request_id").orEmpty(),
                 appId = stringValue(values, "appId", "app_id").orEmpty(),
@@ -174,12 +217,35 @@ data class PhotoRequest @JvmOverloads constructor(
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
                 compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
-                flash = boolValue(values, "flash") ?: true,
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
+                aeExposureDivisor = aeDivisor,
+                isoCap = isoCap,
+                noiseReduction = boolValue(values, "noiseReduction"),
+                edgeEnhancement = boolValue(values, "edgeEnhancement"),
+                mfnr = boolValue(values, "mfnr"),
+                zsl = boolValue(values, "zsl"),
+                ispDigitalGain = ispDigitalGain,
+                ispAnalogGain = ispAnalogGain,
             )
+        }
+
+        /** Adds optional scan-mode tuning fields to a `take_photo` JSON payload. */
+        @JvmStatic
+        fun appendScanFields(
+            json: JSONObject,
+            request: PhotoRequest,
+        ) {
+            request.aeExposureDivisor?.let { json.put("aeExposureDivisor", it) }
+            request.isoCap?.let { json.put("isoCap", it) }
+            request.noiseReduction?.let { json.put("noiseReduction", it) }
+            request.edgeEnhancement?.let { json.put("edgeEnhancement", it) }
+            request.mfnr?.let { json.put("mfnr", it) }
+            request.zsl?.let { json.put("zsl", it) }
+            request.ispDigitalGain?.let { json.put("ispDigitalGain", it) }
+            request.ispAnalogGain?.let { json.put("ispAnalogGain", it) }
         }
     }
 }
@@ -227,6 +293,8 @@ data class VideoRecordingRequest(
     val width: Int = 0,
     val height: Int = 0,
     val fps: Int = 0,
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    val maxRecordingTimeMinutes: Int = 0,
 )
 
 data class VideoRecordingStatusEvent(
@@ -238,6 +306,19 @@ data class VideoRecordingStatusEvent(
     val details: String? get() = stringValue(values, "details")
     val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
     val data: Map<String, Any>? get() = stringMapValue(values["data"])
+}
+
+data class MediaUploadEvent(
+    val values: Map<String, Any>,
+) {
+    val type: String get() = stringValue(values, "type").orEmpty()
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val mediaUrl: String? get() = stringValue(values, "mediaUrl")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+    val mediaType: Int? get() = numberValue(values, "mediaType")
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val isSuccess: Boolean get() = type == "media_success"
+    val isVideo: Boolean get() = mediaType == 2
 }
 
 data class GalleryStatusEvent(

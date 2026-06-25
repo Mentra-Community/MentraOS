@@ -50,6 +50,8 @@ export function isMockExplicitlyRequested(): boolean {
 export interface MockTransportOptions {
   /** Override the synthetic userId. Default "mock-user". */
   userId?: string
+  /** Override the synthetic miniapp auth token. Default "mock-miniapp-token". */
+  authToken?: string
   /** Override the synthetic packageName when window.MentraOS isn't set. */
   packageName?: string
   /** Suppress the [mock-transport] console logs. Default false. */
@@ -61,11 +63,13 @@ export class MockTransport implements Transport {
   private disconnectHandler: TransportDisconnectHandler | null = null
   private open_ = false
   private readonly userId: string
+  private readonly authToken: string
   private readonly packageName: string | null
   private readonly silent: boolean
 
   constructor(options: MockTransportOptions = {}) {
     this.userId = options.userId ?? "mock-user"
+    this.authToken = options.authToken ?? "mock-miniapp-token"
     this.packageName = options.packageName ?? null
     this.silent = options.silent === true
   }
@@ -144,6 +148,12 @@ export class MockTransport implements Transport {
       capabilities: null,
       visibility: "foreground",
       colorScheme: "light",
+      auth: {
+        mentraUserId: this.userId,
+        oemId: "mock",
+        token: this.authToken,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      },
     }
     const envelope: MiniappEnvelope = {payload: ackPayload}
     this.log(`-> CONNECT_ACK userId=${this.userId} pkg=${incomingPackage}`)

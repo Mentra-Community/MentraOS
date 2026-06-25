@@ -269,14 +269,14 @@ export default function NexDeveloperSettings() {
   const [commandSender, setCommandSender] = useState<BleCommand | null>(null)
   const [commandReceiver, setCommandReceiver] = useState<BleCommand | null>(null)
 
-  // LC3 Audio Control — persisted feature flag synced to core (off by default).
+  // LC3 Audio Control — persisted feature flag synced to the Bluetooth SDK (off by default).
   const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
 
-  // Chinese captions — persisted feature flag synced to core (off by default).
+  // Chinese captions — persisted feature flag synced to the Bluetooth SDK (off by default).
   // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
   const [chineseCaptionsEnabled, setChineseCaptionsEnabled] = useSetting(SETTINGS.nex_chinese_captions.key)
 
-  // VAD (Voice Activity Detection) — Manager defaults this on, then syncs it through CORE_SETTINGS_KEYS.
+  // VAD (Voice Activity Detection) — Manager defaults this on, then syncs it through BLUETOOTH_SETTING_KEYS.
   const [vadEnabled, setVadEnabled] = useSetting<boolean>(SETTINGS.voice_activity_detection_enabled.key)
 
   // // // Get both protobuf versions from core status
@@ -372,8 +372,8 @@ export default function NexDeveloperSettings() {
     }
   }
 
-  // These toggles persist to the settings store, which auto-syncs the flag to core
-  // (CORE_SETTINGS_KEYS) where native applies the behavior change.
+  // These toggles persist to the settings store, which auto-syncs the flag to Bluetooth settings
+  // (BLUETOOTH_SETTING_KEYS) where native applies the behavior change.
   const onLc3AudioToggle = (enabled: boolean) => {
     setLc3AudioEnabled(enabled)
   }

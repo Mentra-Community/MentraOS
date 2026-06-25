@@ -1,7 +1,7 @@
 import {Platform} from "react-native"
 import {check, request, PERMISSIONS, RESULTS} from "react-native-permissions"
 
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {deriveGalleryDisplayName} from "./galleryDisplayName"
 

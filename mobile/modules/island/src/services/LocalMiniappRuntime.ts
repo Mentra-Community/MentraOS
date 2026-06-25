@@ -18,10 +18,12 @@ import * as Location from "expo-location"
 import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
+  CanvasOperation,
   MiniappErrorCode,
   MiniappRequestType,
   MiniappResponseType,
   MiniappStreamType,
+  CLOUD_STATUS_STREAM,
   parseEnvelope,
   serializeEnvelope,
 } from "@mentra/miniapp"
@@ -35,16 +37,29 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {BlobStore} from "./BlobStore"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
   type CameraFovPreset,
   type CameraFovRequest,
   type CameraRoiPosition,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
+  type InteropAuditEvent,
+  type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
+import type {
+  AudioSubscription,
+  LanguageSource,
+  TranscriptionData,
+  TranslationData,
+} from "@mentra/cloud-runtime/protocol"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
+import type {ClientApp} from "../types/applet"
 
 // =============================================================================
 // Types
@@ -62,6 +77,7 @@ interface ConnectedMiniapp {
   sendMessage: (raw: string) => void
   lastPongAt: number
   installedManifest?: InstalledMiniappManifest
+  authRefreshTimerId: number | null
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /**
@@ -92,9 +108,36 @@ function locationRateRank(rate: string | null | undefined): number {
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (value: T | null) => {
+      if (settled) return
+      settled = true
+      BgTimer.clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = BgTimer.setTimeout(() => done(null), timeoutMs)
+    promise.then(
+      (value) => done(value),
+      () => done(null),
+    )
+  })
+}
+
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
-const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
+const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
+const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
+const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
+// Unregister after this many missed pongs. Generous on purpose: a busy
+// context (heavy interim translation traffic) or OS scheduling while idle can
+// delay pongs well past one interval, and killing a healthy-but-busy script
+// drops its subscriptions (releasing the mic). With the liveness-timeout
+// respawn path wired (MentraJSRouter.start), a genuinely dead context still
+// comes back automatically — this threshold only bounds how long that takes.
+const PING_TIMEOUT_THRESHOLD = 6 // ~30s
+
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 const CAMERA_FOV_MIN = 62
@@ -231,11 +274,37 @@ class LocalMiniappRuntime {
   /** Connected miniapps keyed by packageName. */
   private connectedApps: Map<string, ConnectedMiniapp> = new Map()
 
+  /**
+   * Packages that have completed their CONNECT handshake (sent
+   * `miniapp_connect`, got `CONNECT_ACK`). Distinct from `connectedApps`,
+   * which is populated at spawn/registration time — handshake is later.
+   * Drives {@link waitForConnect}.
+   */
+  private handshookApps: Set<string> = new Set()
+
+  /** Pending {@link waitForConnect} resolvers, keyed by packageName. */
+  private connectWaiters: Map<string, Set<(err?: Error) => void>> = new Map()
+
   /** Ref-counted stream subscriptions: stream → set of packageNames. */
   private streamSubscribers: Map<string, Set<string>> = new Map()
 
+  /** Guards one-time wiring of the cloud transcript/translation fan-out. */
+  private cloudResultsWired = false
+  private cloudStatusWired = false
+
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
+  private foregroundProbeTimers: Map<string, number> = new Map()
+
+  /**
+   * Notified when a miniapp is unregistered for missing liveness pings.
+   * MentraJSRouter wires this into its crash-respawn machinery so a
+   * silently-stalled background script is restarted (with crash-loop
+   * protection) instead of staying dead — a dead background drops its
+   * subscriptions, which releases the mic while the webview still looks
+   * alive.
+   */
+  public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
@@ -463,11 +532,19 @@ class LocalMiniappRuntime {
     installedManifest?: InstalledMiniappManifest,
   ): void {
     console.log(`${LOG_TAG}: registerApp(${packageName})`)
+    this.clearForegroundProbe(packageName)
+    // Fresh spawn → fresh handshake. Clear any prior handshake flag so
+    // waitForConnect() blocks until this context's own CONNECT arrives.
+    this.handshookApps.delete(packageName)
     // If the app is already registered (e.g. QR scanned again for same package),
     // tear down its old subscriptions first so streamSubscribers doesn't keep
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      if (existing.authRefreshTimerId !== null) {
+        BgTimer.clearTimeout(existing.authRefreshTimerId)
+        existing.authRefreshTimerId = null
+      }
       for (const stream of existing.subscriptions) {
         const subs = this.streamSubscribers.get(stream)
         if (subs) {
@@ -483,6 +560,7 @@ class LocalMiniappRuntime {
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       installedManifest,
+      authRefreshTimerId: null,
       speakerState: "idle",
       requestedLocationRate: null,
     })
@@ -490,7 +568,60 @@ class LocalMiniappRuntime {
     // now gone — recompute so the aggregate doesn't include a stale rate.
     // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
     this.recomputeLocationTier()
+    this.ensureCloudStatusWired()
     this.ensurePingLoop()
+  }
+
+  /**
+   * Resolve once `packageName` has completed its CONNECT handshake. If it has
+   * already connected, resolves immediately. Rejects if the timeout elapses
+   * first, or if the app is unregistered while waiting.
+   *
+   * Used by the launcher's `ensureConnected` (and thus the action broker) so a
+   * just-spawned target is known to be live before anything is delivered to it.
+   */
+  public waitForConnect(packageName: string, timeoutMs: number): Promise<void> {
+    if (this.handshookApps.has(packageName)) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      const waiter = (err?: Error) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.connectWaiters.get(packageName)?.delete(waiter)
+        if (err) reject(err)
+        else resolve()
+      }
+      const timer = setTimeout(() => {
+        waiter(new Error(`waitForConnect: ${packageName} did not connect within ${timeoutMs}ms`))
+      }, timeoutMs)
+      let set = this.connectWaiters.get(packageName)
+      if (!set) {
+        set = new Set()
+        this.connectWaiters.set(packageName, set)
+      }
+      set.add(waiter)
+    })
+  }
+
+  /** Resolve/reject all pending {@link waitForConnect} waiters for a package. */
+  private flushConnectWaiters(packageName: string, err?: Error): void {
+    const waiters = this.connectWaiters.get(packageName)
+    if (!waiters) return
+    this.connectWaiters.delete(packageName)
+    for (const w of waiters) w(err)
+  }
+
+  /**
+   * Invalidate the CONNECT handshake for a package whose native context is
+   * being replaced WITHOUT going through register/unregister — i.e. a crash
+   * respawn. Without this, {@link waitForConnect} would treat the dead/
+   * not-yet-initialized context as connected and deliver to it. Pending waiters
+   * are failed so a wake mid-respawn retries rather than hanging.
+   */
+  public resetHandshake(packageName: string): void {
+    this.handshookApps.delete(packageName)
+    this.flushConnectWaiters(packageName, new Error(`${packageName} respawning`))
   }
 
   /**
@@ -539,6 +670,13 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.clearForegroundProbe(packageName)
+    this.clearMiniappAuthRefresh(packageName)
+    // Drop the handshake flag and fail any in-flight waitForConnect() callers
+    // (e.g. a wake that's mid-handshake when the app is torn down). Done before
+    // the early-return so it runs even if the connectedApps entry is already gone.
+    this.handshookApps.delete(packageName)
+    this.flushConnectWaiters(packageName, new Error(`${packageName} unregistered before connect`))
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
@@ -559,19 +697,27 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
+    // Tear down this app's blob state: abort in-flight uploads + close readers
+    // so a crashed/closed miniapp doesn't leak partial files or file handles.
+    this.blobStore.onAppGone(packageName)
+
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
     // so glasses publishing and managed Cloudflare inputs do not leak.
-    void getRuntimeHooks().streaming?.stop(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
-    })
+    void getRuntimeHooks()
+      .streaming?.stop(packageName)
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
+      })
 
     // Stop any phone-owned video recordings for this app. A miniapp that
     // closes/crashes mid-recording loses its recordingId, so without this the
     // glasses keep recording until the max-recording timeout or thermal shutdown.
-    void getRuntimeHooks().videoRecording?.stopForApp?.(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
-    })
+    void getRuntimeHooks()
+      .videoRecording?.stopForApp?.(packageName)
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
+      })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -637,6 +783,11 @@ class LocalMiniappRuntime {
       return
     }
 
+    // ANY inbound message proves the context is alive — a busy background
+    // script streaming DISPLAY/storage traffic shouldn't be killed by the
+    // liveness watchdog just because its PONG replies queue behind real work.
+    this.handlePong(packageName)
+
     // Console-tap forwarding. The miniapp's console.log/warn/etc is wrapped
     // (via injected shim from miniappGlobals.ts) to post a `dev_log`
     // envelope. We fan out to two destinations:
@@ -668,13 +819,19 @@ class LocalMiniappRuntime {
     // Dispatch
     switch (requestType) {
       case MiniappRequestType.CONNECT:
-        this.handleConnect(packageName, payload, requestId)
+        void this.handleConnect(packageName, payload, requestId)
+        break
+      case MiniappRequestType.AUTH_REFRESH:
+        void this.handleAuthRefresh(packageName, payload, requestId)
         break
       case MiniappRequestType.SUBSCRIBE:
         this.handleSubscribe(packageName, payload, requestId)
         break
       case MiniappRequestType.DISPLAY:
         this.handleDisplay(packageName, payload, requestId)
+        break
+      case MiniappRequestType.CANVAS:
+        this.handleCanvas(packageName, payload, requestId)
         break
       case MiniappRequestType.PLAY_AUDIO:
         this.handlePlayAudio(packageName, payload, requestId)
@@ -714,6 +871,12 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.NAVIGATION_REVERSE_GEOCODE:
         this.navigationHandlers.handleReverseGeocode(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_PLACE_AUTOCOMPLETE:
+        this.navigationHandlers.handlePlaceAutocomplete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_PLACE_DETAILS:
+        this.navigationHandlers.handlePlaceDetails(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
         this.navigationHandlers.handleRequestPermission(packageName, requestId)
@@ -759,8 +922,8 @@ class LocalMiniappRuntime {
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
         break
       case MiniappResponseType.PONG:
-        // Miniapp's auto-reply to our PING — mark the app as alive
-        this.handlePong(packageName)
+        // Liveness already touched above for every inbound message; the
+        // PONG carries no other action.
         break
 
       case MiniappRequestType.SHARE:
@@ -774,6 +937,53 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.DOWNLOAD:
         this.handleDownload(packageName, payload, requestId)
+        break
+
+      // Persistent binary blob storage (session.blob)
+      case MiniappRequestType.BLOB_CREATE:
+        this.blobStore.handleCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_WRITE:
+        this.blobStore.handleWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_COMMIT:
+        this.blobStore.handleCommit(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_ABORT:
+        this.blobStore.handleAbort(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SET_FROM_URL:
+        void this.blobStore.handleSetFromUrl(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_IMPORT:
+        void this.blobStore.handleImport(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_GET:
+        this.blobStore.handleGet(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_LIST:
+        this.blobStore.handleList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_USAGE:
+        this.blobStore.handleUsage(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_DELETE:
+        this.blobStore.handleDelete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLEAR:
+        this.blobStore.handleClear(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_OPEN_READ:
+        this.blobStore.handleOpenRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_READ:
+        this.blobStore.handleRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLOSE_READ:
+        this.blobStore.handleCloseRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SHARE:
+        void this.blobStore.handleShare(packageName, payload, requestId)
         break
 
       // Cloud-coordinated features
@@ -799,6 +1009,23 @@ class LocalMiniappRuntime {
         void this.handleManagedStreamStop(packageName, payload, requestId)
         break
 
+      // Inter-miniapp interop (SYSTEM apps only)
+      case MiniappRequestType.MINIAPPS_LIST:
+        this.handleMiniappsList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_START:
+        void this.handleMiniappsStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_STOP:
+        void this.handleMiniappsStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.ACTION_INVOKE:
+        void this.handleActionInvoke(packageName, payload, requestId)
+        break
+      case MiniappRequestType.ACTION_RESULT:
+        this.handleActionResult(packageName, payload)
+        break
+
       // Deferred in v1
       case MiniappRequestType.DASHBOARD_CONTENT_UPDATE:
         this.sendResult(packageName, requestId, false, undefined, {
@@ -817,10 +1044,12 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handleConnect(
+    packageName: string,
+    _payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
-
-    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -842,6 +1071,10 @@ class LocalMiniappRuntime {
     // to false; this is manifest-declaration tracking only — OS-grant state
     // is intentionally not modeled here.
     const declaredPermissions = computeDeclaredPermissionRecord(existing.installedManifest)
+    const authPromise = this.requestMiniappAuth(packageName)
+    const initialAuth = await withTimeout(authPromise, 1_500)
+    const userId = initialAuth?.mentraUserId ?? ""
+    if (initialAuth) this.scheduleMiniappAuthRefresh(packageName, initialAuth)
 
     this.sendToMiniapp(
       packageName,
@@ -851,9 +1084,100 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
     )
+    if (!initialAuth) {
+      authPromise
+        .then((auth) => {
+          if (!auth) return
+          this.scheduleMiniappAuthRefresh(packageName, auth)
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.AUTH_UPDATE,
+            auth,
+          })
+        })
+        .catch((err) => {
+          console.warn(`${LOG_TAG}: miniapp auth unavailable for ${packageName}: ${(err as Error)?.message ?? err}`)
+        })
+    }
+    this.sendCloudStatusToMiniapp(packageName)
+
+    // Handshake complete — unblock any launcher.waitForConnect() callers.
+    this.handshookApps.add(packageName)
+    this.flushConnectWaiters(packageName)
+  }
+
+  private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = getRuntimeHooks().miniappAuth
+    if (!auth) return null
+    return auth.getToken(packageName, opts)
+  }
+
+  private async handleAuthRefresh(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
+      if (!auth) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_CONNECTED,
+          message: "Miniapp auth is not configured",
+        })
+        return
+      }
+      this.sendResult(packageName, requestId, true, {auth})
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (err as Error)?.message ?? "Miniapp auth refresh failed",
+      })
+    }
+  }
+
+  private async refreshMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    const auth = await this.requestMiniappAuth(packageName, opts)
+    if (!auth) return null
+    this.scheduleMiniappAuthRefresh(packageName, auth)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth,
+    })
+    return auth
+  }
+
+  private authRefreshOptions(payload: Record<string, unknown>): {minTtlMs?: number} | undefined {
+    const minTtlMs = Number(payload.minTtlMs)
+    if (!Number.isFinite(minTtlMs) || minTtlMs <= 0) return undefined
+    return {minTtlMs}
+  }
+
+  private scheduleMiniappAuthRefresh(packageName: string, auth: MiniappAuthToken): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    this.clearMiniappAuthRefresh(packageName)
+
+    const refreshAt = auth.expiresAt - MINIAPP_AUTH_REFRESH_HEADROOM_MS
+    const delay = Math.max(MINIAPP_AUTH_REFRESH_MIN_DELAY_MS, refreshAt - Date.now())
+    app.authRefreshTimerId = BgTimer.setTimeout(() => {
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      current.authRefreshTimerId = null
+      void this.refreshMiniappAuth(packageName).catch((err) => {
+        console.warn(`${LOG_TAG}: miniapp auth refresh failed for ${packageName}: ${(err as Error)?.message ?? err}`)
+      })
+    }, delay)
+  }
+
+  private clearMiniappAuthRefresh(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authRefreshTimerId === null) return
+    const timerId = app.authRefreshTimerId
+    BgTimer.clearTimeout(timerId)
+    app.authRefreshTimerId = null
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -1064,6 +1388,74 @@ class LocalMiniappRuntime {
     }
   }
 
+  /**
+   * Canvas commands (session.canvas.*). A distinct command vocabulary from
+   * DISPLAY — `{operation, options}` rather than `{view, layout}`. The glasses
+   * have no native canvas surface yet, so each operation is translated into the
+   * equivalent display event and routed through LocalDisplayManager, reusing its
+   * boot/throttle/arbitration/expiry + native BluetoothSdk.displayEvent path.
+   *
+   * `show_page` is the one operation with no native target today (there's no
+   * host-side page concept); it's a recognized no-op so callers don't error.
+   */
+  private handleCanvas(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    try {
+      const operation = payload.operation as CanvasOperation | undefined
+      const options = (payload.options as Record<string, unknown> | undefined) ?? {}
+
+      let layout: DisplayPayload["layout"] | null = null
+      switch (operation) {
+        case CanvasOperation.SHOW_TEXT:
+          layout = {
+            layoutType: "positioned_text",
+            text: options.text,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+            borderWidth: options.borderWidth,
+            borderRadius: options.borderRadius,
+          }
+          break
+        case CanvasOperation.SHOW_BITMAP:
+          layout = {
+            layoutType: "bitmap_view",
+            data: options.data,
+            x: options.x,
+            y: options.y,
+            width: options.width,
+            height: options.height,
+          }
+          break
+        case CanvasOperation.CLEAR:
+          layout = {layoutType: "clear_view"}
+          break
+        case CanvasOperation.SHOW_PAGE:
+          // No native page surface yet — recognize the command and ack so the
+          // miniapp's showPage() resolves. Render wiring is future work.
+          console.log(`${LOG_TAG}: canvas show_page (no native target yet):`, options.id)
+          this.sendResult(packageName, requestId, true)
+          return
+        default:
+          this.sendResult(packageName, requestId, false, undefined, {
+            code: MiniappErrorCode.INTERNAL,
+            message: `unknown canvas operation "${String(operation)}"`,
+          })
+          return
+      }
+
+      localDisplayManager.request(packageName, {view: "main", layout})
+
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: canvas error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Canvas error",
+      })
+    }
+  }
+
   private handlePlayAudio(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     const audioUrl = (payload.audioUrl ?? payload.url) as string | undefined
     if (!audioUrl) {
@@ -1141,7 +1533,8 @@ class LocalMiniappRuntime {
 
       this.setSpeakerState(packageName, "loading")
 
-      const audioPlayback = getRuntimeHooks().audioPlayback
+      const hooks = getRuntimeHooks()
+      const audioPlayback = hooks.audioPlayback
       if (!audioPlayback) {
         const message = "audio playback unavailable"
         this.setSpeakerState(packageName, "error", {
@@ -1155,33 +1548,64 @@ class LocalMiniappRuntime {
         return
       }
 
-      // Try offline TTS first; on synthesize failure (e.g. requested voice's
-      // language model isn't downloaded) fall through to cloud TTS rather
-      // than surfacing the offline error to the miniapp.
-      //
-      // If the miniapp passed an explicit `voice_id` that offline TTS can't
-      // honor (e.g. an ElevenLabs voice id), skip offline entirely instead of
-      // silently substituting the default offline voice — the miniapp asked
-      // for a specific voice and we shouldn't lie about which one it got.
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
-        !voiceExplicit ||
-        voice === "default" ||
-        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
-      let offlineGenerated: TtsSynthesisResult | undefined
-      if (offlineSupportsVoice && (await ttsModelManager.isModelAvailable())) {
-        try {
-          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
-            ? voice
-            : undefined
-          offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
-        } catch (offlineErr) {
-          console.warn(`${LOG_TAG}: offline TTS synthesize failed, falling back to cloud:`, offlineErr)
-          offlineGenerated = undefined
+        !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+
+      const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
+      const cloud = hooks.cloud
+      const cloudConnected = cloud?.isConnected() === true
+      console.log(
+        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=${cloud?.tts ? "yes" : "no"}, offlineVoice=${offlineSupportsVoice}`,
+      )
+
+      let terminalSent = false
+      const sendPlaybackResult = (
+        success: boolean,
+        error: string | null,
+        duration: number | null,
+        fallbackErrorMessage: string,
+      ) => {
+        if (terminalSent) return
+        terminalSent = true
+        if (success) {
+          this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
+        } else {
+          this.setSpeakerState(packageName, "error", {
+            errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+            errorMessage: error ?? fallbackErrorMessage,
+            durationMs: duration ?? undefined,
+          })
         }
+        this.sendResult(
+          packageName,
+          requestId,
+          success,
+          {completed: success, duration},
+          error
+            ? {
+                code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+                message: error,
+              }
+            : undefined,
+        )
       }
 
-      if (offlineGenerated) {
+      const playOfflineTts = async (reason?: string): Promise<boolean> => {
+        if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
+          return false
+        }
+
+        let offlineGenerated: TtsSynthesisResult | undefined
+
+        try {
+          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
+          offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
+        } catch (offlineErr) {
+          console.warn(`${LOG_TAG}: offline TTS synthesize failed${reason ? ` after ${reason}` : ""}:`, offlineErr)
+          return false
+        }
+
         const generated = offlineGenerated
         audioPlayback.play(
           {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
@@ -1189,63 +1613,76 @@ class LocalMiniappRuntime {
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
               console.warn(`${LOG_TAG}: offline TTS cleanup failed`, cleanupError)
             })
-            if (success) {
-              this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
-            } else {
-              this.setSpeakerState(packageName, "error", {
-                errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                errorMessage: error ?? "offline tts playback failed",
-                durationMs: duration ?? undefined,
-              })
-            }
-            this.sendResult(
-              packageName,
-              requestId,
-              success,
-              {completed: success, duration},
-              error
-                ? {
-                    code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                    message: error,
-                  }
-                : undefined,
-            )
+            sendPlaybackResult(success, error, duration, "offline tts playback failed")
           },
         )
         queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        return true
+      }
+
+      const playCloudTts = async (fallbackToOffline: boolean): Promise<boolean> => {
+        if (!cloud?.tts) return false
+
+        let source: Awaited<ReturnType<typeof cloud.tts.speak>>
+        try {
+          source = await cloud.tts.speak(text, {
+            ...(voiceExplicit && voice !== "default" ? {voice_id: voice} : {}),
+            ...(modelId ? {model_id: modelId} : {}),
+            ...(voiceSettings ? {voice_settings: voiceSettings} : {}),
+          })
+        } catch (cloudErr) {
+          const error = cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
+          console.warn(`${LOG_TAG}: cloud TTS source failed: ${error}`)
+          if (fallbackToOffline && (await playOfflineTts("cloud tts source failed"))) {
+            return true
+          }
+          sendPlaybackResult(false, error, null, "tts failed")
+          return true
+        }
+
+        await Promise.resolve(
+          audioPlayback.play(
+            {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
+            (_respId, success, error, duration) => {
+              if (!success && fallbackToOffline) {
+                void playOfflineTts("cloud tts playback failed").then((started) => {
+                  if (!started) {
+                    sendPlaybackResult(false, error, duration, "tts failed")
+                  }
+                })
+                return
+              }
+              sendPlaybackResult(success, error, duration, "tts failed")
+            },
+          ),
+        )
+        queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        return true
+      }
+
+      if (cloudConnected && (await playCloudTts(true))) {
         return
       }
 
-      const backendUrl = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)
-      const ttsUrl = `${backendUrl}/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`
+      // Offline is the disconnected-cloud fallback. If the model is not
+      // available, preserve the old behavior by trying cloud as a last resort.
+      if (await playOfflineTts(cloudConnected ? undefined : "cloud disconnected")) {
+        return
+      }
 
-      audioPlayback.play(
-        {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume, stopOtherAudio},
-        (_respId, success, error, duration) => {
-          if (success) {
-            this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
-          } else {
-            this.setSpeakerState(packageName, "error", {
-              errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-              errorMessage: error ?? "tts failed",
-              durationMs: duration ?? undefined,
-            })
-          }
-          this.sendResult(
-            packageName,
-            requestId,
-            success,
-            {completed: success, duration},
-            error
-              ? {
-                  code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                  message: error,
-                }
-              : undefined,
-          )
-        },
-      )
-      queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+      if (await playCloudTts(false)) {
+        return
+      }
+
+      const message = "tts unavailable: no cloud TTS URL or offline TTS model"
+      this.setSpeakerState(packageName, "error", {
+        errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+        errorMessage: message,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+        message,
+      })
     } catch (err) {
       console.error(`${LOG_TAG}: speak error:`, err)
       const message = err instanceof Error ? err.message : "TTS error"
@@ -1339,6 +1776,18 @@ class LocalMiniappRuntime {
   )
 
   /**
+   * `session.blob` — persistent, per-app binary storage. Like NavigationHandlers,
+   * the BLOB_* dispatcher cases delegate here. It's a generic byte store; audio
+   * recording lives entirely in the miniapp (mic.onAudioChunk → chunked
+   * BLOB_WRITE), so nothing audio-specific runs in the host.
+   */
+  private readonly blobStore = new BlobStore({
+    sendResult: (packageName, requestId, ok, result, error) =>
+      this.sendResult(packageName, requestId, ok, result, error),
+    getUserId: () => getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
+  })
+
+  /**
    * Heading is a sensor stream — start the native compass when any mini
    * app is subscribed to "heading_update", stop it when none are.
    */
@@ -1412,7 +1861,6 @@ class LocalMiniappRuntime {
     console.log(`[LOCATION] aggregate tier → ${next}`)
     getRuntimeHooks().locationTier?.setLocationTier(next)
   }
-
 
   // ---------------------------------------------------------------------------
   // Storage helpers
@@ -1845,7 +2293,7 @@ class LocalMiniappRuntime {
 
     try {
       const result = await photo.takePhoto(packageName, {
-        size: payload.size as "small" | "medium" | "large" | "full" | undefined,
+        size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
@@ -1856,6 +2304,8 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -1952,8 +2402,8 @@ class LocalMiniappRuntime {
     try {
       const result = await streaming.startUnmanaged(packageName, {
         streamUrl: payload.streamUrl as string,
-        video: payload.video,
-        audio: payload.audio,
+        video: normalizeStreamVideoConfig(payload.video),
+        audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
@@ -1961,6 +2411,8 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Stream start failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -1981,8 +2433,10 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Stream stop failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -2002,18 +2456,19 @@ class LocalMiniappRuntime {
     }
     try {
       const result = await streaming.startManaged(packageName, {
-        restreamDestinations: payload.restreamDestinations as
-          | Array<string | {url: string; name?: string}>
-          | undefined,
-        video: payload.video,
-        audio: payload.audio,
+        restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
+        video: normalizeStreamVideoConfig(payload.video),
+        audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
+        ingest: payload.ingest as "srt" | "whip" | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Managed stream start failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -2148,6 +2603,146 @@ class LocalMiniappRuntime {
     }
     getRuntimeHooks().socketComms?.updatePhoneSubscriptions(Array.from(cloudStreams))
     localSttFallbackCoordinator.onSubscriptionChange(transcriptionLang !== null, transcriptionLang)
+
+    // Mirror the same set as typed AudioSubscription[] and push it to the cloud
+    // runtime.
+    const cloud = getRuntimeHooks().cloud
+    if (cloud) {
+      this.ensureCloudResultsWired(cloud)
+      const subs = this.buildCloudAudioSubscriptions(cloudStreams)
+      console.log(
+        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
+      )
+      cloud.setSubscriptions(subs).catch((err) => {
+        // Best-effort: the cloud may not be connected yet. Logging is enough.
+        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+      })
+    }
+  }
+
+  /**
+   * Build the cloud `AudioSubscription[]` from the miniapp cloud-stream key set.
+   *
+   * Stream keys: `transcription:<lang>` (lang may be `auto`, `en-US`, …) and
+   * `translation:<source>:<target>` (3 colon-parts; source/target may be `*`
+   * or `auto` wildcards, target may also be `*`). The cloud protocol requires a
+   * concrete `target: string` for translation, so wildcard-target translation
+   * keys (`translation:<source>:*`, `translation:*:*`, `translation:auto`) have
+   * no cloud equivalent and are skipped. Wildcard/`auto` SOURCE maps to
+   * `{mode: "auto"}`.
+   */
+  private buildCloudAudioSubscriptions(cloudStreams: Set<string>): AudioSubscription[] {
+    const subs: AudioSubscription[] = []
+    const langSource = (code: string): LanguageSource =>
+      code === "auto" || code === "*" ? {mode: "auto"} : {mode: "specific", code}
+    for (const stream of cloudStreams) {
+      if (stream.startsWith("transcription:")) {
+        const lang = stream.substring("transcription:".length)
+        subs.push({kind: "transcription", language: langSource(lang)})
+      } else if (stream.startsWith("translation:")) {
+        const parts = stream.split(":")
+        // Only `translation:<source>:<target>` maps cleanly; a concrete target
+        // is required by the cloud schema.
+        if (parts.length === 3) {
+          const [, source, target] = parts
+          if (target === "*") continue
+          subs.push({kind: "translation", source: langSource(source), target})
+        }
+      }
+    }
+    return subs
+  }
+
+  /**
+   * Wire the cloud's transcription/translation results into the existing
+   * miniapp fan-out exactly once. Maps each cloud result back to the
+   * cloud-to-app data shape `forwardEvent` already forwards, keyed on the
+   * `transcription:<lang>` / `translation:<source>:<target>` stream strings, so
+   * subscribed miniapps receive identical envelopes.
+   */
+  private ensureCloudResultsWired(cloud: CloudRuntimeAdapter): void {
+    if (this.cloudResultsWired) return
+    this.cloudResultsWired = true
+
+    cloud.onTranscript((d: TranscriptionData) => {
+      this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
+        type: "transcription",
+        text: d.text,
+        isFinal: d.isFinal,
+        utteranceId: d.utteranceId,
+        transcribeLanguage: d.resolvedLanguage,
+        detectedLanguage: d.languageDetected ? d.resolvedLanguage : undefined,
+        startTime: d.startMs,
+        endTime: d.endMs,
+        speakerId: d.speakerId,
+        duration: d.durationMs,
+        provider: d.provider,
+        confidence: d.confidence,
+      })
+    })
+
+    cloud.onTranslation((d: TranslationData) => {
+      this.forwardEvent(`translation:${d.source.language}:${d.target.language}`, {
+        type: "translation",
+        text: d.text,
+        originalText: d.originalText,
+        isFinal: d.isFinal,
+        utteranceId: d.utteranceId,
+        startTime: d.startMs,
+        endTime: d.endMs,
+        speakerId: d.speakerId,
+        duration: d.durationMs,
+        transcribeLanguage: d.source.language,
+        translateLanguage: d.target.language,
+        didTranslate: true,
+        provider: d.provider,
+        confidence: d.confidence,
+      })
+    })
+  }
+
+  private ensureCloudStatusWired(): void {
+    if (this.cloudStatusWired) return
+    this.cloudStatusWired = true
+
+    getRuntimeHooks().cloud?.onStatusChanged((status) => {
+      if (status.status === "connected") {
+        this.updateCloudSubscriptions()
+      }
+      this.broadcastCloudStatus()
+    })
+
+    getRuntimeHooks().settings?.subscribeKey?.<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive, () => {
+      this.broadcastCloudStatus()
+    })
+  }
+
+  private currentCloudStatus(): CloudClientStatusSnapshot {
+    const base = getRuntimeHooks().cloud?.getStatus() ?? {
+      status: "disconnected",
+      audioTransport: "none",
+    }
+    const fallbackActive =
+      getRuntimeHooks().settings?.getSetting<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive) === true
+    return {
+      status: base.status,
+      audioTransport: fallbackActive ? "offline" : base.audioTransport,
+    }
+  }
+
+  private broadcastCloudStatus(): void {
+    const status = this.currentCloudStatus()
+    for (const packageName of this.connectedApps.keys()) {
+      this.sendCloudStatusToMiniapp(packageName, status)
+    }
+  }
+
+  private sendCloudStatusToMiniapp(packageName: string, status = this.currentCloudStatus()): void {
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.EVENT,
+      streamType: CLOUD_STATUS_STREAM,
+      data: status,
+    })
   }
 
   // ===========================================================================
@@ -2235,10 +2830,7 @@ class LocalMiniappRuntime {
       // Suppress the raw background-GPS forward for that miniapp so the two
       // streams don't interleave and cause the position to jump back to the
       // real-phone location during simulation.
-      if (
-        normalizedStream === MiniappStreamType.LOCATION_UPDATE &&
-        this.navigationHandlers.isTripActive(packageName)
-      ) {
+      if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.navigationHandlers.isTripActive(packageName)) {
         continue
       }
       this.sendToMiniapp(packageName, {
@@ -2359,6 +2951,347 @@ class LocalMiniappRuntime {
   /**
    * Send a REQUEST_RESULT response.
    */
+  // ===========================================================================
+  // Inter-miniapp interop (session.miniapps + session.actions.invoke)
+  // ===========================================================================
+
+  /** Max serialized size of an action call's params / result (256 KB). */
+  private static readonly ACTION_PAYLOAD_CAP = 256 * 1024
+
+  /** Outstanding action invocations, keyed by host-generated callId. */
+  private actionCalls = new Map<
+    string,
+    {callerPackageName: string; targetPackageName: string; callerRequestId?: string; timer: number}
+  >()
+  private actionCallSeq = 0
+
+  /** Emit an interop audit event (best-effort — never let telemetry break a call). */
+  private auditInterop(event: InteropAuditEvent): void {
+    try {
+      getRuntimeHooks().interop?.audit?.(event)
+    } catch {
+      /* telemetry must never break an interop call */
+    }
+  }
+
+  /** Reject the request with NOT_PERMITTED unless the caller is a system app. */
+  private requireSystemCaller(
+    packageName: string,
+    requestId: string | undefined,
+    op: InteropAuditEvent["op"],
+    target?: string,
+  ): boolean {
+    if (getRuntimeHooks().interop?.isSystemApp(packageName)) return true
+    this.auditInterop({caller: packageName, op, target, ok: false, errorCode: MiniappErrorCode.NOT_PERMITTED})
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.NOT_PERMITTED,
+      message: "Inter-miniapp APIs are restricted to system apps",
+    })
+    return false
+  }
+
+  /** Project a host ClientApp into the SDK's MiniappInfo shape (JSON over the wire). */
+  private buildMiniappInfo(app: ClientApp): Record<string, unknown> {
+    const compatibility = app.compatibility ?? {
+      isCompatible: true,
+      missingRequired: [],
+      missingOptional: [],
+      warnings: [],
+    }
+    return {
+      packageName: app.packageName,
+      name: app.name,
+      version: app.version ?? "",
+      running: app.running,
+      compatibility,
+      actions: app.actions ?? [],
+    }
+  }
+
+  private handleMiniappsList(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    if (!this.requireSystemCaller(packageName, requestId, "list")) return
+    const interop = getRuntimeHooks().interop
+    if (!interop) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "interop adapter not configured",
+      })
+      return
+    }
+    const includeIncompatible = payload.includeIncompatible === true
+    const infos = interop
+      .listApps()
+      .filter(
+        (a) =>
+          a.packageName &&
+          a.packageName !== packageName &&
+          !a.packageName.includes("@empty") &&
+          (includeIncompatible || a.compatibility?.isCompatible !== false),
+      )
+      .map((a) => this.buildMiniappInfo(a))
+    this.sendResult(packageName, requestId, true, infos)
+    this.auditInterop({caller: packageName, op: "list", ok: true})
+  }
+
+  private async handleMiniappsStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = payload.packageName as string | undefined
+    if (!this.requireSystemCaller(packageName, requestId, "start", target)) return
+    const interop = getRuntimeHooks().interop
+    const app = target ? interop?.listApps().find((a) => a.packageName === target) : undefined
+    if (!target || !app || !interop) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_FOUND,
+        message: `Miniapp not found: ${target ?? "(missing packageName)"}`,
+      })
+      this.auditInterop({
+        caller: packageName,
+        op: "start",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.APP_NOT_FOUND,
+      })
+      return
+    }
+    // Pre-flight the hardware gate so the caller gets a precise reason rather
+    // than a generic rejection (start()'s own gate would otherwise alert + abort).
+    if (app.compatibility && app.compatibility.isCompatible === false) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_COMPATIBLE,
+        message: `${target} is not compatible with the connected glasses`,
+      })
+      this.auditInterop({
+        caller: packageName,
+        op: "start",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.APP_NOT_COMPATIBLE,
+      })
+      return
+    }
+    try {
+      // startApp resolves to false when the host gate (beforeStart) rejected the
+      // launch or the background context failed to spawn — don't report success.
+      const started = await interop.startApp(target)
+      if (started) {
+        this.sendResult(packageName, requestId, true)
+        this.auditInterop({caller: packageName, op: "start", target, ok: true})
+      } else {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: `start of ${target} was rejected by the host (gated or failed to spawn)`,
+        })
+        this.auditInterop({
+          caller: packageName,
+          op: "start",
+          target,
+          ok: false,
+          errorCode: MiniappErrorCode.INTERNAL,
+        })
+      }
+    } catch (e) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (e as Error)?.message ?? "start failed",
+      })
+      this.auditInterop({
+        caller: packageName,
+        op: "start",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.INTERNAL,
+      })
+    }
+  }
+
+  private async handleMiniappsStop(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = payload.packageName as string | undefined
+    if (!this.requireSystemCaller(packageName, requestId, "stop", target)) return
+    const interop = getRuntimeHooks().interop
+    if (!target || !interop) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_FOUND,
+        message: "stop requires a packageName",
+      })
+      return
+    }
+    try {
+      await interop.stopApp(target)
+      this.sendResult(packageName, requestId, true)
+      this.auditInterop({caller: packageName, op: "stop", target, ok: true})
+    } catch (e) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (e as Error)?.message ?? "stop failed",
+      })
+    }
+  }
+
+  /** True iff `value` serializes larger than the action payload cap. */
+  private actionPayloadTooLarge(value: unknown): boolean {
+    try {
+      return JSON.stringify(value ?? null).length > LocalMiniappRuntime.ACTION_PAYLOAD_CAP
+    } catch {
+      // Unserializable — let it through; the transport's own serialize handles it.
+      return false
+    }
+  }
+
+  /**
+   * session.actions.invoke → wake the target headlessly, deliver an ACTION_CALL,
+   * and correlate its ACTION_RESULT back to the caller's pending request.
+   */
+  private async handleActionInvoke(
+    callerPackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const targetForGate = payload.targetPackageName as string | undefined
+    if (!this.requireSystemCaller(callerPackageName, requestId, "invoke", targetForGate)) return
+
+    const target = payload.targetPackageName as string | undefined
+    const actionId = payload.actionId as string | undefined
+    const params = (payload.params as Record<string, unknown> | undefined) ?? {}
+    // Floor the timeout at 6s so the host never rejects with ACTION_TIMEOUT before
+    // the target SDK's handler-registration window closes. A freshly-woken miniapp
+    // buffers an undelivered ACTION_CALL for HANDLER_WAIT_MS (5s in @mentra/miniapp's
+    // actions module) waiting for session.actions.handle; a shorter host timeout
+    // could fire while the target is still registering, then the action would run
+    // with no caller left to receive its result. 6s = that 5s buffer + 1s for the
+    // ACTION_RESULT/NO_ACTION_HANDLER reply to travel back. Keep these in sync.
+    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
+    const interop = getRuntimeHooks().interop
+
+    if (this.actionPayloadTooLarge(params)) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
+        message: "action params exceeded the 256 KB cap",
+      })
+      return
+    }
+
+    const app = target ? interop?.listApps().find((a) => a.packageName === target) : undefined
+    if (!target || !app || !interop) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_FOUND,
+        message: `Miniapp not found: ${target ?? "(missing targetPackageName)"}`,
+      })
+      return
+    }
+    if (!actionId) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.ACTION_NOT_FOUND,
+        message: "invoke requires an actionId",
+      })
+      return
+    }
+    if (app.compatibility && app.compatibility.isCompatible === false) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_COMPATIBLE,
+        message: `${target} is not compatible with the connected glasses`,
+      })
+      return
+    }
+    // Declared-action gate — only once the host populates app.actions (Phase 2);
+    // until then app.actions is undefined and we fall through to NO_ACTION_HANDLER.
+    if (!(app.actions ?? []).some((a) => a.id === actionId)) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.ACTION_NOT_FOUND,
+        message: `${target} does not declare action "${actionId}"`,
+      })
+      return
+    }
+
+    // Headless wake + wait for CONNECT (idempotent / fast if already connected).
+    try {
+      await interop.wakeMiniapp(target)
+    } catch (e) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.WAKE_FAILED,
+        message: (e as Error)?.message ?? `failed to wake ${target}`,
+      })
+      return
+    }
+
+    // The wake waited for CONNECT, but the target could have dropped in the gap
+    // before delivery — fail fast rather than arming a timer for a call that
+    // sendToMiniapp would silently drop (the caller would otherwise wait the
+    // full invoke timeout for an ACTION_CALL that was never delivered).
+    if (!this.connectedApps.has(target)) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.WAKE_FAILED,
+        message: `${target} disconnected before the action could be delivered`,
+      })
+      this.auditInterop({
+        caller: callerPackageName,
+        op: "invoke",
+        target,
+        actionId,
+        ok: false,
+        errorCode: MiniappErrorCode.WAKE_FAILED,
+      })
+      return
+    }
+
+    // Deliver the call and arm the handler timeout; ACTION_RESULT resolves it.
+    const callId = `act-${Date.now().toString(36)}-${this.actionCallSeq++}`
+    const timer = BgTimer.setTimeout(() => {
+      this.actionCalls.delete(callId)
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.ACTION_TIMEOUT,
+        message: `action "${actionId}" timed out after ${timeoutMs}ms`,
+      })
+    }, timeoutMs)
+    this.actionCalls.set(callId, {callerPackageName, targetPackageName: target, callerRequestId: requestId, timer})
+    this.sendToMiniapp(target, {
+      type: MiniappResponseType.ACTION_CALL,
+      callId,
+      actionId,
+      params,
+      callerPackageName,
+    })
+    this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: true})
+  }
+
+  /** Target → host: forward an ACTION_RESULT back to the caller's pending invoke. */
+  private handleActionResult(targetPackageName: string, payload: Record<string, unknown>): void {
+    const callId = payload.callId as string | undefined
+    if (!callId) return
+    const pending = this.actionCalls.get(callId)
+    if (!pending) return
+    // Only the invoked target may resolve this call. callIds are guessable
+    // (timestamp + seq), so a different connected miniapp must not be able to
+    // spoof a result/error for someone else's invoke.
+    if (pending.targetPackageName !== targetPackageName) return
+    this.actionCalls.delete(callId)
+    BgTimer.clearTimeout(pending.timer)
+
+    if (payload.ok === true) {
+      const result = payload.result
+      if (this.actionPayloadTooLarge(result)) {
+        this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, {
+          code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
+          message: "action result exceeded the 256 KB cap",
+        })
+        return
+      }
+      this.sendResult(pending.callerPackageName, pending.callerRequestId, true, result ?? null)
+    } else {
+      const error = (payload.error as ({code: string; message: string} & Record<string, unknown>) | undefined) ?? {
+        code: MiniappErrorCode.INTERNAL,
+        message: "action handler error",
+      }
+      this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, error)
+    }
+  }
+
   private sendResult(
     packageName: string,
     requestId: string | undefined,
@@ -2389,6 +3322,41 @@ class LocalMiniappRuntime {
       type: MiniappResponseType.VISIBILITY_CHANGE,
       visibility,
     })
+  }
+
+  /**
+   * Fast foreground liveness check used when a local miniapp UI is opened or
+   * resumed. The normal watchdog intentionally waits ~30s to avoid killing a
+   * healthy-but-busy background script. When the user is actively looking at a
+   * WebView, a stale JSContext reads as "cloud offline" / no captions, so probe
+   * immediately and reuse the crash-respawn path if no message comes back.
+   */
+  public probeForegroundLiveness(
+    packageName: string,
+    reason = "foreground-open",
+    timeoutMs = FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS,
+  ): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    this.clearForegroundProbe(packageName)
+    const probeStartedAt = Date.now()
+
+    this.sendToMiniapp(packageName, {
+      type: MiniappRequestType.PING,
+    })
+
+    const timerId = BgTimer.setTimeout(() => {
+      this.foregroundProbeTimers.delete(packageName)
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      if (current.lastPongAt >= probeStartedAt) return
+
+      console.warn(`${LOG_TAG}: ${packageName} failed foreground liveness probe (${reason}), respawning`)
+      this.unregisterApp(packageName)
+      this.onLivenessTimeout?.(packageName)
+    }, timeoutMs)
+    this.foregroundProbeTimers.set(packageName, timerId)
   }
 
   // ===========================================================================
@@ -2431,6 +3399,9 @@ class LocalMiniappRuntime {
 
     for (const pkg of toRemove) {
       this.unregisterApp(pkg)
+      // Hand the package to the router's respawn machinery — a missed-pings
+      // death is treated like a crash so the background script comes back.
+      this.onLivenessTimeout?.(pkg)
     }
   }
 
@@ -2442,7 +3413,15 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (app) {
       app.lastPongAt = Date.now()
+      this.clearForegroundProbe(packageName)
     }
+  }
+
+  private clearForegroundProbe(packageName: string): void {
+    const timerId = this.foregroundProbeTimers.get(packageName)
+    if (timerId == null) return
+    BgTimer.clearTimeout(timerId)
+    this.foregroundProbeTimers.delete(packageName)
   }
 
   // ===========================================================================
@@ -2463,6 +3442,10 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.clear()
     this.streamSubscribers.clear()
     this.connectedApps.clear()
+    for (const timerId of this.foregroundProbeTimers.values()) {
+      BgTimer.clearTimeout(timerId)
+    }
+    this.foregroundProbeTimers.clear()
 
     LocalMiniappRuntime.instance = null
   }

@@ -104,3 +104,36 @@ export function isSentryTransientError(err) {
   ];
   return bareTransient.some((re) => re.test(haystack));
 }
+
+/**
+ * Predicate for withRetry on the iOS archive: retry on the non-deterministic
+ * Mapbox SPM build-order race in addition to the Sentry/network transients.
+ *
+ * The `Crust` pod imports Mapbox SPM products (MapboxDirections /
+ * MapboxNavigationCore / MapboxMaps) that are linked to the app target, not to
+ * Crust. Crust gets compile-time visibility via search paths into the shared
+ * build-products dir, where SPM drops the .swiftmodule. In a clean archive the
+ * targets build in parallel and Crust can compile BEFORE SPM has emitted that
+ * module → "error: no such module 'MapboxDirections'" (or NavigationCore/Maps)
+ * → ARCHIVE FAILED (exit 65). The race is non-deterministic and the failed
+ * partial build still leaves the swiftmodule in DerivedData, so a retry almost
+ * always finds it present and succeeds.
+ *
+ * We deliberately scope this to the Mapbox module names: a "no such module"
+ * for any OTHER module is a real, non-transient error (missing dependency,
+ * broken pod) and should fail fast rather than burn retries.
+ */
+export function isSPMOrSentryTransientError(err) {
+  if (isSentryTransientError(err)) return true;
+
+  const haystack = [
+    err?.message,
+    err?.stdout,
+    err?.stderr,
+  ].filter(Boolean).join('\n');
+  if (!haystack) return false;
+
+  // "no such module 'Mapbox…'" — the SPM build-order race. Scoped to Mapbox
+  // module names so unrelated missing-module errors still fail immediately.
+  return /no such module ['"]Mapbox\w+['"]/i.test(haystack);
+}
