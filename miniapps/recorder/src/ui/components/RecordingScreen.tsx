@@ -43,8 +43,10 @@ export function RecordingScreen({
   onStop,
   onCancel,
 }: Props) {
-  const [startedAt] = useState(() => Date.now())
   const [view, setView] = useState<View>("audio")
+  // Capture start comes from the background (stable across pause + reopen), not
+  // when this screen mounted.
+  const startedAt = status.startedAt
   const speaking = !paused && status.level > 0.06
 
   return (

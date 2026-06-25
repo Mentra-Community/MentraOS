@@ -58,6 +58,8 @@ export class RecorderController {
   private lastLevel = 0
   private lastEmitMs = 0
   private writeErrored = false
+  /** Epoch ms the current capture began — stable across pause + WebView reopen. */
+  private captureStartedAt = 0
   /** True while the capture is paused (mic + transcription feed suspended). */
   private paused = false
   /** Committed transcript text (final results), accumulated across the capture. */
@@ -168,6 +170,10 @@ export class RecorderController {
       usage: this.usage,
       playingId: this.playingId,
       hasMic: this.session.mic.hasPermission,
+      // Restore the in-progress transcript so a WebView reopened mid-capture
+      // shows what's been transcribed so far (not just text from new speech).
+      transcript: this.recordingId ? [this.finalTranscript, this.interimTranscript].filter(Boolean).join(" ") : "",
+      transcriptLang: this.recordingId ? this.lang : "",
     })
   }
 
@@ -189,6 +195,7 @@ export class RecorderController {
       this.lastLevel = 0
       this.lastEmitMs = 0
       this.writeErrored = false
+      this.captureStartedAt = Date.now()
       this.paused = false
       this.finalTranscript = ""
       this.interimTranscript = ""
@@ -199,7 +206,14 @@ export class RecorderController {
       this.unsubs.push(() => this.micUnsub?.())
       this.subscribeTranscription()
 
-      this.lastStatus = {recordingId: writer.key, ms: 0, bytes: WAV_HEADER_BYTES, level: 0, paused: false}
+      this.lastStatus = {
+        recordingId: writer.key,
+        startedAt: this.captureStartedAt,
+        ms: 0,
+        bytes: WAV_HEADER_BYTES,
+        level: 0,
+        paused: false,
+      }
       this.ui.send("rec:status", this.lastStatus)
       this.renderHud()
     } catch (err) {
@@ -270,6 +284,7 @@ export class RecorderController {
     this.lastEmitMs = ms
     this.lastStatus = {
       recordingId: this.recordingId!,
+      startedAt: this.captureStartedAt,
       ms,
       bytes: WAV_HEADER_BYTES + captured,
       level: this.lastLevel,
@@ -290,10 +305,21 @@ export class RecorderController {
       /* ignore */
     }
     this.micUnsub = null
+    // Tearing down transcription means the pending interim words will never be
+    // finalized — commit them now so they survive into the saved transcript.
+    this.commitInterim()
     this.unsubscribeTranscription()
     this.paused = true
     this.lastLevel = 0
     this.emitStatus()
+  }
+
+  /** Fold the in-progress interim transcript into the committed text. */
+  private commitInterim(): void {
+    const t = this.interimTranscript.trim()
+    if (!t) return
+    this.finalTranscript = this.finalTranscript ? `${this.finalTranscript} ${t}` : t
+    this.interimTranscript = ""
   }
 
   /** Re-arm the mic + transcription feeds and continue appending. */
@@ -311,6 +337,7 @@ export class RecorderController {
     const captured = this.pcmBytes + this.bufBytes
     this.lastStatus = {
       recordingId: this.recordingId,
+      startedAt: this.captureStartedAt,
       ms: pcmDurationMs(captured, this.sampleRate),
       bytes: WAV_HEADER_BYTES + captured,
       level: this.paused ? 0 : this.lastLevel,
@@ -454,6 +481,7 @@ export class RecorderController {
     this.bufBytes = 0
     this.pcmBytes = 0
     this.writeErrored = false
+    this.captureStartedAt = 0
     this.paused = false
     this.finalTranscript = ""
     this.interimTranscript = ""

@@ -52,12 +52,19 @@ export function useRecorder() {
           usage: Usage
           playingId: string | null
           hasMic: boolean
+          transcript?: string
+          transcriptLang?: string
         }
         setStatus(s.recording)
         setRecordings(s.recordings)
         setUsage(s.usage)
         setPlayingId(s.playingId)
         setHasMic(s.hasMic)
+        // Restore an in-progress capture's transcript on WebView reopen.
+        if (s.recording) {
+          setTranscript(s.transcript ?? "")
+          setTranscriptLang(s.transcriptLang ?? "")
+        }
         setReady(true)
       }),
     )

@@ -29,6 +29,8 @@ export interface RecordingItem {
 /** Live status while a capture is in progress. */
 export interface RecorderStatus {
   recordingId: string
+  /** Epoch ms the capture began (stable across pause + WebView reopen). */
+  startedAt: number
   /** Elapsed capture time, ms. */
   ms: number
   /** Bytes written so far. */
@@ -56,4 +58,8 @@ export interface RecorderSnapshot {
   playingId: string | null
   /** True when a glasses microphone is available to record from. */
   hasMic: boolean
+  /** Accumulated live transcript (final + interim) for an in-progress capture. */
+  transcript?: string
+  /** Detected transcription language for an in-progress capture. */
+  transcriptLang?: string
 }
