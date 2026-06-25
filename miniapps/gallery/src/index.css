@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* ── Gallery design system — editorial pure white × electric cobalt ──────────
+   Tokens mirror the Paper file ("Engaging rain"). Display = Red Hat Display
+   (bundled); body = Inter (system fallback); technical labels = JetBrains Mono
+   (system mono fallback). Full-screen surfaces invert to near-black. */
+@theme {
+  --color-ground: #ffffff;
+  --color-surface: #f4f5f8;
+  --color-ink: #0b0e14;
+  --color-muted: #6a7282;
+  --color-line: #e7e9ef;
+  --color-night: #06080c;
+  --color-cobalt: #1f45ff;
+  --color-cobalt-press: #1736cc;
+
+  --font-display: "Red Hat Display", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Roboto Mono", monospace;
+}
+
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("../public/fonts/RedHatDisplay-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("../public/fonts/RedHatDisplay-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("../public/fonts/RedHatDisplay-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("../public/fonts/RedHatDisplay-ExtraBold.ttf") format("truetype");
+  font-weight: 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("../public/fonts/RedHatDisplay-Black.ttf") format("truetype");
+  font-weight: 900;
+  font-display: swap;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: "Inter", -apple-system, system-ui, sans-serif;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Captured frame pops into the grid when a new photo lands. */
+@keyframes tile-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-tile-pop {
+  animation: tile-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.parthawe.gallery",
+  "version": "1.0.0",
+  "name": "Gallery",
+  "description": "Browse photos captured with your Mentra Live glasses in a clean, date-grouped library — full-screen viewer, multi-select, and capture. Editorial white × cobalt. Built on the @mentra/miniapp SDK (background capture + blob storage).",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {"type": "CAMERA", "description": "Capture photos to add to the gallery"}
+  ],
+  "hardwareRequirements": [
+    {"type": "CAMERA", "level": "OPTIONAL", "description": "Capture new photos from the gallery"},
+    {"type": "DISPLAY", "level": "OPTIONAL", "description": "Shows capture status on the glasses"}
+  ],
+  "port": 3280
+}
