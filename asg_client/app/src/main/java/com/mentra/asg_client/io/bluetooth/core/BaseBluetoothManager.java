@@ -511,17 +511,38 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             Log.e(TAG, "Rejected outbound BLE file transfer start", e);
             return false;
         } catch (TimeoutException e) {
-            if (future != null) {
-                future.cancel(false);
+            if (future != null && future.cancel(false)) {
+                Log.e(TAG, "Timed out waiting for queued outbound BLE file transfer start", e);
+                return false;
             }
-            Log.e(TAG, "Timed out waiting for outbound BLE file transfer start", e);
-            return false;
+            Log.w(
+                    TAG,
+                    "Timed out waiting for outbound BLE file transfer start after it began; "
+                            + "waiting for the actual start result",
+                    e);
+            return awaitFileTransferStartResult(future);
         } catch (InterruptedException e) {
             if (future != null) {
                 future.cancel(false);
             }
             Thread.currentThread().interrupt();
             Log.e(TAG, "Interrupted waiting for outbound BLE file transfer start", e);
+            return false;
+        } catch (ExecutionException e) {
+            Log.e(TAG, "Outbound BLE file transfer start failed", e);
+            return false;
+        }
+    }
+
+    private boolean awaitFileTransferStartResult(Future<Boolean> future) {
+        if (future == null) {
+            return false;
+        }
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "Interrupted waiting for outbound BLE file transfer start result", e);
             return false;
         } catch (ExecutionException e) {
             Log.e(TAG, "Outbound BLE file transfer start failed", e);
