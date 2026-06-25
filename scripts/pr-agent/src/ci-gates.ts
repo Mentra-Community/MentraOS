@@ -7,6 +7,8 @@ export type CiCheckStatus = {
   status: string;
   conclusion: string | null;
   required: boolean;
+  /** True when the workflow run was blocked pending manual approval (bot-pushed commit). */
+  awaitingApproval?: boolean;
 };
 
 export function requiredWorkflowsForPaths(changedFiles: string[], repoRoot: string): string[] {
@@ -52,11 +54,18 @@ export async function fetchWorkflowStatuses(
       (a, b) =>
         new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
     )[0]!;
+    // action_required means the workflow was queued but hasn't been approved to run yet
+    // (e.g. bot-pushed commits require manual approval). Treat as pending, not failure.
+    const isAwaitingApproval =
+      latest.conclusion === 'action_required' ||
+      latest.status === 'action_required' ||
+      latest.status === 'waiting';
     return {
       name: workflowName,
-      status: latest.status ?? 'missing',
-      conclusion: latest.conclusion ?? null,
+      status: isAwaitingApproval ? 'pending' : (latest.status ?? 'missing'),
+      conclusion: isAwaitingApproval ? null : (latest.conclusion ?? null),
       required: true,
+      awaitingApproval: isAwaitingApproval || undefined,
     };
   });
 }
@@ -69,6 +78,8 @@ export function isCiGreen(checks: CiCheckStatus[]): boolean {
   const required = requiredChecks(checks);
   if (required.length === 0) return true;
   return required.every((c) => {
+    // Awaiting approval means a human will trigger it when they review — treat as non-blocking.
+    if (c.awaitingApproval) return true;
     if (['in_progress', 'queued', 'waiting', 'pending'].includes(c.status)) {
       return false;
     }
