@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.dev-hud",
+  "version": "0.1.0",
+  "name": "Dev HUD",
+  "description": "Local development status HUD for GitHub PRs and Codex threads.",
+  "type": "background",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3148,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Shows GitHub and Codex development status on glasses"
+    }
+  ],
+  "icon": "icon.png"
+}
