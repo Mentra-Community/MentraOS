@@ -3,6 +3,8 @@ import {useCallback, useEffect, useRef, useState} from "react"
 import type {RecorderStatus, RecordingItem, Usage} from "../../shared/types"
 
 const EMPTY_USAGE: Usage = {bytes: 0, count: 0, quotaBytes: 0}
+/** Number of bars held in the live waveform's rolling window. */
+const WAVE_BARS = 56
 
 /**
  * useRecorder — single hook over the background channel bus.
@@ -22,7 +24,14 @@ export function useRecorder() {
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [hasMic, setHasMic] = useState(true)
   const [ready, setReady] = useState(false)
+  const [levels, setLevels] = useState<number[]>([])
+  const [transcript, setTranscript] = useState("")
+  const [transcriptLang, setTranscriptLang] = useState("")
+  const [playPosMs, setPlayPosMs] = useState(0)
+  const [unavailableId, setUnavailableId] = useState<string | null>(null)
   const mounted = useRef(true)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const unavailableTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     mounted.current = true
@@ -49,12 +58,37 @@ export function useRecorder() {
     )
     offs.push(
       on("rec:status", (p) => {
-        if (mounted.current) setStatus(p as RecorderStatus)
+        if (!mounted.current) return
+        const st = p as RecorderStatus
+        setStatus(st)
+        // Feed a rolling waveform; reset at the start of a fresh capture.
+        if (st.ms === 0) {
+          setTranscript("")
+          setTranscriptLang("")
+        }
+        setLevels((prev) => {
+          if (st.ms === 0) return []
+          if (st.paused) return prev
+          const next = [...prev, st.level]
+          return next.length > WAVE_BARS ? next.slice(next.length - WAVE_BARS) : next
+        })
       }),
     )
     offs.push(
       on("rec:stopped", () => {
-        if (mounted.current) setStatus(null)
+        if (!mounted.current) return
+        setStatus(null)
+        setLevels([])
+        setTranscript("")
+        setTranscriptLang("")
+      }),
+    )
+    offs.push(
+      on("rec:transcript", (p) => {
+        if (!mounted.current) return
+        const {final, interim, lang} = p as {final: string; interim: string; lang?: string}
+        setTranscript([final, interim].filter(Boolean).join(" "))
+        if (lang) setTranscriptLang(lang)
       }),
     )
     offs.push(
@@ -67,13 +101,48 @@ export function useRecorder() {
     )
     offs.push(
       on("rec:playback", (p) => {
-        if (mounted.current) setPlayingId((p as {playingId: string | null}).playingId)
+        if (!mounted.current) return
+        const id = (p as {playingId: string | null}).playingId
+        setPlayingId(id)
+        if (!id) setPlayPosMs(0)
+      }),
+    )
+    offs.push(
+      on("rec:audio-missing", (p) => {
+        if (!mounted.current) return
+        const {id} = p as {id: string}
+        setUnavailableId(id)
+        if (unavailableTimer.current) clearTimeout(unavailableTimer.current)
+        unavailableTimer.current = setTimeout(() => {
+          if (mounted.current) setUnavailableId(null)
+        }, 2600)
+      }),
+    )
+    // Background streams the WAV bytes as a data: URL; play it here via <audio>.
+    offs.push(
+      on("rec:audio", (p) => {
+        const {dataUrl} = p as {id: string; dataUrl: string}
+        let a = audioRef.current
+        if (!a) {
+          a = new Audio()
+          audioRef.current = a
+        }
+        a.onended = () => mentra.send("rec:stop-play", {})
+        a.onerror = () => mentra.send("rec:stop-play", {})
+        a.ontimeupdate = () => {
+          if (mounted.current) setPlayPosMs((audioRef.current?.currentTime ?? 0) * 1000)
+        }
+        a.src = dataUrl
+        setPlayPosMs(0)
+        void a.play().catch(() => mentra.send("rec:stop-play", {}))
       }),
     )
 
     mentra.send("rec:request-snapshot", {})
     return () => {
       mounted.current = false
+      audioRef.current?.pause()
+      if (unavailableTimer.current) clearTimeout(unavailableTimer.current)
       for (const off of offs) off()
     }
   }, [])
@@ -81,26 +150,41 @@ export function useRecorder() {
   const startRecording = useCallback(() => mentra.send("rec:start", {}), [])
   const stopRecording = useCallback(() => mentra.send("rec:stop", {}), [])
   const cancelRecording = useCallback(() => mentra.send("rec:cancel", {}), [])
+  const pauseRecording = useCallback(() => mentra.send("rec:pause", {}), [])
+  const resumeRecording = useCallback(() => mentra.send("rec:resume", {}), [])
   const play = useCallback((id: string) => mentra.send("rec:play", {id}), [])
-  const stopPlay = useCallback(() => mentra.send("rec:stop-play", {}), [])
+  const stopPlay = useCallback(() => {
+    audioRef.current?.pause()
+    mentra.send("rec:stop-play", {})
+  }, [])
   const exportRecording = useCallback((id: string) => mentra.send("rec:export", {id}), [])
+  const exportTranscript = useCallback((id: string) => mentra.send("rec:export-transcript", {id}), [])
   const remove = useCallback((id: string) => mentra.send("rec:delete", {id}), [])
   const clearAll = useCallback(() => mentra.send("rec:clear", {}), [])
 
   return {
     status,
+    levels,
+    transcript,
+    transcriptLang,
     recordings,
     usage,
     playingId,
+    playPosMs,
+    unavailableId,
     hasMic,
     ready,
     isRecording: status !== null,
+    paused: status?.paused ?? false,
     startRecording,
     stopRecording,
     cancelRecording,
+    pauseRecording,
+    resumeRecording,
     play,
     stopPlay,
     exportRecording,
+    exportTranscript,
     remove,
     clearAll,
   }

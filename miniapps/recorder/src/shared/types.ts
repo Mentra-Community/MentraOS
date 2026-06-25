@@ -22,6 +22,8 @@ export interface RecordingItem {
   sampleRate: number
   /** True if the recording was capped at the storage quota. */
   truncated?: boolean
+  /** Soniox transcript captured live during recording (final text). */
+  transcript?: string
 }
 
 /** Live status while a capture is in progress. */
@@ -33,6 +35,8 @@ export interface RecorderStatus {
   bytes: number
   /** Coarse 0–1 input level for the meter. */
   level: number
+  /** True while the capture is paused (mic feed suspended). */
+  paused?: boolean
 }
 
 /** Per-app blob storage usage. */
