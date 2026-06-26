@@ -19,6 +19,7 @@ import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
+import com.mentra.bluetoothsdk.sgcs.Nimo
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -712,6 +713,15 @@ class DeviceManager {
     }
 
     /**
+     * Marks glasses-mic audio as alive for the 10s reinit watchdog. SGCs that decode
+     * audio themselves and feed [handlePcm] directly (e.g. Nimo's Opus path) must call
+     * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
+     */
+    fun reportGlassesAudioActivity() {
+        lastLc3Event = System.currentTimeMillis()
+    }
+
+    /**
      * Handle raw LC3 audio data from glasses. Decodes the glasses LC3, then passes to handlePcm for
      * canonical LC3 encoding. Note: frameSize here is for glasses→phone decoding, NOT for
      * phone→cloud encoding.
@@ -1131,6 +1141,8 @@ class DeviceManager {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
+        } else if (wearable.contains(DeviceTypes.NIMO)) {
+            sgc = Nimo()
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
@@ -1324,6 +1336,12 @@ class DeviceManager {
         if (view == null) {
             Bridge.log("MAN: Invalid view")
             return
+        }
+
+        run {
+            @Suppress("UNCHECKED_CAST") val l = event["layout"] as? Map<String, Any>
+            val preview = ((l?.get("text") ?: l?.get("topText")) as? String ?: "").take(60)
+            Bridge.log("MAN: displayEvent view=$view layout=${l?.get("layoutType")} text=\"$preview\"")
         }
 
         val isDashboard = view == "dashboard"

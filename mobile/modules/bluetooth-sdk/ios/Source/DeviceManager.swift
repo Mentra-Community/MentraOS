@@ -623,6 +623,8 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
+        } else if wearable.contains(DeviceTypes.NIMO) {
+            sgc = Nimo()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
