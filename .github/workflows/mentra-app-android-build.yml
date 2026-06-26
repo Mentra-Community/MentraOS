@@ -158,6 +158,15 @@ jobs:
             ./fix-react-native-symlinks.sh
           fi
 
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+
       - name: Build Android Release APK
         id: gradle-build
         working-directory: ./mobile/android
@@ -198,6 +207,19 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Verify release signature (not debug)
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK")
+          echo "$CERTS"
+          if echo "$CERTS" | grep -qi "CN=Android Debug"; then
+            echo "::error::Release APK is DEBUG-signed — upload keystore was not injected."
+            exit 1
+          fi
+          echo "Release APK is signed with the production upload key."
 
       - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4

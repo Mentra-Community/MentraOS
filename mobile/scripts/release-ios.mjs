@@ -27,7 +27,11 @@ function ipaPrefix(version) {
 // ── Load App Store Connect credentials ────────────────────────────────────────
 
 function loadASCConfig() {
-  const configPath = path.join(os.homedir(), '.mentra', 'credentials', 'appstore-connect.env');
+  // CI injects credentials from secrets into a temp dir and points here via
+  // MENTRA_ASC_CONFIG_PATH; local dev falls back to ~/.mentra/credentials.
+  const configPath =
+    process.env.MENTRA_ASC_CONFIG_PATH ||
+    path.join(os.homedir(), '.mentra', 'credentials', 'appstore-connect.env');
   if (!existsSync(configPath)) {
     return null;
   }

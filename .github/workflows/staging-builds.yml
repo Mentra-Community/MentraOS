@@ -173,6 +173,17 @@ jobs:
             ./fix-react-native-symlinks.sh
           fi
 
+      - name: Inject release signing + Play credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          play: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
         working-directory: ./mobile
         env:
@@ -440,6 +451,14 @@ jobs:
           echo "---all signing identities visible to xcodebuild---"
           security find-identity -v -p codesigning
 
+      - name: Inject App Store Connect API key
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
         working-directory: ./mobile
         env:
@@ -588,6 +607,15 @@ jobs:
           chmod +x ./build_and_deploy.sh
           ./build_and_deploy.sh
           test -f ../app/src/main/assets/recovery_worker.apk
+
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build Release APK
         id: gradle-build
