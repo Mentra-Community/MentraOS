@@ -4445,21 +4445,29 @@ class G2 : SGCManager() {
                 return@let
             }
 
-            val extra = mutableMapOf<String, Any>()
-            (listFields[1] as? Int)?.let { extra["containerId"] = it }
-            (listFields[2] as? ByteArray)?.let {
-                val containerName = String(it, Charsets.UTF_8)
-                if (containerName.isNotBlank()) {
-                    extra["containerName"] = containerName
-                }
-            }
-            (listFields[3] as? ByteArray)?.let {
-                extra["selectedItemName"] = String(it, Charsets.UTF_8)
-            }
-            (listFields[4] as? Int)?.let { extra["selectedItemIndex"] = it }
+            val containerId = listFields[1] as? Int
+            val containerName = (listFields[2] as? ByteArray)
+                ?.let { String(it, Charsets.UTF_8) }
+                ?.takeIf { it.isNotBlank() }
+            val selectedItemName = (listFields[3] as? ByteArray)?.let { String(it, Charsets.UTF_8) }
+            val selectedItemIndex = listFields[4] as? Int
 
-            Bridge.sendTouchEvent(DeviceTypes.G2, gestureName, timestamp, extra = extra)
-            Bridge.log("G2: ListEvent → $gestureName $extra")
+            Bridge.sendTouchEvent(
+                DeviceTypes.G2,
+                gestureName,
+                timestamp,
+                containerId = containerId,
+                containerName = containerName,
+                selectedItemName = selectedItemName,
+                selectedItemIndex = selectedItemIndex
+            )
+            val selectionDescription = listOf(
+                "containerId=$containerId",
+                "containerName=$containerName",
+                "selectedItemName=$selectedItemName",
+                "selectedItemIndex=$selectedItemIndex"
+            ).joinToString(" ")
+            Bridge.log("G2: ListEvent → $gestureName $selectionDescription")
             return
         }
     }

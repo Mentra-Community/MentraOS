@@ -325,7 +325,10 @@ public class Bridge private constructor() {
                 gestureName: String,
                 timestamp: Long,
                 source: Int? = null,
-                extra: Map<String, Any>? = null
+                containerId: Int? = null,
+                containerName: String? = null,
+                selectedItemName: String? = null,
+                selectedItemIndex: Int? = null
         ) {
             val body = HashMap<String, Any>()
             body["type"] = "touch_event"
@@ -335,7 +338,18 @@ public class Bridge private constructor() {
             if (source != null) {
                 body["source"] = source
             }
-            extra?.let { body.putAll(it) }
+            if (containerId != null) {
+                body["containerId"] = containerId
+            }
+            if (!containerName.isNullOrBlank()) {
+                body["containerName"] = containerName
+            }
+            if (selectedItemName != null) {
+                body["selectedItemName"] = selectedItemName
+            }
+            if (selectedItemIndex != null) {
+                body["selectedItemIndex"] = selectedItemIndex
+            }
             sendTypedMessage("touch_event", body)
         }
 

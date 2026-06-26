@@ -4265,30 +4265,27 @@ class G2: NSObject, SGCManager {
                 return
             }
 
-            var extra: [String: Any] = [:]
-            if let containerId = listFields[1] as? Int32 {
-                extra["containerId"] = containerId
-            }
-            if let containerNameData = listFields[2] as? Data,
-               let containerName = String(data: containerNameData, encoding: .utf8),
-               !containerName.isEmpty
-            {
-                extra["containerName"] = containerName
-            }
-            if let selectedNameData = listFields[3] as? Data,
-               let selectedItemName = String(data: selectedNameData, encoding: .utf8)
-            {
-                extra["selectedItemName"] = selectedItemName
-            }
-            if let selectedItemIndex = listFields[4] as? Int32 {
-                extra["selectedItemIndex"] = selectedItemIndex
-            }
+            let containerId = listFields[1] as? Int32
+            let containerName = (listFields[2] as? Data)
+                .flatMap { String(data: $0, encoding: .utf8) }
+                .flatMap { $0.isEmpty ? nil : $0 }
+            let selectedItemName = (listFields[3] as? Data).flatMap { String(data: $0, encoding: .utf8) }
+            let selectedItemIndex = listFields[4] as? Int32
 
             Bridge.sendTouchEvent(
                 deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp,
-                extra: extra
+                containerId: containerId,
+                containerName: containerName,
+                selectedItemName: selectedItemName,
+                selectedItemIndex: selectedItemIndex
             )
-            Bridge.log("G2: ListEvent → \(gestureName) \(extra)")
+            let selectionDescription = [
+                "containerId=\(String(describing: containerId))",
+                "containerName=\(String(describing: containerName))",
+                "selectedItemName=\(String(describing: selectedItemName))",
+                "selectedItemIndex=\(String(describing: selectedItemIndex))",
+            ].joined(separator: " ")
+            Bridge.log("G2: ListEvent → \(gestureName) \(selectionDescription)")
         }
     }
 

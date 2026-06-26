@@ -243,7 +243,10 @@ class Bridge {
         gestureName: String,
         timestamp: Int64,
         source: Int32? = nil,
-        extra: [String: Any] = [:]
+        containerId: Int32? = nil,
+        containerName: String? = nil,
+        selectedItemName: String? = nil,
+        selectedItemIndex: Int32? = nil
     ) {
         var body: [String: Any] = [
             "type": "touch_event",
@@ -254,7 +257,18 @@ class Bridge {
         if let source {
             body["source"] = source
         }
-        body.merge(extra) { _, new in new }
+        if let containerId {
+            body["containerId"] = containerId
+        }
+        if let containerName, !containerName.isEmpty {
+            body["containerName"] = containerName
+        }
+        if let selectedItemName {
+            body["selectedItemName"] = selectedItemName
+        }
+        if let selectedItemIndex {
+            body["selectedItemIndex"] = selectedItemIndex
+        }
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
