@@ -113,11 +113,20 @@ runs:
           require ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
           mkdir -p asg_client/credentials
           decode_to "$ASG_KEYSTORE_B64" asg_client/credentials/asg-keystore.jks
+          # The recovery worker signs with the ASG cert and reads its keystore from
+          # asg_client/recovery_worker/credentials/recovery-keystore.jks. On a clean
+          # runner build_and_deploy.sh can't find it (its ~/.mentra and ../../
+          # fallbacks miss), so materialize it directly where the gradle build reads.
+          # It also reads RECOVERY_/OTA_/ASG_ passwords; the ASG_* gradle props above
+          # satisfy that chain.
+          mkdir -p asg_client/recovery_worker/credentials
+          decode_to "$ASG_KEYSTORE_B64" asg_client/recovery_worker/credentials/recovery-keystore.jks
           # Gradle reads these as project properties (project.hasProperty(...)).
           put ORG_GRADLE_PROJECT_ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
           put ORG_GRADLE_PROJECT_ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
           put ORG_GRADLE_PROJECT_ASG_KEY_ALIAS "$ASG_KEY_ALIAS"
           echo "Injected ASG release keystore -> asg_client/credentials/asg-keystore.jks"
+          echo "Injected recovery keystore -> asg_client/recovery_worker/credentials/recovery-keystore.jks"
         fi
 
         if [ "$MOBILE" = "true" ]; then
