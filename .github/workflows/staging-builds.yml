@@ -530,9 +530,10 @@ jobs:
 
   build-asg:
     name: Build ASG Client
-    # Pinned to the mac runners: they have the ASG signing keystore provisioned
-    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
-    runs-on: [self-hosted, macOS, ARM64]
+    # GitHub-hosted Ubuntu. Signing creds come from secrets via inject-signing;
+    # it's a clean gradle build (no fastlane/upload), so it doesn't need the mac
+    # runners. The GH-release upload happens later in the ubuntu upload-releases job.
+    runs-on: ubuntu-latest
 
     outputs:
       version_code: ${{ steps.asg-build-info.outputs.version_code }}
@@ -554,8 +555,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Free disk space if low
-        uses: ./.github/actions/disk-guard
+      - name: Free up disk space
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       - name: Compute ASG build info
         id: asg-build-info
@@ -596,10 +603,10 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          key: asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            asg-gradle-${{ runner.os }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-
 
       # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
       # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-

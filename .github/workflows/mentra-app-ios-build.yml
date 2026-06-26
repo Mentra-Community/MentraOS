@@ -164,18 +164,40 @@ jobs:
           # That's the intermittent iOS prebuild failure (it depends on whether the
           # Pods cache hits this run).
           #
-          # Force a clean, deterministic prebuild: remove the (stale or partial)
-          # generated project while preserving the Pods/ and build-device/ caches,
-          # so prebuild regenerates AppDelegate + the Xcode project every run. We do
-          # NOT use `expo prebuild --clean` (disallowed in this repo, and it would
-          # also wipe the dep caches).
+          # Force a clean, deterministic prebuild. The previous approach deleted
+          # everything in mobile/ios EXCEPT Pods/ and build-device/ — but leaving
+          # those behind means mobile/ios/ still EXISTS, so `expo prebuild` says
+          # "reusing /ios" and skips regenerating the native project (no
+          # AppDelegate) → the intermittent failure. Instead, move the dep caches
+          # OUT of mobile/ios, remove mobile/ios entirely so prebuild regenerates
+          # AppDelegate + the Xcode project from scratch, then restore the caches
+          # afterward (see "Restore iOS dep caches" below). We do NOT use
+          # `expo prebuild --clean` (disallowed in this repo; also wipes caches).
+          rm -rf "$RUNNER_TEMP/ios-cache"
+          mkdir -p "$RUNNER_TEMP/ios-cache"
           if [ -d mobile/ios ]; then
-            find mobile/ios -mindepth 1 -maxdepth 1 ! -name Pods ! -name build-device -exec rm -rf {} +
+            [ -d mobile/ios/Pods ] && mv mobile/ios/Pods "$RUNNER_TEMP/ios-cache/Pods" || true
+            [ -d mobile/ios/build-device ] && mv mobile/ios/build-device "$RUNNER_TEMP/ios-cache/build-device" || true
+            rm -rf mobile/ios
           fi
 
       - name: Run Expo prebuild
         working-directory: ./mobile
         run: bun expo prebuild --platform ios
+
+      - name: Restore iOS dep caches (Pods + build-device)
+        run: |
+          # Prebuild just regenerated a clean mobile/ios with a valid AppDelegate.
+          # Restore the Pods/ and build-device/ caches we moved aside so pod
+          # install + xcodebuild reuse them instead of starting cold.
+          if [ -d "$RUNNER_TEMP/ios-cache/Pods" ]; then
+            rm -rf mobile/ios/Pods
+            mv "$RUNNER_TEMP/ios-cache/Pods" mobile/ios/Pods
+          fi
+          if [ -d "$RUNNER_TEMP/ios-cache/build-device" ]; then
+            rm -rf mobile/ios/build-device
+            mv "$RUNNER_TEMP/ios-cache/build-device" mobile/ios/build-device
+          fi
 
       - name: Setup Sherpa Onnx
         working-directory: ./mobile
