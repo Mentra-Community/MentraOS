@@ -22,17 +22,23 @@ export interface RecordingItem {
   sampleRate: number
   /** True if the recording was capped at the storage quota. */
   truncated?: boolean
+  /** Soniox transcript captured live during recording (final text). */
+  transcript?: string
 }
 
 /** Live status while a capture is in progress. */
 export interface RecorderStatus {
   recordingId: string
+  /** Epoch ms the capture began (stable across pause + WebView reopen). */
+  startedAt: number
   /** Elapsed capture time, ms. */
   ms: number
   /** Bytes written so far. */
   bytes: number
   /** Coarse 0–1 input level for the meter. */
   level: number
+  /** True while the capture is paused (mic + transcription feed suspended). */
+  paused?: boolean
 }
 
 /** Per-app blob storage usage. */
@@ -52,4 +58,8 @@ export interface RecorderSnapshot {
   playingId: string | null
   /** True when a glasses microphone is available to record from. */
   hasMic: boolean
+  /** Accumulated live transcript (final + interim) for an in-progress capture. */
+  transcript?: string
+  /** Detected transcription language for an in-progress capture. */
+  transcriptLang?: string
 }
