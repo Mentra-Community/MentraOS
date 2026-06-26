@@ -81,7 +81,10 @@ runs:
         # whitespace as "invalid input", so strip it first. Works on BSD + GNU.
         decode_to() {
           local b64="$1" out="$2"
-          printf '%s' "$b64" | tr -d '\r\n \t' | base64 --decode > "$out"
+          # Use -d (not --decode): accepted by both GNU coreutils and BSD/macOS
+          # base64. (--decode also works on current macOS, but -d is the portable
+          # spelling.)
+          printf '%s' "$b64" | tr -d '\r\n \t' | base64 -d > "$out"
         }
         # Aliases have well-known defaults; an unset ALIAS secret arrives as "" and
         # must not override the build's default, so fall back here.
