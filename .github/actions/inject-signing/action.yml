@@ -76,11 +76,29 @@ runs:
           local name="$1" value="$2" delim="EOF_$RANDOM$RANDOM"
           { printf '%s<<%s\n' "$name" "$delim"; printf '%s\n' "$value"; printf '%s\n' "$delim"; } >> "$GITHUB_ENV"
         }
+        # Decode base64 to a file, tolerating newlines/whitespace in the input.
+        # macOS `base64` wraps output at 76 cols; GNU `base64 -d` rejects that
+        # whitespace as "invalid input", so strip it first. Works on BSD + GNU.
+        decode_to() {
+          local b64="$1" out="$2"
+          printf '%s' "$b64" | tr -d '\r\n \t' | base64 --decode > "$out"
+        }
         # Aliases have well-known defaults; an unset ALIAS secret arrives as "" and
         # must not override the build's default, so fall back here.
         [ -n "${ASG_KEY_ALIAS:-}" ]    || ASG_KEY_ALIAS="asg"
         [ -n "${UPLOAD_KEY_ALIAS:-}" ] || UPLOAD_KEY_ALIAS="upload"
         [ -n "${OTA_KEY_ALIAS:-}" ]    || OTA_KEY_ALIAS="ota"
+        # Strip trailing CR/LF from password/alias values. A keystore password can
+        # legitimately contain spaces, but never a trailing newline — and a stray
+        # one (e.g. from how a secret was created) makes Gradle report "keystore
+        # password was incorrect". Only \r\n are stripped, so real chars are safe.
+        strip_eol() { printf '%s' "${1%$'\n'}" | sed $'s/[\r\n]*$//'; }
+        ASG_STORE_PASSWORD="$(strip_eol "${ASG_STORE_PASSWORD:-}")"
+        ASG_KEY_PASSWORD="$(strip_eol "${ASG_KEY_PASSWORD:-}")"
+        UPLOAD_STORE_PASSWORD="$(strip_eol "${UPLOAD_STORE_PASSWORD:-}")"
+        UPLOAD_KEY_PASSWORD="$(strip_eol "${UPLOAD_KEY_PASSWORD:-}")"
+        OTA_STORE_PASSWORD="$(strip_eol "${OTA_STORE_PASSWORD:-}")"
+        OTA_KEY_PASSWORD="$(strip_eol "${OTA_KEY_PASSWORD:-}")"
         umask 077
         TMP="${RUNNER_TEMP:-/tmp}/mentra-creds"
         mkdir -p "$TMP"
@@ -90,7 +108,7 @@ runs:
           require ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
           require ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
           mkdir -p asg_client/credentials
-          echo "$ASG_KEYSTORE_B64" | base64 --decode > asg_client/credentials/asg-keystore.jks
+          decode_to "$ASG_KEYSTORE_B64" asg_client/credentials/asg-keystore.jks
           # Gradle reads these as project properties (project.hasProperty(...)).
           put ORG_GRADLE_PROJECT_ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
           put ORG_GRADLE_PROJECT_ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
@@ -103,7 +121,7 @@ runs:
           require UPLOAD_STORE_PASSWORD "$UPLOAD_STORE_PASSWORD"
           require UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
           mkdir -p mobile/credentials
-          echo "$UPLOAD_KEYSTORE_B64" | base64 --decode > mobile/credentials/upload-keystore.jks
+          decode_to "$UPLOAD_KEYSTORE_B64" mobile/credentials/upload-keystore.jks
           put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD "$UPLOAD_STORE_PASSWORD"
           put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
           put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS "$UPLOAD_KEY_ALIAS"
@@ -115,7 +133,7 @@ runs:
           require OTA_STORE_PASSWORD "$OTA_STORE_PASSWORD"
           require OTA_KEY_PASSWORD "$OTA_KEY_PASSWORD"
           mkdir -p asg_client/ota_updater/credentials
-          echo "$OTA_KEYSTORE_B64" | base64 --decode > asg_client/ota_updater/credentials/ota-keystore.jks
+          decode_to "$OTA_KEYSTORE_B64" asg_client/ota_updater/credentials/ota-keystore.jks
           # OTA gradle reads these via System.getenv(...).
           put OTA_STORE_PASSWORD "$OTA_STORE_PASSWORD"
           put OTA_KEY_PASSWORD "$OTA_KEY_PASSWORD"
@@ -135,7 +153,7 @@ runs:
           require ASC_API_KEY_ID "$ASC_API_KEY_ID"
           require ASC_API_ISSUER_ID "$ASC_API_ISSUER_ID"
           P8="$TMP/AuthKey_${ASC_API_KEY_ID}.p8"
-          echo "$ASC_API_KEY_P8_B64" | base64 --decode > "$P8"
+          decode_to "$ASC_API_KEY_P8_B64" "$P8"
           # Generate the appstore-connect.env that release-ios.mjs parses.
           {
             echo "ASC_API_KEY_ID=$ASC_API_KEY_ID"
