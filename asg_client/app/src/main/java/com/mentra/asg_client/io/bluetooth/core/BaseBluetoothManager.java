@@ -586,9 +586,12 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            future.cancel(true);
-            Log.e(TAG, "Timed out waiting for outbound BLE file transfer start result", e);
-            return false;
+            Log.w(
+                    TAG,
+                    "Timed out waiting for already-running outbound BLE file transfer start; "
+                            + "leaving the worker uninterrupted",
+                    e);
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Log.e(TAG, "Interrupted waiting for outbound BLE file transfer start result", e);
