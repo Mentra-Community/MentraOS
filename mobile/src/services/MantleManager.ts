@@ -1,4 +1,5 @@
 import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import type {TouchEvent} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
@@ -713,6 +714,7 @@ class MantleManager {
         BluetoothSdk.addListener("touch_event", (event) => {
           socketComms.sendTouchEvent(event)
           localMiniappRuntime.forwardEvent("touch_event", event)
+          void this.handleNativeDashboardTouchFallback(event)
         }),
       )
 
@@ -1359,6 +1361,18 @@ class MantleManager {
     }
   }
 
+  private async handleNativeDashboardTouchFallback(event: TouchEvent) {
+    if (event.deviceModel !== "Even Realities G2") return
+    if (!isDoubleClickGesture(event.gestureName)) return
+
+    const useNativeDashboard = await useSettingsStore.getState().getSetting(SETTINGS.use_native_dashboard.key)
+    if (!useNativeDashboard) return
+    if (localMiniappRuntime.hasTouchSubscriberForGesture(event.gestureName)) return
+
+    console.log("MANTLE: G2 double tap opening native dashboard")
+    BluetoothSdk.showDashboard()
+  }
+
   public async resetDisplayTimeout() {
     if (this.clearTextTimeout) {
       // console.log("MANTLE: canceling pending timeout")
@@ -1421,6 +1435,10 @@ class MantleManager {
   public async handle_button_press(event: ButtonPressEvent) {
     socketComms.sendButtonPress(event.buttonId, event.pressType)
   }
+}
+
+function isDoubleClickGesture(gestureName: string): boolean {
+  return gestureName === "double_tap" || gestureName === "double_click"
 }
 
 const mantle = MantleManager.getInstance()
