@@ -58,13 +58,12 @@ public class ReliableMessageManager {
         final JSONObject message;
         final long timestamp;
         final int retryCount;
-        final Runnable timeoutRunnable;
+        volatile Runnable timeoutRunnable;
 
-        PendingMessage(JSONObject message, int retryCount, Runnable timeoutRunnable) {
+        PendingMessage(JSONObject message, int retryCount) {
             this.message = message;
             this.timestamp = System.currentTimeMillis();
             this.retryCount = retryCount;
-            this.timeoutRunnable = timeoutRunnable;
         }
     }
 
@@ -107,20 +106,23 @@ public class ReliableMessageManager {
             long messageId = generateMessageId();
             message.put("mId", messageId);
 
-            // Send immediately, then start ACK tracking only after the queued transport send
-            // actually completes.
+            PendingMessage pending = new PendingMessage(message, 0);
+            pendingMessages.put(messageId, pending);
+
+            // Accept ACKs immediately, but start the timeout only after the queued transport send
+            // actually completes so outbound queue delay does not consume the ACK window.
             boolean accepted =
                     sendDirectly(
                             message,
                             success -> {
                                 if (success) {
-                                    trackMessage(messageId, message, 0, ACK_TIMEOUT_MS);
+                                    startAckTimeoutIfPending(messageId, pending, ACK_TIMEOUT_MS);
                                     totalMessagesSent++;
-                                } else {
+                                } else if (pendingMessages.remove(messageId, pending)) {
                                     totalFailures++;
                                 }
                             });
-            if (!accepted) {
+            if (!accepted && pendingMessages.remove(messageId, pending)) {
                 totalFailures++;
             }
             return accepted;
@@ -139,7 +141,9 @@ public class ReliableMessageManager {
         PendingMessage pending = pendingMessages.remove(messageId);
         if (pending != null) {
             // Cancel timeout
-            retryHandler.removeCallbacks(pending.timeoutRunnable);
+            if (pending.timeoutRunnable != null) {
+                retryHandler.removeCallbacks(pending.timeoutRunnable);
+            }
             totalAcksReceived++;
 
             Log.d(TAG, String.format("ACK received for message %d (attempts: %d, time: %dms)",
@@ -175,20 +179,18 @@ public class ReliableMessageManager {
     }
 
     /**
-     * Track a message for retry if ACK not received.
+     * Arm the ACK timeout if the message is still pending.
      * @param messageId The message ID to track
-     * @param message The message content
+     * @param pending The pending message to arm
      */
-    private void trackMessage(
-            long messageId, JSONObject message, int retryCount, long timeoutMs) {
+    private void startAckTimeoutIfPending(long messageId, PendingMessage pending, long timeoutMs) {
         Runnable timeoutRunnable = () -> handleTimeout(messageId);
+        pending.timeoutRunnable = timeoutRunnable;
 
-        PendingMessage pending = new PendingMessage(message, retryCount, timeoutRunnable);
-
-        pendingMessages.put(messageId, pending);
-
-        // Schedule timeout check
         retryHandler.postDelayed(timeoutRunnable, timeoutMs);
+        if (pendingMessages.get(messageId) != pending) {
+            retryHandler.removeCallbacks(timeoutRunnable);
+        }
     }
 
     /**
@@ -224,25 +226,25 @@ public class ReliableMessageManager {
     private void retryMessage(long messageId, PendingMessage pending) {
         int nextRetryCount = pending.retryCount + 1;
         long backoffDelay = ACK_TIMEOUT_MS * (1L << pending.retryCount);
+        PendingMessage retryPending = new PendingMessage(pending.message, nextRetryCount);
 
-        // Send again, then restart the ACK timeout only after the queued retry actually completes.
+        if (!pendingMessages.replace(messageId, pending, retryPending)) {
+            return;
+        }
+
+        // Keep accepting ACKs while the retry is queued, but restart the ACK timeout only after
+        // the queued retry actually completes.
         boolean accepted =
                 sendDirectly(
                         pending.message,
                         success -> {
-                            if (success && pendingMessages.containsKey(messageId)) {
-                                trackMessage(
-                                        messageId,
-                                        pending.message,
-                                        nextRetryCount,
-                                        backoffDelay);
-                            } else if (!success) {
-                                pendingMessages.remove(messageId);
+                            if (success) {
+                                startAckTimeoutIfPending(messageId, retryPending, backoffDelay);
+                            } else if (pendingMessages.remove(messageId, retryPending)) {
                                 totalFailures++;
                             }
                         });
-        if (!accepted) {
-            pendingMessages.remove(messageId);
+        if (!accepted && pendingMessages.remove(messageId, retryPending)) {
             totalFailures++;
         }
     }
@@ -287,7 +289,9 @@ public class ReliableMessageManager {
             PendingMessage pending = entry.getValue();
             if (pending.timestamp < cutoff) {
                 Log.w(TAG, "Removing stale message: " + entry.getKey());
-                retryHandler.removeCallbacks(pending.timeoutRunnable);
+                if (pending.timeoutRunnable != null) {
+                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+                }
                 return true;
             }
             return false;
