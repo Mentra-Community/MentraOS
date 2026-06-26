@@ -120,13 +120,11 @@ jobs:
             asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
             asg-gradle-${{ runner.os }}-
 
-      - name: Build recovery worker asset
-        working-directory: ./asg_client/recovery_worker
-        run: |
-          chmod +x ./build_and_deploy.sh
-          ./build_and_deploy.sh
-          test -f ../app/src/main/assets/recovery_worker.apk
-
+      # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
+      # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-
+      # local fallback this action writes) and signs with the ASG_* gradle props,
+      # so it must run after injection or it falls back to ~/.mentra (the disk
+      # dependency this PR removes) and fails on a clean runner.
       - name: Inject release signing key
         uses: ./.github/actions/inject-signing
         with:
@@ -135,6 +133,13 @@ jobs:
           asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
           asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
           asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
+
+      - name: Build recovery worker asset
+        working-directory: ./asg_client/recovery_worker
+        run: |
+          chmod +x ./build_and_deploy.sh
+          ./build_and_deploy.sh
+          test -f ../app/src/main/assets/recovery_worker.apk
 
       - name: Build Release APK
         id: gradle-build
@@ -166,7 +171,10 @@ jobs:
         # production key, never CN=Android Debug. Fail the build if it is.
         run: |
           APK=asg_client/app/build/outputs/apk/release/app-release.apk
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          # Any build-tools apksigner can verify; pick the last one. Avoid
+          # `sort -V` (not portable to older BSD/macOS sort) — plain sort of the
+          # build-tools paths is fine for selecting one that exists.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
           [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
           CERTS=$("$APKSIGNER" verify --print-certs "$APK")
           echo "$CERTS"

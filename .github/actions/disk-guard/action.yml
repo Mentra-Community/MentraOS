@@ -61,14 +61,21 @@ runs:
         if [ "${now}" -lt "${DEEP_GB}" ]; then
           echo "Still below deep threshold (${now} GiB) — deep cleaning..."
 
-          # Old NDK versions — keep only the one the build pins.
-          for ndkdir in ~/Library/Android/sdk/ndk/*; do
-            [ -d "$ndkdir" ] || continue
-            if [ "$(basename "$ndkdir")" != "${KEEP_NDK}" ]; then
-              echo "  removing NDK $(basename "$ndkdir")"
-              rm -rf "$ndkdir" 2>/dev/null || true
-            fi
-          done
+          # Old NDK versions — keep only the build-pinned one, but ONLY prune if
+          # that version is actually installed. Otherwise the runner may have a
+          # different single NDK (e.g. setup-runner.sh provisions 26.x) and we'd
+          # delete the only usable NDK, breaking the next Android build.
+          if [ -d ~/Library/Android/sdk/ndk/"${KEEP_NDK}" ]; then
+            for ndkdir in ~/Library/Android/sdk/ndk/*; do
+              [ -d "$ndkdir" ] || continue
+              if [ "$(basename "$ndkdir")" != "${KEEP_NDK}" ]; then
+                echo "  removing NDK $(basename "$ndkdir")"
+                rm -rf "$ndkdir" 2>/dev/null || true
+              fi
+            done
+          else
+            echo "  keep-NDK ${KEEP_NDK} not installed — skipping NDK prune (won't delete the only NDK)"
+          fi
 
           # Emulator + SDK sources — not needed for assembleRelease CI.
           rm -rf ~/Library/Android/sdk/emulator/* 2>/dev/null || true

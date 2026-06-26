@@ -230,7 +230,7 @@ jobs:
       - name: Verify release signature (not debug)
         run: |
           APK=mobile/android/app/build/outputs/apk/release/app-release.apk
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
           [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
           CERTS=$("$APKSIGNER" verify --print-certs "$APK")
           echo "$CERTS"
