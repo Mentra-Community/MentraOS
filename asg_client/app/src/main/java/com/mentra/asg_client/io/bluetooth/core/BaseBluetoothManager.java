@@ -129,6 +129,16 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     /** Queue an outbound message and notify once the queued send attempt finishes. */
     @Override
     public final boolean sendMessage(byte[] data, SendMessageCallback callback) {
+        return queueOutboundMessage(data, callback, true);
+    }
+
+    /** Queue an outbound command that should not be broadcast back to phone-facing listeners. */
+    protected final boolean sendInternalCommand(byte[] data) {
+        return queueOutboundMessage(data, null, false);
+    }
+
+    private boolean queueOutboundMessage(
+            byte[] data, SendMessageCallback callback, boolean broadcastJsonResponses) {
         if (data == null || data.length == 0) {
             return false;
         }
@@ -148,7 +158,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                                                     sequence,
                                                     queuedAtMs,
                                                     traceInfo,
-                                                    callback)));
+                                                    callback,
+                                                    broadcastJsonResponses)));
             logOutboundQueueEvent(
                     "queued",
                     sequence,
@@ -182,7 +193,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             long sequence,
             long queuedAtMs,
             OutboundTraceInfo traceInfo,
-            SendMessageCallback callback) {
+            SendMessageCallback callback,
+            boolean broadcastJsonResponses) {
         long dequeuedAtMs = System.currentTimeMillis();
         logOutboundQueueEvent(
                 "dequeued",
@@ -200,7 +212,7 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         boolean success = false;
         Exception error = null;
         try {
-            success = sendMessageNow(data);
+            success = sendMessageNow(data, broadcastJsonResponses);
         } catch (Exception e) {
             error = e;
             Log.e(TAG, "Error sending queued outbound BLE message", e);
@@ -264,18 +276,20 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
      * Template method: broadcasts JSON responses to registered intent listeners, then delegates to
      * the subclass-specific send implementation.
      */
-    private boolean sendMessageNow(byte[] data) {
+    private boolean sendMessageNow(byte[] data, boolean broadcastJsonResponses) {
         BleTraceLogger.logBytes("glasses_to_phone", "asg_ble_output", data);
 
         // Try to broadcast JSON responses to intent listeners
-        try {
-            String str = new String(data, StandardCharsets.UTF_8);
-            if (str.startsWith("{")) {
-                JSONObject json = new JSONObject(str);
-                IntentResponseBroadcaster.getInstance().broadcastResponse(context, json);
+        if (broadcastJsonResponses) {
+            try {
+                String str = new String(data, StandardCharsets.UTF_8);
+                if (str.startsWith("{")) {
+                    JSONObject json = new JSONObject(str);
+                    IntentResponseBroadcaster.getInstance().broadcastResponse(context, json);
+                }
+            } catch (Exception e) {
+                // Not valid JSON; skip broadcast, still send over BLE.
             }
-        } catch (Exception e) {
-            // Not valid JSON; skip broadcast, still send over BLE.
         }
 
         return sendMessageInternal(data);
@@ -520,7 +534,7 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                     "Timed out waiting for outbound BLE file transfer start after it began; "
                             + "waiting for the actual start result",
                     e);
-            return awaitFileTransferStartResult(future);
+            return awaitFileTransferStartResult(future, OUTBOUND_FILE_START_TIMEOUT_MS);
         } catch (InterruptedException e) {
             if (future != null) {
                 future.cancel(false);
@@ -534,12 +548,16 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         }
     }
 
-    private boolean awaitFileTransferStartResult(Future<Boolean> future) {
+    private boolean awaitFileTransferStartResult(Future<Boolean> future, long timeoutMs) {
         if (future == null) {
             return false;
         }
         try {
-            return future.get();
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            Log.e(TAG, "Timed out waiting for outbound BLE file transfer start result", e);
+            return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Log.e(TAG, "Interrupted waiting for outbound BLE file transfer start result", e);

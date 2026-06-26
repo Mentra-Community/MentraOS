@@ -242,12 +242,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return sent;
     }
 
-    /**
-     * Sends an internal command directly to the glasses transport without broadcasting it as a
-     * phone-facing command response.
-     */
+    /** Queues an internal command without broadcasting it as a phone-facing command response. */
     public boolean sendCommandToGlasses(byte[] data) {
-        return sendMessageInternal(data);
+        return sendInternalCommand(data);
     }
 
     private boolean sendChunkedJson(String originalJson) {
