@@ -168,11 +168,12 @@ jobs:
           # everything in mobile/ios EXCEPT Pods/ and build-device/ — but leaving
           # those behind means mobile/ios/ still EXISTS, so `expo prebuild` says
           # "reusing /ios" and skips regenerating the native project (no
-          # AppDelegate) → the intermittent failure. Instead, move the dep caches
-          # OUT of mobile/ios, remove mobile/ios entirely so prebuild regenerates
-          # AppDelegate + the Xcode project from scratch, then restore the caches
-          # afterward (see "Restore iOS dep caches" below). We do NOT use
-          # `expo prebuild --clean` (disallowed in this repo; also wipes caches).
+          # AppDelegate) → the intermittent failure. Instead, move Pods/ OUT of
+          # mobile/ios, remove mobile/ios entirely so prebuild regenerates
+          # AppDelegate + the Xcode project from scratch, then restore Pods after.
+          # Preserve Pods/ and build-device/ (the DerivedData cache) by moving them
+          # OUT, then restore after prebuild. We do NOT use `expo prebuild --clean`
+          # (disallowed; also wipes caches).
           rm -rf "$RUNNER_TEMP/ios-cache"
           mkdir -p "$RUNNER_TEMP/ios-cache"
           if [ -d mobile/ios ]; then
@@ -188,8 +189,7 @@ jobs:
       - name: Restore iOS dep caches (Pods + build-device)
         run: |
           # Prebuild just regenerated a clean mobile/ios with a valid AppDelegate.
-          # Restore the Pods/ and build-device/ caches we moved aside so pod
-          # install + xcodebuild reuse them instead of starting cold.
+          # Restore Pods/ and build-device/ so pod install + xcodebuild reuse them.
           if [ -d "$RUNNER_TEMP/ios-cache/Pods" ]; then
             rm -rf mobile/ios/Pods
             mv "$RUNNER_TEMP/ios-cache/Pods" mobile/ios/Pods
@@ -197,6 +197,10 @@ jobs:
           if [ -d "$RUNNER_TEMP/ios-cache/build-device" ]; then
             rm -rf mobile/ios/build-device
             mv "$RUNNER_TEMP/ios-cache/build-device" mobile/ios/build-device
+            # The cached SPM checkouts (e.g. mapbox-maps-ios) restore read-only,
+            # which makes the Podfile post-install hook fail with "Permission
+            # denied". Make them writable so pod install can process them.
+            chmod -R u+w mobile/ios/build-device/SourcePackages 2>/dev/null || true
           fi
 
       - name: Setup Sherpa Onnx
