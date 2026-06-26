@@ -1,0 +1,102 @@
+name: "Disk Guard"
+description: >
+  Free disk space on self-hosted macOS CI runners, gated on available space so
+  warm builds pay no penalty. Two tiers: a light cache trim when space dips, and
+  an aggressive deep clean (old NDKs, old runner binaries, stale caches) when
+  space is critically low. Replaces the old scheduled cleanup workflow — there is
+  no cron job; this runs inline at the start of every build but only acts when
+  needed.
+inputs:
+  light-gb:
+    description: "Below this many GiB free, do a light cache trim."
+    required: false
+    default: "40"
+  deep-gb:
+    description: "Below this many GiB free, also do an aggressive deep clean."
+    required: false
+    default: "20"
+  keep-ndk:
+    description: "NDK version to keep when deep-cleaning old NDKs (others removed)."
+    required: false
+    default: "27.1.12297006"
+runs:
+  using: "composite"
+  steps:
+    - name: Disk guard
+      shell: bash
+      env:
+        LIGHT_GB: ${{ inputs.light-gb }}
+        DEEP_GB: ${{ inputs.deep-gb }}
+        KEEP_NDK: ${{ inputs.keep-ndk }}
+      run: |
+        set -uo pipefail
+
+        # Free GiB on the volume backing $HOME (data volume on macOS).
+        free_gb() { df -g "$HOME" | awk 'NR==2 {print $4}'; }
+
+        before=$(free_gb)
+        echo "Disk guard: ${before} GiB free (light<${LIGHT_GB}, deep<${DEEP_GB})."
+
+        if [ "${before}" -ge "${LIGHT_GB}" ]; then
+          echo "Above light threshold — nothing to do."
+          df -h "$HOME" | sed -n '1,2p'
+          exit 0
+        fi
+
+        # ---- Tier 1: light cache trim (rebuildable, regenerates next build) ----
+        echo "Below light threshold — trimming rebuildable caches..."
+        (command -v gradle >/dev/null 2>&1 && gradle --stop) >/dev/null 2>&1 || true
+        pkill -f 'GradleDaemon' >/dev/null 2>&1 || true
+        rm -rf ~/Library/Caches/CocoaPods/* 2>/dev/null || true
+        rm -rf ~/Library/Caches/org.swift.swiftpm/* 2>/dev/null || true
+        rm -rf ~/Library/Caches/Homebrew/* 2>/dev/null || true
+        rm -rf ~/.gradle/caches/build-cache-* ~/.gradle/caches/transforms-* ~/.gradle/caches/journal-* 2>/dev/null || true
+        rm -rf ~/.gradle/daemon 2>/dev/null || true
+        rm -rf ~/.bun/install/cache/* 2>/dev/null || true
+        find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -mtime +3 -exec rm -rf {} \; 2>/dev/null || true
+        rm -rf ~/.android/avd/* ~/.android/cache/* 2>/dev/null || true
+
+        # ---- Tier 2: aggressive deep clean when critically low ----
+        now=$(free_gb)
+        if [ "${now}" -lt "${DEEP_GB}" ]; then
+          echo "Still below deep threshold (${now} GiB) — deep cleaning..."
+
+          # Old NDK versions — keep only the build-pinned one, but ONLY prune if
+          # that version is actually installed. Otherwise the runner may have a
+          # different single NDK (e.g. setup-runner.sh provisions 26.x) and we'd
+          # delete the only usable NDK, breaking the next Android build.
+          if [ -d ~/Library/Android/sdk/ndk/"${KEEP_NDK}" ]; then
+            for ndkdir in ~/Library/Android/sdk/ndk/*; do
+              [ -d "$ndkdir" ] || continue
+              if [ "$(basename "$ndkdir")" != "${KEEP_NDK}" ]; then
+                echo "  removing NDK $(basename "$ndkdir")"
+                rm -rf "$ndkdir" 2>/dev/null || true
+              fi
+            done
+          else
+            echo "  keep-NDK ${KEEP_NDK} not installed — skipping NDK prune (won't delete the only NDK)"
+          fi
+
+          # Emulator + SDK sources — not needed for assembleRelease CI.
+          rm -rf ~/Library/Android/sdk/emulator/* 2>/dev/null || true
+          rm -rf ~/Library/Android/sdk/sources/* 2>/dev/null || true
+
+          # Stale runner version binaries (self-update leftovers; keep current).
+          rm -f ~/mentra/actions-runner-*/*.tar.gz 2>/dev/null || true
+          # Age-based gradle prune (anything not touched in 14 days).
+          find ~/.gradle/caches -type f -atime +14 -delete 2>/dev/null || true
+
+          # Old iOS DeviceSupport / archives.
+          rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport/* 2>/dev/null || true
+        fi
+
+        after=$(free_gb)
+        echo "Disk guard: reclaimed $((after - before)) GiB (now ${after} GiB free)."
+        df -h "$HOME" | sed -n '1,2p'
+
+        # Fail loudly if still critically low, rather than dying ~6 min later at
+        # packageRelease with "No space left on device".
+        if [ "${after}" -lt 8 ]; then
+          echo "::error::Disk still critically low (${after} GiB) after deep clean. Runner host needs manual attention."
+          exit 1
+        fi
