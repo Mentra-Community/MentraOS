@@ -45,6 +45,7 @@ import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
+import {BlobModule} from "./modules/blob"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -197,6 +198,13 @@ export class MiniappSession {
   public readonly permissions: PermissionsModule
   public readonly phone: PhoneModule
   public readonly storage: SimpleStorage
+  /**
+   * Phone-local persistent BINARY storage (`session.blob`) — the binary
+   * counterpart to `session.storage`. Files on disk, scoped to this miniapp.
+   * Writes/reads are chunked so large payloads (e.g. captured audio fed in via
+   * `session.mic.onAudioChunk`) never cross the bridge in one message.
+   */
+  public readonly blob: BlobModule
   public readonly stream: StreamModule
   public readonly system: SystemModule
   public readonly transcription: TranscriptionModule
@@ -289,6 +297,7 @@ export class MiniappSession {
     this.permissions = new PermissionsModule(this)
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)
+    this.blob = new BlobModule(this)
     this.stream = new StreamModule(this)
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)

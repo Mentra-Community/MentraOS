@@ -257,6 +257,69 @@ function summarize(trace) {
     return parts.slice(0, 10).join(' ');
   }
 
+  if (
+    trace.layer === 'sdk_ble_chunk' ||
+    trace.layer === 'sdk_ble_write' ||
+    trace.layer === 'asg_ble_outbound_queue'
+  ) {
+    const priorityKeys = [
+      'level',
+      'warningReason',
+      'stage',
+      'requestId',
+      'commandType',
+      'appId',
+      'chunkNumber',
+      'totalChunks',
+      'chunkIndex',
+      'sequence',
+      'messageId',
+      'durationMs',
+      'queueDelayMs',
+      'sendDurationMs',
+      'maxChunkSendDurationMs',
+      'maxChunkSpacingMs',
+      'callbackDelayMs',
+      'timeSinceLastSendMs',
+      'timeSincePreviousChunkSendMs',
+      'nextProcessDelayMs',
+      'remainingDelayMs',
+      'retryDelayMs',
+      'pacingDelayMs',
+      'writeAccepted',
+      'success',
+      'complete',
+      'status',
+      'queueSize',
+      'queueSizeAfterAdd',
+      'queueSizeAfterPoll',
+      'packedBytes',
+      'payloadBytes',
+      'chunkJsonBytes',
+      'messageBytes',
+      'wireJsonBytes',
+      'reassembledBytes',
+      'receivedChunks',
+      'currentMtu',
+      'writeType',
+      'queuedAtMs',
+      'wakeup',
+      'chunked',
+      'cWrapped',
+      'chunkId',
+      'characteristicUuid',
+      'errorClass',
+      'errorMessage',
+    ];
+    const parts = [];
+    for (const key of priorityKeys) {
+      if (trace.payload[key] != null) {
+        parts.push(`${key}=${singleLine(trace.payload[key])}`);
+      }
+    }
+    return parts.slice(0, 16).join(' ');
+  }
+
   if (trace.type === 'k900:sr_log' && trace.payload.B) {
     const body = trace.payload.B.body ?? '';
     return [
@@ -285,20 +348,23 @@ function singleLine(value) {
 }
 
 function formatTrace(trace) {
+  const warning =
+    trace.payload && typeof trace.payload === 'object' && trace.payload.level === 'warning';
   const left = [
     trace.time.padEnd(12),
     compactLabel(trace.direction, trace.layer).padEnd(noColor ? 18 : 27),
     trace.layer.padEnd(20),
-    color(trace.type.padEnd(18), 'dim'),
+    color(trace.type.padEnd(18), warning ? 'yellow' : 'dim'),
   ].join('  ');
 
   const summary = summarize(trace);
+  const styledSummary = warning ? color(summary, 'yellow') : summary;
   const details =
     verbose && (trace.source || trace.bytes)
       ? color(` source=${trace.source}${trace.bytes ? ` bytes=${trace.bytes}` : ''}`, 'dim')
       : '';
 
-  return `${left}${summary ? `  ${summary}` : ''}${details}`;
+  return `${left}${summary ? `  ${styledSummary}` : ''}${details}`;
 }
 
 const rl = readline.createInterface({

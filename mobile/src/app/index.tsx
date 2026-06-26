@@ -175,7 +175,12 @@ export default function InitScreen() {
       return
     }
 
-    const res = await restComms.getMinimumClientVersion()
+    // The phone often fires this the instant wifi reconnects, before the DNS
+    // path is warm — on China cloud the api.mentraglass.cn → Aliyun ALB CNAME
+    // chain intermittently returns SERVFAIL (EAI_FAIL) at that moment. Retry
+    // with backoff so a single transient DNS blip at boot doesn't dump the user
+    // to the connection-error screen (which blocks login).
+    const res = await restComms.retry(() => restComms.getMinimumClientVersion(), 3, 1000)
     if (res.is_error()) {
       console.error("Failed to fetch cloud version:", res.error)
 

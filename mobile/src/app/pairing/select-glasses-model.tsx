@@ -7,6 +7,7 @@ import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
@@ -44,6 +45,8 @@ export default function SelectGlassesModelScreen() {
         return <MentraLogo color={theme.colors.text} />
       case DeviceTypes.Z100:
         return <VuzixLogo color={theme.colors.text} />
+      case DeviceTypes.NIMO:
+        return <NimoLogo />
       default:
         return null
     }
