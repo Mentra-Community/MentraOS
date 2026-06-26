@@ -473,10 +473,18 @@ export class RecorderController {
         /* ignore */
       }
     }
+    // Tear down any still-live feeds before dropping their handles. The
+    // stop/cancel paths already unsubscribed; the start-failure path has not, so
+    // do it here too — otherwise a handler could fire after the capture is gone.
+    try {
+      this.micUnsub?.()
+    } catch {
+      /* ignore */
+    }
+    this.unsubscribeTranscription()
     this.writer = null
     this.recordingId = null
     this.micUnsub = null
-    this.transcriptUnsub = null
     this.chunks = []
     this.bufBytes = 0
     this.pcmBytes = 0
