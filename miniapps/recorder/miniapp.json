@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.recorder",
+  "version": "1.0.0",
+  "name": "Recorder",
+  "description": "Capture the glasses microphone to a real audio file on your phone — record, play back, and export WAV. A debugging tool for the audio system, built on session.recorder + session.blob.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3170,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Records audio from the connected glasses microphone"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures audio from the glasses to record"
+    }
+  ]
+}

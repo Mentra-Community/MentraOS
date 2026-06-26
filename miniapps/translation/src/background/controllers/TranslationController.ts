@@ -178,6 +178,7 @@ export class TranslationController {
     this.subscribeCloudStatus()
 
     this.registerUiHandlers()
+    this.registerActions()
     console.log(`LocalTranslation: started (target=${this.settings.targetLanguage}, profile=${this.currentProfile.id})`)
   }
 
@@ -259,6 +260,51 @@ export class TranslationController {
         this.clearTranscripts()
       }),
     )
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Actions (cross-miniapp / AI)
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Declared in miniapp.json. A system miniapp (e.g. Mentra AI) invokes this to
+   * start live translation — the host headless-wakes us if we're stopped, and
+   * by the time this runs start() has already subscribed to any-source → the
+   * saved target. We then apply any caller-requested target/source and confirm.
+   */
+  private registerActions(): void {
+    try {
+      this.unsubs.push(this.session.actions.handle("start_translation", (params) => this.startTranslation(params)))
+    } catch (err) {
+      // actions module unavailable on this host, or already registered — the
+      // miniapp still runs, it just can't be started via the action.
+      console.log("LocalTranslation: failed to register actions", err)
+    }
+  }
+
+  private async startTranslation(
+    params: Record<string, unknown>,
+  ): Promise<{targetLanguage: string; status: string}> {
+    const target =
+      typeof params.targetLanguage === "string" && params.targetLanguage.trim() ? params.targetLanguage.trim() : null
+
+    if (target && target !== this.settings.targetLanguage) {
+      // setTargetLanguage persists, re-subscribes, and broadcasts to the UI.
+      await this.setTargetLanguage(target)
+    } else {
+      // Target unchanged — re-subscribe to ensure translation is live (e.g. a
+      // fresh start on a just-woken session).
+      this.subscribeTranslation()
+    }
+
+    // subscribeTranslation swallows subscribe failures (it logs and leaves
+    // translationCleanup null). Don't claim "translating" if nothing attached —
+    // surface it as an action error so the caller (e.g. Mentra AI) knows.
+    if (!this.translationCleanup) {
+      throw new Error("Failed to start translation — no active subscription")
+    }
+
+    return {targetLanguage: this.settings.targetLanguage, status: "translating"}
   }
 
   private sendSnapshot(): void {
@@ -391,7 +437,9 @@ export class TranslationController {
         void this.handleTranslation(data)
       }
 
-      // Any source language -> selected target language.
+      // Any source language -> selected target language. Translating whatever
+      // is spoken into one chosen language is the app's whole model; the source
+      // is intentionally not configurable (see the file header).
       this.translationCleanup = this.session.translation.to(targetLanguage, handler)
     } catch (err) {
       console.log(`LocalTranslation: translation subscribe failed for target=${targetLanguage}`, err)
