@@ -99,11 +99,15 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // When on, LC3 audio received from Nex glasses is played back (Android only).
-  nex_audio_playback: {
-    key: "nex_audio_playback",
+  // Local-only dev toggle: defaults off and never synced to the cloud account
+  // (saveOnServer: false); persists locally so it survives app restarts.
+  // Key renamed from the legacy `nex_audio_playback` so stale server/local
+  // values (saved back when this was saveOnServer:true) can't re-enable it.
+  nex_lc3_audio_playback: {
+    key: "nex_lc3_audio_playback",
     defaultValue: () => false,
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   china_deployment: {
@@ -712,7 +716,7 @@ const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.gallery_mode.key,
   // Mentra Nex feature flags:
   SETTINGS.nex_chinese_captions.key,
-  SETTINGS.nex_audio_playback.key,
+  SETTINGS.nex_lc3_audio_playback.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
