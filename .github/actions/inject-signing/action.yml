@@ -91,8 +91,9 @@ runs:
         # Strip trailing CR/LF from password/alias values. A keystore password can
         # legitimately contain spaces, but never a trailing newline — and a stray
         # one (e.g. from how a secret was created) makes Gradle report "keystore
-        # password was incorrect". Only \r\n are stripped, so real chars are safe.
-        strip_eol() { printf '%s' "${1%$'\n'}" | sed $'s/[\r\n]*$//'; }
+        # password was incorrect". Uses tr (portable on BSD+GNU; BSD sed choked on
+        # an in-pattern \r). Only CR/LF are removed, so real chars are safe.
+        strip_eol() { printf '%s' "$1" | tr -d '\r\n'; }
         ASG_STORE_PASSWORD="$(strip_eol "${ASG_STORE_PASSWORD:-}")"
         ASG_KEY_PASSWORD="$(strip_eol "${ASG_KEY_PASSWORD:-}")"
         UPLOAD_STORE_PASSWORD="$(strip_eol "${UPLOAD_STORE_PASSWORD:-}")"
