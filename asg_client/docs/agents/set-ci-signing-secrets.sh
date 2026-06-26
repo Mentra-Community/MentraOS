@@ -33,14 +33,20 @@ prop() {
   awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); gsub(/^[ \t]+|[ \t]+$/,""); print; exit}' "$GP"
 }
 
-# Prompt (silent) if a value is empty.
-need() {
-  local var="$1" label="$2" val="${!1:-}"
+# Set a secret from a gradle.properties key. If the prop is missing, optionally
+# fall back to a default; if still empty, prompt (unless OPTIONAL=1 -> skip).
+# Reads via prop() and pipes straight to gh with printf '%s' (never echo, never
+# nested subshells / indirect expansion — those mangled values containing '!').
+set_prop_secret() {
+  local name="$1" key="$2" default="${3:-}" optional="${4:-0}"
+  local val; val="$(prop "$key")"
+  [ -n "$val" ] || val="$default"
   if [ -z "$val" ]; then
-    read -rsp "Enter ${label}: " val; echo
+    if [ "$optional" = "1" ]; then echo "  SKIP $name (no $key in $GP)"; return; fi
+    read -rsp "Enter $name: " val; echo
   fi
-  [ -n "$val" ] || die "${label} is required"
-  printf '%s' "$val"
+  [ -n "$val" ] || die "$name is required"
+  set_secret "$name" "$val"
 }
 
 set_secret() {
@@ -68,19 +74,19 @@ set_secret_b64 UPLOAD_KEYSTORE_B64 "$CRED/upload-keystore.jks"
 set_secret_b64 OTA_KEYSTORE_B64    "$CRED/ota-keystore.jks"
 
 echo "== ASG signing passwords =="
-set_secret ASG_STORE_PASSWORD "$(ASG_STORE_PASSWORD="$(prop ASG_STORE_PASSWORD)"; need ASG_STORE_PASSWORD 'ASG_STORE_PASSWORD')"
-set_secret ASG_KEY_PASSWORD   "$(ASG_KEY_PASSWORD="$(prop ASG_KEY_PASSWORD)"; need ASG_KEY_PASSWORD 'ASG_KEY_PASSWORD')"
-set_secret ASG_KEY_ALIAS      "$(v="$(prop ASG_KEY_ALIAS)"; echo "${v:-asg}")"
+set_prop_secret ASG_STORE_PASSWORD ASG_STORE_PASSWORD
+set_prop_secret ASG_KEY_PASSWORD   ASG_KEY_PASSWORD
+set_prop_secret ASG_KEY_ALIAS      ASG_KEY_ALIAS asg
 
 echo "== Mobile (upload) signing passwords =="
-set_secret MENTRAOS_UPLOAD_STORE_PASSWORD "$(MENTRAOS_UPLOAD_STORE_PASSWORD="$(prop MENTRAOS_UPLOAD_STORE_PASSWORD)"; need MENTRAOS_UPLOAD_STORE_PASSWORD 'MENTRAOS_UPLOAD_STORE_PASSWORD')"
-set_secret MENTRAOS_UPLOAD_KEY_PASSWORD   "$(MENTRAOS_UPLOAD_KEY_PASSWORD="$(prop MENTRAOS_UPLOAD_KEY_PASSWORD)"; need MENTRAOS_UPLOAD_KEY_PASSWORD 'MENTRAOS_UPLOAD_KEY_PASSWORD')"
-set_secret MENTRAOS_UPLOAD_KEY_ALIAS      "$(v="$(prop MENTRAOS_UPLOAD_KEY_ALIAS)"; echo "${v:-upload}")"
+set_prop_secret MENTRAOS_UPLOAD_STORE_PASSWORD MENTRAOS_UPLOAD_STORE_PASSWORD
+set_prop_secret MENTRAOS_UPLOAD_KEY_PASSWORD   MENTRAOS_UPLOAD_KEY_PASSWORD
+set_prop_secret MENTRAOS_UPLOAD_KEY_ALIAS      MENTRAOS_UPLOAD_KEY_ALIAS upload
 
 echo "== OTA signing passwords (optional — skip if unused in CI) =="
-set_secret OTA_STORE_PASSWORD "$(prop OTA_STORE_PASSWORD)"
-set_secret OTA_KEY_PASSWORD   "$(prop OTA_KEY_PASSWORD)"
-set_secret OTA_KEY_ALIAS      "$(v="$(prop OTA_KEY_ALIAS)"; echo "${v:-ota}")"
+set_prop_secret OTA_STORE_PASSWORD OTA_STORE_PASSWORD "" 1
+set_prop_secret OTA_KEY_PASSWORD   OTA_KEY_PASSWORD   "" 1
+set_prop_secret OTA_KEY_ALIAS      OTA_KEY_ALIAS      ota
 
 echo "== Google Play service account (JSON contents) =="
 if [ -f "$CRED/google-play-key.json" ]; then
@@ -94,8 +100,14 @@ set_secret_b64 ASC_API_KEY_P8_B64 "$CRED/AuthKey_VKL3ALRUBR.p8"
 # ASC_API_KEY_ID / ASC_API_ISSUER_ID live in appstore-connect.env (KEY=VALUE).
 ASC_ENV="$CRED/appstore-connect.env"
 asc_val() { [ -f "$ASC_ENV" ] && awk -F= -v k="$1" '$1==k{sub(/^[^=]*=/,"");gsub(/^[ \t]+|[ \t]+$/,"");print;exit}' "$ASC_ENV" || true; }
-set_secret ASC_API_KEY_ID    "$(v="$(asc_val ASC_API_KEY_ID)";    [ -n "$v" ] && echo "$v" || need ASC_API_KEY_ID 'ASC_API_KEY_ID')"
-set_secret ASC_API_ISSUER_ID "$(v="$(asc_val ASC_API_ISSUER_ID)"; [ -n "$v" ] && echo "$v" || need ASC_API_ISSUER_ID 'ASC_API_ISSUER_ID')"
+set_asc_secret() {
+  local name="$1" key="$2" val; val="$(asc_val "$key")"
+  if [ -z "$val" ]; then read -rp "Enter $name: " val; fi
+  [ -n "$val" ] || die "$name is required"
+  set_secret "$name" "$val"
+}
+set_asc_secret ASC_API_KEY_ID    ASC_API_KEY_ID
+set_asc_secret ASC_API_ISSUER_ID ASC_API_ISSUER_ID
 
 echo
 echo "Done. Verify with: gh secret list --repo $REPO | grep -E 'KEYSTORE|ASG_|MENTRAOS_UPLOAD|OTA_|GOOGLE_PLAY|ASC_'"
