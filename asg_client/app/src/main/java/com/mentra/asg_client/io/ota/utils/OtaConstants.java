@@ -7,8 +7,10 @@ public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
     // URLs
-    // Production OTA version JSON URL
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
+    // Production OTA version JSON URL for ASG client 39+.
+    // prod_live_version.json intentionally remains the legacy rescue manifest for
+    // older clients that may be stuck on a corrupted artifact cache.
+    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
 
     // Test URLs (uncomment to use for testing)
     // public static final String VERSION_JSON_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/live_version_test_non_production.json";

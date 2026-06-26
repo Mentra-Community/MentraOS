@@ -383,7 +383,7 @@ public class OtaHelper {
             // This is just a HEAD reachability probe so the actual URL doesn't matter for the
             // probe to work, but it should be kept in sync with the manifest URL when that swaps.
             HttpURLConnection conn = (HttpURLConnection)
-                new URL("https://ota.mentraglass.com/prod_live_version.json").openConnection();
+                new URL(OtaConstants.VERSION_JSON_URL).openConnection();
             conn.setConnectTimeout(REACHABILITY_TIMEOUT_MS);
             conn.setReadTimeout(REACHABILITY_TIMEOUT_MS);
             conn.setRequestMethod("HEAD");
