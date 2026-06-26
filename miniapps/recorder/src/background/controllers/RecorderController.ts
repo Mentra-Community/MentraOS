@@ -299,6 +299,10 @@ export class RecorderController {
   /** Suspend the mic + transcription feeds; the partial blob stays open. */
   private pauseRecording(): void {
     if (!this.recordingId || this.paused) return
+    // Set paused first so any mic/transcription event that fires during the
+    // teardown window below is dropped (onChunk + onTranscript both bail on
+    // paused) — no audio-less words or trailing PCM after the pause edge.
+    this.paused = true
     try {
       this.micUnsub?.()
     } catch {
@@ -309,7 +313,6 @@ export class RecorderController {
     // finalized — commit them now so they survive into the saved transcript.
     this.commitInterim()
     this.unsubscribeTranscription()
-    this.paused = true
     this.lastLevel = 0
     this.emitStatus()
   }
@@ -368,7 +371,9 @@ export class RecorderController {
   }
 
   private onTranscript(d: {text: string; isFinal: boolean; language?: string}): void {
-    if (!this.recordingId) return
+    // Drop events that land during/after pause (mirrors onChunk) so the
+    // transcript can't gain words with no matching recorded audio.
+    if (!this.recordingId || this.paused) return
     if (d.language) this.lang = d.language
     if (d.isFinal) {
       const t = d.text.trim()

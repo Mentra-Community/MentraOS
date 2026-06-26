@@ -37,6 +37,10 @@ export function useRecorder() {
   const [unavailableId, setUnavailableId] = useState<string | null>(null)
   const mounted = useRef(true)
   const unavailableTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks the capture a status belongs to, so we only clear the live transcript
+  // + waveform when a genuinely new capture starts — not on a same-capture
+  // status (e.g. an early pause that reports ms === 0 before any PCM buffered).
+  const lastRecId = useRef<string | null>(null)
 
   useEffect(() => {
     mounted.current = true
@@ -61,6 +65,7 @@ export function useRecorder() {
         setPlayingId(s.playingId)
         setHasMic(s.hasMic)
         // Restore an in-progress capture's transcript on WebView reopen.
+        lastRecId.current = s.recording?.recordingId ?? null
         if (s.recording) {
           setTranscript(s.transcript ?? "")
           setTranscriptLang(s.transcriptLang ?? "")
@@ -73,22 +78,27 @@ export function useRecorder() {
         if (!mounted.current) return
         const st = p as RecorderStatus
         setStatus(st)
-        // Feed a rolling waveform; reset at the start of a fresh capture.
-        if (st.ms === 0) {
+        // A new recordingId means a fresh capture — clear carryover. Keyed off
+        // the id (not ms === 0) so a same-capture status can't wipe live state.
+        if (st.recordingId !== lastRecId.current) {
+          lastRecId.current = st.recordingId
           setTranscript("")
           setTranscriptLang("")
+          setLevels([])
         }
-        setLevels((prev) => {
-          if (st.ms === 0) return []
-          if (st.paused) return prev
-          const next = [...prev, st.level]
-          return next.length > WAVE_BARS ? next.slice(next.length - WAVE_BARS) : next
-        })
+        // Feed a rolling waveform; frozen while paused.
+        if (!st.paused) {
+          setLevels((prev) => {
+            const next = [...prev, st.level]
+            return next.length > WAVE_BARS ? next.slice(next.length - WAVE_BARS) : next
+          })
+        }
       }),
     )
     offs.push(
       on("rec:stopped", () => {
         if (!mounted.current) return
+        lastRecId.current = null
         setStatus(null)
         setLevels([])
         setTranscript("")
