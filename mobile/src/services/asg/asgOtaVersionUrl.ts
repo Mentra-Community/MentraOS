@@ -3,10 +3,10 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
-  // Pre-wall-clock ASG builds ignore ota_start.ota_version_url, but MentraOS should
+  // ASG builds before 39 ignore ota_start.ota_version_url, but MentraOS should
   // still check v2: ota_start will run their compiled rescue manifest first, then
   // the upgraded ASG client continues on v2.
-  return Number.isFinite(buildNumber) && buildNumber < 100000
+  return Number.isFinite(buildNumber) && buildNumber < 39
 }
 
 function getOtaVersionUrlDevOverride(): string | null {

@@ -1119,7 +1119,7 @@ class MentraBluetoothSdk private constructor(
 
     private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {
         val parsed = buildNumber.toIntOrNull()
-        return parsed != null && parsed < 100_000
+        return parsed != null && parsed < 39
     }
 
     internal fun sendShutdown() {

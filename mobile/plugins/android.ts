@@ -193,7 +193,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
     // 4a. Enable Core Library Desugaring (required by :crust → Mapbox Nav SDK).
     if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
       buildGradle = buildGradle.replace(
-        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        /(namespace\s+['"]com\.mentra\.mentra(?:\.[A-Za-z0-9_.]+)?['"])/,
         `$1
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -419,6 +419,7 @@ function withAndroidManifestModifications(config: any) {
       // (GoogleNavigation pod + GOOGLE_NAV_API_KEY in Info.plist) until the
       // iOS migration lands — that path is untouched. See
       // issues/mapbox-navigation-migration.md.
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
       if (!app["meta-data"]) {
         app["meta-data"] = []
       }
@@ -431,31 +432,33 @@ function withAndroidManifestModifications(config: any) {
       // build-time-only (~/.gradle/gradle.properties) and never reaches the
       // manifest. Fail loudly in CI/EAS; warn in local dev.
       // See issues/mapbox-navigation-migration.md.
-      const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
-      if (!mapboxToken) {
-        const isCiOrEas =
-          process.env.CI === "true" ||
-          process.env.CI === "1" ||
-          process.env.EAS_BUILD === "true" ||
-          process.env.NODE_ENV === "production"
-        const msg =
-          "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime — " +
-          "set it in mobile/.env (see mobile/.env.example) before building."
-        if (isCiOrEas) {
-          throw new Error(msg)
+      if (!isChinaBuild) {
+        const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+        if (!mapboxToken) {
+          const isCiOrEas =
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
+            process.env.EAS_BUILD === "true" ||
+            process.env.NODE_ENV === "production"
+          const msg =
+            "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime — " +
+            "set it in mobile/.env (see mobile/.env.example) before building."
+          if (isCiOrEas) {
+            throw new Error(msg)
+          }
+          console.warn(`[mobile/plugins/android] ${msg}`)
         }
-        console.warn(`[mobile/plugins/android] ${msg}`)
-      }
-      const existingMapbox = app["meta-data"].find((m: any) => m.$["android:name"] === "com.mapbox.token")
-      if (existingMapbox) {
-        existingMapbox.$["android:value"] = mapboxToken
-      } else {
-        app["meta-data"].push({
-          $: {
-            "android:name": "com.mapbox.token",
-            "android:value": mapboxToken,
-          },
-        })
+        const existingMapbox = app["meta-data"].find((m: any) => m.$["android:name"] === "com.mapbox.token")
+        if (existingMapbox) {
+          existingMapbox.$["android:value"] = mapboxToken
+        } else {
+          app["meta-data"].push({
+            $: {
+              "android:name": "com.mapbox.token",
+              "android:value": mapboxToken,
+            },
+          })
+        }
       }
     }
 

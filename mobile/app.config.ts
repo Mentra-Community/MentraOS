@@ -67,8 +67,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // build-time-only and lives in ~/.gradle/gradle.properties (Android) / the
   // CocoaPods netrc (iOS), never here. Fail loudly in CI/EAS, warn in local
   // dev. See issues/mapbox-navigation-migration.md.
+  // The China build (cn variant) ships without Mentra Map, so it has no nav
+  const isChinaBuild = variant === VARIANTS.cn
   const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
-  if (!mapboxAccessToken) {
+  if (!mapboxAccessToken && !isChinaBuild) {
     const isCiOrEas =
       process.env.CI === "true" ||
       process.env.CI === "1" ||

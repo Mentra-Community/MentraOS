@@ -15,6 +15,7 @@ import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
+import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
@@ -425,6 +426,11 @@ class MantleManager {
           continue
         }
         const {packageName, version} = parsed
+
+        // China build: don't install hidden bundled miniapps (e.g. Mentra Map).
+        if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) {
+          continue
+        }
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
           continue

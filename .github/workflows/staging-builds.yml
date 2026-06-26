@@ -27,10 +27,6 @@ on:
   push:
     branches:
       - staging
-    paths:
-      - "mobile/**"
-      - "asg_client/**"
-      - ".github/workflows/staging-builds.yml"
   workflow_dispatch:
     inputs:
       skip_cleanup:
