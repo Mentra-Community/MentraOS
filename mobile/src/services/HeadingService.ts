@@ -10,7 +10,7 @@
  * synchronously so the UI doesn't have to wait for the next sensor tick.
  */
 
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 const LOG_TAG = "HEADING_SERVICE"
 

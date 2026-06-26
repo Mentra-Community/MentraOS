@@ -86,12 +86,19 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`. |
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
-| `size`           | string  | `"medium"`          | `small`, `medium`, or `large`                               |
-| `compress`       | string  | `"none"`            | Compression preset passed to capture pipeline               |
-| `flash`          | boolean | `true`              | Fire the privacy LED during capture                         |
-| `sound`          | boolean | `true`              | Play shutter sound                                          |
-| `exposureTimeNs` | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
-| `iso`            | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
+| `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
+| `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
+| `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
+| `sound`              | boolean | `true`              | Play shutter sound                                          |
+| `exposureTimeNs`     | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
+| `iso`                | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
+| `aeExposureDivisor`  | number  | absent              | After AE convergence, divide metered exposure by this factor (scan tuning) |
+| `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
+| `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
+| `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
+| `mfnr`               | boolean | absent              | `false` disables MFNR for this capture                      |
+| `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
+| `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
@@ -649,8 +656,10 @@ Persists the resolution/fps used when the hardware camera button starts a video.
 #### `button_photo_setting`
 
 ```json
-{"type": "button_photo_setting", "size": "large"}
+{"type": "button_photo_setting", "size": "high"}
 ```
+
+`size` is one of `low`, `medium`, `high`, or `max`. Legacy values `small`, `large`, and `full` are normalized on ingest.
 
 `size` is one of `small`, `medium`, `large`.
 
@@ -671,6 +680,21 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 ```
 
 Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
+
+#### `camera_tuning_config` (Mentra Live / K900-class hardware)
+
+```json
+{"type": "camera_tuning_config", "anr": false, "gain": false}
+```
+
+Configures camera HAL tuning (ANR / pixsmart gain) without a reboot. ASG persists the flags (`camera_anr_enabled` / `camera_gain_enabled`, both default `true`) and relays them as a `camconfig` broadcast to SystemUI's `CTReceiver`. Both fields are optional; an omitted field keeps the stored value.
+
+- `anr`: `true` = ANR (Adaptive Noise Reduction) on; `false` = ANR off.
+- `gain`: `true` = stock gain params; `false` = pixsmart gain-off params.
+
+**Scan-mode convention**: send `{"anr": false, "gain": false}` to disable ANR and gain for sharper barcode/QR/text captures, and `{"anr": true, "gain": true}` to restore defaults.
+
+ASG replies with `settings_ack` (`setting: "camera_tuning"`, `status: "applied"`) echoing the effective `anr`/`gain` values. The persisted flags are re-applied at boot and after any `camera_fov_setting` HAL restart so the tuning survives reboots and FOV changes.
 
 ---
 
@@ -882,14 +906,6 @@ Idle response:
   "step_percent": 0,
   "overall_percent": 0
 }
-```
-
-#### `ota_retry_version_check`
-
-Asks ASG to retry the last phone-started OTA after the phone completes recovery work (for example syncing the glasses clock). The retry re-uses the manifest URL from the last `ota_start`. ASG ignores the command — replying only with its current `ota_status` — unless a phone-started OTA previously failed with `clock_skew` or `ssl_error`.
-
-```json
-{"type": "ota_retry_version_check"}
 ```
 
 #### `ota_update_response` (deprecated)

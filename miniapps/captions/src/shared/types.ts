@@ -1,65 +1,67 @@
 /**
- * Shared domain types referenced by BOTH the background JSContext and
- * the UI WebView. Both bundlers inline this file at build time, so
- * there's no runtime resolution across the boundary.
+ * Shared domain types referenced by BOTH the background JSContext and the UI
+ * WebView. Both bundlers inline this file at build time, so there's no runtime
+ * resolution across the boundary.
  *
- * Rule: anything that crosses the `mentra.send` / `session.ui.send`
- * channel boundary needs its payload shape declared here so each side
- * sees the same TypeScript type.
+ * Rule: anything that crosses the `mentra.send` / `session.ui.send` channel
+ * boundary needs its payload shape declared here so each side sees the same
+ * TypeScript type.
+ *
+ * These shapes mirror the cloud app's SSE message payloads (TranscriptsManager
+ * broadcast / display preview / settings update) so the ported UI components
+ * can stay byte-identical.
  */
 
-/** Per-tester event payload. The tester subscribes to a specific iface
- * via `mentra.send("tester:start", {iface})` and gets back a stream of
- * `{iface, kind, payload}` events from background. `kind` distinguishes
- * the event sub-type (e.g. "transcript", "button", "location"). */
-export interface TesterEventPayload {
-  iface: string
-  kind: string
-  payload: unknown
+/** Caption settings — persisted in storage, mirrored to the UI. */
+export interface CaptionSettings {
+  language: string
+  languageHints: string[]
+  displayLines: number
+  displayWidth: number
+  wordBreaking: boolean
 }
 
-/** Glasses capabilities snapshot, broadcast on session.ui.onOpen. */
-export interface CapabilitiesSnapshot {
-  hasCamera?: boolean
-  hasMicrophone?: boolean
-  hasDisplay?: boolean
-  hasSpeaker?: boolean
-  hasWifi?: boolean
-  modelName?: string
-}
-
-/** Connection state snapshot, broadcast on session.ui.onOpen and on change. */
-export interface ConnectionSnapshot {
-  connected: boolean
-}
-
-/** Captions live transcript update — pushed to UI on every transcription event. */
-export interface CaptionsLiveTranscript {
+/** A single transcript entry shown in the UI's transcript list. */
+export interface Transcript {
+  id: string
+  utteranceId: string | null
+  speaker: string
   text: string
+  timestamp: number | null // Unix epoch ms — formatted client-side in user's timezone
+  isFinal: boolean
 }
 
-/** Captions history update — pushed when a final transcription is appended. */
-export interface CaptionsHistoryUpdate {
-  history: string[]
+/** The glasses display preview (what's currently rendered on the lenses). */
+export interface DisplayPreview {
+  text: string
+  lines: string[]
+  isFinal: boolean
+  timestamp: number
 }
 
-/** Last-button-press footer update. */
-export interface CaptionsLastButton {
-  label: string
+export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
+export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
+
+/** Phone-owned cloud-client status surfaced through session.cloud. */
+export interface CloudClientStatus {
+  status: CloudClientConnectionStatus
+  audioTransport: CloudClientAudioTransport
 }
 
-/** Caller-controlled settings the UI can flip on background. */
-export interface CaptionsSettings {
-  mirrorToGlasses: boolean
+/** A single live-transcript broadcast: one interim/final result. */
+export interface LiveTranscript {
+  type: "interim" | "final"
+  id: string
+  utteranceId: string | null
+  speaker: string
+  text: string
+  timestamp: number | null
 }
 
-/** Args to `tester:invoke` — the new RPC replacing the old `tester:fire`. */
-export interface TesterInvoke {
-  iface: string
-  method: string
-  args?: unknown[]
+/** Full state snapshot pushed to the UI on every WebView open. */
+export interface CaptionsSnapshot {
+  settings: CaptionSettings
+  transcripts: Transcript[]
+  displayPreview: DisplayPreview | null
+  cloudStatus: CloudClientStatus
 }
-
-/** Result of `tester:invoke`. Handlers return the raw call result; errors
- *  propagate via the RPC error path so callers see `MentraRpcError`. */
-export type TesterInvokeResult = unknown

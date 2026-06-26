@@ -419,44 +419,44 @@ class MiniappCatalog {
           {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
         ],
       },
-      {
-        packageName: captionsPackageName,
-        name: translate("miniApps:offlineCaptions"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/captions.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
-      {
-        packageName: notifyPackageName,
-        name: translate("miniApps:notify"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/notification.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
+      // {
+      //   packageName: captionsPackageName,
+      //   name: translate("miniApps:offlineCaptions"),
+      //   type: "standard",
+      //   offline: true,
+      //   logoUrl: require("@assets/applet-icons/captions.png"),
+      //   webviewUrl: "",
+      //   healthy: true,
+      //   hidden: false,
+      //   permissions: [],
+      //   offlineRoute: "",
+      //   running: false,
+      //   loading: false,
+      //   local: false,
+      //   hardwareRequirements: [
+      //     {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+      //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      //   ],
+      // },
+      // {
+      //   packageName: notifyPackageName,
+      //   name: translate("miniApps:notify"),
+      //   type: "standard",
+      //   offline: true,
+      //   logoUrl: require("@assets/applet-icons/notification.png"),
+      //   webviewUrl: "",
+      //   healthy: true,
+      //   hidden: false,
+      //   permissions: [],
+      //   offlineRoute: "",
+      //   running: false,
+      //   loading: false,
+      //   local: false,
+      //   hardwareRequirements: [
+      //     {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+      //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      //   ],
+      // },
       {
         packageName: settingsPackageName,
         name: translate("miniApps:settings"),
@@ -526,7 +526,10 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) || useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)) {
+    if (
+      useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) ||
+      useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
+    ) {
       apps.push({
         packageName: lmaInstallerPackageName,
         name: translate("miniApps:lmaInstaller"),

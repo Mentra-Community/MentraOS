@@ -587,26 +587,6 @@ public class Bridge private constructor() {
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
         }
 
-        /**
-         * Send OTA update available notification - glasses have detected an available update
-         * (background mode)
-         */
-        @JvmStatic
-        fun sendOtaUpdateAvailable(
-                versionCode: Long,
-                versionName: String,
-                updates: List<String>,
-                totalSize: Long
-        ) {
-            val eventBody = HashMap<String, Any>()
-            eventBody["version_code"] = versionCode
-            eventBody["version_name"] = versionName
-            eventBody["updates"] = updates
-            eventBody["total_size"] = totalSize
-
-            sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
-        }
-
         /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
         @JvmStatic
         fun sendOtaStartAck() {

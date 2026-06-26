@@ -8,7 +8,7 @@
 
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {
   MentraJSCrashController,
@@ -44,7 +44,9 @@ export function bootstrapMentraJS() {
   // runs; cast to a loose shape so the bootstrap compiles cleanly.
   const crust = CrustModule as unknown as ConstructorParameters<typeof MentraJSRouter>[1]
 
-  const crashController = new MentraJSCrashController()
+  const crashController = new MentraJSCrashController({
+    maxRetries: 3,
+  })
   const uiRouter = new MentraUIRouter({
     mentraJsDispatchToJs: (packageName: string, envelope: Record<string, unknown>) =>
       (

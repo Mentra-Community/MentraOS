@@ -64,6 +64,14 @@ export interface StartManagedOptions {
   audio?: StreamAudioConfig
   /** Play glasses-side stream start/stop sounds. Defaults to true. */
   sound?: boolean
+  /**
+   * Ingest protocol — a latency/durability trade:
+   *   - "srt" (default): ~10-20s latency via LL-HLS playback, with shareable
+   *     HLS/DASH URLs and automatic recording.
+   *   - "whip": sub-second WebRTC playback (use `webrtcUrl`/WHEP), but NO
+   *     HLS/DASH and NO recording (provider limitation).
+   */
+  ingest?: "srt" | "whip"
 }
 
 export interface StreamPublisherStartResult {
@@ -75,6 +83,9 @@ export interface StreamPublisherStartResult {
 export interface ManagedStreamResult extends StreamPublisherStartResult {
   /** Cloudflare live input UID — useful for building hosted-player URLs. */
   liveInputId: string
+  /** Playback mode this stream supports: "hls" (use hlsUrl/dashUrl) or
+   *  "webrtc" (use webrtcUrl via WHEP; hlsUrl will never serve content). */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -106,6 +117,7 @@ export class StreamModule {
       video: options.video,
       audio: options.audio,
       sound: options.sound ?? true,
+      ingest: options.ingest,
     })
   }
 

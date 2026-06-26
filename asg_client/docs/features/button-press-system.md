@@ -70,7 +70,7 @@ if (captureService.isRecordingVideo()) {
 Settings consulted:
 
 - `getButtonPhotoSize()` — `small` / `medium` / `large`. Set via [`button_photo_setting`](../ASG_CLIENT_API.md#button_photo_setting).
-- `getButtonCameraLedEnabled()` — privacy LED on/off during capture. Set via [`button_camera_led`](../ASG_CLIENT_API.md#button_camera_led).
+- The privacy LED is always enabled during capture.
 
 ## Long press: video record / stop
 
@@ -113,7 +113,6 @@ The phone app sets button-related settings via the [API commands](../ASG_CLIENT_
 - `button_photo_setting` — short-press photo resolution
 - `button_video_recording_setting` — long-press video resolution + fps
 - `button_max_recording_time` — max long-press recording duration
-- `button_camera_led` — privacy LED enable
 
 ## Logcat tags
 

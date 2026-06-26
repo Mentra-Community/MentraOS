@@ -4,7 +4,8 @@ import "@/shared/channels"
 import {RouterProvider, useRouter} from "@/ui/router"
 import {NavigationPage} from "@/ui/pages/NavigationPage/NavigationPage"
 import {AddPlacePage} from "@/ui/pages/AddPlacePage"
-import {getGoogleMaps} from "@/ui/lib/googleMaps"
+import {SettingsPage} from "@/ui/pages/SettingsPage"
+import {getMapbox} from "@/ui/lib/mapbox"
 import {ToastProvider} from "@/ui/components/Toast/Toast"
 
 function Pages() {
@@ -39,17 +40,18 @@ function Pages() {
           onClose={pop}
         />
       ) : null}
+      {route.name === "settings" ? <SettingsPage onClose={pop} /> : null}
     </>
   )
 }
 
 export default function App() {
-  // Kick off the Google Maps JS API load as soon as the tree mounts.
-  // getGoogleMaps() is the singleton initialiser — first call kicks off
-  // the script tag, subsequent calls are no-ops. It also pumps the
-  // resulting ready/error state into the navStore so NavMap can render.
+  // Kick off Mapbox GL JS init as soon as the tree mounts. getMapbox() is
+  // the singleton initialiser — first call resolves the token and sets
+  // mapboxgl.accessToken; subsequent calls are no-ops. NavMap awaits the
+  // same singleton's whenReady() before constructing its map.
   useEffect(() => {
-    getGoogleMaps()
+    getMapbox()
   }, [])
 
   return (

@@ -7,12 +7,11 @@ package com.mentra.asg_client.camera;
  * - BUTTON: High quality for user's personal photos (stored locally, synced via gallery)
  * - SDK: Optimized for fast WiFi transfer (app-requested photos via take_photo command)
  *
- * Size tiers:
- * - small: Ultra-fast transfers, suitable for thumbnails or quick previews
+ * Size tiers (canonical names):
+ * - low: Ultra-fast transfers, suitable for thumbnails or quick previews
  * - medium: Good balance of quality and speed (SDK default)
- * - large: High quality for detailed analysis
- * - full: Native sensor resolution (SDK only, for apps that truly need max detail)
- * - max: Highest JPEG size reported by camera hardware (button photos only)
+ * - high: High quality for detailed analysis
+ * - max: Highest JPEG size reported by camera hardware (~4032×3024)
  */
 public final class CameraConstants {
 
@@ -63,11 +62,6 @@ public final class CameraConstants {
     /** SDK photo large resolution height */
     public static final int SDK_HEIGHT_LARGE = 1440;
 
-    /** SDK photo full resolution width - native sensor (4:3 aspect ratio) */
-    public static final int SDK_WIDTH_FULL = 3264;
-    /** SDK photo full resolution height - native sensor */
-    public static final int SDK_HEIGHT_FULL = 2448;
-
     // =========================================================================
     // SDK JPEG QUALITY SETTINGS
     // Lower quality = smaller files = faster transfer
@@ -82,17 +76,16 @@ public final class CameraConstants {
     /** JPEG quality for SDK large photos (prioritize quality) */
     public static final int SDK_JPEG_QUALITY_LARGE = 85;
 
-    /** JPEG quality for SDK full photos (max quality for max resolution) */
-    public static final int SDK_JPEG_QUALITY_FULL = 95;
+    /** JPEG quality for SDK max / scan photos */
+    public static final int SDK_JPEG_QUALITY_MAX = 95;
 
     // =========================================================================
     // SIZE TIER NAMES
     // =========================================================================
 
-    public static final String SIZE_SMALL = "small";
+    public static final String SIZE_LOW = "low";
     public static final String SIZE_MEDIUM = "medium";
-    public static final String SIZE_LARGE = "large";
-    public static final String SIZE_FULL = "full";
+    public static final String SIZE_HIGH = "high";
     public static final String SIZE_MAX = "max";
 
     // =========================================================================
@@ -101,6 +94,6 @@ public final class CameraConstants {
     // SDK small:  ~30-50 KB
     // SDK medium: ~80-150 KB
     // SDK large:  ~200-400 KB
-    // SDK full:   ~1-2 MB
+    // SDK max:    ~2-4 MB
     // Button:     ~500 KB - 2 MB (depending on size setting)
 }

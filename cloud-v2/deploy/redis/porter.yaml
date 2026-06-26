@@ -1,0 +1,27 @@
+# Redis for cloud-v2 dev/staging.
+#
+# In-cluster Redis as a Porter app. Reachable from cloud-v2 as
+# `redis://cloud-v2-redis:6379`.
+#
+# NOT production-grade — single-pod, no persistence, no auth. For prod
+# we'll migrate to ElastiCache (managed) and update REDIS_URL.
+#
+# Apply via: `porter apply -f deploy/redis/porter.yaml`
+
+version: v2
+name: cloud-v2-redis
+
+image:
+  repository: redis
+  tag: "7-alpine"
+
+services:
+  - name: redis
+    type: worker
+    # Disable persistence — Redis here is coordination + stream buffer,
+    # not durable state. Matches the dev docker config.
+    run: redis-server --save "" --appendonly no
+    port: 6379
+    cpuCores: 0.5
+    ramMegabytes: 512
+    terminationGracePeriodSeconds: 10

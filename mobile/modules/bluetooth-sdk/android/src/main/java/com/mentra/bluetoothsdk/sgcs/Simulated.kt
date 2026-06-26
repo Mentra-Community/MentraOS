@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk.sgcs
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
@@ -32,20 +33,8 @@ class Simulated : SGCManager() {
     }
 
     // Camera & Media
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    ) {
-        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound")
+    override fun requestPhoto(request: PhotoRequest) {
+        Bridge.log("requestPhoto save=${request.save}, sound=${request.sound}")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -60,8 +49,8 @@ class Simulated : SGCManager() {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
-        Bridge.log("startVideoRecording flash=$flash, sound=$sound")
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
+        Bridge.log("startVideoRecording sound=$sound")
     }
 
     override fun stopVideoRecording(requestId: String) {
@@ -79,10 +68,6 @@ class Simulated : SGCManager() {
 
     override fun sendButtonMaxRecordingTime() {
         Bridge.log("sendButtonMaxRecordingTime")
-    }
-
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
     }
 
     override fun sendCameraFovSetting() {

@@ -576,36 +576,6 @@ public class CommunicationManager
         return transport != null && transport.isConnected();
     }
 
-    /**
-     * Send OTA update available notification to phone (background mode). Part of
-     * OtaHelper.PhoneConnectionProvider interface.
-     *
-     * @param updateInfo JSON with version_code, version_name, updates[], total_size
-     */
-    @Override
-    public void sendOtaUpdateAvailable(JSONObject updateInfo) {
-        Log.d(TAG, "📱 =========================================");
-        Log.d(TAG, "📱 SEND OTA UPDATE AVAILABLE");
-        Log.d(TAG, "📱 =========================================");
-
-        if (isPhoneConnected()) {
-            try {
-                // Use reliable sending for important update notification
-                boolean sent = reliableManager.sendMessage(updateInfo);
-                Log.d(
-                        TAG,
-                        "📱 "
-                                + (sent
-                                        ? "✅ OTA update available sent successfully"
-                                        : "❌ Failed to send OTA update available"));
-            } catch (Exception e) {
-                Log.e(TAG, "📱 💥 Error sending OTA update available", e);
-            }
-        } else {
-            Log.w(TAG, "📱 ❌ Cannot send OTA update available - phone not connected");
-        }
-    }
-
     /** Send a non-session OTA control message (e.g. {@code ota_start_ack}) over BLE. */
     @Override
     public void sendOtaMessage(JSONObject message) {

@@ -16,12 +16,14 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
 import com.mentra.asg_client.camera.policy.ManualExposurePolicy;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.request.AeCaptureCallback;
 import com.mentra.asg_client.camera.request.AePreviewController;
 import com.mentra.asg_client.camera.request.HdrBurstBuilder;
@@ -259,11 +261,56 @@ public final class PhotoSession {
     }
 
     private Long currentExposureTimeNs() {
+        if (activeCapture != null
+                && activeCapture.exposureTimeNs != null
+                && activeCapture.exposureTimeNs > 0) {
+            return activeCapture.exposureTimeNs;
+        }
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        if (settings.usesScanExposure()
+                && mLastMeteredExposureNs != null
+                && mLastMeteredExposureNs > 0
+                && settings.aeExposureDivisor != null) {
+            return mLastMeteredExposureNs / settings.aeExposureDivisor;
+        }
         return activeCapture != null ? activeCapture.exposureTimeNs : null;
+    }
+
+    private boolean shouldUseScanExposure() {
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        if (!settings.usesScanExposure()) {
+            return false;
+        }
+        if (mLastMeteredExposureNs == null || mLastMeteredExposureNs <= 0) {
+            return false;
+        }
+        CameraCapabilities caps = hooks.capabilities();
+        return caps != null
+                && caps.manualSensorSupported
+                && caps.sensorExposureTimeRange != null
+                && caps.sensorSensitivityRange != null;
     }
 
     private Integer currentIso() {
         return activeCapture != null ? activeCapture.iso : null;
+    }
+
+    private PhotoCaptureSettings currentCaptureSettings() {
+        return activeCapture != null
+                ? activeCapture.captureSettings
+                : PhotoCaptureSettings.EMPTY;
+    }
+
+    /**
+     * Explicit {@code zsl} on the request wins; otherwise let the global device setting apply.
+     * ZSL and MFNR are independent capabilities — ZSL being off should not be implied by MFNR
+     * being off, as ZSL reduces shutter lag regardless of multi-frame processing.
+     */
+    private static Boolean resolveRequestZsl(PhotoCaptureSettings captureSettings) {
+        if (captureSettings != null && captureSettings.zsl != null) {
+            return captureSettings.zsl;
+        }
+        return null;
     }
 
     private long currentStartTimeMs() {
@@ -276,6 +323,12 @@ public final class PhotoSession {
      */
     private void activateQueuedRequest(QueuedPhotoRequest queued) {
         resetCaptureMetadataState();
+        // Scan exposure is derived from the AE-metered readings of the CURRENT scene. Clear the
+        // previous shot's metering so a warm/burst session reuse or a camera reopen cannot make
+        // shouldUseScanExposure()/shouldUseManualExposure() short-circuit AE convergence and apply
+        // a stale exposure/ISO to this request. The AE callback re-populates these after metering.
+        mLastMeteredExposureNs = null;
+        mLastMeteredIso = null;
         activeCapture = ActivePhotoCapture.fromQueued(queued);
         rememberConfiguredCamera(queued);
     }
@@ -301,17 +354,21 @@ public final class PhotoSession {
 
     private int getJpegQualityForSize() {
         if (currentIsFromSdk()) {
-            String size = currentSize();
+            // Normalize so legacy tiers (small→low, large→high, full→max) map correctly.
+            String size = PhotoSizeTier.normalize(currentSize());
             if (size == null) {
                 return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
             }
+            if (shouldUseScanExposure()) {
+                return CameraConstants.SDK_JPEG_QUALITY_MAX;
+            }
             switch (size) {
-                case CameraConstants.SIZE_SMALL:
+                case CameraConstants.SIZE_LOW:
                     return CameraConstants.SDK_JPEG_QUALITY_SMALL;
-                case CameraConstants.SIZE_LARGE:
+                case CameraConstants.SIZE_HIGH:
                     return CameraConstants.SDK_JPEG_QUALITY_LARGE;
-                case CameraConstants.SIZE_FULL:
-                    return CameraConstants.SDK_JPEG_QUALITY_FULL;
+                case CameraConstants.SIZE_MAX:
+                    return CameraConstants.SDK_JPEG_QUALITY_MAX;
                 case CameraConstants.SIZE_MEDIUM:
                 default:
                     return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
@@ -856,6 +913,11 @@ public final class PhotoSession {
         if (fpsRange != null) {
             requested.put("aeTargetFpsRange", fpsRange);
         }
+        if (jpegSize != null) {
+            requested.put("width", jpegSize.getWidth());
+            requested.put("height", jpegSize.getHeight());
+        }
+        currentCaptureSettings().appendWarningsTo(requested);
         return requested;
     }
 
@@ -903,6 +965,8 @@ public final class PhotoSession {
             if (iso != null) {
                 resolvedConfig.put("iso", iso);
             }
+
+            currentCaptureSettings().appendWarningsTo(resolvedConfig);
 
             hooks.executor().execute(() -> callback.onPhotoConfigured(resolvedConfig));
         } catch (JSONException e) {
@@ -1032,6 +1096,9 @@ public final class PhotoSession {
     }
 
     private boolean shouldUseManualExposure() {
+        if (shouldUseScanExposure()) {
+            return true;
+        }
         Long exposureNs = currentExposureTimeNs();
         CameraCapabilities caps = hooks.capabilities();
         boolean manualSupported = caps != null && caps.manualSensorSupported;
@@ -1131,6 +1198,14 @@ public final class PhotoSession {
                 ManualExposurePolicy.pickSensitivityForManualCapture(
                         targetExposureNs, last, meteredExposureNs, isoRange);
 
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        if (settings.isoCap != null && settings.isoCap > 0) {
+            iso = Math.min(iso, settings.isoCap);
+            if (isoRange != null) {
+                iso = Math.max(isoRange.getLower(), Math.min(isoRange.getUpper(), iso));
+            }
+        }
+
         try {
             Integer isoLow = (isoRange != null) ? isoRange.getLower() : null;
             Integer isoHigh = (isoRange != null) ? isoRange.getUpper() : null;
@@ -1223,6 +1298,9 @@ public final class PhotoSession {
                     JpegOrientationResolver.lookupJpegOrientation(
                             displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
 
+            PhotoCaptureSettings captureSettings = currentCaptureSettings();
+            boolean edgeEnhancementEnabled = captureSettings.edgeEnhancementEnabled();
+
             StillCaptureBuilder.configure(
                     StillCaptureBuilder.wrap(stillBuilder),
                     useManual,
@@ -1234,7 +1312,8 @@ public final class PhotoSession {
                     hooks.hasAutoFocus(),
                     jpegSize,
                     getJpegQualityForSize(),
-                    jpegOrientation);
+                    jpegOrientation,
+                    edgeEnhancementEnabled);
 
             Log.d(
                     TAG,
@@ -1243,11 +1322,25 @@ public final class PhotoSession {
                             + " for display orientation: "
                             + displayOrientation);
 
-            if (!useManual
-                    && hooks.cameraSettings() != null
-                    && (hooks.cameraSettings().mAsgSettings.isZslEnabled()
-                            || hooks.cameraSettings().mAsgSettings.isMfnrEnabled())) {
-                hooks.cameraSettings().configureCaptureBuilder(stillBuilder);
+            if (hooks.cameraSettings() != null) {
+                Boolean requestMfnr =
+                        captureSettings.mfnr != null ? captureSettings.mfnr : null;
+                Boolean requestZsl = resolveRequestZsl(captureSettings);
+                if (!useManual) {
+                    if (requestMfnr != null || requestZsl != null) {
+                        hooks.cameraSettings()
+                                .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
+                    } else if (hooks.cameraSettings().mAsgSettings.isZslEnabled()
+                            || hooks.cameraSettings().mAsgSettings.isMfnrEnabled()) {
+                        hooks.cameraSettings().configureCaptureBuilder(stillBuilder);
+                    }
+                } else if ((requestMfnr != null && !requestMfnr)
+                        || (requestZsl != null && !requestZsl)) {
+                    // Pass the explicit values as-is; null = "use global device default",
+                    // false = "explicitly disabled". Do NOT coerce null to false here.
+                    hooks.cameraSettings()
+                            .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
+                }
             }
 
             CaptureRequest captureRequest = stillBuilder.build();
@@ -1262,6 +1355,31 @@ public final class PhotoSession {
                                 + zslInCapture
                                 + ")");
             }
+
+            Boolean requestMfnrForLog =
+                    captureSettings.mfnr != null ? captureSettings.mfnr : null;
+            Boolean requestZslForLog = resolveRequestZsl(captureSettings);
+            boolean globalMfnr =
+                    hooks.cameraSettings() != null
+                            && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
+            boolean globalZsl =
+                    hooks.cameraSettings() != null
+                            && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+            PhotoCaptureSettings.logAppliedAtCapture(
+                    currentFilePath() != null ? currentFilePath() : "unknown",
+                    captureSettings,
+                    useManual,
+                    mLastMeteredExposureNs,
+                    useManual
+                            ? Long.valueOf(manualClampedNs)
+                            : currentExposureTimeNs(),
+                    useManual
+                            ? manualIso
+                            : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
+                    requestMfnrForLog,
+                    requestZslForLog,
+                    globalMfnr,
+                    globalZsl);
 
             if (useManual) {
                 Log.i(
@@ -1329,6 +1447,9 @@ public final class PhotoSession {
 
                                 @Override
                                 public void recordCaptureMetadata(JSONObject captureMetadata) {
+                                    if (captureMetadata != null) {
+                                        currentCaptureSettings().appendWarningsTo(captureMetadata);
+                                    }
                                     recordStillCaptureMetadata(captureGeneration, captureMetadata);
                                 }
 
