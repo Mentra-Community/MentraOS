@@ -53,7 +53,10 @@ set_secret() {
   local name="$1" value="$2"
   if [ -z "$value" ]; then echo "  SKIP $name (empty)"; return; fi
   if [ "$DRY_RUN" = "1" ]; then echo "  [dry-run] would set $name (${#value} bytes)"; return; fi
-  printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --body - >/dev/null
+  # NOTE: `gh secret set --body -` sets the literal value "-" (it does NOT mean
+  # "read stdin"). gh reads stdin only when --body is omitted entirely. So pipe
+  # the value and DON'T pass --body. (This bug set every secret to "-".)
+  printf '%s' "$value" | gh secret set "$name" --repo "$REPO" >/dev/null
   echo "  set $name"
 }
 

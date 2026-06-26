@@ -108,12 +108,6 @@ runs:
           require ASG_KEYSTORE_B64 "$ASG_KEYSTORE_B64"
           require ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
           require ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
-          # TEMP DEBUG (remove): print sha8 + len of received passwords so we can
-          # tell whether the secret value matches the keystore (expected 96f16799).
-          # This reveals NO secret material — only a hash and length.
-          echo "DEBUG asg store: sha8=$(printf %s "$ASG_STORE_PASSWORD" | shasum | cut -c1-8) len=${#ASG_STORE_PASSWORD}"
-          echo "DEBUG asg key:   sha8=$(printf %s "$ASG_KEY_PASSWORD" | shasum | cut -c1-8) len=${#ASG_KEY_PASSWORD}"
-          echo "DEBUG asg alias: [$ASG_KEY_ALIAS]"
           mkdir -p asg_client/credentials
           decode_to "$ASG_KEYSTORE_B64" asg_client/credentials/asg-keystore.jks
           # Gradle reads these as project properties (project.hasProperty(...)).
