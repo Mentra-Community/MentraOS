@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import org.json.JSONException;
@@ -38,7 +39,7 @@ public class ResponseSender {
                                         .sendMessage(
                                                 data,
                                                 callback != null ? callback::onComplete : null,
-                                                gate != null ? gate::shouldSend : null);
+                                                adaptSendGate(gate));
                             }
                             return false;
                         });
@@ -47,6 +48,24 @@ public class ResponseSender {
         this.reliableManager.setEnabled(true, 1);
 
         Log.d(TAG, "✅ Response sender initialized with reliability support");
+    }
+
+    private static IBluetoothManager.SendMessageGate adaptSendGate(
+            ReliableMessageManager.SendGate gate) {
+        if (gate == null) {
+            return null;
+        }
+        return new IBluetoothManager.SendMessageGate() {
+            @Override
+            public boolean shouldSend() {
+                return gate.shouldSend();
+            }
+
+            @Override
+            public Object lock() {
+                return gate.lock();
+            }
+        };
     }
 
     /**

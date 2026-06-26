@@ -225,11 +225,26 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         boolean skipped = false;
         Exception error = null;
         try {
-            if (!shouldSendQueuedMessage(gate)) {
-                skipped = true;
-                return;
+            if (gate == null) {
+                success = sendMessageNow(data, broadcastJsonResponses);
+            } else {
+                Object gateLock = gate.lock();
+                if (gateLock == null) {
+                    if (!shouldSendQueuedMessage(gate)) {
+                        skipped = true;
+                        return;
+                    }
+                    success = sendMessageNow(data, broadcastJsonResponses);
+                } else {
+                    synchronized (gateLock) {
+                        if (!shouldSendQueuedMessage(gate)) {
+                            skipped = true;
+                            return;
+                        }
+                        success = sendMessageNow(data, broadcastJsonResponses);
+                    }
+                }
             }
-            success = sendMessageNow(data, broadcastJsonResponses);
         } catch (Exception e) {
             error = e;
             Log.e(TAG, "Error sending queued outbound BLE message", e);

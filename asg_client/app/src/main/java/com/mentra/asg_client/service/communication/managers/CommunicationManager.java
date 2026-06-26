@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
@@ -39,13 +40,31 @@ public class CommunicationManager
                                 return this.transport.sendMessage(
                                         data,
                                         callback != null ? callback::onComplete : null,
-                                        gate != null ? gate::shouldSend : null);
+                                        adaptSendGate(gate));
                             }
                             return false;
                         });
 
         // Enable by default - worst case with old phones is just some extra retries
         this.reliableManager.setEnabled(true, 1);
+    }
+
+    private static IBluetoothManager.SendMessageGate adaptSendGate(
+            ReliableMessageManager.SendGate gate) {
+        if (gate == null) {
+            return null;
+        }
+        return new IBluetoothManager.SendMessageGate() {
+            @Override
+            public boolean shouldSend() {
+                return gate.shouldSend();
+            }
+
+            @Override
+            public Object lock() {
+                return gate.lock();
+            }
+        };
     }
 
     /**

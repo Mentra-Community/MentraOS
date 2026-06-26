@@ -8,6 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.security.SecureRandom;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -23,6 +24,7 @@ public class ReliableMessageManager {
     private static final int MAX_RETRIES = 2;             // 2 retries (3 total attempts)
     private static final long MAX_PENDING_MESSAGES = 10;  // Resource constraint
     private static final long CLEANUP_INTERVAL_MS = 30000; // 30 seconds
+    private static final long QUEUED_SEND_CLEANUP_MS = CLEANUP_INTERVAL_MS * 10; // 5 minutes
 
     // State
     private final ConcurrentHashMap<Long, PendingMessage> pendingMessages;
@@ -53,6 +55,8 @@ public class ReliableMessageManager {
 
     public interface SendGate {
         boolean shouldSend();
+
+        Object lock();
     }
 
     /**
@@ -126,7 +130,7 @@ public class ReliableMessageManager {
                                     totalFailures++;
                                 }
                             },
-                            () -> pendingMessages.get(messageId) == pending);
+                            pendingGate(messageId, pending));
             if (!accepted && pendingMessages.remove(messageId, pending)) {
                 totalFailures++;
             }
@@ -143,17 +147,23 @@ public class ReliableMessageManager {
      * @param messageId The message ID being acknowledged
      */
     public void handleAck(long messageId) {
-        PendingMessage pending = pendingMessages.remove(messageId);
+        PendingMessage pending = pendingMessages.get(messageId);
         if (pending != null) {
-            // Cancel timeout
-            if (pending.timeoutRunnable != null) {
-                retryHandler.removeCallbacks(pending.timeoutRunnable);
-            }
-            totalAcksReceived++;
+            synchronized (pending) {
+                if (!pendingMessages.remove(messageId, pending)) {
+                    return;
+                }
 
-            Log.d(TAG, String.format("ACK received for message %d (attempts: %d, time: %dms)",
-                messageId, pending.retryCount + 1,
-                System.currentTimeMillis() - pending.timestamp));
+                // Cancel timeout
+                if (pending.timeoutRunnable != null) {
+                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+                }
+                totalAcksReceived++;
+
+                Log.d(TAG, String.format("ACK received for message %d (attempts: %d, time: %dms)",
+                    messageId, pending.retryCount + 1,
+                    System.currentTimeMillis() - pending.timestamp));
+            }
         }
     }
 
@@ -249,7 +259,7 @@ public class ReliableMessageManager {
                                 totalFailures++;
                             }
                         },
-                        () -> pendingMessages.get(messageId) == retryPending);
+                        pendingGate(messageId, retryPending));
         if (!accepted && pendingMessages.remove(messageId, retryPending)) {
             totalFailures++;
         }
@@ -275,6 +285,20 @@ public class ReliableMessageManager {
         }
     }
 
+    private SendGate pendingGate(long messageId, PendingMessage pending) {
+        return new SendGate() {
+            @Override
+            public boolean shouldSend() {
+                return pendingMessages.get(messageId) == pending;
+            }
+
+            @Override
+            public Object lock() {
+                return pending;
+            }
+        };
+    }
+
     /**
      * Schedule periodic cleanup of old messages.
      */
@@ -291,22 +315,31 @@ public class ReliableMessageManager {
     private void cleanupOldMessages() {
         long now = System.currentTimeMillis();
         long cutoff = now - (CLEANUP_INTERVAL_MS * 2);
+        long queuedCutoff = now - QUEUED_SEND_CLEANUP_MS;
 
-        pendingMessages.entrySet().removeIf(entry -> {
+        for (Map.Entry<Long, PendingMessage> entry : pendingMessages.entrySet()) {
+            long messageId = entry.getKey();
             PendingMessage pending = entry.getValue();
-            // The ACK timer is armed only after the queued transport send completes.
-            if (pending.timeoutRunnable == null) {
-                return false;
-            }
-            if (pending.timestamp < cutoff) {
-                Log.w(TAG, "Removing stale message: " + entry.getKey());
-                if (pending.timeoutRunnable != null) {
-                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+
+            synchronized (pending) {
+                // The ACK timer is armed only after the queued transport send completes.
+                if (pending.timeoutRunnable == null) {
+                    if (pending.timestamp < queuedCutoff
+                            && pendingMessages.remove(messageId, pending)) {
+                        Log.w(TAG, "Removing stale queued message: " + messageId);
+                        totalFailures++;
+                    }
+                    continue;
                 }
-                return true;
+
+                if (pending.timestamp < cutoff
+                        && pendingMessages.remove(messageId, pending)) {
+                    Log.w(TAG, "Removing stale message: " + messageId);
+                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+                    totalFailures++;
+                }
             }
-            return false;
-        });
+        }
     }
 
     /**

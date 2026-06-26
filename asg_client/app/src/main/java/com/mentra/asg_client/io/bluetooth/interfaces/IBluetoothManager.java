@@ -29,6 +29,8 @@ public interface IBluetoothManager {
 
     interface SendMessageGate {
         boolean shouldSend();
+
+        Object lock();
     }
 
     /**
