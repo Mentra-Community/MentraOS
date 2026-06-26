@@ -294,6 +294,10 @@ public class ReliableMessageManager {
 
         pendingMessages.entrySet().removeIf(entry -> {
             PendingMessage pending = entry.getValue();
+            // The ACK timer is armed only after the queued transport send completes.
+            if (pending.timeoutRunnable == null) {
+                return false;
+            }
             if (pending.timestamp < cutoff) {
                 Log.w(TAG, "Removing stale message: " + entry.getKey());
                 if (pending.timeoutRunnable != null) {
