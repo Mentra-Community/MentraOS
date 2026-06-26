@@ -64,6 +64,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:

@@ -81,6 +81,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:

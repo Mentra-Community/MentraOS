@@ -24,7 +24,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: self-hosted
+    # GitHub-hosted Ubuntu: this is a debug-signed compile/test check (no prod
+    # keystore, no Play upload), so it does not need the mac runners. Moving it
+    # here frees self-hosted macOS capacity for iOS + staging/release builds.
+    runs-on: ubuntu-latest
 
     steps:
       - name: Update PR comment - Build started
