@@ -129,16 +129,26 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     /** Queue an outbound message and notify once the queued send attempt finishes. */
     @Override
     public final boolean sendMessage(byte[] data, SendMessageCallback callback) {
-        return queueOutboundMessage(data, callback, true);
+        return sendMessage(data, callback, null);
+    }
+
+    /** Queue an outbound message with a final worker-side send gate. */
+    @Override
+    public final boolean sendMessage(
+            byte[] data, SendMessageCallback callback, SendMessageGate gate) {
+        return queueOutboundMessage(data, callback, true, gate);
     }
 
     /** Queue an outbound command that should not be broadcast back to phone-facing listeners. */
     protected final boolean sendInternalCommand(byte[] data) {
-        return queueOutboundMessage(data, null, false);
+        return queueOutboundMessage(data, null, false, null);
     }
 
     private boolean queueOutboundMessage(
-            byte[] data, SendMessageCallback callback, boolean broadcastJsonResponses) {
+            byte[] data,
+            SendMessageCallback callback,
+            boolean broadcastJsonResponses,
+            SendMessageGate gate) {
         if (data == null || data.length == 0) {
             return false;
         }
@@ -159,7 +169,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                                                     queuedAtMs,
                                                     traceInfo,
                                                     callback,
-                                                    broadcastJsonResponses)));
+                                                    broadcastJsonResponses,
+                                                    gate)));
             logOutboundQueueEvent(
                     "queued",
                     sequence,
@@ -194,7 +205,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             long queuedAtMs,
             OutboundTraceInfo traceInfo,
             SendMessageCallback callback,
-            boolean broadcastJsonResponses) {
+            boolean broadcastJsonResponses,
+            SendMessageGate gate) {
         long dequeuedAtMs = System.currentTimeMillis();
         logOutboundQueueEvent(
                 "dequeued",
@@ -210,25 +222,44 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
         long sendStartedAtMs = System.currentTimeMillis();
         boolean success = false;
+        boolean skipped = false;
         Exception error = null;
         try {
+            if (!shouldSendQueuedMessage(gate)) {
+                skipped = true;
+                return;
+            }
             success = sendMessageNow(data, broadcastJsonResponses);
         } catch (Exception e) {
             error = e;
             Log.e(TAG, "Error sending queued outbound BLE message", e);
         } finally {
-            logOutboundQueueEvent(
-                    "send_result",
-                    sequence,
-                    traceInfo,
-                    queuedAtMs,
-                    sendStartedAtMs - queuedAtMs,
-                    System.currentTimeMillis() - sendStartedAtMs,
-                    success,
-                    data.length,
-                    outboundBleExecutor.getQueue().size(),
-                    error);
+            if (!skipped) {
+                logOutboundQueueEvent(
+                        "send_result",
+                        sequence,
+                        traceInfo,
+                        queuedAtMs,
+                        sendStartedAtMs - queuedAtMs,
+                        System.currentTimeMillis() - sendStartedAtMs,
+                        success,
+                        data.length,
+                        outboundBleExecutor.getQueue().size(),
+                        error);
+            }
             notifySendMessageCallback(callback, success);
+        }
+    }
+
+    private boolean shouldSendQueuedMessage(SendMessageGate gate) {
+        if (gate == null) {
+            return true;
+        }
+        try {
+            return gate.shouldSend();
+        } catch (Exception e) {
+            Log.w(TAG, "Queued send gate failed", e);
+            return false;
         }
     }
 

@@ -30,14 +30,15 @@ public class ResponseSender {
         // reference
         this.reliableManager =
                 new ReliableMessageManager(
-                        (data, callback) -> {
+                        (data, callback, gate) -> {
                             if (this.serviceManager != null
                                     && this.serviceManager.getBluetoothManager() != null) {
                                 return this.serviceManager
                                         .getBluetoothManager()
                                         .sendMessage(
                                                 data,
-                                                callback != null ? callback::onComplete : null);
+                                                callback != null ? callback::onComplete : null,
+                                                gate != null ? gate::shouldSend : null);
                             }
                             return false;
                         });

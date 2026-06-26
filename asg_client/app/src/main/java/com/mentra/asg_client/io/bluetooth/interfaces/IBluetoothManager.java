@@ -27,6 +27,10 @@ public interface IBluetoothManager {
         void onSendComplete(boolean success);
     }
 
+    interface SendMessageGate {
+        boolean shouldSend();
+    }
+
     /**
      * Queue a message to send to the connected device.
      *
@@ -44,6 +48,16 @@ public interface IBluetoothManager {
      * @return true if the data was accepted for outbound delivery, false otherwise
      */
     boolean sendMessage(byte[] data, SendMessageCallback callback);
+
+    /**
+     * Queue a message and check whether it is still valid immediately before the queued send.
+     *
+     * @param data The data to send
+     * @param callback Optional callback invoked after the queued send attempt completes
+     * @param gate Optional gate checked on the outbound worker before writing
+     * @return true if the data was accepted for outbound delivery, false otherwise
+     */
+    boolean sendMessage(byte[] data, SendMessageCallback callback, SendMessageGate gate);
 
     /**
      * Send a file to the connected device.

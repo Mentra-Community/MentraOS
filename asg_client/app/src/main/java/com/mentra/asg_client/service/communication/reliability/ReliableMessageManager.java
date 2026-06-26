@@ -44,11 +44,15 @@ public class ReliableMessageManager {
      * Implemented by the class that has access to Bluetooth.
      */
     public interface IMessageSender {
-        boolean sendData(byte[] data, SendCompletionCallback callback);
+        boolean sendData(byte[] data, SendCompletionCallback callback, SendGate gate);
     }
 
     public interface SendCompletionCallback {
         void onComplete(boolean success);
+    }
+
+    public interface SendGate {
+        boolean shouldSend();
     }
 
     /**
@@ -121,7 +125,8 @@ public class ReliableMessageManager {
                                 } else if (pendingMessages.remove(messageId, pending)) {
                                     totalFailures++;
                                 }
-                            });
+                            },
+                            () -> pendingMessages.get(messageId) == pending);
             if (!accepted && pendingMessages.remove(messageId, pending)) {
                 totalFailures++;
             }
@@ -243,7 +248,8 @@ public class ReliableMessageManager {
                             } else if (pendingMessages.remove(messageId, retryPending)) {
                                 totalFailures++;
                             }
-                        });
+                        },
+                        () -> pendingMessages.get(messageId) == retryPending);
         if (!accepted && pendingMessages.remove(messageId, retryPending)) {
             totalFailures++;
         }
@@ -255,13 +261,14 @@ public class ReliableMessageManager {
      * @return true if sent successfully, false otherwise
      */
     private boolean sendDirectly(JSONObject message) {
-        return sendDirectly(message, null);
+        return sendDirectly(message, null, null);
     }
 
-    private boolean sendDirectly(JSONObject message, SendCompletionCallback callback) {
+    private boolean sendDirectly(
+            JSONObject message, SendCompletionCallback callback, SendGate gate) {
         try {
             String jsonString = message.toString();
-            return messageSender.sendData(jsonString.getBytes(), callback);
+            return messageSender.sendData(jsonString.getBytes(), callback, gate);
         } catch (Exception e) {
             Log.e(TAG, "Error sending message", e);
             return false;
