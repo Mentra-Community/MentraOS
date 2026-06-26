@@ -193,7 +193,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
     // 4a. Enable Core Library Desugaring (required by :crust → Mapbox Nav SDK).
     if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
       buildGradle = buildGradle.replace(
-        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        /(namespace\s+['"]com\.mentra\.mentra(?:\.[A-Za-z0-9_.]+)?['"])/,
         `$1
     compileOptions {
         coreLibraryDesugaringEnabled true
