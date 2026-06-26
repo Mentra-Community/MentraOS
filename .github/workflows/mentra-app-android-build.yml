@@ -85,6 +85,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free up disk space
+        # GitHub-hosted ubuntu runners ship with ~14GB free, which a full RN
+        # Android release build (NDK + Gradle + node_modules + bun cache) can
+        # exhaust ("No space left on device"). Drop preinstalled toolchains we
+        # don't use to reclaim ~20GB+.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          # Remove large preinstalled toolchains this build never uses (~15GB+).
+          # Keep the Android SDK — the build needs it.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -110,18 +125,21 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          # Scope by runner.environment: a cache saved on a self-hosted Linux
+          # runner stores absolute symlink paths (/home/mentra/...) that break
+          # tar-restore on a github-hosted runner (/home/runner/...).
+          key: gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            gradle-${{ runner.os }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
           restore-keys: |
-            bun-${{ runner.os }}-
+            bun-${{ runner.environment }}-${{ runner.os }}-
 
       - name: Install dependencies
         working-directory: ./mobile
