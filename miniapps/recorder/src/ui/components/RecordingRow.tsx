@@ -1,4 +1,4 @@
-import {useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ChevronDown, FileText, Pause, Play, Share2, Trash2} from "lucide-react"
 
 import type {RecordingItem} from "../../shared/types"
@@ -31,6 +31,21 @@ export function RecordingRow({
   onDelete,
 }: Props) {
   const [open, setOpen] = useState(false)
+  // Deleting is permanent (no undo), so the trash button arms on first tap and
+  // only deletes on a second tap; it disarms itself after a few seconds.
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => void (confirmTimer.current && clearTimeout(confirmTimer.current)), [])
+  const handleDelete = () => {
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    if (confirmDelete) {
+      setConfirmDelete(false)
+      onDelete()
+      return
+    }
+    setConfirmDelete(true)
+    confirmTimer.current = setTimeout(() => setConfirmDelete(false), 3000)
+  }
   const hasTranscript = !!item.transcript?.trim()
   // Live progress while this row is the one playing back.
   const progress = playing && item.durationMs > 0 ? Math.min(1, posMs / item.durationMs) : 0
@@ -103,10 +118,14 @@ export function RecordingRow({
 
         <button
           type="button"
-          aria-label="Delete recording"
-          onClick={onDelete}
-          className="grid place-items-center rounded-full shrink-0 active:opacity-70 -mr-1"
-          style={{width: 32, height: 32, color: "var(--text-muted)"}}>
+          aria-label={confirmDelete ? "Tap again to delete" : "Delete recording"}
+          onClick={handleDelete}
+          className="grid place-items-center rounded-full shrink-0 active:opacity-70 -mr-1 press"
+          style={
+            confirmDelete
+              ? {width: 32, height: 32, color: "#fff", background: "var(--rec)"}
+              : {width: 32, height: 32, color: "var(--text-muted)"}
+          }>
           <Trash2 className="w-[18px] h-[18px]" />
         </button>
       </div>
