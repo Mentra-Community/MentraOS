@@ -105,10 +105,9 @@ class MentraNex : SGCManager() {
     private var context: Context? = null
     // private var isDebug: Boolean = true
 
-    // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
+    // Off by default; toggled from Nex Developer Settings via the nex_lc3_audio_playback flag.
     private val isLc3AudioEnabled: Boolean
-        // get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
-        get() = false
+        get() = DeviceStore.get("bluetooth", "nex_lc3_audio_playback") as? Boolean ?: false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -221,7 +220,7 @@ class MentraNex : SGCManager() {
         }
     }
 
-    /** Start/stop the LC3 player when the nex_audio_playback flag changes. */
+    /** Start/stop the LC3 player when the nex_lc3_audio_playback flag changes. */
     override fun applyNexAudioPlaybackSetting() {
         if (isLc3AudioEnabled) {
             Bridge.log("Nex: LC3 audio playback enabled - starting player")

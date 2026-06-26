@@ -97,8 +97,14 @@ dependencies {
   // APK weight). `:navigation` is the core engine; `:tripdata` carries the
   // banner/maneuver formatting used to label turns.
   // Version pinned to 3.25.0 — re-check https://docs.mapbox.com/android/navigation/releases/
-  implementation 'com.mapbox.navigationcore:navigation:3.25.0'
-  implementation 'com.mapbox.navigationcore:tripdata:3.25.0'
+  def isChinaBuild = System.getenv("EXPO_PUBLIC_DEPLOYMENT_REGION") == "china"
+  if (isChinaBuild) {
+    compileOnly 'com.mapbox.navigationcore:navigation:3.25.0'
+    compileOnly 'com.mapbox.navigationcore:tripdata:3.25.0'
+  } else {
+    implementation 'com.mapbox.navigationcore:navigation:3.25.0'
+    implementation 'com.mapbox.navigationcore:tripdata:3.25.0'
+  }
 
   // Required for Java 8+ APIs on minSdk < 26 (was needed by Google Nav SDK;
   // Mapbox Nav SDK likewise targets desugared core libs).
