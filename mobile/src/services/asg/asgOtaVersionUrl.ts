@@ -3,8 +3,8 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
-  // Pre-wall-clock ASG builds ignore ota_start.ota_version_url, so compare against the URL they will actually use.
-  return Number.isFinite(buildNumber) && buildNumber < 100000
+  // ASG builds before 39 ignore ota_start.ota_version_url, so compare against the URL they will actually use.
+  return Number.isFinite(buildNumber) && buildNumber < 39
 }
 
 function getOtaVersionUrlDevOverride(): string | null {

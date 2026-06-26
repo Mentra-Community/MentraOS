@@ -1178,7 +1178,7 @@ public final class MentraBluetoothSDK {
 
     private func isLegacyAsgOtaStartBuild(_ buildNumber: String) -> Bool {
         guard let parsed = Int(buildNumber) else { return false }
-        return parsed < 100_000
+        return parsed < 39
     }
 
     func sendShutdown() {
