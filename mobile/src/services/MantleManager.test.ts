@@ -8,6 +8,7 @@ import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {localMiniappRuntime} from "@mentra/island"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -193,6 +194,7 @@ describe("MantleManager", () => {
     resetMantleTestState()
     jest.clearAllTimers()
     jest.clearAllMocks()
+    jest.restoreAllMocks()
   })
 
   afterAll(() => {
@@ -317,6 +319,44 @@ describe("MantleManager", () => {
         voice_activity_detection_enabled: false,
       }),
     )
+  })
+
+  it("opens the G2 native dashboard when double tap is not claimed by a local miniapp", async () => {
+    const hasTouchSubscriber = jest.spyOn(localMiniappRuntime, "hasTouchSubscriberForGesture").mockReturnValue(false)
+
+    emitBluetoothSdkEvent("touch_event", {
+      type: "touch_event",
+      deviceModel: "Even Realities G2",
+      gestureName: "double_tap",
+      timestamp: 999,
+    })
+
+    await waitFor(() => {
+      expect(hasTouchSubscriber).toHaveBeenCalledWith("double_tap")
+      expect(bluetoothSdkMock.showDashboard).toHaveBeenCalledTimes(1)
+    })
+    expect(socketComms.sendTouchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceModel: "Even Realities G2",
+        gestureName: "double_tap",
+      }),
+    )
+  })
+
+  it("does not open the G2 native dashboard when a local miniapp claims double tap", async () => {
+    const hasTouchSubscriber = jest.spyOn(localMiniappRuntime, "hasTouchSubscriberForGesture").mockReturnValue(true)
+
+    emitBluetoothSdkEvent("touch_event", {
+      type: "touch_event",
+      deviceModel: "Even Realities G2",
+      gestureName: "double_tap",
+      timestamp: 999,
+    })
+
+    await waitFor(() => {
+      expect(hasTouchSubscriber).toHaveBeenCalledWith("double_tap")
+    })
+    expect(bluetoothSdkMock.showDashboard).not.toHaveBeenCalled()
   })
 
   it("syncs notification enablement and blocklist settings to Crust only", async () => {

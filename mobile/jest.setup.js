@@ -354,6 +354,7 @@ jest.mock("@mentra/island", () => {
       forwardEvent: jest.fn(),
       getAppStatus: jest.fn(() => null),
       handleRawMessage: jest.fn(),
+      hasTouchSubscriberForGesture: jest.fn(() => false),
       initialize: jest.fn(),
       wireStreamingStatusFanout: jest.fn(),
     },

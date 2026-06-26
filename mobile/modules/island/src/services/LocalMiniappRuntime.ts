@@ -348,6 +348,16 @@ class LocalMiniappRuntime {
   private constructor() {}
 
   /**
+   * Returns true when at least one connected miniapp is subscribed to touch
+   * events broadly or to the given gesture-specific touch stream.
+   */
+  public hasTouchSubscriberForGesture(gestureName: string): boolean {
+    if (this.streamSubscribers.has(MiniappStreamType.TOUCH_EVENT)) return true
+    const kind = normalizeTouchGestureKind(gestureName)
+    return typeof kind === "string" && this.streamSubscribers.has(`${MiniappStreamType.TOUCH_EVENT}:${kind}`)
+  }
+
+  /**
    * Generate an HMAC-signed local session token for browser fallback auth.
    * Token format: base64(JSON({userId, packageName, exp})).base64(HMAC-SHA256(payload, secret))
    * Single-use, 5-minute TTL.
