@@ -70,6 +70,12 @@ runs:
       run: |
         set -euo pipefail
         require() { [ -n "${2:-}" ] || { echo "::error::inject-signing: secret '$1' is required but empty. Set it in repo secrets."; exit 1; }; }
+        # Write KEY=VALUE to $GITHUB_ENV using the heredoc-delimiter form so values
+        # with special chars / newlines can't corrupt env parsing or inject vars.
+        put() {
+          local name="$1" value="$2" delim="EOF_$RANDOM$RANDOM"
+          { printf '%s<<%s\n' "$name" "$delim"; printf '%s\n' "$value"; printf '%s\n' "$delim"; } >> "$GITHUB_ENV"
+        }
         # Aliases have well-known defaults; an unset ALIAS secret arrives as "" and
         # must not override the build's default, so fall back here.
         [ -n "${ASG_KEY_ALIAS:-}" ]    || ASG_KEY_ALIAS="asg"
@@ -86,11 +92,9 @@ runs:
           mkdir -p asg_client/credentials
           echo "$ASG_KEYSTORE_B64" | base64 --decode > asg_client/credentials/asg-keystore.jks
           # Gradle reads these as project properties (project.hasProperty(...)).
-          {
-            echo "ORG_GRADLE_PROJECT_ASG_STORE_PASSWORD=$ASG_STORE_PASSWORD"
-            echo "ORG_GRADLE_PROJECT_ASG_KEY_PASSWORD=$ASG_KEY_PASSWORD"
-            echo "ORG_GRADLE_PROJECT_ASG_KEY_ALIAS=$ASG_KEY_ALIAS"
-          } >> "$GITHUB_ENV"
+          put ORG_GRADLE_PROJECT_ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
+          put ORG_GRADLE_PROJECT_ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
+          put ORG_GRADLE_PROJECT_ASG_KEY_ALIAS "$ASG_KEY_ALIAS"
           echo "Injected ASG release keystore -> asg_client/credentials/asg-keystore.jks"
         fi
 
@@ -100,11 +104,9 @@ runs:
           require UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
           mkdir -p mobile/credentials
           echo "$UPLOAD_KEYSTORE_B64" | base64 --decode > mobile/credentials/upload-keystore.jks
-          {
-            echo "ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD=$UPLOAD_STORE_PASSWORD"
-            echo "ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD=$UPLOAD_KEY_PASSWORD"
-            echo "ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS=$UPLOAD_KEY_ALIAS"
-          } >> "$GITHUB_ENV"
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD "$UPLOAD_STORE_PASSWORD"
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS "$UPLOAD_KEY_ALIAS"
           echo "Injected mobile upload keystore -> mobile/credentials/upload-keystore.jks"
         fi
 
@@ -115,18 +117,16 @@ runs:
           mkdir -p asg_client/ota_updater/credentials
           echo "$OTA_KEYSTORE_B64" | base64 --decode > asg_client/ota_updater/credentials/ota-keystore.jks
           # OTA gradle reads these via System.getenv(...).
-          {
-            echo "OTA_STORE_PASSWORD=$OTA_STORE_PASSWORD"
-            echo "OTA_KEY_PASSWORD=$OTA_KEY_PASSWORD"
-            echo "OTA_KEY_ALIAS=$OTA_KEY_ALIAS"
-          } >> "$GITHUB_ENV"
+          put OTA_STORE_PASSWORD "$OTA_STORE_PASSWORD"
+          put OTA_KEY_PASSWORD "$OTA_KEY_PASSWORD"
+          put OTA_KEY_ALIAS "$OTA_KEY_ALIAS"
           echo "Injected OTA keystore -> asg_client/ota_updater/credentials/ota-keystore.jks"
         fi
 
         if [ "$PLAY" = "true" ]; then
           require GOOGLE_PLAY_KEY_JSON "$GOOGLE_PLAY_KEY_JSON"
           printf '%s' "$GOOGLE_PLAY_KEY_JSON" > "$TMP/google-play-key.json"
-          echo "GOOGLE_PLAY_JSON_KEY=$TMP/google-play-key.json" >> "$GITHUB_ENV"
+          put GOOGLE_PLAY_JSON_KEY "$TMP/google-play-key.json"
           echo "Injected Google Play key -> $TMP/google-play-key.json"
         fi
 
@@ -143,6 +143,6 @@ runs:
             echo "ASC_API_KEY_PATH=$P8"
           } > "$TMP/appstore-connect.env"
           # release-ios.mjs honors this override before ~/.mentra fallback.
-          echo "MENTRA_ASC_CONFIG_PATH=$TMP/appstore-connect.env" >> "$GITHUB_ENV"
+          put MENTRA_ASC_CONFIG_PATH "$TMP/appstore-connect.env"
           echo "Injected App Store Connect key -> $P8"
         fi

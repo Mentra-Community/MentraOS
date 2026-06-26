@@ -24,9 +24,10 @@ permissions:
 
 jobs:
   build:
-    # GitHub-hosted Ubuntu: this is a debug-signed compile/test check (no prod
-    # keystore, no Play upload), so it does not need the mac runners. Moving it
-    # here frees self-hosted macOS capacity for iOS + staging/release builds.
+    # GitHub-hosted Ubuntu: a compile/test check that release-signs with the
+    # upload key injected from secrets (no Play upload). It does not need the mac
+    # runners, so moving it here frees self-hosted macOS capacity for iOS +
+    # staging/release builds.
     runs-on: ubuntu-latest
 
     steps:
