@@ -99,10 +99,6 @@ export default function MiniappDeveloperScannerScreen() {
 
       const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
 
-      // A reachable dev server + manifest is a strong "this user is a developer"
-      // signal — latch the per-account flag now (idempotent).
-      markMiniappDevMode()
-
       const manifest = launchResult.manifest
       packageName = packageName || manifest?.packageName || "com.dev.unknown"
       name = name || manifest?.name || "Dev Miniapp"
@@ -126,6 +122,12 @@ export default function MiniappDeveloperScannerScreen() {
       // it survives as sourcePackageName (clearDevArtifacts needs it to drop
       // the dev slot when the released package is installed/uninstalled).
       if (manifest) {
+        // A fetched manifest means a real dev app loaded — latch the per-account
+        // "this user is a developer" signal (idempotent). Gated on the manifest
+        // so a failed/unreachable scan (decision "offline", no manifest) can't
+        // flip the flag, matching the URL loader's behavior.
+        markMiniappDevMode()
+
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
           packageName: DEV_APP_PACKAGE_NAME,
