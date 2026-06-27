@@ -19,6 +19,11 @@ export type TouchEvent = {
   deviceModel: DeviceModel
   gestureName: string
   timestamp: number
+  source?: number
+  containerId?: number
+  containerName?: string
+  selectedItemName?: string
+  selectedItemIndex?: number
 }
 
 export type AccelEvent = {

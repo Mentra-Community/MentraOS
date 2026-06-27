@@ -11,7 +11,7 @@ import CoreBluetooth
 import Foundation
 import UIKit
 #if SWIFT_PACKAGE
-import MentraBluetoothSDKCoreObjC
+    import MentraBluetoothSDKCoreObjC
 #endif
 
 struct ViewState {
@@ -30,6 +30,12 @@ struct ViewState {
     // Optional positioned_text border (used by G2; ignored by others)
     var borderWidth: Int32? = nil
     var borderRadius: Int32? = nil
+    // Optional selectable_list fields (used by G2; ignored by others)
+    var borderColor: Int32? = nil
+    var paddingLength: Int32? = nil
+    var listItems: [String] = []
+    var itemWidth: Int32? = nil
+    var showSelectionBorder: Bool? = nil
 }
 
 @MainActor
@@ -301,9 +307,9 @@ struct ViewState {
     private var lastLc3Event: Date?
     private var micReinitTimer: Timer?
 
-    /// STT:
+    // STT:
     #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-    private var transcriber: SherpaOnnxTranscriber?
+        private var transcriber: SherpaOnnxTranscriber?
     #endif
 
     var viewStates: [ViewState] = [
@@ -334,20 +340,20 @@ struct ViewState {
 
         // Initialize SherpaOnnx Transcriber
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
-        {
-            transcriber = SherpaOnnxTranscriber(context: rootViewController)
-        } else {
-            Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
-        }
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first,
+               let rootViewController = window.rootViewController
+            {
+                transcriber = SherpaOnnxTranscriber(context: rootViewController)
+            } else {
+                Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
+            }
 
-        // Initialize the transcriber
-        if let transcriber = transcriber {
-            transcriber.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        }
+            // Initialize the transcriber
+            if let transcriber = transcriber {
+                transcriber.initialize()
+                Bridge.log("SherpaOnnxTranscriber fully initialized")
+            }
         #endif
 
         // Initialize persistent LC3 converter for unified audio encoding
@@ -358,8 +364,10 @@ struct ViewState {
             guard let self = self else { return }
             self.micReinitTimer = Timer.scheduledTimer(
                 withTimeInterval: 10.0, repeats: true
-            ) { [weak self] _ in
-                self?.checkAndReinitGlassesMic()
+            ) { _ in
+                Task { @MainActor [weak self] in
+                    self?.checkAndReinitGlassesMic()
+                }
             }
         }
     }
@@ -420,11 +428,11 @@ struct ViewState {
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
-            transcriber?.acceptAudio(pcm16le: pcmData)
-        }
-#endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+            if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
+                transcriber?.acceptAudio(pcm16le: pcmData)
+            }
+        #endif
     }
 
     func updateMicState() {
@@ -556,47 +564,29 @@ struct ViewState {
         let delay = 0.25 // Frame delay in seconds
         let totalCycles = 2 // Number of animation cycles
 
-        // Variables to track animation state
-        var frameIndex = 0
-        var cycles = 0
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
 
-        // Create a dispatch queue for the animation
-        let animationQueue = DispatchQueue.global(qos: .userInteractive)
+            try? await Task.sleep(nanoseconds: 350_000_000)
 
-        /// Function to display the current animation frame
-        func displayFrame() {
-            // Check if we've completed all cycles
-            if cycles >= totalCycles {
-                // End animation with final message
-                Task { await sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\") }
-                animationQueue.asyncAfter(deadline: .now() + 1.0) {
-                    self.sgc?.clearDisplay()
+            var frameIndex = 0
+            var cycles = 0
+            while cycles < totalCycles {
+                let arrow = arrowFrames[frameIndex]
+                let frameText = "                    \(arrow) MentraOS Booting \(arrow)"
+                await self.sgc?.sendTextWall(frameText)
+
+                frameIndex = (frameIndex + 1) % arrowFrames.count
+                if frameIndex == 0 {
+                    cycles += 1
                 }
-                return
+
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
 
-            // Display current animation frame
-            let frameText =
-                "                    \(arrowFrames[frameIndex]) MentraOS Booting \(arrowFrames[frameIndex])"
-            Task { await sgc?.sendTextWall(frameText) }
-
-            // Move to next frame
-            frameIndex = (frameIndex + 1) % arrowFrames.count
-
-            // Count completed cycles
-            if frameIndex == 0 {
-                cycles += 1
-            }
-
-            // Schedule next frame
-            animationQueue.asyncAfter(deadline: .now() + delay) {
-                displayFrame()
-            }
-        }
-
-        // Start the animation after a short initial delay
-        animationQueue.asyncAfter(deadline: .now() + 0.35) {
-            displayFrame()
+            await self.sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self.sgc?.clearDisplay()
         }
     }
 
@@ -628,21 +618,21 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
-        if sgc == nil && wearable.contains(DeviceTypes.NEX) {
-            sgc = MentraNexSGC.getInstance()
-        }
-#endif
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
-        if sgc == nil {
-            if wearable.contains(DeviceTypes.MACH1) {
-                sgc = Mach1()
-            } else if wearable.contains(DeviceTypes.Z100) {
-                sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-                sgc?.type = DeviceTypes.Z100 // Override type to Z100
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+            if sgc == nil && wearable.contains(DeviceTypes.NEX) {
+                sgc = MentraNexSGC.getInstance()
             }
-        }
-#endif
+        #endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+            if sgc == nil {
+                if wearable.contains(DeviceTypes.MACH1) {
+                    sgc = Mach1()
+                } else if wearable.contains(DeviceTypes.Z100) {
+                    sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
+                    sgc?.type = DeviceTypes.Z100 // Override type to Z100
+                }
+            }
+        #endif
         // update device model:
         DeviceStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
     }
@@ -732,6 +722,20 @@ struct ViewState {
                     borderWidth: currentViewState.borderWidth ?? 0,
                     borderRadius: currentViewState.borderRadius ?? 0
                 )
+            case "selectable_list":
+                await sgc?.sendSelectableList(
+                    currentViewState.listItems,
+                    x: currentViewState.bmpX ?? 0,
+                    y: currentViewState.bmpY ?? 0,
+                    width: currentViewState.bmpWidth ?? 576,
+                    height: currentViewState.bmpHeight ?? 288,
+                    borderWidth: currentViewState.borderWidth ?? 1,
+                    borderColor: currentViewState.borderColor ?? 13,
+                    borderRadius: currentViewState.borderRadius ?? 6,
+                    paddingLength: currentViewState.paddingLength ?? 5,
+                    itemWidth: currentViewState.itemWidth ?? 0,
+                    showSelectionBorder: currentViewState.showSelectionBorder ?? true
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -783,6 +787,29 @@ struct ViewState {
         }
 
         return result
+    }
+
+    private func viewStateKey(_ state: ViewState) -> String {
+        var parts: [String] = []
+        parts.reserveCapacity(18)
+        parts.append(state.layoutType)
+        parts.append(state.text)
+        parts.append(state.topText)
+        parts.append(state.bottomText)
+        parts.append(state.title)
+        parts.append(state.data ?? "")
+        parts.append(state.bmpX.map(String.init) ?? "")
+        parts.append(state.bmpY.map(String.init) ?? "")
+        parts.append(state.bmpWidth.map(String.init) ?? "")
+        parts.append(state.bmpHeight.map(String.init) ?? "")
+        parts.append(state.borderWidth.map(String.init) ?? "")
+        parts.append(state.borderRadius.map(String.init) ?? "")
+        parts.append(state.borderColor.map(String.init) ?? "")
+        parts.append(state.paddingLength.map(String.init) ?? "")
+        parts.append(state.listItems.joined(separator: "\n"))
+        parts.append(state.itemWidth.map(String.init) ?? "")
+        parts.append(state.showSelectionBorder.map(String.init) ?? "")
+        return parts.joined(separator: "|")
     }
 
     private func checkAndReinitGlassesMic() {
@@ -850,7 +877,7 @@ struct ViewState {
             let deviceName = session.availableInputs?.first(where: {
                 $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
             })?.portName
-            Bridge.log("MAN: ✅ Successfully detected newly paired device '\(deviceName)'")
+            Bridge.log("MAN: ✅ Successfully detected newly paired device '\(deviceName ?? "unknown")'")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
@@ -887,10 +914,10 @@ struct ViewState {
 
     func restartTranscriber() {
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber?.restart()
+            Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
+            transcriber?.restart()
         #else
-        Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+            Bridge.log("MAN: Local STT is not included in this SwiftPM build")
         #endif
     }
 
@@ -909,7 +936,7 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
-        
+
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             // Re-read the current sgc rather than capturing the connect-time instance: the user may
@@ -951,7 +978,6 @@ struct ViewState {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
-
     }
 
     private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {
@@ -1059,6 +1085,17 @@ struct ViewState {
         let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
         let borderWidth = (layout["borderWidth"] as? NSNumber).map { $0.int32Value }
         let borderRadius = (layout["borderRadius"] as? NSNumber).map { $0.int32Value }
+        let borderColor = (layout["borderColor"] as? NSNumber).map { $0.int32Value }
+        let paddingLength = (layout["paddingLength"] as? NSNumber).map { $0.int32Value }
+        let rawListItems = (layout["items"] as? [Any]) ?? (layout["itemName"] as? [Any]) ?? []
+        let listItems = rawListItems.map { item in
+            if let stringItem = item as? String {
+                return stringItem
+            }
+            return "\(item)"
+        }
+        let itemWidth = (layout["itemWidth"] as? NSNumber).map { $0.int32Value }
+        let showSelectionBorder = layout["showSelectionBorder"] as? Bool
 
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
@@ -1069,7 +1106,9 @@ struct ViewState {
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
             text: text, data: data, animationData: nil,
             bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight,
-            borderWidth: borderWidth, borderRadius: borderRadius
+            borderWidth: borderWidth, borderRadius: borderRadius,
+            borderColor: borderColor, paddingLength: paddingLength, listItems: listItems,
+            itemWidth: itemWidth, showSelectionBorder: showSelectionBorder
         )
 
         if layoutType == "bitmap_animation" {
@@ -1113,10 +1152,8 @@ struct ViewState {
 
         let cS = viewStates[stateIndex]
         let nS = newViewState
-        let currentState =
-            cS.layoutType + cS.text + cS.topText + cS.bottomText + cS.title + (cS.data ?? "")
-        let newState =
-            nS.layoutType + nS.text + nS.topText + nS.bottomText + nS.title + (nS.data ?? "")
+        let currentState = viewStateKey(cS)
+        let newState = viewStateKey(nS)
 
         if currentState == newState {
             // Core.log("MAN: View state is the same, skipping update")
@@ -1383,9 +1420,23 @@ struct ViewState {
             ispDigitalGain: request.ispDigitalGain,
             ispAnalogGain: request.ispAnalogGain
         )
-        Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
-        )
+        let sgcDescription = sgc.map { String(describing: type(of: $0)) } ?? "null"
+        let photoLogParts = [
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto",
+            "requestId=\(routed.requestId)",
+            "appId=\(routed.appId)",
+            "webhookUrl=\(routed.webhookUrl ?? "nil")",
+            "size=\(routed.size.rawValue)",
+            "compress=\(routed.compress?.rawValue ?? "none")",
+            "save=\(routed.save)",
+            "sound=\(routed.sound)",
+            "exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil")",
+            "iso=\(manualIso.map { String($0) } ?? "auto")",
+            "aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil")",
+            "isoCap=\(routed.isoCap.map { String($0) } ?? "nil")",
+            "sgc=\(sgcDescription)",
+        ]
+        Bridge.log(photoLogParts.joined(separator: " "))
         guard let sgc else {
             Bridge.log(
                 "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
@@ -1574,10 +1625,10 @@ struct ViewState {
 
     func cleanup() {
         // Clean up transcriber resources
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        transcriber?.shutdown()
-        transcriber = nil
-#endif
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+            transcriber?.shutdown()
+            transcriber = nil
+        #endif
 
         // Clean up LC3 converter
         lc3Converter = nil

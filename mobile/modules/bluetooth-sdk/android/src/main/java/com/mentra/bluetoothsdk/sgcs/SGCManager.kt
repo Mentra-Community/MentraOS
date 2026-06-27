@@ -91,6 +91,21 @@ abstract class SGCManager {
             borderWidth: Int = 0,
             borderRadius: Int = 0
     ) {}
+    open fun sendSelectableList(
+            items: List<String>,
+            x: Int = 0,
+            y: Int = 0,
+            width: Int = 576,
+            height: Int = 288,
+            borderWidth: Int = 1,
+            borderColor: Int = 13,
+            borderRadius: Int = 6,
+            paddingLength: Int = 5,
+            itemWidth: Int = 0,
+            showSelectionBorder: Boolean = true
+    ) {
+        sendTextWall(items.joinToString("\n"))
+    }
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

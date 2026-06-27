@@ -149,6 +149,14 @@ export interface VadData {
 
 export interface TouchData {
   kind: "click" | "double_click" | "scroll_top" | "scroll_bottom" | string
+  gestureName?: string
+  deviceModel?: string
+  timestamp?: number
+  source?: number
+  containerId?: number
+  containerName?: string
+  selectedItemIndex?: number
+  selectedItemName?: string
 }
 
 export interface AudioChunkData {

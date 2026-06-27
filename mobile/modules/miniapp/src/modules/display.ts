@@ -27,6 +27,7 @@ export type LayoutType =
   | "dashboard_card"
   | "bitmap_view"
   | "positioned_text"
+  | "selectable_list"
   | "clear_view"
 
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
@@ -88,6 +89,32 @@ export interface PositionedText {
   borderRadius?: number
 }
 
+export interface SelectableList {
+  layoutType: "selectable_list"
+  /** Plain text rows rendered by the glasses' native list widget. G2 supports up to 20 rows. */
+  items: string[]
+  /** Top-left x of the list container on the 576×288 canvas. Omit for full-screen placement. */
+  x?: number
+  /** Top-left y of the list container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border gray level. G2 list containers use 0-15. */
+  borderColor?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
+  /** Uniform inner padding (px). */
+  paddingLength?: number
+  /** Row width. 0 lets firmware auto-fill. */
+  itemWidth?: number
+  /** Whether the firmware draws a border around the current row. */
+  showSelectionBorder?: boolean
+}
+
 export interface ClearView {
   layoutType: "clear_view"
 }
@@ -99,6 +126,7 @@ export type Layout =
   | DashboardCard
   | BitmapView
   | PositionedText
+  | SelectableList
   | ClearView
 
 export interface DisplayOptions {
@@ -131,6 +159,29 @@ export interface TextAtOptions extends DisplayOptions {
   borderWidth?: number
   /** Border corner radius (px). */
   borderRadius?: number
+}
+
+export interface SelectableListOptions extends DisplayOptions {
+  /** Top-left x of the list container on the 576×288 canvas. */
+  x?: number
+  /** Top-left y of the list container on the 576×288 canvas. */
+  y?: number
+  /** Container width. */
+  width?: number
+  /** Container height. */
+  height?: number
+  /** Border stroke width (px). 0 = no border. */
+  borderWidth?: number
+  /** Border gray level. G2 list containers use 0-15. */
+  borderColor?: number
+  /** Border corner radius (px). */
+  borderRadius?: number
+  /** Uniform inner padding (px). */
+  paddingLength?: number
+  /** Row width. 0 lets firmware auto-fill. */
+  itemWidth?: number
+  /** Whether the firmware draws a border around the current row. */
+  showSelectionBorder?: boolean
 }
 
 export class DisplayManager {
@@ -195,6 +246,44 @@ export class DisplayManager {
     const {x, y, width, height, borderWidth, borderRadius, ...display} = options
     this.send(
       {layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius},
+      display,
+    )
+  }
+
+  /**
+   * Show a native selectable list. On G2, the glasses firmware owns scroll
+   * movement and selection highlight; miniapps receive selection clicks through
+   * `session.input.onTouch(...)` with optional selected item fields.
+   */
+  showSelectableList(items: string[], options: SelectableListOptions = {}): void {
+    const {
+      x,
+      y,
+      width,
+      height,
+      borderWidth,
+      borderColor,
+      borderRadius,
+      paddingLength,
+      itemWidth,
+      showSelectionBorder,
+      ...display
+    } = options
+    this.send(
+      {
+        layoutType: "selectable_list",
+        items,
+        x,
+        y,
+        width,
+        height,
+        borderWidth,
+        borderColor,
+        borderRadius,
+        paddingLength,
+        itemWidth,
+        showSelectionBorder,
+      },
       display,
     )
   }

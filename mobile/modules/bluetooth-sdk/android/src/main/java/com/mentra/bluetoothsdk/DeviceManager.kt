@@ -652,11 +652,7 @@ class DeviceManager {
     }
 
     private fun statesEqual(s1: ViewState, s2: ViewState): Boolean {
-        val state1 =
-            "${s1.layoutType}${s1.text}${s1.topText}${s1.bottomText}${s1.title}${s1.data ?: ""}"
-        val state2 =
-            "${s2.layoutType}${s2.text}${s2.topText}${s2.bottomText}${s2.title}${s2.data ?: ""}"
-        return state1 == state2
+        return s1 == s2
     }
 
     private fun Map<String, Any>.getString(key: String, defaultValue: String): String {
@@ -681,7 +677,13 @@ class DeviceManager {
         var bmpHeight: Int? = null,
         // Optional positioned_text border (used by G2; ignored by others).
         var borderWidth: Int? = null,
-        var borderRadius: Int? = null
+        var borderRadius: Int? = null,
+        // Optional selectable_list fields (used by G2; ignored by others).
+        var borderColor: Int? = null,
+        var paddingLength: Int? = null,
+        var listItems: List<String> = emptyList(),
+        var itemWidth: Int? = null,
+        var showSelectionBorder: Boolean? = null
     )
     // MARK: - End Unique
 
@@ -962,6 +964,22 @@ class DeviceManager {
                     currentViewState.bmpHeight ?: 288,
                     currentViewState.borderWidth ?: 0,
                     currentViewState.borderRadius ?: 0
+                )
+            }
+
+            "selectable_list" -> {
+                sgc?.sendSelectableList(
+                    currentViewState.listItems,
+                    currentViewState.bmpX ?: 0,
+                    currentViewState.bmpY ?: 0,
+                    currentViewState.bmpWidth ?: 576,
+                    currentViewState.bmpHeight ?: 288,
+                    currentViewState.borderWidth ?: 1,
+                    currentViewState.borderColor ?: 13,
+                    currentViewState.borderRadius ?: 6,
+                    currentViewState.paddingLength ?: 5,
+                    currentViewState.itemWidth ?: 0,
+                    currentViewState.showSelectionBorder ?: true
                 )
             }
 
@@ -1365,6 +1383,12 @@ class DeviceManager {
         // Optional positioned_text border (G2).
         val borderWidth = (layout["borderWidth"] as? Number)?.toInt()
         val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
+        val borderColor = (layout["borderColor"] as? Number)?.toInt()
+        val paddingLength = (layout["paddingLength"] as? Number)?.toInt()
+        val rawListItems = (layout["items"] as? List<*>) ?: (layout["itemName"] as? List<*>)
+        val listItems = rawListItems?.mapNotNull { it?.toString() } ?: emptyList()
+        val itemWidth = (layout["itemWidth"] as? Number)?.toInt()
+        val showSelectionBorder = layout["showSelectionBorder"] as? Boolean
 
         var newViewState =
             ViewState(
@@ -1380,7 +1404,12 @@ class DeviceManager {
                 bmpWidth,
                 bmpHeight,
                 borderWidth,
-                borderRadius
+                borderRadius,
+                borderColor,
+                paddingLength,
+                listItems,
+                itemWidth,
+                showSelectionBorder
             )
 
         val currentState = viewStates[stateIndex]
