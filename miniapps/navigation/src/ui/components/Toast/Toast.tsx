@@ -39,7 +39,10 @@ export function ToastProvider({children}: {children: ReactNode}) {
             animate={{opacity: 1, y: 0}}
             exit={{opacity: 0, y: 16}}
             transition={{duration: 0.18, ease: "easeOut"}}
-            className="pointer-events-none fixed inset-x-0 bottom-10 z-[100] flex justify-center px-6">
+            // Sit above the Android 3-button nav bar: base 2.5rem (was
+            // `bottom-10`) + host-injected bottom inset (0 on iOS / gesture nav).
+            style={{bottom: "calc(2.5rem + var(--mentra-safe-bottom))"}}
+            className="pointer-events-none fixed inset-x-0 z-[100] flex justify-center px-6">
             <div className="rounded-full bg-black px-4 py-2.5 text-white text-[14px] font-medium [box-shadow:#00000033_0px_6px_20px] max-w-[90vw] text-center">
               {message}
             </div>

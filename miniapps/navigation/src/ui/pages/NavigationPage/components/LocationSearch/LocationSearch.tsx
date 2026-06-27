@@ -294,6 +294,10 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               // <input> is exempt — browsers always allow selection
               // inside form controls so the user can still edit their
               // query normally.
+              // Full-bleed white panel (bg goes under the bars), but pad the
+              // scroll content so the last result clears the Android 3-button
+              // nav bar (host-injected inset; 0 on iOS / gesture nav).
+              style={{paddingBottom: "var(--mentra-safe-bottom)"}}
               className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto select-none [-webkit-touch-callout:none] [-webkit-user-select:none] ${safeHeadingSearchResults}`}>
               {loading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">

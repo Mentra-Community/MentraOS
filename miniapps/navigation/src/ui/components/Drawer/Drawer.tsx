@@ -200,7 +200,14 @@ function DrawerInner({
   }
 
   return (
-    <div className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
+    // Lift the whole drawer above the Android 3-button nav bar. The host
+    // injects the bottom safe-area inset as `--mentra-safe-bottom` (0 on iOS /
+    // gesture nav). It's applied to the outer wrapper — NOT the measured card —
+    // so the peek/drag math (sheetHeight, peekOffset, published DrawerOffset)
+    // is unchanged; the map stays full-bleed behind everything.
+    <div
+      className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none"
+      style={{paddingBottom: "var(--mentra-safe-bottom)"}}>
       <motion.div
         ref={sheetRef}
         drag="y"

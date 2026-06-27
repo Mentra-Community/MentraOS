@@ -106,10 +106,16 @@ export function NavMap({
   const devEnabled = isDev || devOverride
 
   // Anchor the floating right-rail (zoom / recenter buttons) just above
-  // whichever drawer is currently mounted.
+  // whichever drawer is currently mounted, and above the Android 3-button nav
+  // bar (host-injected `--mentra-safe-bottom`; 0 on iOS / gesture nav). The
+  // same inset is applied to the drawers' outer wrappers, so this keeps the
+  // rail the same 12px above whichever drawer is up.
   const drawerOffset = useDrawerOffset()
   const fallbackZero = useMotionValue(0)
-  const railBottom = useTransform(drawerOffset ?? fallbackZero, (h: number) => h + 12)
+  const railBottom = useTransform(
+    drawerOffset ?? fallbackZero,
+    (h: number) => `calc(${h + 12}px + var(--mentra-safe-bottom))`,
+  )
 
   useEffect(() => {
     let alive = true

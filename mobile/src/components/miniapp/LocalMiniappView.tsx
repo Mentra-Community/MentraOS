@@ -480,11 +480,6 @@ function LocalMiniappView({
       right: insets.right,
     },
     webviewFillsStatusBar: true,
-    // The Compositor renders this WebView edge-to-edge (Screen preset="fixed",
-    // no bottom safeAreaEdge), so on Android with a 3-button nav bar the bottom
-    // inset must be applied as the miniapp's default body padding — otherwise
-    // its content draws behind the nav buttons.
-    webviewFillsNavBar: true,
     colorScheme,
   })
   const uiShim = buildMentraUiShim({packageName})
