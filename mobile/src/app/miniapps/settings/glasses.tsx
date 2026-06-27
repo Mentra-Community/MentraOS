@@ -1,5 +1,6 @@
 import {ScrollView, Image} from "react-native"
 
+import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {Header, Screen} from "@/components/ignite"
 import {DeviceSettingsSection} from "@/components/settings/DeviceSettingsSection"
@@ -51,7 +52,13 @@ export default function Glasses() {
         style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}
         contentInsetAdjustmentBehavior="automatic">
         {!defaultWearable ? (
-          <EmptyState />
+          <>
+            {/* No device paired — keep the pairing CTA above the empty state */}
+            <Spacer height={theme.spacing.s6} />
+            <ConnectDeviceButton />
+            <Spacer height={theme.spacing.s6} />
+            <EmptyState />
+          </>
         ) : (
           <>
             <Spacer height={theme.spacing.s6} />
