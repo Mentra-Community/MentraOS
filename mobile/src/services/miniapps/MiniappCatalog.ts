@@ -25,6 +25,7 @@ import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappSta
 import restComms from "@/services/RestComms"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
@@ -363,6 +364,10 @@ class MiniappCatalog {
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
+          // Re-launching a dev tile from the home screen / app switcher is also a
+          // "developer" signal — latch the per-account flag (idempotent), same as
+          // the QR-scan and URL-load paths. Only on a reachable "live" launch.
+          markMiniappDevMode()
           useAppStatusStore.getState().setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
