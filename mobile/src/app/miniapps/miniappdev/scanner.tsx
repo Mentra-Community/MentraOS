@@ -17,6 +17,7 @@ import {
   type DevAppRecord,
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 import {DEV_APP_NAME} from "@mentra/island/src/services/AppRegistry"
 
@@ -54,6 +55,7 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
+        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -96,6 +98,10 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
+
+      // A reachable dev server + manifest is a strong "this user is a developer"
+      // signal — latch the per-account flag now (idempotent).
+      markMiniappDevMode()
 
       const manifest = launchResult.manifest
       packageName = packageName || manifest?.packageName || "com.dev.unknown"

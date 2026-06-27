@@ -18,6 +18,7 @@ import {
   type DevAppRecord,
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
@@ -165,6 +166,10 @@ export default function MiniappDeveloperUrlScreen() {
         )
         return
       }
+
+      // A reachable dev server + manifest is a strong "this user is a developer"
+      // signal — latch the per-account flag now (idempotent).
+      markMiniappDevMode()
 
       const manifest = launchResult.manifest
       const entry: RecentDevApp = {

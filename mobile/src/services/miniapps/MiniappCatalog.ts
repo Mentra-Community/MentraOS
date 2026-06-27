@@ -1,4 +1,3 @@
-import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -18,7 +17,6 @@ import {
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {DevToolsIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -34,7 +32,6 @@ import {
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
-  lmaInstallerPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
@@ -525,29 +522,6 @@ class MiniappCatalog {
         hardwareRequirements: [],
       },
     ]
-
-    if (
-      useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) ||
-      useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
-    ) {
-      apps.push({
-        packageName: lmaInstallerPackageName,
-        name: translate("miniApps:lmaInstaller"),
-        type: "standard",
-        offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
-        local: false,
-        webviewUrl: "",
-        permissions: [],
-        running: false,
-        loading: false,
-        healthy: true,
-        hidden: false,
-        hardwareRequirements: [],
-        logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevToolsIcon),
-      })
-    }
 
     // China build: don't register Offline Captions, Notify, or Feedback.
     if (isChinaBuild()) {
