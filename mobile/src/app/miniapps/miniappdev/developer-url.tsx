@@ -87,6 +87,12 @@ export default function MiniappDeveloperUrlScreen() {
       return
     }
 
+    // Single chokepoint for both entry paths (typed URL + recent-list tap): a
+    // reachable dev server means a real dev app loaded, so latch the per-account
+    // "this user is a developer" signal here (idempotent). Marking after the
+    // offline check keeps a failed/unreachable launch from flipping the flag.
+    markMiniappDevMode()
+
     const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
       ? (launchResult.manifest.permissions as AppletPermission[])
       : []
@@ -166,10 +172,6 @@ export default function MiniappDeveloperUrlScreen() {
         )
         return
       }
-
-      // A reachable dev server + manifest is a strong "this user is a developer"
-      // signal — latch the per-account flag now (idempotent).
-      markMiniappDevMode()
 
       const manifest = launchResult.manifest
       const entry: RecentDevApp = {
