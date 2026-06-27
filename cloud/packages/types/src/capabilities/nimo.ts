@@ -78,4 +78,7 @@ export const nimo: Capabilities = {
 
   // WiFi capabilities - no WiFi
   hasWifi: false,
+
+  // OTA capabilities - Nimo firmware updates are not driven by the ASG OTA flow
+  hasOta: false,
 };
