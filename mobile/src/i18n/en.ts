@@ -492,7 +492,7 @@ const en = {
     selectMic: "Select which microphone to use",
     simulatedGlassesNote: "This setting has no effect when using Simulated Glasses",
     profileSettings: "Profile",
-    privacySettings: "Permissions and Privacy",
+    privacySettings: "Privacy",
     transcriptionSettings: "Transcription",
     speechSettings: "Speech",
     notificationsSettings: "Notifications",
@@ -981,7 +981,7 @@ const en = {
   account: {
     accountSettings: "Account settings",
     deviceSettings: "Device settings",
-    appSettings: "MentraOS settings",
+    appSettings: "App Settings",
   },
   appSettings: {
     noDescription: "No description available.",

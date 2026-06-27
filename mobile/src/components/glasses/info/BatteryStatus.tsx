@@ -31,7 +31,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
         {glassesBatteryLevel !== -1 && (
           <StatusCard
             style={{
-              backgroundColor: theme.colors.background,
+              backgroundColor: theme.colors.primary_foreground,
               flex: 1,
               paddingHorizontal: theme.spacing.s4,
               paddingRight: theme.spacing.s5,
@@ -49,7 +49,7 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
 
         {caseBatteryLevel !== undefined && caseBatteryLevel !== -1 && !caseRemoved && (
           <StatusCard
-            style={{backgroundColor: theme.colors.background, flex: 1, paddingHorizontal: theme.spacing.s4}}
+            style={{backgroundColor: theme.colors.primary_foreground, flex: 1, paddingHorizontal: theme.spacing.s4}}
             label={translate("deviceSettings:case")}
             subtitle={caseCharging ? translate("deviceSettings:charging") : undefined}
             textStyle={themed($compactTextStyle)}
