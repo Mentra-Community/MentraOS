@@ -45,13 +45,6 @@ interface DeviceSettingsSectionProps {
    * opts out; the flattened main settings page shows it inline.
    */
   showDeviceHeader?: boolean
-  /**
-   * Render the device "Advanced Settings" group (Device Information +
-   * Microphone). The flattened main settings page hosts these in its own
-   * page-level Advanced Settings group to avoid a duplicate group/row, so it
-   * opts out; the standalone glasses page keeps them.
-   */
-  showAdvancedGroup?: boolean
 }
 
 /**
@@ -61,7 +54,7 @@ interface DeviceSettingsSectionProps {
  *
  * Returns null when no device is paired so embedding pages don't need a guard.
  */
-export function DeviceSettingsSection({showDeviceHeader = true, showAdvancedGroup = true}: DeviceSettingsSectionProps) {
+export function DeviceSettingsSection({showDeviceHeader = true}: DeviceSettingsSectionProps) {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const hasDeviceInfo = useHasDeviceInfo()
@@ -229,24 +222,18 @@ export function DeviceSettingsSection({showDeviceHeader = true, showAdvancedGrou
             onPress={() => push("/pairing/select-controller")}
           />
         )}
-      </Group>
 
-      {showAdvancedGroup && (
-        <Group title={translate("deviceSettings:advancedSettings")}>
-          {hasDeviceInfo && (
-            <RouteButton
-              icon={<Icon name="device-ipad" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("deviceSettings:deviceInformation")}
-              onPress={() => push("/miniapps/settings/device-info")}
-            />
-          )}
+        {/* Device diagnostics — device-scoped, kept out of the app-level Advanced
+            Settings (Debug / Miniapp Developer), which is a different category.
+            The mic selector is deduped to the App Settings group on the main page. */}
+        {hasDeviceInfo && (
           <RouteButton
-            icon={<Icon name="microphone" size={24} color={theme.colors.secondary_foreground} />}
-            label={translate("deviceSettings:microphone")}
-            onPress={() => push("/miniapps/settings/microphone")}
+            icon={<Icon name="device-ipad" size={24} color={theme.colors.secondary_foreground} />}
+            label={translate("deviceSettings:deviceInformation")}
+            onPress={() => push("/miniapps/settings/device-info")}
           />
-        </Group>
-      )}
+        )}
+      </Group>
 
       {/* this just gives the user a bit more space to scroll */}
       <Spacer height={theme.spacing.s2} />

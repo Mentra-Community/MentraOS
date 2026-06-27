@@ -3,7 +3,7 @@ import {ScrollView} from "react-native-gesture-handler"
 
 import {VersionInfo} from "@/components/dev/VersionInfo"
 import {Icon, Screen} from "@/components/ignite"
-import {DeviceSettingsSection, useHasDeviceInfo} from "@/components/settings/DeviceSettingsSection"
+import {DeviceSettingsSection} from "@/components/settings/DeviceSettingsSection"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
@@ -19,7 +19,6 @@ export default function MainSettingsPage() {
   const {push} = useNavigationStore.getState()
   const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const hasDeviceInfo = useHasDeviceInfo()
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
@@ -46,9 +45,8 @@ export default function MainSettingsPage() {
             />
           </Group>
 
-          {/* Device/glasses settings, flattened inline (previously a separate page).
-              Device Information lives in the page-level Advanced Settings group below. */}
-          <DeviceSettingsSection showAdvancedGroup={false} />
+          {/* Device/glasses settings, flattened inline (previously a separate page) */}
+          <DeviceSettingsSection />
 
           <Group title={translate("account:appSettings")}>
             {superMode && (
@@ -83,13 +81,6 @@ export default function MainSettingsPage() {
           </Group>
 
           <Group title={translate("deviceSettings:advancedSettings")}>
-            {hasDeviceInfo && (
-              <RouteButton
-                icon={<Icon name="device-ipad" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("deviceSettings:deviceInformation")}
-                onPress={() => push("/miniapps/settings/device-info")}
-              />
-            )}
             {debugMode && (
               <RouteButton
                 icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
