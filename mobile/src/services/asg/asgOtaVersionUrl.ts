@@ -1,11 +1,10 @@
-import {OTA_VERSION_URL_PROD} from "@/config/ota"
+import {OTA_VERSION_URL_LEGACY_PROD, OTA_VERSION_URL_PROD} from "@/config/ota"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
-  // ASG builds before 39 ignore ota_start.ota_version_url, but MentraOS should
-  // still check v2: ota_start will run their compiled rescue manifest first, then
-  // the upgraded ASG client continues on v2.
+  // ASG builds before 39 ignore ota_start.ota_version_url, so the phone-side
+  // availability check must match the manifest those glasses will actually use.
   return Number.isFinite(buildNumber) && buildNumber < 39
 }
 
@@ -23,9 +22,7 @@ function getOtaVersionUrlDevOverride(): string | null {
 export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
   const deviceUrl = glassesUrl?.trim()
   if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
-    // Legacy glasses may still advertise the previous production manifest, but
-    // the phone-side availability check must use v2 so users enter the rescue flow.
-    return OTA_VERSION_URL_PROD
+    return OTA_VERSION_URL_LEGACY_PROD
   }
 
   const devOverrideUrl = getOtaVersionUrlDevOverride()

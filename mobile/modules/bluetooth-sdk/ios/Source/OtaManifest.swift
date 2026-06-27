@@ -2,10 +2,9 @@ import Foundation
 
 enum OtaManifestDefaults {
     private static let sdkOtaReleaseBaseUrl = "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
-    // Keep prod as the legacy-device fallback for SDK checks. Pre-override ASG
-    // builds ignore ota_start.ota_version_url and use their compiled rescue
-    // manifest, then continue future updates on v2 after the rescue update.
-    static let prodOtaVersionUrl = "https://ota.mentraglass.com/prod_live_version_v2.json"
+    // ASG builds before 39 ignore ota_start.ota_version_url, so SDK checks must
+    // use the same legacy production manifest those glasses will install from.
+    static let legacyProdOtaVersionUrl = "https://ota.mentraglass.com/prod_live_version.json"
 
     static func defaultOtaVersionUrl() throws -> String {
         guard let sdkVersion = BluetoothSdkDefaults.sdkVersion,
