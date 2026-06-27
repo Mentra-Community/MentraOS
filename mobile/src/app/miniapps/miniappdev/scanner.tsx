@@ -17,6 +17,7 @@ import {
   type DevAppRecord,
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 export default function MiniappDeveloperScannerScreen() {
@@ -53,6 +54,7 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
+        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -121,6 +123,12 @@ export default function MiniappDeveloperScannerScreen() {
       // one as sourcePackageName — which MantleManager uses as the miniapp-token
       // audience, so the dev backend's JWKS verify (aud === real package) passes.
       if (manifest) {
+        // A fetched manifest means a real dev app loaded — latch the per-account
+        // "this user is a developer" signal (idempotent). Gated on the manifest
+        // so a failed/unreachable scan (decision "offline", no manifest) can't
+        // flip the flag, matching the URL loader's behavior.
+        markMiniappDevMode()
+
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
           packageName,

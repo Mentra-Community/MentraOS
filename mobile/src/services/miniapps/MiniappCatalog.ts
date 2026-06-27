@@ -1,4 +1,3 @@
-import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -18,7 +17,6 @@ import {
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {DevToolsIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -27,6 +25,7 @@ import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappSta
 import restComms from "@/services/RestComms"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
@@ -34,7 +33,6 @@ import {
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
-  lmaInstallerPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
@@ -366,6 +364,10 @@ class MiniappCatalog {
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
+          // Re-launching a dev tile from the home screen / app switcher is also a
+          // "developer" signal — latch the per-account flag (idempotent), same as
+          // the QR-scan and URL-load paths. Only on a reachable "live" launch.
+          markMiniappDevMode()
           useAppStatusStore.getState().setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
@@ -525,29 +527,6 @@ class MiniappCatalog {
         hardwareRequirements: [],
       },
     ]
-
-    if (
-      useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) ||
-      useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
-    ) {
-      apps.push({
-        packageName: lmaInstallerPackageName,
-        name: translate("miniApps:lmaInstaller"),
-        type: "standard",
-        offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
-        local: false,
-        webviewUrl: "",
-        permissions: [],
-        running: false,
-        loading: false,
-        healthy: true,
-        hidden: false,
-        hardwareRequirements: [],
-        logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevToolsIcon),
-      })
-    }
 
     // China build: don't register Offline Captions, Notify, or Feedback.
     if (isChinaBuild()) {

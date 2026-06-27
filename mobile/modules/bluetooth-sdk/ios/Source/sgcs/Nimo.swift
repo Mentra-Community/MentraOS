@@ -808,6 +808,10 @@ class Nimo: NSObject, SGCManager {
         pendingText = " "
     }
 
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
     func sendTextWall(_ text: String) async {
         // Coalesced: only the most recent pending text survives until the next 100ms drain.
         pendingText = text
@@ -1032,6 +1036,10 @@ class Nimo: NSObject, SGCManager {
         Bridge.log("NIMO: requestPhoto - not supported (no camera)")
     }
 
+    func requestPhoto(_: PhotoRequest) {
+        Bridge.log("NIMO: requestPhoto(PhotoRequest) - not supported (no camera)")
+    }
+
     func startStream(_: [String: Any]) {
         Bridge.log("NIMO: startStream - not supported")
     }
@@ -1062,7 +1070,7 @@ class Nimo: NSObject, SGCManager {
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     // MARK: - SGCManager: User Context / Gallery / Version

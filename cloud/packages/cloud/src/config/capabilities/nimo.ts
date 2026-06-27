@@ -75,4 +75,7 @@ export const nimo: Capabilities = {
 
   // WiFi capabilities - no WiFi
   hasWifi: false,
+
+  // OTA capabilities - firmware is not updated over the air
+  hasOta: false,
 };

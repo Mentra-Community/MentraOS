@@ -155,19 +155,6 @@ export default function DebugSettingsScreen() {
             />
           </Group>
 
-          <Group title={translate("debugSettings:miniappDevGroupTitle")}>
-            <RouteButton
-              label={translate("debugSettings:miniappDevLoadUrlLabel")}
-              subtitle={translate("debugSettings:miniappDevLoadUrlSubtitle")}
-              onPress={() => push("/miniapps/miniappdev/developer-url")}
-            />
-            <RouteButton
-              label={translate("debugSettings:miniappDevScanLabel")}
-              subtitle={translate("debugSettings:miniappDevScanSubtitle")}
-              onPress={() => push("/miniapps/miniappdev/scanner")}
-            />
-          </Group>
-
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
 
