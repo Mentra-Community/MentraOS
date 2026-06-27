@@ -224,7 +224,11 @@ const exportOptionsPlist = isCIForSigning
   ? path.resolve('ci/ios-export/ExportOptions-Match.plist')
   : path.resolve('ci/ios-export/ExportOptions.plist');
 
-await $({ stdio: 'inherit' })`xcodebuild -exportArchive -archivePath ${archivePath} -exportOptionsPlist ${exportOptionsPlist} -exportPath ${exportPath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates`;
+// NOTE: -exportArchive does NOT take -derivedDataPath (xcodebuild errors:
+// "The flag -scheme, -testProductsPath, or -xctestrun is required when
+// specifying -derivedDataPath", exit 64). Export works from the archive itself,
+// so it needs no DerivedData isolation. Keep -derivedDataPath on resolve+archive only.
+await $({ stdio: 'inherit' })`xcodebuild -exportArchive -archivePath ${archivePath} -exportOptionsPlist ${exportOptionsPlist} -exportPath ${exportPath} -allowProvisioningUpdates`;
 
 // Find the exported IPA
 const ipaFiles = (await $`ls ${exportPath}/*.ipa`).stdout.trim().split('\n').filter(Boolean);
