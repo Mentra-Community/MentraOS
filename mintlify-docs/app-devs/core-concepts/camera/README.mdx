@@ -1,17 +1,169 @@
 ---
-title: "Camera, Photos, And Streaming"
-description: "Use the Bluetooth SDK for camera, photo, and streaming features."
+title: "Camera"
+description: "Take photos and record video on camera glasses."
+icon: "camera"
 ---
 
-The Mentra Cloud SDK (`@mentra/sdk`) is for cloud Mini Apps that run through MentraOS sessions. For camera capture, photo upload, video streaming, RTMP/SRT/WHIP ingest, or direct phone-to-glasses camera flows, use the Mentra Live Bluetooth SDK docs instead:
+`session.camera` captures photos and video on glasses that have a camera, like
+Mentra Live. `takePhoto` resolves after the photo is captured on the glasses and
+uploaded, and hands you back a download URL.
 
-<CardGroup cols={2}>
-  <Card title="Bluetooth SDK Docs" icon="bluetooth" href="/mentra-live/overview">
-    Build mobile apps that connect directly to smart glasses and control camera/photo/streaming features.
-  </Card>
-  <Card title="Camera And Streaming" icon="camera" href="/mentra-live/camera-streaming">
-    Request photos and start RTMP, SRT, or WebRTC streams from supported smart glasses.
-  </Card>
-</CardGroup>
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
 
-If you are building a cloud Mini App, continue with the App Devs docs for server-side sessions, transcription, display output, permissions, storage, phone events, location, and dashboard UI.
+registerMiniapp((session) => {
+  session.input.onButtonPress(async () => {
+    if (!session.capabilities?.hasCamera) return;
+    const photo = await session.camera.takePhoto();
+    session.display.showBitmapView(photo.photoUrl);
+  });
+});
+```
+
+Camera needs the `CAMERA` permission and glasses with a camera. Declare a
+`CAMERA` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest) so the call is allowed, and
+a `CAMERA` hardware requirement so the miniapp only installs on glasses that can
+capture. Without the permission the call rejects with `PERMISSION_NOT_DECLARED`.
+Check `session.capabilities.hasCamera` before calling so you don't fire a request
+the glasses can't satisfy.
+
+## Take a photo
+
+`takePhoto` sends the request, waits while the glasses capture and the phone
+uploads, then resolves with the photo metadata. The returned `photoUrl` is a
+signed download URL with a short TTL (about 30 minutes), so fetch or display it
+soon after.
+
+```typescript
+const photo = await session.camera.takePhoto({ size: "high", sound: false });
+// photo.photoUrl  – signed URL, ~30 min TTL
+// photo.mimeType  – e.g. "image/jpeg"
+// photo.size      – bytes
+```
+
+All options are optional. The defaults are listed below.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
+| `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
+| `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
+| `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
+| `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
+
+The result is a `PhotoTaken`:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `string` | Correlates the request with ASG status and upload logs. |
+| `photoUrl` | `string` | Signed download URL for the captured image (~30 min TTL). |
+| `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
+| `size` | `number` | Image size in bytes. |
+
+## Record video
+
+`startVideoRecording` resolves once the glasses report that recording started,
+returning a `recordingId`. Pass that id to `stopVideoRecording` to end the clip.
+
+```typescript
+const { recordingId } = await session.camera.startVideoRecording({ fps: 5, save: true });
+// … later …
+await session.camera.stopVideoRecording(recordingId);
+```
+
+Resolution and frame rate are optional. Omit them to use the device's saved
+button-video settings. A lower `fps` (for example `5`) keeps the glasses cooler
+and the file smaller on long recordings.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `width` | `number` | device default | Video width in pixels. |
+| `height` | `number` | device default | Video height in pixels. |
+| `fps` | `number` | device default | Frames per second. |
+| `sound` | `boolean` | `true` | Play start/stop capture sounds. |
+| `save` | `boolean` | `false` | Keep the recording on the glasses after it finishes. |
+
+`startVideoRecording` resolves with a `VideoRecordingStarted`:
+
+| Field | Type | Description |
+|---|---|---|
+| `recordingId` | `string` | Identifier for this recording. Pass it to `stopVideoRecording`. |
+
+`stopVideoRecording(recordingId)` resolves to `void`. By default the clip stays on
+the glasses. To send it somewhere, pass an `uploadUrl` and the glasses upload the
+finished recording there with a multipart POST (the file is the `video` part):
+
+```typescript
+await session.camera.stopVideoRecording(recordingId, {
+  uploadUrl: "https://your-server.example/clips",
+  uploadAuthToken: "optional-bearer-token", // sent as the Authorization header if set
+});
+```
+
+| Option | Type | What it does |
+|---|---|---|
+| `uploadUrl` | `string` | Endpoint the finished recording is POSTed to. Omit to keep it on the glasses. |
+| `uploadAuthToken` | `string` | Bearer token for the upload's `Authorization` header, if your endpoint needs one. |
+
+Unlike `takePhoto`, the recording bytes don't come back over the bridge: with an
+`uploadUrl` they go straight from the glasses to your endpoint, otherwise they
+stay on the device.
+
+## Field of view
+
+`setFov` applies a camera FOV/ROI setting on the glasses and resolves after the
+ASG client reports it was applied. It takes a single request object: either a
+named preset, or an explicit FOV plus optional region.
+
+```typescript
+// A named preset. The simplest option, always center ROI.
+await session.camera.setFov({ preset: "wide" });
+
+// Or an explicit horizontal FOV with a region.
+await session.camera.setFov({ fov: 102, roiPosition: "bottom" });
+```
+
+The argument is one of two shapes:
+
+| Field | Type | Notes |
+|---|---|---|
+| `preset` | `"narrow" \| "standard" \| "wide"` | Named preset. Uses center ROI. Mutually exclusive with `fov`/`roiPosition`. |
+| `fov` | `number` | Horizontal FOV in degrees. Pair with `roiPosition`. |
+| `roiPosition` | `"center" \| "bottom" \| "top"` | Region position for the `fov` form. Defaults to `"center"`. |
+
+It resolves with a `CameraFovResult`:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `string` | Correlates the request with ASG logs. |
+| `fov` | `number` | The applied horizontal FOV in degrees. |
+| `roiPosition` | `"center" \| "bottom" \| "top"` | The applied region position. |
+| `timestamp` | `number` | When the setting was applied. |
+
+## Errors
+
+Every method returns a promise that rejects with `{ code, message }` on failure.
+Wrap calls in `try`/`catch` and read `code`.
+
+| Code | When |
+|---|---|
+| `PERMISSION_NOT_DECLARED` | The miniapp didn't declare the `CAMERA` permission. |
+| `REQUEST_ABORTED` | The request timed out, or the session was torn down before it completed. |
+| `INTERNAL` | The phone-side handler threw. The glasses have no camera, capture or upload failed, or another device error occurred. Read `message`. |
+
+```typescript
+try {
+  const photo = await session.camera.takePhoto();
+  session.display.showBitmapView(photo.photoUrl);
+} catch (err) {
+  if (err.code === "PERMISSION_NOT_DECLARED") {
+    session.display.showTextWall("Camera permission not granted");
+  }
+}
+```
+
+<Note>
+This module is for discrete photo and video capture. For live video streaming,
+use [`session.stream`](/app-devs/core-concepts/stream).
+</Note>

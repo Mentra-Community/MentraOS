@@ -1,0 +1,102 @@
+---
+title: "Auth"
+description: "A miniapp-scoped backend token and an authenticated fetch."
+icon: "key"
+---
+
+If your miniapp has its own backend, `session.auth` lets you call it as the
+current user. It mints a token scoped to this user and your miniapp's package,
+and `session.auth.fetch` attaches that token to every request.
+
+```typescript src/background/index.ts
+const res = await session.auth.fetch("https://api.example.com/notes");
+const notes = await res.json();
+```
+
+`fetch` injects an `Authorization: Bearer <token>` header for you, and refreshes
+the token when it's close to expiry. Your backend receives the token and verifies
+it (it's a JWT). The token is never a Core or runtime token: it identifies one
+user calling one miniapp's package, nothing more.
+
+## The auth state
+
+`session.auth.current` is the current token and who it's for, or `null` before
+the host has issued one.
+
+```typescript
+const auth = session.auth.current;
+if (auth) {
+  console.log(auth.mentraUserId, auth.expiresAt);
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `mentraUserId` | `string` | The Mentra user this token is for. |
+| `oemId` | `string \| undefined` | The OEM that provisioned the user, when present. |
+| `token` | `string` | The signed token to send to your backend. |
+| `expiresAt` | `number` | Expiry as a Unix timestamp in milliseconds. |
+
+`mentraUserId` and `oemId` are also on the module directly as getters, each
+returning `null` when there's no token yet:
+
+```typescript
+const userId = session.auth.mentraUserId; // string | null
+const oem = session.auth.oemId;           // string | null
+```
+
+## Calling your backend
+
+| Method | Returns | Description |
+|---|---|---|
+| `fetch(input, init?)` | `Promise<Response>` | Standard `fetch` with the `Authorization` header added. |
+| `getToken(options?)` | `Promise<string>` | The raw token, valid for at least `minTtlMs`. |
+| `getAuthHeader(options?)` | `Promise<string>` | The string `"Bearer <token>"`. |
+| `onUpdate(handler)` | `() => void` | Fires when the host rotates the token. Returns an unsubscribe function. |
+
+Use `getAuthHeader` when you bring your own HTTP client:
+
+```typescript
+const header = await session.auth.getAuthHeader();
+await axios.get("https://api.example.com/notes", {
+  headers: { Authorization: header },
+});
+```
+
+`getToken` returns the raw string if you need to attach it yourself:
+
+```typescript
+const token = await session.auth.getToken();
+```
+
+## Token freshness
+
+`getToken`, `getAuthHeader`, and `fetch` all take a `minTtlMs` option: the
+minimum lifetime the token must still have before it's handed back. It defaults
+to `30000` (30 seconds). If the current token has less time left than that, the
+call waits for the host's next auth update before resolving.
+
+```typescript
+// require at least 2 minutes of remaining lifetime
+const res = await session.auth.fetch("https://api.example.com/sync", {
+  minTtlMs: 120_000,
+});
+```
+
+`fetch`'s `init` is a normal `RequestInit` plus `minTtlMs`, so method, body, and
+your own headers all work as usual. The `Authorization` header is added last and
+wins over any you pass.
+
+```typescript
+await session.auth.fetch("https://api.example.com/notes", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text: "buy milk" }),
+});
+```
+
+<Note>
+The token can rotate. Read it through `getToken`/`getAuthHeader` (or `fetch`)
+each time you make a request rather than caching the string, and watch
+`onUpdate` if you hold a long-lived connection.
+</Note>

@@ -531,8 +531,9 @@ export interface RuntimeHooks {
  * Video recording adapter — start/stop a local video recording on the glasses.
  * The runtime calls these from its handleVideoRecordingStart/Stop handlers; the
  * host's PhoneVideoCoordinator implements them (drives the glasses over BLE via
- * the bluetooth-sdk startVideoRecording/stopVideoRecording). Unlike photo, this
- * returns recording control status only — no uploaded URL is returned.
+ * the bluetooth-sdk startVideoRecording/stopVideoRecording). `stopRecording`
+ * optionally uploads the finished clip to a developer-provided URL; no uploaded
+ * URL is returned to the miniapp.
  */
 export interface VideoRecordingAdapter {
   startRecording: (
@@ -545,7 +546,11 @@ export interface VideoRecordingAdapter {
       save?: boolean
     },
   ) => Promise<{recordingId: string}>
-  stopRecording: (packageName: string, recordingId?: string) => Promise<void>
+  stopRecording: (
+    packageName: string,
+    recordingId?: string,
+    opts?: {uploadUrl?: string; uploadAuthToken?: string},
+  ) => Promise<void>
   /**
    * Stop any recordings still owned by an app (e.g. on miniapp disconnect/crash)
    * so the glasses don't keep recording until the max-recording timeout.

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "mentra-miniapp": "./src/index.ts"
   },
