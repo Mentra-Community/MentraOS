@@ -79,6 +79,18 @@ await $({ stdio: 'inherit' })`bun expo prebuild --platform ios`;
 // Copy .env to ios/.xcode.env.local so build env vars are available
 await $({ stdio: 'inherit' })`cp .env ios/.xcode.env.local`;
 
+// Pin NODE_BINARY to THIS node (the one running release:ios, i.e. the Node 20
+// from setup-node). Xcode's "[CP-User] Generate app.config" build phase sources
+// .xcode.env(.local) and otherwise resolves `command -v node` against Xcode's
+// minimal PATH, which on the self-hosted runners hits the SYSTEM node symlink
+// (/usr/local/bin/node → Node 18). Node 18 lacks util.parseEnv, so @expo/env
+// throws "parseEnv is not a function" and the archive fails with exit 65.
+// .xcode.env.local is sourced after .xcode.env, so this overrides it.
+await import('fs').then(fs =>
+  fs.appendFileSync('ios/.xcode.env.local', `\nexport NODE_BINARY=${process.execPath}\n`),
+);
+console.log(`Pinned NODE_BINARY=${process.execPath} (node ${process.version}) for Xcode build phases`);
+
 // In CI, switch the Mentra app target's Release config to MANUAL signing
 // with the fastlane match-installed AppStore profile. Without this,
 // Expo's prebuild leaves the project in Automatic mode which on a CI
