@@ -35,9 +35,10 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
               flex: 1,
               paddingHorizontal: theme.spacing.s4,
               paddingRight: theme.spacing.s5,
+              paddingVertical: theme.spacing.s5,
             }}
             label={translate("deviceSettings:glasses")}
-            textStyle={themed($compactTextStyle)}
+            textStyle={themed($compactLabelStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
                 <Icon name={glassesCharging ? "battery-charging" : "battery-3"} size={16} color={theme.colors.text} />
@@ -49,10 +50,15 @@ export function BatteryStatus({compact}: BatteryStatusProps) {
 
         {caseBatteryLevel !== undefined && caseBatteryLevel !== -1 && !caseRemoved && (
           <StatusCard
-            style={{backgroundColor: theme.colors.primary_foreground, flex: 1, paddingHorizontal: theme.spacing.s4}}
+            style={{
+              backgroundColor: theme.colors.primary_foreground,
+              flex: 1,
+              paddingHorizontal: theme.spacing.s4,
+              paddingVertical: theme.spacing.s5,
+            }}
             label={translate("deviceSettings:case")}
             subtitle={caseCharging ? translate("deviceSettings:charging") : undefined}
-            textStyle={themed($compactTextStyle)}
+            textStyle={themed($compactLabelStyle)}
             iconEnd={
               <View style={themed($compactBatteryValue)}>
                 <Icon name={caseCharging ? "battery-charging" : "battery-3"} size={16} color={theme.colors.text} />
@@ -107,6 +113,12 @@ const $sideBySideContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
   width: "100%",
 })
 
+// The "Glasses"/"Case" label — not bold, per Parth's design.
+const $compactLabelStyle: ThemedStyle<TextStyle> = () => ({
+  fontSize: 14,
+})
+
+// The battery percentage value.
 const $compactTextStyle: ThemedStyle<TextStyle> = () => ({
   fontSize: 14,
   width: 60,
