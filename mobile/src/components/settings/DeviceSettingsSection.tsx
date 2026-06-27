@@ -37,15 +37,6 @@ export function useHasDeviceInfo(): boolean {
   return Boolean(bluetoothName || buildNumber || wifiLocalIp)
 }
 
-interface DeviceSettingsSectionProps {
-  /**
-   * Show the inline device identity header (model name + glasses image). The
-   * standalone glasses page already renders this in its screen Header, so it
-   * opts out; the flattened main settings page shows it inline.
-   */
-  showDeviceHeader?: boolean
-}
-
 /**
  * The device/glasses settings, rendered as a single flat card stack under the
  * paired device's name — matching Parth's flattened Settings design. Every row
@@ -55,10 +46,10 @@ interface DeviceSettingsSectionProps {
  * reference layout), with capability-specific rows (G2 menu, WiFi, OTA, Nex,
  * Mentra Live button, super-mode tools) slotting in where applicable.
  *
- * Embedded inline on the flattened main settings page and on the standalone
- * /miniapps/settings/glasses route. Returns null when no device is paired.
+ * Embedded inline on the flattened main settings page. Returns null when no
+ * device is paired.
  */
-export function DeviceSettingsSection({showDeviceHeader = true}: DeviceSettingsSectionProps) {
+export function DeviceSettingsSection() {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const hasDeviceInfo = useHasDeviceInfo()
@@ -109,14 +100,12 @@ export function DeviceSettingsSection({showDeviceHeader = true}: DeviceSettingsS
 
   return (
     <View style={{gap: theme.spacing.s2}}>
-      {showDeviceHeader && (
-        <View className="flex-row items-center justify-between">
-          <Text>{formatGlassesTitle(defaultWearable)}</Text>
-          {defaultWearable !== DeviceTypes.SIMULATED && (
-            <Image source={getGlassesImage(defaultWearable)} style={{width: 110, maxHeight: 32}} resizeMode="contain" />
-          )}
-        </View>
-      )}
+      <View className="flex-row items-center justify-between">
+        <Text>{formatGlassesTitle(defaultWearable)}</Text>
+        {defaultWearable !== DeviceTypes.SIMULATED && (
+          <Image source={getGlassesImage(defaultWearable)} style={{width: 110, maxHeight: 32}} resizeMode="contain" />
+        )}
+      </View>
 
       {/* Reconnect affordances when paired but not connected */}
       {!glassesConnected && <ConnectDeviceButton />}
