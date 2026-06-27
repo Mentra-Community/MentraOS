@@ -1,0 +1,28 @@
+name: "Reset watchman"
+description: >
+  Reset the watchman daemon before an Expo/Metro build on a self-hosted macOS
+  runner. watchman is a per-user daemon shared across all runner processes on the
+  host; its state can wedge (stale watch / cookie file the watcher never observes)
+  and then `expo prebuild` / Metro fails with
+  "Watchman error: syncToNow: timed out waiting for cookie file ... within 60000ms".
+  Dropping all watches + shutting the server down forces a clean restart on next
+  use. No-op (and non-fatal) when watchman isn't installed (e.g. ubuntu runners).
+runs:
+  using: "composite"
+  steps:
+    - name: Reset watchman
+      shell: bash
+      run: |
+        if ! command -v watchman >/dev/null 2>&1; then
+          echo "watchman not installed — skipping."
+          exit 0
+        fi
+        echo "Resetting watchman (drop watches + restart daemon)..."
+        # Drop every watch this user's watchman is tracking (clears wedged state).
+        watchman watch-del-all 2>/dev/null || true
+        # Shut the server down; it auto-restarts clean on the next query.
+        watchman shutdown-server 2>/dev/null || true
+        # Clear stale state/cookie files that survive a crash.
+        rm -rf /usr/local/var/run/watchman/"$USER"-state 2>/dev/null || true
+        rm -rf /opt/homebrew/var/run/watchman/"$USER"-state 2>/dev/null || true
+        echo "watchman reset done."
