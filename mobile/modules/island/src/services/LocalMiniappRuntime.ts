@@ -2370,7 +2370,10 @@ class LocalMiniappRuntime {
     }
 
     try {
-      await video.stopRecording(packageName, payload.recordingId as string | undefined)
+      await video.stopRecording(packageName, payload.recordingId as string | undefined, {
+        uploadUrl: payload.uploadUrl as string | undefined,
+        uploadAuthToken: payload.uploadAuthToken as string | undefined,
+      })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2804,14 +2807,21 @@ class LocalMiniappRuntime {
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
-    // exact streamType, so per-gesture subscribers (`touch_event:click`,
+    // exact streamType, so per-gesture subscribers (`touch_event:single_tap`,
     // etc.) need their own EVENT envelope with the gesture-tagged streamType.
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
+    let outboundData = data
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
-      const kind = (data as {kind?: string} | null)?.kind
-      if (typeof kind === "string" && kind.length > 0) {
-        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${kind}`
+      // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
+      // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it
+      // to miniapps as `TouchData.kind` and tag a per-gesture stream so
+      // onTouch("single_tap", ...) routes correctly.
+      const touch = data as {gestureName?: string; kind?: string} | null
+      const gesture = touch?.gestureName ?? touch?.kind
+      if (typeof gesture === "string" && gesture.length > 0) {
+        outboundData = {...(touch as object), kind: gesture}
+        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${gesture}`
       }
     }
 
@@ -2836,7 +2846,7 @@ class LocalMiniappRuntime {
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
-        data,
+        data: outboundData,
       })
     }
 
@@ -2849,7 +2859,7 @@ class LocalMiniappRuntime {
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,
             streamType: perGestureStream,
-            data,
+            data: outboundData,
           })
         }
       }

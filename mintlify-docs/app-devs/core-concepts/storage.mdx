@@ -1,184 +1,65 @@
 ---
 title: "Storage"
-description: "Persistent key-value storage for your app"
+description: "Persistent key-value storage scoped to your miniapp."
+icon: "database"
 ---
 
-Use `session.storage` to save and retrieve data that persists across sessions. When a user closes your app and opens it again later, their stored data is still there.
-
-## Basic Usage
-
-```typescript
-// Save a value
-await session.storage.set("username", "Alice");
-
-// Read it back
-const username = await session.storage.get("username");
-// "Alice"
-
-// Delete it
-await session.storage.delete("username");
-```
-
-All values are stored as strings. For objects, use `JSON.stringify` and `JSON.parse`:
+`session.storage` is a phone-local key-value store. It's scoped to the user and
+your miniapp, so your keys never collide with another miniapp's, and the data
+survives restarts. Keys and values are both strings.
 
 ```typescript
-// Save an object
-const settings = { theme: "dark", fontSize: 14 };
-await session.storage.set("settings", JSON.stringify(settings));
-
-// Read it back
-const raw = await session.storage.get("settings");
-const parsed = raw ? JSON.parse(raw) : null;
+await session.storage.set("lastNote", "buy milk");
+const note = await session.storage.get("lastNote"); // "buy milk"
 ```
 
-## Methods
+Storage needs no permission and no hardware. Every method is async and
+round-trips to the phone.
 
-### get
-
-Retrieve a value by key. Returns `null` if the key doesn't exist.
+## Reading and writing
 
 ```typescript
-const value = await session.storage.get("key");
-
-if (value !== null) {
-  // Key exists
-}
+await session.storage.set("count", "3");
+const count = await session.storage.get("count");  // "3", or null if unset
+await session.storage.delete("count");
+const exists = await session.storage.has("count"); // false
 ```
 
-### set
+| Method | Returns | Notes |
+|---|---|---|
+| `get(key)` | `Promise<string \| null>` | `null` when the key isn't set. |
+| `set(key, value)` | `Promise<void>` | Overwrites silently. |
+| `delete(key)` | `Promise<void>` | No-op if the key isn't set. |
+| `has(key)` | `Promise<boolean>` | Whether the key is set. |
+| `keys()` | `Promise<string[]>` | Every key in your namespace. |
+| `clear()` | `Promise<void>` | Drops every key in your namespace. |
 
-Store a value. Overwrites any existing value for that key.
+## Bulk operations
+
+For hydrating state on startup or saving several keys at once:
 
 ```typescript
-await session.storage.set("key", "value");
+const all = await session.storage.getAll();          // { count: "3", lastNote: "…" }
+await session.storage.setMultiple({ a: "1", b: "2" }); // one round-trip
 ```
 
-### delete
+| Method | Returns | Notes |
+|---|---|---|
+| `getAll()` | `Promise<Record<string, string>>` | Every key/value pair. |
+| `setMultiple(values)` | `Promise<void>` | Writes many pairs in one round-trip. |
 
-Remove a key and its value.
+<Note>
+Keep the total stored payload small (think under ~1 MB). `getAll()` pulls
+everything across the bridge at once, and a large namespace will stall the
+background context while it resolves. For images, audio, or files, use
+[`session.blob`](/app-devs/core-concepts/blob) instead.
+</Note>
+
+## Storing objects
+
+Values are strings, so serialize structured data yourself:
 
 ```typescript
-await session.storage.delete("key");
+await session.storage.set("notes", JSON.stringify(notes));
+const notes = JSON.parse((await session.storage.get("notes")) ?? "[]");
 ```
-
-### getAll
-
-Retrieve all stored key-value pairs.
-
-```typescript
-const all = await session.storage.getAll();
-// { "key1": "value1", "key2": "value2", ... }
-```
-
-### clear
-
-Remove all stored data for this app and user.
-
-```typescript
-await session.storage.clear();
-```
-
-### keys
-
-Get all stored keys. Returns `Promise<string[]>`.
-
-```typescript
-const allKeys = await session.storage.keys();
-// ["username", "settings", "launchCount"]
-```
-
-### has
-
-Check if a key exists. Returns `Promise<boolean>`.
-
-```typescript
-const exists = await session.storage.has("username");
-```
-
-### setMultiple
-
-Batch set multiple key-value pairs. Takes a `Record<string, any>`.
-
-```typescript
-await session.storage.setMultiple({ username: "Alice", theme: "dark", fontSize: "14" });
-```
-
-### flush
-
-Force-flush any pending writes to the server.
-
-```typescript
-await session.storage.flush();
-```
-
-## Common Patterns
-
-### User preferences
-
-```typescript
-app.onSession(async (session) => {
-  // Load saved preferences
-  const lang = await session.storage.get("language") || "en";
-
-  session.transcription.configure({
-    languageHints: [lang],
-  });
-
-  session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
-  });
-});
-```
-
-### Session state that survives restarts
-
-```typescript
-app.onSession(async (session) => {
-  // Restore state from last session
-  const raw = await session.storage.get("lastState");
-  const lastState = raw ? JSON.parse(raw) : null;
-
-  if (lastState) {
-    session.display.showTextWall(`Welcome back! Last seen: ${lastState.lastSeen}`);
-  }
-
-  // Save state on stop
-  session.onStopped(async () => {
-    await session.storage.set("lastState", JSON.stringify({
-      lastSeen: new Date().toISOString(),
-    }));
-  });
-});
-```
-
-### Counters
-
-```typescript
-const raw = await session.storage.get("launchCount");
-const count = raw ? parseInt(raw, 10) + 1 : 1;
-await session.storage.set("launchCount", count.toString());
-
-session.display.showTextWall(`You've opened this app ${count} times`);
-```
-
-## Storage Limits
-
-Storage is per-app, per-user. Each user of your app has their own isolated storage. Data stored for one user is not visible to other users.
-
-Storage is backed by the cloud - it's not local to the glasses or phone. This means it works across devices if the user switches phones.
-
-## Migrating from v2
-
-```typescript
-// v2
-await session.simpleStorage.get("key");
-await session.simpleStorage.set("key", "value");
-await session.simpleStorage.delete("key");
-
-// v3
-await session.storage.get("key");
-await session.storage.set("key", "value");
-await session.storage.delete("key");
-```
-
-Same API, just `session.storage` instead of `session.simpleStorage`. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

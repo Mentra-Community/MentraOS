@@ -1215,13 +1215,10 @@ export class NavigationController {
   private wireTouchGestures(): void {
     this.unsubs.push(
       this.session.input.onTouch((data) => {
-        // The miniapp `TouchData.kind` field arrives undefined on G2 — the native
-        // side labels the gesture under a different key. Log the WHOLE payload so
-        // we can see the real field name, and read the gesture from whichever of
-        // the likely keys is populated.
+        // `data.kind` carries the gesture (single_tap / double_tap / swipe_up /
+        // swipe_down / ...); gestureName is a fallback for older host builds.
         const d = data as unknown as Record<string, unknown>
-        const gesture = String(d.kind ?? d.gestureName ?? d.gesture ?? d.type ?? "")
-        console.log(`[TOUCH] payload=${JSON.stringify(data)} → gesture="${gesture}"`)
+        const gesture = String(d.kind ?? d.gestureName ?? "")
 
         // system_exit = the glasses tore down our EvenHub page (dashboard etc).
         // Do NOT touch largeMapShown here — it fires constantly and would
@@ -1235,12 +1232,7 @@ export class NavigationController {
           return
         }
 
-        // G2 swipe-up arrives as scroll_top / swipe_up (native mapping varies).
-        const isSwipe =
-          gesture === "scroll_top" ||
-          gesture === "swipe_up" ||
-          gesture === "scroll_bottom" ||
-          gesture === "swipe_down"
+        const isSwipe = gesture === "swipe_up" || gesture === "swipe_down"
         if (!isSwipe) return
 
         // Large map is a dev-gated WIP feature, OFF by default. When disabled,
