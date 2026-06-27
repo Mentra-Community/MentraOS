@@ -63,11 +63,7 @@ export default function MainSettingsPage() {
                 onPress={() => push("/miniapps/settings/notifications")}
               />
             )}
-            <RouteButton
-              icon={<Icon name="microphone" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("deviceSettings:microphone")}
-              onPress={() => push("/miniapps/settings/microphone")}
-            />
+            {/* Microphone lives in the device section above (it's a glasses mic selector) */}
             <RouteButton
               icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
               label={translate("settings:speechSettings")}
