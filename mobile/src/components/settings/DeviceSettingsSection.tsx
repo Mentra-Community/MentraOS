@@ -15,11 +15,9 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {useApps} from "@mentra/island"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
-import {ButtonSettings} from "@/components/glasses/settings/ButtonSettings"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
@@ -55,15 +53,16 @@ export function DeviceSettingsSection() {
   const hasDeviceInfo = useHasDeviceInfo()
   const [autoBrightness, setAutoBrightness] = useSetting(SETTINGS.auto_brightness.key)
   const [brightness, setBrightness] = useSetting(SETTINGS.brightness.key)
-  const [defaultButtonActionEnabled, setDefaultButtonActionEnabled] = useSetting(
-    SETTINGS.default_button_action_enabled.key,
-  )
+  // Button-action settings are no longer surfaced in the UI — the action button always launches the
+  // camera (forced at runtime in ButtonActions.tsx). See the commented-out ButtonSettings block below.
+  // const [defaultButtonActionEnabled, setDefaultButtonActionEnabled] = useSetting(
+  //   SETTINGS.default_button_action_enabled.key,
+  // )
+  // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   const {push} = useNavigationStore.getState()
-  const applets = useApps()
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = useGlassesStore((state) => state.otaProgress)
@@ -159,8 +158,11 @@ export function DeviceSettingsSection() {
         <RouteButton label={translate("settings:layoutSettings")} onPress={() => push("/miniapps/settings/layout")} />
       )}
 
-      {/* Button Settings — Mentra Live only (G2's button is a touchpad and conflicts with the native menu) */}
-      {glassesConnected && defaultWearable === DeviceTypes.LIVE && (
+      {/* Button Settings — Mentra Live only (G2's button is a touchpad and conflicts with the native menu).
+          Hidden for now: the action button always launches the camera. ButtonActions.tsx already forces
+          `default_button_action_app` to com.mentra.camera at runtime for any Mentra Live (camera) glasses, so
+          there's nothing for the user to configure. Re-enable this block if we ship a real button-config UX. */}
+      {/* {glassesConnected && defaultWearable === DeviceTypes.LIVE && (
         <ButtonSettings
           enabled={defaultButtonActionEnabled}
           selectedApp={defaultButtonActionApp}
@@ -168,7 +170,7 @@ export function DeviceSettingsSection() {
           onEnabledChange={setDefaultButtonActionEnabled}
           onAppChange={setDefaultButtonActionApp}
         />
-      )}
+      )} */}
 
       {/* Microphone */}
       <RouteButton
