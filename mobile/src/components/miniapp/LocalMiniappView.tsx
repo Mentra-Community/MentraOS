@@ -447,10 +447,7 @@ function LocalMiniappView({
     )
   }
 
-  let isDevApp = packageName == DEV_APP_PACKAGE_NAME
-  if (isDevApp) {
-    appName = undefined
-  }
+  const isDevApp = packageName == DEV_APP_PACKAGE_NAME
 
   if (!uiUri) {
     return (
