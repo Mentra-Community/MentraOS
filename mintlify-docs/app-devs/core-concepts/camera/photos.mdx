@@ -1,12 +1,12 @@
 ---
-title: "Camera"
-description: "Take photos and record video on camera glasses."
+title: "Photos"
+description: "Capture photos on camera glasses."
 icon: "camera"
 ---
 
-`session.camera` captures photos and video on glasses that have a camera, like
-Mentra Live. `takePhoto` resolves after the photo is captured on the glasses and
-uploaded, and hands you back a download URL.
+`session.camera.takePhoto` captures a still on glasses that have a camera, like
+Mentra Live. It resolves after the photo is captured and uploaded, and hands you
+back a download URL.
 
 ```typescript src/background/index.ts
 import { registerMiniapp } from "@mentra/miniapp/background";
@@ -21,12 +21,10 @@ registerMiniapp((session) => {
 ```
 
 Camera needs the `CAMERA` permission and glasses with a camera. Declare a
-`CAMERA` permission in your
-[manifest](/app-devs/core-concepts/miniapp-manifest) so the call is allowed, and
-a `CAMERA` hardware requirement so the miniapp only installs on glasses that can
-capture. Without the permission the call rejects with `PERMISSION_NOT_DECLARED`.
-Check `session.capabilities.hasCamera` before calling so you don't fire a request
-the glasses can't satisfy.
+`CAMERA` permission in your [manifest](/app-devs/core-concepts/miniapp-manifest)
+so the call is allowed, and a `CAMERA` hardware requirement so the miniapp only
+installs on glasses that can capture. Check `session.capabilities.hasCamera`
+before calling so you don't fire a request the glasses can't satisfy.
 
 ## Take a photo
 
@@ -61,60 +59,12 @@ The result is a `PhotoTaken`:
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
 
-## Record video
-
-`startVideoRecording` resolves once the glasses report that recording started,
-returning a `recordingId`. Pass that id to `stopVideoRecording` to end the clip.
-
-```typescript
-const { recordingId } = await session.camera.startVideoRecording({ fps: 5, save: true });
-// … later …
-await session.camera.stopVideoRecording(recordingId);
-```
-
-Resolution and frame rate are optional. Omit them to use the device's saved
-button-video settings. A lower `fps` (for example `5`) keeps the glasses cooler
-and the file smaller on long recordings.
-
-| Option | Type | Default | What it does |
-|---|---|---|---|
-| `width` | `number` | device default | Video width in pixels. |
-| `height` | `number` | device default | Video height in pixels. |
-| `fps` | `number` | device default | Frames per second. |
-| `sound` | `boolean` | `true` | Play start/stop capture sounds. |
-| `save` | `boolean` | `false` | Keep the recording on the glasses after it finishes. |
-
-`startVideoRecording` resolves with a `VideoRecordingStarted`:
-
-| Field | Type | Description |
-|---|---|---|
-| `recordingId` | `string` | Identifier for this recording. Pass it to `stopVideoRecording`. |
-
-`stopVideoRecording(recordingId)` resolves to `void`. By default the clip stays on
-the glasses. To send it somewhere, pass an `uploadUrl` and the glasses upload the
-finished recording there with a multipart POST (the file is the `video` part):
-
-```typescript
-await session.camera.stopVideoRecording(recordingId, {
-  uploadUrl: "https://your-server.example/clips",
-  uploadAuthToken: "optional-bearer-token", // sent as the Authorization header if set
-});
-```
-
-| Option | Type | What it does |
-|---|---|---|
-| `uploadUrl` | `string` | Endpoint the finished recording is POSTed to. Omit to keep it on the glasses. |
-| `uploadAuthToken` | `string` | Bearer token for the upload's `Authorization` header, if your endpoint needs one. |
-
-Unlike `takePhoto`, the recording bytes don't come back over the bridge: with an
-`uploadUrl` they go straight from the glasses to your endpoint, otherwise they
-stay on the device.
-
 ## Field of view
 
 `setFov` applies a camera FOV/ROI setting on the glasses and resolves after the
-ASG client reports it was applied. It takes a single request object: either a
-named preset, or an explicit FOV plus optional region.
+ASG client reports it was applied. It applies to all captures (photos and video),
+and takes a single request object: either a named preset, or an explicit FOV plus
+optional region.
 
 ```typescript
 // A named preset. The simplest option, always center ROI.
@@ -164,6 +114,6 @@ try {
 ```
 
 <Note>
-This module is for discrete photo and video capture. For live video streaming,
-use [`session.stream`](/app-devs/core-concepts/stream).
+For video, see [Videos](/app-devs/core-concepts/camera/videos). For live video
+streaming, see [Streaming](/app-devs/core-concepts/stream).
 </Note>

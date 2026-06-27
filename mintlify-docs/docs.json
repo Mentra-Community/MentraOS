@@ -94,7 +94,8 @@
             "group": "Camera",
             "icon": "camera",
             "pages": [
-              "app-devs/core-concepts/camera/README",
+              "app-devs/core-concepts/camera/photos",
+              "app-devs/core-concepts/camera/videos",
               "app-devs/core-concepts/stream"
             ]
           },
@@ -281,7 +282,7 @@
     { "source": "/app-devs/core-concepts/hardware-capabilities/overview", "destination": "/app-devs/core-concepts/session" },
     { "source": "/app-devs/core-concepts/hardware-capabilities/device-capabilities", "destination": "/app-devs/core-concepts/session" },
     { "source": "/app-devs/core-concepts/hardware-capabilities/display-glasses", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/hardware-capabilities/camera-glasses", "destination": "/app-devs/core-concepts/camera/README" },
+    { "source": "/app-devs/core-concepts/hardware-capabilities/camera-glasses", "destination": "/app-devs/core-concepts/camera/photos" },
     { "source": "/app-devs/core-concepts/webviews/bun-fullstack", "destination": "/app-devs/core-concepts/webviews/react-webviews" },
     { "source": "/app-devs/core-concepts/webviews/webview-authentication", "destination": "/app-devs/core-concepts/auth" },
     { "source": "/app-devs/reference/index", "destination": "/app-devs/core-concepts/session" },
@@ -296,7 +297,7 @@
     { "source": "/app-devs/reference/managers/settings-manager", "destination": "/app-devs/core-concepts/session" },
     { "source": "/app-devs/reference/managers/audio-manager", "destination": "/app-devs/core-concepts/speakers/text-to-speech" },
     { "source": "/app-devs/reference/managers/led-manager", "destination": "/app-devs/core-concepts/led/overview" },
-    { "source": "/app-devs/reference/managers/camera", "destination": "/app-devs/core-concepts/camera/README" },
+    { "source": "/app-devs/reference/managers/camera", "destination": "/app-devs/core-concepts/camera/photos" },
     { "source": "/app-devs/reference/managers/location-manager", "destination": "/app-devs/core-concepts/location" },
     { "source": "/app-devs/reference/interfaces/capabilities", "destination": "/app-devs/core-concepts/session" },
     { "source": "/app-devs/reference/interfaces/config-types", "destination": "/app-devs/core-concepts/session" },
