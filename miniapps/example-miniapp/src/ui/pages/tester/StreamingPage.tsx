@@ -24,10 +24,9 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
-// Mirrors the SDK's StreamPublisherStartResult / ManagedStreamResult.
-// Both unmanaged and managed resolve to an object: unmanaged gives
-// {streamId, status}; managed additionally carries the Cloudflare playback
-// fields. `hlsUrl` (managed-only) is the discriminator below.
+// Mirrors the SDK's StreamResult. Both direct and managed resolve to an object:
+// direct gives {streamId, status}; managed additionally carries the Cloudflare
+// playback fields. `hlsUrl` (managed-only) is the discriminator below.
 interface StreamStartResult {
   streamId: string
   status?: string
@@ -50,8 +49,8 @@ export default function StreamingPage() {
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
   const [result, setResult] = useState<StreamStartResult | undefined>(undefined)
 
-  const start = (method: "startUnmanaged" | "startManaged", args: unknown[]) => {
-    invoke(method, args)
+  const start = (options: Record<string, unknown>) => {
+    invoke("startStream", [options])
       .then((r) => setResult(r as StreamStartResult))
       .catch(() => {
         /* error already surfaced via lastError → ErrorRow */
@@ -92,11 +91,11 @@ export default function StreamingPage() {
       <MiniappHeader title="session.stream" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Glasses-side RTMP/SRT/WHIP publishing. Unmanaged uses your URL
-          directly; managed provisions a Cloudflare live input + playback URLs.
+          Glasses-side RTMP/SRT/WHIP publishing. A direct URL publishes straight
+          from the glasses; managed provisions a Cloudflare live input + playback URLs.
         </p>
 
-        <Label htmlFor="stream-url">unmanaged ingest URL</Label>
+        <Label htmlFor="stream-url">direct ingest URL</Label>
         <Input
           id="stream-url"
           value={unmanagedUrl}
@@ -104,10 +103,10 @@ export default function StreamingPage() {
           placeholder="rtmp://your.server/app/key"
         />
         <div className="mt-2 flex flex-col gap-2">
-          <Button onClick={() => start("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
-            startUnmanaged(streamUrl)
+          <Button onClick={() => start({direct: unmanagedUrl})}>
+            startStream(direct)
           </Button>
-          <Button onClick={() => start("startManaged", [{}])}>startManaged()</Button>
+          <Button onClick={() => start({})}>startStream() (managed)</Button>
           <Button variant="destructive" onClick={stop}>
             stop()
           </Button>
