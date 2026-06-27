@@ -147,11 +147,21 @@ if (isCIForSigning) {
 //      present and succeeds. Previously this error aborted immediately because
 //      the retry predicate only matched Sentry/network errors.
 
+// Per-workspace DerivedData. By DEFAULT xcodebuild uses
+// ~/Library/Developer/Xcode/DerivedData — which is MACHINE-GLOBAL and shared by
+// every runner process on a self-hosted Mac (bigbob runs 3). Concurrent iOS
+// builds then share the same DerivedData + ModuleCache.noindex / SDKStatCaches,
+// which corrupts/locks the module cache and makes a build hang mid-compile then
+// fail ~30min later with no error (the recurring staging iOS failure). Pinning
+// DerivedData inside the runner workspace makes each build fully isolated. The
+// path is absolute under cwd (mobile/), i.e. under RUNNER_WORKSPACE in CI.
+const derivedDataPath = path.resolve('build/DerivedData');
+
 console.log('\n━━━ Step 3.5: Resolving Mapbox SPM packages ━━━');
 
 await withRetry(
   'xcodebuild resolve packages',
-  () => $({ stdio: 'inherit' })`xcodebuild -resolvePackageDependencies -workspace ios/Mentra.xcworkspace -scheme Mentra`,
+  () => $({ stdio: 'inherit' })`xcodebuild -resolvePackageDependencies -workspace ios/Mentra.xcworkspace -scheme Mentra -derivedDataPath ${derivedDataPath}`,
   { shouldRetry: isSPMOrSentryTransientError },
 );
 
@@ -177,7 +187,7 @@ const archivePath = path.resolve('build/Mentra.xcarchive');
 await withRetry(
   'xcodebuild archive',
   () => {
-    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
+    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
     p.stdout.pipe(process.stdout);
     p.stderr.pipe(process.stderr);
     return p;
@@ -202,7 +212,7 @@ const exportOptionsPlist = isCIForSigning
   ? path.resolve('ci/ios-export/ExportOptions-Match.plist')
   : path.resolve('ci/ios-export/ExportOptions.plist');
 
-await $({ stdio: 'inherit' })`xcodebuild -exportArchive -archivePath ${archivePath} -exportOptionsPlist ${exportOptionsPlist} -exportPath ${exportPath} -allowProvisioningUpdates`;
+await $({ stdio: 'inherit' })`xcodebuild -exportArchive -archivePath ${archivePath} -exportOptionsPlist ${exportOptionsPlist} -exportPath ${exportPath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates`;
 
 // Find the exported IPA
 const ipaFiles = (await $`ls ${exportPath}/*.ipa`).stdout.trim().split('\n').filter(Boolean);

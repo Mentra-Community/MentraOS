@@ -97,6 +97,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
+
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
 
@@ -306,6 +309,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
 
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
