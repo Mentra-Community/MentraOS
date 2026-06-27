@@ -143,18 +143,29 @@ internal object NimoProtocol {
     // widget resTypes
     const val WIDGET_TEXT_NEW = 0x00
     const val WIDGET_TEXT_APPEND = 0x01
+    const val WIDGET_RAW = 0x02
     const val WIDGET_PICTURE = 0x80
 
     // navigation widget resIds (appId 0x01): mini map 0x00, arrow 0x01, turn text 0x02,
     // status bar 0x03 (raw), tip 0x04, large map 0x05.
     const val NAV_RES_MINI_MAP = 0x00
+    const val NAV_RES_ARROW = 0x01
     const val NAV_RES_TURN_TEXT = 0x02
+    const val NAV_RES_INFO = 0x03
+    const val NAV_RES_TIP = 0x04
     const val NAV_RES_LARGE_MAP = 0x05
 
     // navigation image widget sizes (hard firmware requirements; see IMAGE_PROTOCOL).
     const val NAV_MINI_MAP_SIZE = 160
+    const val NAV_ARROW_SIZE = 48
     const val NAV_LARGE_MAP_WIDTH = 452
     const val NAV_LARGE_MAP_HEIGHT = 170
+
+    // naviInfo status struct (resId 0x03, raw): navType(1) + dist(32 UTF-8) + time(32 UTF-8).
+    const val NAV_INFO_STRUCT_SIZE = 65
+    const val NAV_TYPE_WALK = 0x00
+    const val NAV_TYPE_CYCLE = 0x01
+    const val NAV_TYPE_EBIKE = 0x02
 
     // phone types
     const val PHONE_TYPE_OTHER = 0x02
@@ -986,6 +997,10 @@ class Nimo : SGCManager() {
     private var textAppEntered = false
     private var navAppEntered = false
     private var currentGlassesAppId = -1
+    // Last navigation HUD frame pushed, to coalesce the app's ~3s identical re-pushes.
+    private var lastNavHudKey = ""
+    // Arrow direction currently shown, so the icon is re-sent only when the turn changes.
+    private var lastNavArrow: NavArrow? = null
 
     // Battery
     private var lastBatteryLevel = -1
@@ -1179,12 +1194,25 @@ class Nimo : SGCManager() {
             borderWidth: Int,
             borderRadius: Int
     ) {
-        // Navigation pushes turn text via positioned_text. Nimo widgets have fixed geometry, so
-        // position/border are ignored — funnel the text through the same coalesced path as
-        // sendTextWall so it renders on the ASR note page. Without this override the base no-op
-        // silently dropped all navigation text.
-        // Bridge.log("NIMO: sendPositionedText(text=$text)")
-        // pendingText = text
+        // The navigation app pushes its whole turn-by-turn HUD through positioned_text in one
+        // combined string (arrow / distance / instruction / ETA). Nimo widgets have fixed
+        // geometry, so x/y/border are ignored; instead we parse the string and fan the pieces
+        // out to the dedicated nav widgets (arrow icon, instruction, tip, status struct).
+        if (handshakeState != HandshakeState.READY) return
+        val trimmed = text.trim()
+        // Blank pushes (e.g. the app clearing its loading-message region) must not wipe the
+        // current HUD — ignore them and keep the last frame on screen.
+        if (trimmed.isEmpty()) return
+        val hud = parseNavHud(trimmed)
+        // Coalesce: the app re-pushes the same frame every ~3s; only redraw on real changes.
+        val key = hud.toString()
+        if (key == lastNavHudKey) return
+        lastNavHudKey = key
+        Bridge.log(
+                "NIMO: nav HUD → arrow=${hud.arrow} instr=\"${hud.instruction}\" tip=\"${hud.tip}\" eta=\"${hud.eta}\""
+        )
+        enterNavAppIfNeeded()
+        pushNavHud(hud)
     }
 
     override fun displayBitmap(
@@ -1195,60 +1223,245 @@ class Nimo : SGCManager() {
             height: Int?
     ): Boolean {
         // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
-        // large-map widget (appId 0x01, resId 0x05, 452x170 2bpp) — the full-width nav map,
-        // which shows far more than the small 160x160 mini-map (resId 0x00). bitmapToGrayscale
-        // aspect-fits onto black, so a non-matching source aspect letterboxes rather than
-        // distorts. The nav app must be foregrounded before pushing content (mirrors the text
-        // path). TODO: hardware-verify the large-map widget renders and the nav app-mode.
-        val targetWidth = NimoProtocol.NAV_LARGE_MAP_WIDTH
-        val targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
-        Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=$navAppEntered)")
+        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp) — the compact "small screen"
+        // nav map. bitmapToGrayscale aspect-fits onto black, so a non-matching source aspect
+        // letterboxes rather than distorts. The nav app must be foregrounded before pushing
+        // content (mirrors the text path). TODO: hardware-verify the mini-map widget renders.
+        val targetWidth = NimoProtocol.NAV_MINI_MAP_SIZE
+        val targetHeight = NimoProtocol.NAV_MINI_MAP_SIZE
+        Bridge.log("NIMO: displayBitmap → nav mini map (navAppEntered=$navAppEntered)")
         return try {
             val imageBytes = Base64.decode(base64ImageData, Base64.DEFAULT)
             val bitmap =
                     BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return false
             val grayscale = bitmapToGrayscale(bitmap, targetWidth, targetHeight)
-            val packed = packL8To2bpp(grayscale)
-            val (payload, compression) = compressAdaptive(packed)
-            if (!navAppEntered) {
-                sendFrame(
-                        NimoFrameCodec.encodeFrame(
-                                NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                                NimoProtocol.CTRL_ENTER_APP,
-                                byteArrayOf(
-                                        NimoProtocol.APP_ID_NAV.toByte(),
-                                        NimoProtocol.APP_MODE_STANDALONE.toByte()
-                                )
-                        )
-                )
-                // Optimistic; corrected by app-state reports if the glasses refuse/exit.
-                navAppEntered = true
-            }
-            val content =
-                    NimoFrameCodec.imageHeader(
-                            width = targetWidth,
-                            height = targetHeight,
-                            formatBpp = NimoProtocol.FORMAT_2BPP,
-                            compression = compression,
-                            originalSize = packed.size,
-                            compressedSize =
-                                    if (compression == NimoProtocol.COMPRESSION_NONE) 0
-                                    else payload.size
-                    ) + payload
-            val frames =
-                    NimoFrameCodec.updateContentFrames(
-                            appId = NimoProtocol.APP_ID_NAV,
-                            layoutId = 0,
-                            resId = NimoProtocol.NAV_RES_LARGE_MAP,
-                            resType = NimoProtocol.WIDGET_PICTURE,
-                            content = content
-                    )
-            enqueueFrames(frames)
+            val content = buildNavImageContent(grayscale, targetWidth, targetHeight)
+            enterNavAppIfNeeded()
+            enqueueNavWidget(NimoProtocol.NAV_RES_MINI_MAP, NimoProtocol.WIDGET_PICTURE, content)
             true
         } catch (e: Exception) {
             Bridge.log("NIMO: displayBitmap failed: ${e.message}")
             false
         }
+    }
+
+    /** Foregrounds the nav app (appId 0x01) once; corrected by app-state reports. */
+    private fun enterNavAppIfNeeded() {
+        if (navAppEntered) return
+        sendFrame(
+                NimoFrameCodec.encodeFrame(
+                        NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                        NimoProtocol.CTRL_ENTER_APP,
+                        byteArrayOf(
+                                NimoProtocol.APP_ID_NAV.toByte(),
+                                NimoProtocol.APP_MODE_STANDALONE.toByte()
+                        )
+                )
+        )
+        navAppEntered = true
+    }
+
+    // ---------- Navigation HUD Parsing ----------
+
+    /** Turn direction for the arrow icon; NONE renders a blank icon (no arrow). */
+    private enum class NavArrow {
+        LEFT,
+        RIGHT,
+        STRAIGHT,
+        NONE
+    }
+
+    /** The parsed pieces of one navigation HUD frame. */
+    private data class NavHud(
+            val arrow: NavArrow,
+            val instruction: String,
+            val tip: String,
+            val distance: String,
+            val eta: String,
+            // Whether to show the status struct (dist/ETA bar). Off for welcome/arrival frames.
+            val showStatus: Boolean
+    )
+
+    /**
+     * Parses the navigation app's combined HUD string into the pieces the Nimo nav widgets
+     * want. The app crams the whole frame into one positioned_text push, e.g.:
+     *
+     *   →            ← directional arrow glyph (←/→/↑)
+     *   In 198 m     ← distance-to-turn ("In X" / "Now" / "Arriving in X")
+     *   Turn right onto Octavia St
+     *                ← blank line
+     *   ⊙ 14 min     ← trip ETA
+     *
+     * Non-turn frames (Welcome / Rerouting… / Go back / Starting… / You have arrived …) have no
+     * arrow and no ⊙ line; their text falls through to [NavHud.instruction].
+     *
+     * The instruction is kept short (≤3 words — "Turn right", "Welcome to Maps", "Arrived"); any
+     * "onto <road>" suffix is moved into the tip line next to the distance so the big line stays
+     * a glanceable maneuver.
+     */
+    private fun parseNavHud(text: String): NavHud {
+        var eta = ""
+        val content = mutableListOf<String>()
+        for (raw in text.split("\n")) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            when {
+                // Drop the arrow GLYPH line: the app forces it to "↑" until ~10 m before the turn,
+                // so it reads "straight" for almost the whole leg. We derive the real direction
+                // from the maneuver instruction instead (see arrowForInstruction).
+                line == "←" || line == "→" || line == "↑" || line == "↺" || line == "⇆" -> {}
+                line.startsWith("⊙") -> eta = line.removePrefix("⊙").trim()
+                else -> content.add(line)
+            }
+        }
+        // The distance-to-turn line (used as the tip) vs the instruction line.
+        val distRegex = Regex("^(in\\s|now$|arriving)", RegexOption.IGNORE_CASE)
+        val distLine = content.firstOrNull { distRegex.containsMatchIn(it) } ?: ""
+        val rawInstruction = content.filter { it != distLine }.joinToString(" ")
+        val (instruction, road) = shortenInstruction(rawInstruction)
+        // Arrow direction from the maneuver text, so it points at the turn the whole approach.
+        val arrow = arrowForInstruction(instruction)
+        // Welcome/arrival frames (arrow == NONE) carry no live nav data — hide the status bar.
+        val showStatus = arrow != NavArrow.NONE
+        // Tip = distance line + road name (e.g. "In 198 m on Octavia St"); welcome gets a prompt.
+        var tip = listOf(distLine, road).filter { it.isNotEmpty() }.joinToString(" on ")
+        if (instruction.startsWith("Welcome")) tip = "Choose a location on the map"
+        // Numeric distance for the status struct: strip the "In " / "Arriving in " prefix.
+        val distance =
+                distLine.replace(Regex("^(arriving\\s+in|in)\\s+", RegexOption.IGNORE_CASE), "").trim()
+        return NavHud(arrow, instruction, tip, distance, eta, showStatus)
+    }
+
+    /** Turn direction inferred from the maneuver phrase ("Turn left" → LEFT, else STRAIGHT). */
+    private fun arrowForInstruction(instruction: String): NavArrow {
+        val lower = instruction.lowercase()
+        return when {
+            // No maneuver to point at — hide the arrow entirely on these frames.
+            lower.contains("welcome") || lower.contains("arrived") -> NavArrow.NONE
+            lower.contains("left") -> NavArrow.LEFT
+            lower.contains("right") -> NavArrow.RIGHT
+            else -> NavArrow.STRAIGHT
+        }
+    }
+
+    /**
+     * Reduces a raw instruction to a short maneuver phrase (≤3 words) and the road name it
+     * referenced. "Turn right onto Octavia St" → ("Turn right", "Octavia St"); welcome/arrival
+     * frames collapse to fixed short labels.
+     */
+    private fun shortenInstruction(raw: String): Pair<String, String> {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return Pair("", "")
+        val lower = trimmed.lowercase()
+        if (lower.contains("welcome")) return Pair("Welcome to Maps", "")
+        if (lower.contains("arrived")) return Pair("Arrived!", "")
+        // Peel off the "onto <road>" suffix (or a leading "Onto <road>") into the road name.
+        var maneuver = trimmed
+        var road = ""
+        val ontoIdx = lower.indexOf(" onto ")
+        if (ontoIdx >= 0) {
+            maneuver = trimmed.substring(0, ontoIdx).trim()
+            road = trimmed.substring(ontoIdx + 6).trim()
+        } else if (lower.startsWith("onto ")) {
+            road = trimmed.substring(5).trim()
+            maneuver = ""
+        }
+        val capped =
+                maneuver.split(Regex("\\s+")).filter { it.isNotEmpty() }.take(3).joinToString(" ")
+        return Pair(capped, road)
+    }
+
+    /** Pushes a parsed HUD frame into the nav widgets (arrow icon / instruction / tip / info). */
+    private fun pushNavHud(hud: NavHud) {
+        // naviInstruction (0x02): primary turn text.
+        enqueueNavWidget(
+                NimoProtocol.NAV_RES_TURN_TEXT,
+                NimoProtocol.WIDGET_TEXT_NEW,
+                hud.instruction.ifEmpty { " " }.toByteArray(Charsets.UTF_8)
+        )
+        // naviInstructionTip (0x04): distance-to-turn line.
+        enqueueNavWidget(
+                NimoProtocol.NAV_RES_TIP,
+                NimoProtocol.WIDGET_TEXT_NEW,
+                hud.tip.ifEmpty { " " }.toByteArray(Charsets.UTF_8)
+        )
+        // naviInfo (0x03): 65-byte status struct — navType(1) + dist(32) + time(32). Skipped on
+        // welcome/arrival frames so no (empty) status bar shows there.
+        if (hud.showStatus) {
+            val info = ByteArray(NimoProtocol.NAV_INFO_STRUCT_SIZE)
+            info[0] = NimoProtocol.NAV_TYPE_WALK.toByte()
+            writeUtf8Padded(info, 1, hud.distance, 32)
+            writeUtf8Padded(info, 33, hud.eta, 32)
+            enqueueNavWidget(NimoProtocol.NAV_RES_INFO, NimoProtocol.WIDGET_RAW, info)
+        }
+        // naviIcon (0x01): turn-arrow. Only re-send when the DIRECTION changes — re-pushing the
+        // identical image on every distance tick made the arrow flicker/"move". The bitmap for
+        // each direction is rendered once and cached.
+        if (hud.arrow != lastNavArrow) {
+            lastNavArrow = hud.arrow
+            enqueueNavWidget(
+                    NimoProtocol.NAV_RES_ARROW,
+                    NimoProtocol.WIDGET_PICTURE,
+                    navArrowContent(hud.arrow)
+            )
+        }
+    }
+
+    // Arrow widget content for every direction, rendered ONCE at construction (start time) and
+    // reused — the bitmaps are deterministic, so the send path just selects the pre-built bytes
+    // instead of re-rendering on each turn.
+    private val navArrowCache: Map<NavArrow, ByteArray> =
+            NavArrow.values().associateWith { arrow ->
+                val bmp = buildNavArrowBitmap(arrow)
+                val gray =
+                        bitmapToGrayscale(
+                                bmp,
+                                NimoProtocol.NAV_ARROW_SIZE,
+                                NimoProtocol.NAV_ARROW_SIZE
+                        )
+                bmp.recycle()
+                buildNavImageContent(gray, NimoProtocol.NAV_ARROW_SIZE, NimoProtocol.NAV_ARROW_SIZE)
+            }
+
+    private fun navArrowContent(arrow: NavArrow): ByteArray = navArrowCache.getValue(arrow)
+
+    /** A 48x48 white turn-arrow on black, rotated to point left/right/up per [arrow]. */
+    private fun buildNavArrowBitmap(arrow: NavArrow): Bitmap {
+        val size = NimoProtocol.NAV_ARROW_SIZE
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.BLACK)
+        // NONE → leave the icon blank (all black = nothing lit) for welcome/arrival frames.
+        if (arrow == NavArrow.NONE) return bmp
+        val paint =
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.FILL
+                }
+        val s = size.toFloat()
+        // Rotate the (upward) arrow around the center to face the turn direction.
+        val rotation =
+                when (arrow) {
+                    NavArrow.LEFT -> -90f
+                    NavArrow.RIGHT -> 90f
+                    else -> 0f
+                }
+        canvas.save()
+        canvas.rotate(rotation, s / 2f, s / 2f)
+        val path =
+                android.graphics.Path().apply {
+                    moveTo(s * 0.5f, s * 0.15f) // tip
+                    lineTo(s * 0.85f, s * 0.55f) // head bottom-right
+                    lineTo(s * 0.62f, s * 0.55f)
+                    lineTo(s * 0.62f, s * 0.85f) // shaft bottom-right
+                    lineTo(s * 0.38f, s * 0.85f) // shaft bottom-left
+                    lineTo(s * 0.38f, s * 0.55f)
+                    lineTo(s * 0.15f, s * 0.55f) // head bottom-left
+                    close()
+                }
+        canvas.drawPath(path, paint)
+        canvas.restore()
+        return bmp
     }
 
     override fun showDashboard() {
@@ -1288,22 +1501,15 @@ class Nimo : SGCManager() {
     // ---------- SGCManager: Device Control ----------
 
     override fun setHeadUpAngle(angle: Int) {
-        val clamped = angle.coerceIn(0, 90)
-        Bridge.log("NIMO: setHeadUpAngle($clamped)")
-        // Enable the head-up display gesture, then set the wake angle.
+        Bridge.log("NIMO: setHeadUpAngle($angle) — head-up display disabled for now")
+        // Head-up display is intentionally kept OFF for now (it auto-wakes the dashboard and the
+        // wake-angle semantics aren't dialed in). Force it disabled regardless of the requested
+        // angle. TODO: restore the enable + setAngle [optType, deg] path once verified.
         sendFrame(
                 NimoFrameCodec.encodeFrame(
                         NimoProtocol.CMD_SET_PARAMETER,
                         NimoProtocol.SET_HEADUP_DISPLAY,
-                        byteArrayOf(1)
-                )
-        )
-        // setAngle payload is [optType, deg]. TODO: hardware-verify optType semantics.
-        sendFrame(
-                NimoFrameCodec.encodeFrame(
-                        NimoProtocol.CMD_SET_PARAMETER,
-                        NimoProtocol.SET_ANGLE,
-                        byteArrayOf(0x01, clamped.toByte())
+                        byteArrayOf(0)
                 )
         )
     }
@@ -2091,6 +2297,16 @@ class Nimo : SGCManager() {
                         needsAck = false
                 )
         )
+        // Disable the on-device head-up gesture so raising your head doesn't auto-wake the
+        // dashboard. Disabled for now; re-enable once the wake-angle behaviour is dialed in.
+        sendFrame(
+                NimoFrameCodec.encodeFrame(
+                        NimoProtocol.CMD_SET_PARAMETER,
+                        NimoProtocol.SET_HEADUP_DISPLAY,
+                        byteArrayOf(0),
+                        needsAck = false
+                )
+        )
         getBatteryStatus()
         requestVersionInfo()
 
@@ -2114,6 +2330,8 @@ class Nimo : SGCManager() {
         textAppEntered = false
         navAppEntered = false
         currentGlassesAppId = -1
+        lastNavHudKey = ""
+        lastNavArrow = null
         pendingText = null
         audioClient.stop()
         receiveAssembler.reset()
@@ -2295,12 +2513,21 @@ class Nimo : SGCManager() {
                         NimoProtocol.STATE_ENTER -> {
                             currentGlassesAppId = appId
                             if (appId != textAppId) textAppEntered = false
-                            if (appId != NimoProtocol.APP_ID_NAV) navAppEntered = false
+                            if (appId != NimoProtocol.APP_ID_NAV) {
+                                navAppEntered = false
+                                // Force a full HUD repaint next time the nav app reopens.
+                                lastNavHudKey = ""
+                                lastNavArrow = null
+                            }
                         }
                         NimoProtocol.STATE_EXIT -> {
                             if (appId == currentGlassesAppId) currentGlassesAppId = -1
                             if (appId == textAppId) textAppEntered = false
-                            if (appId == NimoProtocol.APP_ID_NAV) navAppEntered = false
+                            if (appId == NimoProtocol.APP_ID_NAV) {
+                                navAppEntered = false
+                                lastNavHudKey = ""
+                                lastNavArrow = null
+                            }
                         }
                     }
                 }
@@ -2356,11 +2583,14 @@ class Nimo : SGCManager() {
         when (code) {
             NimoProtocol.INPUT_HEAD_UP -> {
                 DeviceStore.apply("glasses", "headUp", true)
-                Bridge.sendHeadUp(true)
+                // Head-up forwarding to the cloud is disabled for now (the wake-angle
+                // semantics aren't dialed in yet). Keep the local state; don't notify.
+                // Bridge.sendHeadUp(true)
             }
             NimoProtocol.INPUT_HEAD_DOWN -> {
                 DeviceStore.apply("glasses", "headUp", false)
-                Bridge.sendHeadUp(false)
+                // Head-up forwarding to the cloud is disabled for now (see INPUT_HEAD_UP).
+                // Bridge.sendHeadUp(false)
             }
             NimoProtocol.INPUT_CLICK_RIGHT, NimoProtocol.INPUT_CLICK_LEFT ->
                     Bridge.sendTouchEvent(DeviceTypes.NIMO, "single_tap", timestamp)
@@ -2444,6 +2674,36 @@ class Nimo : SGCManager() {
         if (version.isEmpty()) return
         DeviceStore.apply("glasses", "firmwareVersion", version)
         Bridge.sendVersionInfo(mapOf("firmwareVersion" to version))
+    }
+
+    // ---------- Nav Widget Helpers ----------
+
+    /** Enqueues a single nav-app content widget (chunked, appId 0x01, layout 0). */
+    private fun enqueueNavWidget(resId: Int, resType: Int, content: ByteArray) {
+        enqueueFrames(
+                NimoFrameCodec.updateContentFrames(
+                        appId = NimoProtocol.APP_ID_NAV,
+                        layoutId = 0,
+                        resId = resId,
+                        resType = resType,
+                        content = content
+                )
+        )
+    }
+
+    /** Builds the [imageHeader + payload] blob for a nav image widget from an L8 buffer. */
+    private fun buildNavImageContent(grayscale: ByteArray, width: Int, height: Int): ByteArray {
+        val packed = packL8To2bpp(grayscale)
+        val (payload, compression) = compressAdaptive(packed)
+        return NimoFrameCodec.imageHeader(
+                width = width,
+                height = height,
+                formatBpp = NimoProtocol.FORMAT_2BPP,
+                compression = compression,
+                originalSize = packed.size,
+                compressedSize =
+                        if (compression == NimoProtocol.COMPRESSION_NONE) 0 else payload.size
+        ) + payload
     }
 
     // ---------- Bitmap Helpers ----------
