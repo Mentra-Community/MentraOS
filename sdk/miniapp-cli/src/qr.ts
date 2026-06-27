@@ -1,13 +1,29 @@
-import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 
 export function printQR(url: string): void {
-  // NOTE: do not use `{ small: true }`. The compact mode packs two QR rows
-  // into one terminal line using vertical half-block glyphs (▀ ▄ █), which
-  // only scan when the terminal renders zero inter-line spacing. macOS
-  // Terminal.app (default) and some embedded terminals (Codex desktop, etc.)
-  // add line leading / anti-alias the blocks, leaving horizontal gaps that
-  // misalign the modules and make the QR unscannable ("corrupted"). Full-size
-  // mode packs only horizontally (2-char-wide blocks / spaces) and tiles
-  // reliably across every terminal.
-  qrcode.generate(url);
+  // We render with `qrcode` (node-qrcode), not `qrcode-terminal`, to fix two
+  // distinct ways the QR came out unscannable for some users:
+  //
+  //  1. Theme inversion. `qrcode-terminal`'s compact mode prints raw half-block
+  //     glyphs in the terminal's *default* foreground color, so on a dark theme
+  //     (default macOS Terminal.app, Codex desktop terminal) it renders
+  //     light-on-dark — an inverted QR most phone cameras can't read. node-qrcode
+  //     emits explicit ANSI colors (white bg / black fg), forcing dark-on-light
+  //     regardless of terminal theme.
+  //  2. Height. A full-block QR is one terminal row per module (~39–43 rows for
+  //     our deep links) and gets clipped in a default 24-row window — also
+  //     unscannable. `small: true` packs two module rows per line (~23 rows),
+  //     which fits while keeping the forced colors above.
+  //
+  // The callback runs synchronously for the terminal renderer, so this stays a
+  // simple void function and output order is preserved at the call sites.
+  QRCode.toString(url, { type: 'terminal', small: true }, (err, str) => {
+    if (err) {
+      // The caller prints the raw URL right after this, so a render failure is
+      // recoverable — just surface it and let the URL fallback stand.
+      console.error(`Could not render QR code: ${err.message}`);
+      return;
+    }
+    process.stdout.write(str);
+  });
 }
