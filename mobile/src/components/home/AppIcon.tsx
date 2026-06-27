@@ -63,9 +63,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}
-          {!app.iconComponent && app.isMiniappDev && !app.logoUrl && (
-            <DevIcon size={iconSize.width as number} />
-          )}
+          {!app.iconComponent && app.isMiniappDev && !app.logoUrl && <DevIcon size={iconSize.width as number} />}
           {!app.iconComponent && (app.logoUrl || !app.isMiniappDev) && (
             <Image
               source={imageSource}
