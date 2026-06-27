@@ -32,8 +32,10 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 // Team-friendly defaults for dev builds. Local Cloud V2 is still one tap away
 // via the METRO_AUTO dev-settings preset; it should not be the invisible
 // default because it depends on a local stack plus adb reverse/LAN reachability.
-const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
-const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
+// Default to the DEBUG cloud (not dev) so the navigation app lands on debug
+// Cloud V2 unless an explicit override/env is set.
+const DEFAULT_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001

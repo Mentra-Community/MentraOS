@@ -53,7 +53,7 @@ export default function SelectGlassesModelScreen() {
   }
 
   // Glasses models that should only be visible in super mode.
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
 
   // Platform-specific glasses options
   const glassesOptions =
