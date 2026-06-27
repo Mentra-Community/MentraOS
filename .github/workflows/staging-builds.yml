@@ -269,11 +269,34 @@ jobs:
       testflight_detail: ${{ steps.release-status.outputs.testflight_detail }}
 
     steps:
-      - name: Kill stale build processes
+      - name: Kill stale build processes (this runner's prior job only)
         run: |
-          killall xcodebuild 2>/dev/null || true
-          killall Simulator 2>/dev/null || true
-          xcrun simctl shutdown all 2>/dev/null || true
+          # This is a SHARED self-hosted macOS runner. A blanket `killall xcodebuild`
+          # would kill iOS builds for OTHER branches running concurrently here — that was
+          # the cause of the recurring fast, diagnostic-free build failures (xcodebuild
+          # SIGTERM'd mid-compile → exit 65 / no error, build halts then ~30min silent
+          # gap until cleanup). The self-hosted runner only ever executes ONE job at a
+          # time per runner process, but multiple runner processes share this Mac
+          # (e.g. bigbob runs big-bob/-2/-3), so we must not touch other runners'
+          # xcodebuild. (The PR iOS workflow was already fixed this way; this staging
+          # job still had the unscoped killall — that's what killed run #3166's iOS build.)
+          #
+          # Scope the cleanup to xcodebuild processes whose RUNNER_WORKSPACE matches ours.
+          WS="${RUNNER_WORKSPACE:-$GITHUB_WORKSPACE}"
+          echo "Cleaning stale xcodebuild under: $WS"
+          pids="$(pgrep -f "xcodebuild.*${WS}" 2>/dev/null || true)"
+          if [ -n "$pids" ]; then
+            echo "Terminating stale xcodebuild pids: $pids"
+            # shellcheck disable=SC2086
+            kill -TERM $pids 2>/dev/null || true
+            sleep 2
+            # shellcheck disable=SC2086
+            kill -KILL $pids 2>/dev/null || true
+          else
+            echo "No stale xcodebuild for this workspace."
+          fi
+          # Do NOT machine-wide `killall Simulator` / `simctl shutdown all` — it would
+          # disrupt other runners. Device builds don't use a simulator anyway.
 
       - name: Clean previous build outputs only
         run: |
