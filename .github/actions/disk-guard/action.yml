@@ -84,6 +84,20 @@ runs:
             echo "  keep-NDK ${KEEP_NDK} not installed — skipping NDK prune (won't delete the only NDK)"
           fi
 
+          # Shared rebuildable caches — the big reclaimable items. These are the
+          # ones Tier 1 deliberately skips (a concurrent build may be reading
+          # them); here at <DEEP_GB the build is about to fail anyway, so deleting
+          # them is the lesser evil. Also stop the Gradle daemon so its cache
+          # files are unlocked before deletion.
+          (command -v gradle >/dev/null 2>&1 && gradle --stop) >/dev/null 2>&1 || true
+          pkill -f 'GradleDaemon' >/dev/null 2>&1 || true
+          rm -rf ~/.bun/install/cache/* 2>/dev/null || true
+          rm -rf ~/Library/Caches/CocoaPods/* 2>/dev/null || true
+          rm -rf ~/Library/Caches/org.swift.swiftpm/* 2>/dev/null || true
+          rm -rf ~/Library/Caches/Homebrew/* 2>/dev/null || true
+          rm -rf ~/.gradle/caches/build-cache-* ~/.gradle/caches/transforms-* ~/.gradle/caches/journal-* ~/.gradle/daemon 2>/dev/null || true
+          rm -rf ~/.android/avd/* ~/.android/cache/* 2>/dev/null || true
+
           # Emulator + SDK sources — not needed for assembleRelease CI.
           rm -rf ~/Library/Android/sdk/emulator/* 2>/dev/null || true
           rm -rf ~/Library/Android/sdk/sources/* 2>/dev/null || true
