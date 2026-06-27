@@ -38,7 +38,7 @@ const API_ROWS: Row[] = [
   {emoji: "📝", title: "session.transcription", subtitle: "on / forLanguage / configure / stop", path: "/tester/transcription"},
   {emoji: "🌐", title: "session.translation", subtitle: "forLanguagePair, stop", path: "/tester/translation"},
   {emoji: "📸", title: "session.camera", subtitle: "takePhoto + image preview", path: "/tester/camera"},
-  {emoji: "🎬", title: "session.stream", subtitle: "unmanaged + managed RTMP/WHIP + viewer", path: "/tester/stream"},
+  {emoji: "🎬", title: "session.stream", subtitle: "startStream direct + managed RTMP/WHIP + viewer", path: "/tester/stream"},
   {emoji: "👆", title: "session.input", subtitle: "buttons, touch + gesture filters", path: "/tester/input"},
   {emoji: "📍", title: "session.location", subtitle: "GPS updates", path: "/tester/location"},
   {emoji: "↕️", title: "session.imu", subtitle: "head position", path: "/tester/imu"},

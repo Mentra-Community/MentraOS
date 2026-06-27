@@ -7,7 +7,6 @@
  * for the features that matter on the phone:
  *
  *   - boot message ("Starting <AppName>…") with a bounded window
- *   - per-request throttle (leading + trailing, ~300 ms, last-write-wins)
  *   - durationMs auto-clear
  *   - core-app vs background-app arbitration with a background lock
  *
@@ -15,8 +14,17 @@
  * and may race with local displays during dev; that's acceptable per plan
  * (agents/local-display-manager-plan.md).
  *
- * All timers use BgTimer so they keep firing when the phone screen
- * is off.
+ * Display pacing is NOT done here. A JS-side ~300ms throttle used to live in
+ * this class, but JS timers (and therefore the throttle's trailing flush) do
+ * not fire on schedule while the iOS app is suspended in the background — so
+ * under streaming captions, updates accumulated and then flushed in a burst on
+ * the next wake. Pacing + last-wins coalescing now live in the native per-device
+ * queue (e.g. G2's event-driven EvenHub queue), which drains off the same BLE
+ * events that wake the process. This class forwards every request straight
+ * through; the native layer collapses redundant frames per display target.
+ *
+ * The remaining BgTimer use (boot window, durationMs expiry) is timing that
+ * does not need sub-second background fidelity.
  */
 
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
@@ -60,7 +68,6 @@ interface BackgroundLock {
 
 const LOG_TAG = "LOCAL_DISPLAY"
 const BOOT_DURATION_MS = 1500
-const THROTTLE_MS = 300
 // Mirrors cloud lease for a bg app holding the display. The bg app has to
 // keep driving the display to hold the lock; if it goes quiet and the core
 // app wants the screen, we release.
@@ -82,10 +89,6 @@ class LocalDisplayManager {
 
   private bootingApp: BootingApp | null = null
   private bootQueue: Map<string, DisplayPayload> = new Map()
-
-  private pendingThrottledByApp: Map<string, DisplayPayload> = new Map()
-  private throttleTimerId: number | null = null
-  private lastSendAt = 0
 
   private expiryTimerId: number | null = null
 
@@ -139,20 +142,13 @@ class LocalDisplayManager {
 
   /**
    * Mark which miniapp is the "core" (foreground) app. Pass null when no local
-   * miniapp is foreground. When the core app flips, any pending throttled
-   * request from the previous core is dropped.
+   * miniapp is foreground.
    */
   public onCoreAppChange(packageName: string | null): void {
     if (this.coreApp === packageName) return
     console.log(`${LOG_TAG}: onCoreAppChange(${packageName ?? "null"})`)
 
-    const prevCore = this.coreApp
     this.coreApp = packageName
-
-    // Drop stale throttle pending for the old core — new core starts clean.
-    if (prevCore) {
-      this.pendingThrottledByApp.delete(prevCore)
-    }
 
     // No core app means no saved frame to restore on the next unmount.
     // Without this, the previous core's last frame can flicker back onto
@@ -174,7 +170,6 @@ class LocalDisplayManager {
       this.cancelBoot()
     }
     this.bootQueue.delete(packageName)
-    this.pendingThrottledByApp.delete(packageName)
 
     // Release bg lock if this app held it.
     if (this.backgroundLock?.packageName === packageName) {
@@ -269,7 +264,7 @@ class LocalDisplayManager {
         this.backgroundLock = null
       }
 
-      this.throttledSend(packageName, payload)
+      this.sendNow(packageName, payload)
       return
     }
 
@@ -292,58 +287,7 @@ class LocalDisplayManager {
       this.backgroundLock.expiresAt = now + BACKGROUND_LOCK_TIMEOUT_MS
     }
 
-    this.throttledSend(packageName, payload)
-  }
-
-  // ===========================================================================
-  // Internals — throttle
-  // ===========================================================================
-
-  private throttledSend(packageName: string, payload: DisplayPayload): void {
-    const now = this.now()
-    const elapsed = now - this.lastSendAt
-
-    if (elapsed >= THROTTLE_MS) {
-      this.sendNow(packageName, payload)
-      return
-    }
-
-    // Queue (replace any pending request from the same app — last wins).
-    this.pendingThrottledByApp.set(packageName, payload)
-    if (this.throttleTimerId === null) {
-      const delay = THROTTLE_MS - elapsed
-      this.throttleTimerId = BgTimer.setTimeout(() => {
-        this.throttleTimerId = null
-        this.flushThrottled()
-      }, delay)
-    }
-  }
-
-  private flushThrottled(): void {
-    // Prefer the core app if it has something pending. Otherwise, the current
-    // bg lock holder. Otherwise, skip.
-    let candidate: {pkg: string; payload: DisplayPayload} | null = null
-
-    if (this.coreApp) {
-      const p = this.pendingThrottledByApp.get(this.coreApp)
-      if (p) candidate = {pkg: this.coreApp, payload: p}
-    }
-    if (!candidate && this.backgroundLock) {
-      const p = this.pendingThrottledByApp.get(this.backgroundLock.packageName)
-      if (p) candidate = {pkg: this.backgroundLock.packageName, payload: p}
-    }
-    if (!candidate) {
-      this.pendingThrottledByApp.clear()
-      return
-    }
-
-    this.pendingThrottledByApp.delete(candidate.pkg)
-    this.sendNow(candidate.pkg, candidate.payload)
-
-    // If more requests accumulated from other apps during the window, they've
-    // been overwritten by later ones anyway; anything left behind (e.g. a
-    // stale bg request while core is live) we drop.
-    this.pendingThrottledByApp.clear()
+    this.sendNow(packageName, payload)
   }
 
   // ===========================================================================
@@ -394,12 +338,6 @@ class LocalDisplayManager {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }
 
-    // System-originated displays (boot message, clear) don't count toward the
-    // user-throttle budget — they're forced, not requested by a miniapp.
-    const isSystem = packageName === SYSTEM_BOOT_PKG || packageName === "system.clear"
-    if (!isSystem) {
-      this.lastSendAt = this.now()
-    }
     this.currentDisplay = {packageName, processedEvent, expiresAt}
 
     this.clearExpiryTimer()
@@ -518,17 +456,11 @@ class LocalDisplayManager {
   public _resetForTest(): void {
     this.cancelBoot()
     this.clearExpiryTimer()
-    if (this.throttleTimerId !== null) {
-      BgTimer.clearTimeout(this.throttleTimerId)
-      this.throttleTimerId = null
-    }
     this.coreApp = null
     this.coreAppDisplay = null
     this.currentDisplay = null
     this.backgroundLock = null
     this.bootQueue.clear()
-    this.pendingThrottledByApp.clear()
-    this.lastSendAt = 0
     this.now = () => Date.now()
   }
 

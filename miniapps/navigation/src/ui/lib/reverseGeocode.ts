@@ -1,76 +1,50 @@
 /**
- * Promise wrapper over Google Maps' `Geocoder.geocode` for reverse
- * geocoding (lat/lng → formatted address). Resolves to the first
- * result's `formatted_address`, or `null` when the SDK isn't loaded,
- * the request fails, or no result comes back. Never rejects — callers
- * branch on null.
+ * Reverse geocoding (lat/lng → address / road name) for the UI WebView.
+ *
+ * These helpers do NOT call a maps provider directly. They proxy through the
+ * background's `places:reverse-geocode` RPC, which calls the miniapp SDK, which
+ * routes the request to the v2 cloud maps service (provider-abstracted, Mapbox
+ * today). That service is the single auth + cache + rate-limit point: the
+ * WebView never holds a maps token, and identical coords are de-duped/cached
+ * cloud-side instead of burning a billed provider call per dropped pin.
+ *
+ * Never reject; callers branch on `null`. A failed lookup resolves to null.
  */
 
-type GeocoderAddressComponent = {long_name?: string; short_name?: string; types?: string[]}
-type GeocoderResultLike = {formatted_address?: string; address_components?: GeocoderAddressComponent[]}
-type GeocoderRequestLike = {location: {lat: number; lng: number}}
-type GeocoderLike = {
-  geocode(
-    request: GeocoderRequestLike,
-    callback: (results: GeocoderResultLike[] | null, status: string) => void,
-  ): void
-}
+const REVERSE_GEOCODE_CHANNEL = "places:reverse-geocode"
 
-export function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
-  const GeocoderCtor = g?.maps?.Geocoder
-  if (!GeocoderCtor) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    try {
-      const geocoder = new GeocoderCtor()
-      geocoder.geocode({location: {lat, lng}}, (results, status) => {
-        const formatted = status === "OK" && results?.[0]?.formatted_address
-        resolve(formatted || null)
-      })
-    } catch (err) {
-      console.warn("[NAV-MINI] reverseGeocode failed:", err)
-      resolve(null)
-    }
-  })
+/** Proxy one reverse-geocode through the background → SDK → cloud maps service. */
+async function fetchReverse(
+  lat: number,
+  lng: number,
+): Promise<{road: string | null; address: string | null} | null> {
+  // Guard against non-finite input before spending a cloud round-trip.
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  try {
+    return await mentra.request(REVERSE_GEOCODE_CHANNEL, {lat, lng})
+  } catch (err) {
+    console.warn("[NAV-MINI] reverseGeocode failed:", err)
+    return null
+  }
 }
 
 /**
- * Reverse-geocode to just the road name (e.g. "Hayes St"), not the full
- * formatted address. Pulls the `route` component out of the geocoder's
- * structured response — the same field Google Maps uses for the road
- * label. Returns null when the SDK isn't loaded, the request fails, no
- * result comes back, or the nearest result has no road (e.g. middle of
- * a park / plaza with no named path nearby). Never rejects.
+ * Full street address for a coordinate — e.g. "369 Hayes Street, San
+ * Francisco, California 94102". Returns null when nothing usable comes back
+ * (failed request, or no address near the coordinate).
  */
-export function reverseGeocodeRoadName(lat: number, lng: number): Promise<string | null> {
-  const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
-  const GeocoderCtor = g?.maps?.Geocoder
-  if (!GeocoderCtor) return Promise.resolve(null)
-  return new Promise((resolve) => {
-    try {
-      const geocoder = new GeocoderCtor()
-      geocoder.geocode({location: {lat, lng}}, (results, status) => {
-        if (status !== "OK" || !results || results.length === 0) {
-          resolve(null)
-          return
-        }
-        // Walk results from closest to furthest, take the first one that
-        // has a `route` component. The closest result is often a building
-        // or POI that doesn't carry a road name; the next-out usually
-        // does. Stops at the first hit.
-        for (const r of results) {
-          const route = r.address_components?.find((c) => c.types?.includes("route"))
-          const name = route?.short_name || route?.long_name
-          if (name) {
-            resolve(name)
-            return
-          }
-        }
-        resolve(null)
-      })
-    } catch (err) {
-      console.warn("[NAV-MINI] reverseGeocodeRoadName failed:", err)
-      resolve(null)
-    }
-  })
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  const result = await fetchReverse(lat, lng)
+  const addr = (result?.address ?? "").trim()
+  return addr || null
+}
+
+/**
+ * Reverse-geocode to just the road name (e.g. "Hayes Street"), not the full
+ * address. Returns null when nothing usable comes back.
+ */
+export async function reverseGeocodeRoadName(lat: number, lng: number): Promise<string | null> {
+  const result = await fetchReverse(lat, lng)
+  const road = (result?.road ?? "").trim()
+  return road || null
 }

@@ -5281,6 +5281,25 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
+    func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {
+        Bridge.log("Sending camera tuning config: anr=\(anrOn), gain=\(gainOn)")
+
+        guard connectionState == ConnTypes.CONNECTED else {
+            Bridge.log("Cannot send camera tuning config - not connected")
+            return
+        }
+
+        var json: [String: Any] = [
+            "type": "camera_tuning_config",
+            "anr": anrOn,
+            "gain": gainOn,
+        ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
+        sendJson(json, wakeUp: true)
+    }
+
     func startVideoRecording(requestId: String, save: Bool, sound: Bool) {
         startVideoRecording(
             requestId: requestId, save: save, sound: sound, width: 0, height: 0, fps: 0,

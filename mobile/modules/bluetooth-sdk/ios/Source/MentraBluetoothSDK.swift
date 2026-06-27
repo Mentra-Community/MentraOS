@@ -595,6 +595,20 @@ public final class MentraBluetoothSDK {
         return result
     }
 
+    public func setCameraTuningConfig(anrOn: Bool, gainOn: Bool) async throws -> SettingsAckEvent {
+        return try await performSettingsCommand(
+            setting: "camera_tuning",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendCameraTuningConfig(
+                    requestId: requestId,
+                    anrOn: anrOn,
+                    gainOn: gainOn
+                )
+            }
+        )
+    }
+
     public func setMicState(
         enabled: Bool,
         useGlassesMic: Bool = true,
@@ -1164,7 +1178,7 @@ public final class MentraBluetoothSDK {
 
     private func isLegacyAsgOtaStartBuild(_ buildNumber: String) -> Bool {
         guard let parsed = Int(buildNumber) else { return false }
-        return parsed < 100_000
+        return parsed < 39
     }
 
     func sendShutdown() {

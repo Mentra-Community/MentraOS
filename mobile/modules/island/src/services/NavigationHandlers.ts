@@ -24,6 +24,7 @@
 
 import type {NavLocation, NavRoute, NavUpdate} from "../runtime/config"
 import navigationService from "./NavigationService"
+import {cloudClientService} from "./CloudClientService"
 import {MiniappErrorCode, MiniappResponseType, MiniappStreamType} from "@mentra/miniapp"
 
 const LOG_TAG = "LocalMiniappRuntime"
@@ -315,18 +316,19 @@ export class NavigationHandlers {
     requestId?: string,
   ): Promise<void> {
     try {
-      const navigation = navigationService
-      const result = navigation
-        ? await navigation.computeRoute(payload)
-        : {ok: false as const, error: "navigation adapter not configured"}
-      if (result.ok === false) {
+      // Computed in the v2 cloud (provider-abstracted maps service). The SDK
+      // payload shape ({origin, stops, mode, avoid, alternatives}) is the v2
+      // DirectionsRequest field-for-field, so it passes straight through. The
+      // direct-Mapbox path in NavigationService is deprecated.
+      if (!cloudClientService.maps) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.INTERNAL,
-          message: result.error ?? "computeRoute failed",
+          message: "cloud maps unavailable",
         })
-      } else {
-        this.sendResult(packageName, requestId, true, result)
+        return
       }
+      const {routes} = await cloudClientService.maps.directions(payload as never)
+      this.sendResult(packageName, requestId, true, {ok: true, routes})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -337,11 +339,11 @@ export class NavigationHandlers {
   }
 
   /**
-   * Reverse-geocode a coordinate into a road name. Backs the SDK
-   * pivot engine's last-resort fallback when the Routes API
-   * instruction didn't carry a parseable road. Always resolves with
-   * `{ok, road?}` — a missing road is `{ok: true, road: null}`, not
-   * an error.
+   * Reverse-geocode a coordinate into a short road name + full formatted
+   * address. Backs the SDK pivot engine's road-name fallback (`road`) and the
+   * navigation miniapp's dropped-pin / POI-tap labels (`address`). Always
+   * resolves with `{ok, road?, address?}` — a missing road/address is
+   * `{ok: true, road: null, address: null}`, not an error.
    */
   async handleReverseGeocode(
     packageName: string,
@@ -358,11 +360,17 @@ export class NavigationHandlers {
         })
         return
       }
-      const navigation = navigationService
-      const result = navigation?.reverseGeocodeRoad
-        ? await navigation.reverseGeocodeRoad({lat, lng})
-        : {ok: false as const, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, true, result)
+      // Resolved in the v2 cloud (provider-abstracted maps service). The
+      // direct-Mapbox geocoding path in NavigationService is deprecated.
+      if (!cloudClientService.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const {road, address} = await cloudClientService.maps.reverseGeocode({lat, lng})
+      this.sendResult(packageName, requestId, true, {ok: true, road, address})
     } catch (err) {
       console.error(`${LOG_TAG}: navigation reverseGeocode error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -370,5 +378,86 @@ export class NavigationHandlers {
         message: err instanceof Error ? err.message : "navigation reverseGeocode error",
       })
     }
+  }
+
+  /**
+   * Type-ahead place search. Proxies to the v2 cloud maps service (Mapbox
+   * Search Box today). Resolves `{ok: true, suggestions}` — an empty query or no
+   * matches is `{ok: true, suggestions: []}`, not an error.
+   */
+  async handlePlaceAutocomplete(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const query = typeof payload.query === "string" ? payload.query : ""
+      const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
+      const near = this.parseNear(payload.near)
+
+      if (!cloudClientService.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const {suggestions} = await cloudClientService.maps.placeAutocomplete({query, near, sessionToken})
+      this.sendResult(packageName, requestId, true, {ok: true, suggestions})
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation placeAutocomplete error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation placeAutocomplete error",
+      })
+    }
+  }
+
+  /**
+   * Resolve a suggestion (`placeId` + `sessionToken`) to a full place with
+   * coordinates, via the v2 cloud maps service. Resolves `{ok: true, place}`.
+   */
+  async handlePlaceDetails(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const placeId = typeof payload.placeId === "string" ? payload.placeId : ""
+      const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : ""
+      if (!placeId) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "placeId required",
+        })
+        return
+      }
+
+      if (!cloudClientService.maps) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "cloud maps unavailable",
+        })
+        return
+      }
+      const place = await cloudClientService.maps.placeDetails({placeId, sessionToken})
+      this.sendResult(packageName, requestId, true, {ok: true, place})
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation placeDetails error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation placeDetails error",
+      })
+    }
+  }
+
+  /** Coerce an inbound `near` payload to a {lat,lng}, or undefined when absent/invalid. */
+  private parseNear(raw: unknown): {lat: number; lng: number} | undefined {
+    if (!raw || typeof raw !== "object") return undefined
+    const obj = raw as Record<string, unknown>
+    const lat = Number(obj.lat)
+    const lng = Number(obj.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined
+    return {lat, lng}
   }
 }

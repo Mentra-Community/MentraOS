@@ -13,7 +13,6 @@ import type {ComponentType} from "react"
 import {
   cameraPackageName,
   feedbackPackageName,
-  lmaInstallerPackageName,
   mirrorPackageName,
   settingsPackageName,
 } from "@/constants/miniapps"
@@ -22,7 +21,6 @@ import {OFFLINE_HOSTED_PACKAGES} from "./offlineHostedPackages"
 import GalleryScreen from "@/app/asg/gallery"
 import GallerySettingsScreen from "@/app/asg/gallery-settings"
 import DeveloperUrlScreen from "@/app/miniapps/miniappdev/developer-url"
-import MiniappDevMain from "@/app/miniapps/miniappdev/main"
 import ScannerScreen from "@/app/miniapps/miniappdev/scanner"
 import MirrorScreen from "@/app/miniapps/mirror/mirror"
 import AppearanceSettings from "@/app/miniapps/settings/appearance"
@@ -71,6 +69,10 @@ const settingsRoutes: Record<string, ComponentType<any>> = {
   "/miniapps/settings/layout": LayoutSettings,
   "/miniapps/settings/microphone": MicrophoneSettings,
   "/miniapps/settings/miniapp-dev": MiniappDevSettings,
+  // Miniapp dev tools live under the Miniapp Developer settings screen now,
+  // so their routes are hosted by the settings overlay (not a standalone app).
+  "/miniapps/miniappdev/developer-url": DeveloperUrlScreen,
+  "/miniapps/miniappdev/scanner": ScannerScreen,
   "/miniapps/settings/notifications": NotificationSettings,
   "/miniapps/settings/position": PositionSettings,
   "/miniapps/settings/privacy": PrivacySettings,
@@ -99,14 +101,6 @@ export const offlineAppRegistry: Record<string, OfflineAppDef> = {
   [feedbackPackageName]: {
     initialRoute: "/miniapps/settings/feedback",
     routes: {"/miniapps/settings/feedback": FeedbackScreen},
-  },
-  [lmaInstallerPackageName]: {
-    initialRoute: "/miniapps/miniappdev/main",
-    routes: {
-      "/miniapps/miniappdev/main": MiniappDevMain,
-      "/miniapps/miniappdev/developer-url": DeveloperUrlScreen,
-      "/miniapps/miniappdev/scanner": ScannerScreen,
-    },
   },
 }
 

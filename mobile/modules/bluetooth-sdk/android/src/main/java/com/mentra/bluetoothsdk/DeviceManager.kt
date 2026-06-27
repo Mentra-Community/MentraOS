@@ -19,6 +19,7 @@ import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
+import com.mentra.bluetoothsdk.sgcs.Nimo
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -41,12 +42,13 @@ import kotlin.jvm.JvmStatic
 class DeviceManager {
     companion object {
 
-        @Volatile private var _instance: DeviceManager? = null
+        @Volatile
+        private var _instance: DeviceManager? = null
 
         @JvmStatic
         fun getInstance(): DeviceManager {
             return _instance
-                    ?: synchronized(this) { _instance ?: DeviceManager().also { _instance = it } }
+                ?: synchronized(this) { _instance ?: DeviceManager().also { _instance = it } }
         }
     }
 
@@ -189,10 +191,10 @@ class DeviceManager {
 
     public var micRanking: MutableList<String>
         get() =
-                (DeviceStore.store.get("bluetooth", "micRanking") as? List<*>)
-                        ?.mapNotNull { it as? String }
-                        ?.toMutableList()
-                        ?: MicMap.map["auto"]?.toMutableList() ?: mutableListOf()
+            (DeviceStore.store.get("bluetooth", "micRanking") as? List<*>)
+                ?.mapNotNull { it as? String }
+                ?.toMutableList()
+                ?: MicMap.map["auto"]?.toMutableList() ?: mutableListOf()
         set(value) = DeviceStore.apply("bluetooth", "micRanking", value)
 
     private var shouldSendBootingMessage: Boolean
@@ -238,11 +240,13 @@ class DeviceManager {
         LC3,
         PCM
     }
+
     // Canonical LC3 config: 16kHz sample rate, 10ms frame duration
     // Frame size is configurable: 20 bytes (16kbps), 40 bytes (32kbps), 60 bytes (48kbps)
     private var lc3EncoderPtr: Long = 0
     private var lc3DecoderPtr: Long = 0
     private val lc3Lock = Any()
+
     // Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
     private var lastLc3Event: Long? = null
@@ -272,17 +276,17 @@ class DeviceManager {
             val context = Bridge.getContext()
             transcriber = SherpaOnnxTranscriber(context)
             transcriber?.setTranscriptListener(
-                    object : SherpaOnnxTranscriber.TranscriptListener {
-                        override fun onPartialResult(text: String, language: String) {
-                            Bridge.log("STT: Partial result: $text")
-                            Bridge.sendLocalTranscription(text, false, language)
-                        }
-
-                        override fun onFinalResult(text: String, language: String) {
-                            Bridge.log("STT: Final result: $text")
-                            Bridge.sendLocalTranscription(text, true, language)
-                        }
+                object : SherpaOnnxTranscriber.TranscriptListener {
+                    override fun onPartialResult(text: String, language: String) {
+                        Bridge.log("STT: Partial result: $text")
+                        Bridge.sendLocalTranscription(text, false, language)
                     }
+
+                    override fun onFinalResult(text: String, language: String) {
+                        Bridge.log("STT: Final result: $text")
+                        Bridge.sendLocalTranscription(text, true, language)
+                    }
+                }
             )
             transcriber?.initialize()
             Bridge.log("SherpaOnnxTranscriber fully initialized")
@@ -332,12 +336,12 @@ class DeviceManager {
 
         // Mic reinit check every 10 seconds
         val micReinitR =
-                object : Runnable {
-                    override fun run() {
-                        checkAndReinitGlassesMic()
-                        mainHandler.postDelayed(this, 10_000)
-                    }
+            object : Runnable {
+                override fun run() {
+                    checkAndReinitGlassesMic()
+                    mainHandler.postDelayed(this, 10_000)
                 }
+            }
         micReinitRunnable = micReinitR
         mainHandler.postDelayed(micReinitR, 10_000)
     }
@@ -365,26 +369,26 @@ class DeviceManager {
         }
 
         val recheck =
-                object : Runnable {
-                    override fun run() {
-                        systemMicAvailabilityRecheckRunnable = null
+            object : Runnable {
+                override fun run() {
+                    systemMicAvailabilityRecheckRunnable = null
 
-                        if (!micEnabled || !systemMicUnavailable) {
-                            return
-                        }
-
-                        val stillBlocked = phoneMic?.hasBlockingMicInterruption() ?: true
-                        if (stillBlocked) {
-                            scheduleSystemMicAvailabilityRecheck(reason)
-                            return
-                        }
-
-                        systemMicUnavailable = false
-                        Bridge.log("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
-                        appendLog("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
-                        updateMicState()
+                    if (!micEnabled || !systemMicUnavailable) {
+                        return
                     }
+
+                    val stillBlocked = phoneMic?.hasBlockingMicInterruption() ?: true
+                    if (stillBlocked) {
+                        scheduleSystemMicAvailabilityRecheck(reason)
+                        return
+                    }
+
+                    systemMicUnavailable = false
+                    Bridge.log("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                    appendLog("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                    updateMicState()
                 }
+            }
 
         systemMicAvailabilityRecheckRunnable = recheck
         mainHandler.postDelayed(recheck, 2_000)
@@ -399,30 +403,30 @@ class DeviceManager {
         lastHadMicrophonePermission = checkMicrophonePermission(context)
 
         Bridge.log(
-                "MAN: Initial permissions - BT: $lastHadBluetoothPermission, Mic: $lastHadMicrophonePermission"
+            "MAN: Initial permissions - BT: $lastHadBluetoothPermission, Mic: $lastHadMicrophonePermission"
         )
 
         // Create receiver for package changes (fires when permissions change)
         permissionReceiver =
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action == Intent.ACTION_PACKAGE_CHANGED &&
-                                        intent.data?.schemeSpecificPart == context?.packageName
-                        ) {
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action == Intent.ACTION_PACKAGE_CHANGED &&
+                        intent.data?.schemeSpecificPart == context?.packageName
+                    ) {
 
-                            Bridge.log("MAN: Package changed, checking permissions...")
-                            checkPermissionChanges()
-                        }
+                        Bridge.log("MAN: Package changed, checking permissions...")
+                        checkPermissionChanges()
                     }
                 }
+            }
 
         // Register the receiver
         try {
             val filter =
-                    IntentFilter().apply {
-                        addAction(Intent.ACTION_PACKAGE_CHANGED)
-                        addDataScheme("package")
-                    }
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_PACKAGE_CHANGED)
+                    addDataScheme("package")
+                }
             context.registerReceiver(permissionReceiver, filter)
             Bridge.log("MAN: Permission monitoring started")
         } catch (e: Exception) {
@@ -435,12 +439,12 @@ class DeviceManager {
 
     private fun startPeriodicPermissionCheck() {
         permissionCheckRunnable =
-                object : Runnable {
-                    override fun run() {
-                        checkPermissionChanges()
-                        handler.postDelayed(this, 10000) // Check every 10 seconds
-                    }
+            object : Runnable {
+                override fun run() {
+                    checkPermissionChanges()
+                    handler.postDelayed(this, 10000) // Check every 10 seconds
                 }
+            }
         handler.postDelayed(permissionCheckRunnable!!, 10000)
     }
 
@@ -454,7 +458,7 @@ class DeviceManager {
 
         if (currentHasBluetoothPermission != lastHadBluetoothPermission) {
             Bridge.log(
-                    "MAN: Bluetooth permission changed: $lastHadBluetoothPermission -> $currentHasBluetoothPermission"
+                "MAN: Bluetooth permission changed: $lastHadBluetoothPermission -> $currentHasBluetoothPermission"
             )
             lastHadBluetoothPermission = currentHasBluetoothPermission
             permissionsChanged = true
@@ -462,7 +466,7 @@ class DeviceManager {
 
         if (currentHasMicrophonePermission != lastHadMicrophonePermission) {
             Bridge.log(
-                    "MAN: Microphone permission changed: $lastHadMicrophonePermission -> $currentHasMicrophonePermission"
+                "MAN: Microphone permission changed: $lastHadMicrophonePermission -> $currentHasMicrophonePermission"
             )
             lastHadMicrophonePermission = currentHasMicrophonePermission
             permissionsChanged = true
@@ -482,17 +486,17 @@ class DeviceManager {
     private fun checkBluetoothPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val connect = ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.BLUETOOTH_CONNECT
+                context,
+                android.Manifest.permission.BLUETOOTH_CONNECT
             ) == PackageManager.PERMISSION_GRANTED
             val scan = ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.BLUETOOTH_SCAN
+                context,
+                android.Manifest.permission.BLUETOOTH_SCAN
             ) == PackageManager.PERMISSION_GRANTED
             connect && scan
         } else {
             ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH) ==
-                    PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -502,8 +506,8 @@ class DeviceManager {
 
     private fun checkMicrophonePermission(context: Context): Boolean {
         return ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.RECORD_AUDIO
+            context,
+            android.Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
     }
 
@@ -511,42 +515,45 @@ class DeviceManager {
         val context = Bridge.getContext()
 
         bluetoothStateReceiver =
-                object : BroadcastReceiver() {
-                    override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
 
-                        val state =
-                                intent.getIntExtra(
-                                        BluetoothAdapter.EXTRA_STATE,
-                                        BluetoothAdapter.ERROR
+                    val state =
+                        intent.getIntExtra(
+                            BluetoothAdapter.EXTRA_STATE,
+                            BluetoothAdapter.ERROR
+                        )
+                    when (state) {
+                        BluetoothAdapter.STATE_OFF -> {
+                            Bridge.log("MAN: Bluetooth turned OFF (control center or settings)")
+                            disconnect()
+                        }
+
+                        BluetoothAdapter.STATE_TURNING_OFF -> {
+                            Bridge.log("MAN: Bluetooth turning off...")
+                        }
+
+                        BluetoothAdapter.STATE_ON -> {
+                            Bridge.log("MAN: Bluetooth turned ON")
+                            // Auto-reconnect to last known device if we have one
+                            if (defaultWearable.isNotEmpty() && deviceName.isNotEmpty()) {
+                                Bridge.log(
+                                    "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
                                 )
-                        when (state) {
-                            BluetoothAdapter.STATE_OFF -> {
-                                Bridge.log("MAN: Bluetooth turned OFF (control center or settings)")
-                                disconnect()
+                                handler.postDelayed(
+                                    { connectDefault() },
+                                    2000
+                                ) // Small delay to let BT stack stabilize
                             }
-                            BluetoothAdapter.STATE_TURNING_OFF -> {
-                                Bridge.log("MAN: Bluetooth turning off...")
-                            }
-                            BluetoothAdapter.STATE_ON -> {
-                                Bridge.log("MAN: Bluetooth turned ON")
-                                // Auto-reconnect to last known device if we have one
-                                if (defaultWearable.isNotEmpty() && deviceName.isNotEmpty()) {
-                                    Bridge.log(
-                                            "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
-                                    )
-                                    handler.postDelayed(
-                                            { connectDefault() },
-                                            2000
-                                    ) // Small delay to let BT stack stabilize
-                                }
-                            }
-                            BluetoothAdapter.STATE_TURNING_ON -> {
-                                Bridge.log("MAN: Bluetooth turning on...")
-                            }
+                        }
+
+                        BluetoothAdapter.STATE_TURNING_ON -> {
+                            Bridge.log("MAN: Bluetooth turning on...")
                         }
                     }
                 }
+            }
 
         try {
             val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
@@ -620,35 +627,35 @@ class DeviceManager {
         // Matching Swift's 4 view states exactly
         viewStates.add(ViewState(" ", " ", " ", "text_wall", "", null, null))
         viewStates.add(
-                ViewState(
-                        " ",
-                        " ",
-                        " ",
-                        "text_wall",
-                        "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
-                        null,
-                        null
-                )
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                null,
+                null
+            )
         )
         viewStates.add(ViewState(" ", " ", " ", "text_wall", "", null, null))
         viewStates.add(
-                ViewState(
-                        " ",
-                        " ",
-                        " ",
-                        "text_wall",
-                        "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
-                        null,
-                        null
-                )
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                null,
+                null
+            )
         )
     }
 
     private fun statesEqual(s1: ViewState, s2: ViewState): Boolean {
         val state1 =
-                "${s1.layoutType}${s1.text}${s1.topText}${s1.bottomText}${s1.title}${s1.data ?: ""}"
+            "${s1.layoutType}${s1.text}${s1.topText}${s1.bottomText}${s1.title}${s1.data ?: ""}"
         val state2 =
-                "${s2.layoutType}${s2.text}${s2.topText}${s2.bottomText}${s2.title}${s2.data ?: ""}"
+            "${s2.layoutType}${s2.text}${s2.topText}${s2.bottomText}${s2.title}${s2.data ?: ""}"
         return state1 == state2
     }
 
@@ -659,22 +666,22 @@ class DeviceManager {
     // Inner classes
 
     data class ViewState(
-            var topText: String,
-            var bottomText: String,
-            var title: String,
-            var layoutType: String,
-            var text: String,
-            var data: String?,
-            var animationData: Map<String, Any>?,
-            // Optional bitmap_view container position/size (used by G2; ignored by others).
-            // Reused by positioned_text for its container rect.
-            var bmpX: Int? = null,
-            var bmpY: Int? = null,
-            var bmpWidth: Int? = null,
-            var bmpHeight: Int? = null,
-            // Optional positioned_text border (used by G2; ignored by others).
-            var borderWidth: Int? = null,
-            var borderRadius: Int? = null
+        var topText: String,
+        var bottomText: String,
+        var title: String,
+        var layoutType: String,
+        var text: String,
+        var data: String?,
+        var animationData: Map<String, Any>?,
+        // Optional bitmap_view container position/size (used by G2; ignored by others).
+        // Reused by positioned_text for its container rect.
+        var bmpX: Int? = null,
+        var bmpY: Int? = null,
+        var bmpWidth: Int? = null,
+        var bmpHeight: Int? = null,
+        // Optional positioned_text border (used by G2; ignored by others).
+        var borderWidth: Int? = null,
+        var borderRadius: Int? = null
     )
     // MARK: - End Unique
 
@@ -703,6 +710,15 @@ class DeviceManager {
         if (shouldSendLc3) {
             convertAndSendMicLc3(pcmData)
         }
+    }
+
+    /**
+     * Marks glasses-mic audio as alive for the 10s reinit watchdog. SGCs that decode
+     * audio themselves and feed [handlePcm] directly (e.g. Nimo's Opus path) must call
+     * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
+     */
+    fun reportGlassesAudioActivity() {
+        lastLc3Event = System.currentTimeMillis()
     }
 
     /**
@@ -789,8 +805,8 @@ class DeviceManager {
 
             for (micMode in micRanking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
-                                micMode == MicTypes.BLUETOOTH_CLASSIC ||
-                                micMode == MicTypes.BLUETOOTH
+                    micMode == MicTypes.BLUETOOTH_CLASSIC ||
+                    micMode == MicTypes.BLUETOOTH
                 ) {
 
                     if (phoneMic?.isRecordingWithMode(micMode) == true) {
@@ -852,8 +868,8 @@ class DeviceManager {
             }
 
             if (micMode == MicTypes.PHONE_INTERNAL ||
-                            micMode == MicTypes.BLUETOOTH_CLASSIC ||
-                            micMode == MicTypes.BLUETOOTH
+                micMode == MicTypes.BLUETOOTH_CLASSIC ||
+                micMode == MicTypes.BLUETOOTH
             ) {
                 phoneMic?.stopMode(micMode)
             }
@@ -916,34 +932,39 @@ class DeviceManager {
             "text_wall" -> {
                 sgc?.sendTextWall(currentViewState.text)
             }
+
             "double_text_wall" -> {
                 sgc?.sendDoubleTextWall(currentViewState.topText, currentViewState.bottomText)
             }
+
             "reference_card" -> {
                 sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
             }
+
             "bitmap_view" -> {
                 currentViewState.data?.let { data ->
                     sgc?.displayBitmap(
-                            data,
-                            currentViewState.bmpX,
-                            currentViewState.bmpY,
-                            currentViewState.bmpWidth,
-                            currentViewState.bmpHeight
+                        data,
+                        currentViewState.bmpX,
+                        currentViewState.bmpY,
+                        currentViewState.bmpWidth,
+                        currentViewState.bmpHeight
                     )
                 }
             }
+
             "positioned_text" -> {
                 sgc?.sendPositionedText(
-                        currentViewState.text,
-                        currentViewState.bmpX ?: 0,
-                        currentViewState.bmpY ?: 0,
-                        currentViewState.bmpWidth ?: 576,
-                        currentViewState.bmpHeight ?: 288,
-                        currentViewState.borderWidth ?: 0,
-                        currentViewState.borderRadius ?: 0
+                    currentViewState.text,
+                    currentViewState.bmpX ?: 0,
+                    currentViewState.bmpY ?: 0,
+                    currentViewState.bmpWidth ?: 576,
+                    currentViewState.bmpHeight ?: 288,
+                    currentViewState.borderWidth ?: 0,
+                    currentViewState.borderRadius ?: 0
                 )
             }
+
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
         }
@@ -964,15 +985,15 @@ class DeviceManager {
         val currentDate = dateFormat.format(Date())
 
         val placeholders =
-                mapOf(
-                        "\$no_datetime$" to formattedDate,
-                        "\$DATE$" to currentDate,
-                        "\$TIME12$" to time12,
-                        "\$TIME24$" to time24,
-                        "\$GBATT$" to
-                                (sgc?.batteryLevel?.let { if (it == -1) "" else "$it%" } ?: ""),
-                        "\$CONNECTION_STATUS$" to "Connected"
-                )
+            mapOf(
+                "\$no_datetime$" to formattedDate,
+                "\$DATE$" to currentDate,
+                "\$TIME12$" to time12,
+                "\$TIME24$" to time24,
+                "\$GBATT$" to
+                    (sgc?.batteryLevel?.let { if (it == -1) "" else "$it%" } ?: ""),
+                "\$CONNECTION_STATUS$" to "Connected"
+            )
 
         return placeholders.entries.fold(text) { result, (key, value) ->
             result.replace(key, value)
@@ -993,83 +1014,89 @@ class DeviceManager {
                 // Another app is using the microphone
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
-                appendLog("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
-                scheduleSystemMicAvailabilityRecheck("external_app_recording")
+                // appendLog("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
+                // scheduleSystemMicAvailabilityRecheck("external_app_recording")
             }
+
             "audio_focus_available" -> {
                 // Audio focus is available again
                 systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: FALSE audio_focus_available")
-                appendLog("MAN: MIC_UNAVAILABLE: FALSE audio_focus_available")
+                // appendLog("MAN: MIC_UNAVAILABLE: FALSE audio_focus_available")
             }
+
             "external_app_stopped" -> {
                 // External app stopped recording
                 systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: FALSE external_app_stopped")
-                appendLog("MAN: MIC_UNAVAILABLE: FALSE external_app_stopped")
+                // appendLog("MAN: MIC_UNAVAILABLE: FALSE external_app_stopped")
             }
+
             "phone_call_interruption" -> {
                 // Phone call started - mark mic as unavailable
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
-                scheduleSystemMicAvailabilityRecheck("phone_call_interruption")
+                // scheduleSystemMicAvailabilityRecheck("phone_call_interruption")
             }
+
             "phone_call_ended" -> {
                 // Phone call ended - mark mic as available again
                 systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: FALSE phone_call_ended")
-                appendLog("MAN: MIC_UNAVAILABLE: FALSE phone_call_ended")
+                // appendLog("MAN: MIC_UNAVAILABLE: FALSE phone_call_ended")
             }
+
             "phone_call_active" -> {
                 // Tried to start recording while phone call already active
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
-                appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
-                scheduleSystemMicAvailabilityRecheck("phone_call_active")
+                // appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
             }
+
             "audio_focus_denied" -> {
                 // Another app has audio focus
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
-                appendLog("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
-                scheduleSystemMicAvailabilityRecheck("audio_focus_denied")
+                // appendLog("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
             }
+
             "permission_denied" -> {
                 // Microphone permission not granted
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE permission_denied")
-                appendLog("MAN: MIC_UNAVAILABLE: TRUE permission_denied")
+                // appendLog("MAN: MIC_UNAVAILABLE: TRUE permission_denied")
                 // Don't trigger fallback - need to request permission from user
             }
+
             "audio_route_changed" -> {
                 // Audio route changed
                 // systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN audio_route_changed")
-                appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN audio_route_changed")
+                // appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN audio_route_changed")
             }
+
             "recording_started" -> {
                 // this is an event from the PhoneMic saying we have started recording
                 // Audio recording started
                 // systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN recording_started")
-                appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_started")
+                // appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_started")
             }
+
             "recording_stopped" -> {
                 // this is an event from the PhoneMic saying we have stopped recording
                 // Audio recording stopped
                 // systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
-                appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
-                if (systemMicUnavailable) {
-                    scheduleSystemMicAvailabilityRecheck("recording_stopped")
-                }
+                // appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
             }
+
             else -> {
                 // Other route changes (headset plug/unplug, BT connect/disconnect, etc.)
                 // Just log for now - may want to handle these in the future
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN other: $reason")
-                appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN other: $reason")
+                // appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN other: $reason")
                 // systemMicUnavailable = false
             }
         }
@@ -1114,6 +1141,8 @@ class DeviceManager {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
+        } else if (wearable.contains(DeviceTypes.NIMO)) {
+            sgc = Nimo()
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
@@ -1183,19 +1212,19 @@ class DeviceManager {
 
         // re-apply display height/depth after reconnection
         mainHandler.postDelayed(
-                {
-                    val h =
-                            (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
-                                    ?.toInt()
-                                    ?: 4
-                    val rawDepth =
-                            (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
-                                    ?.toInt()
-                                    ?: dashboardDepth // canonical default (2), not 1
-                    val d = rawDepth.coerceIn(1, 4)
-                    sgc?.setDashboardPosition(h, d)
-                },
-                2000
+            {
+                val h =
+                    (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
+                        ?.toInt()
+                        ?: 4
+                val rawDepth =
+                    (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
+                        ?.toInt()
+                        ?: dashboardDepth // canonical default (2), not 1
+                val d = rawDepth.coerceIn(1, 4)
+                sgc?.setDashboardPosition(h, d)
+            },
+            2000
         )
 
         // Show welcome message on first connect for all display glasses
@@ -1260,7 +1289,11 @@ class DeviceManager {
         Bridge.log("MAN: Device disconnected")
         lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
+        DeviceStore.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        )
     }
 
     fun handleControllerReady() {
@@ -1305,6 +1338,12 @@ class DeviceManager {
             return
         }
 
+        run {
+            @Suppress("UNCHECKED_CAST") val l = event["layout"] as? Map<String, Any>
+            val preview = ((l?.get("text") ?: l?.get("topText")) as? String ?: "").take(60)
+            Bridge.log("MAN: displayEvent view=$view layout=${l?.get("layoutType")} text=\"$preview\"")
+        }
+
         val isDashboard = view == "dashboard"
         val stateIndex = if (isDashboard) 1 else 0
 
@@ -1328,21 +1367,21 @@ class DeviceManager {
         val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
 
         var newViewState =
-                ViewState(
-                        topText,
-                        bottomText,
-                        title,
-                        layoutType ?: "",
-                        text,
-                        data,
-                        null,
-                        bmpX,
-                        bmpY,
-                        bmpWidth,
-                        bmpHeight,
-                        borderWidth,
-                        borderRadius
-                )
+            ViewState(
+                topText,
+                bottomText,
+                title,
+                layoutType ?: "",
+                text,
+                data,
+                null,
+                bmpX,
+                bmpY,
+                bmpWidth,
+                bmpHeight,
+                borderWidth,
+                borderRadius
+            )
 
         val currentState = viewStates[stateIndex]
 
@@ -1492,6 +1531,11 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    fun sendCameraTuningConfig(requestId: String, anrOn: Boolean, gainOn: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraTuningConfig(requestId, anrOn, gainOn)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
@@ -1502,14 +1546,14 @@ class DeviceManager {
         var result: Map<String, Any>? = null
         var error: String? = null
         live.getGlassesMediaVolume(
-                { m ->
-                    result = m
-                    latch.countDown()
-                },
-                { e ->
-                    error = e
-                    latch.countDown()
-                }
+            { m ->
+                result = m
+                latch.countDown()
+            },
+            { e ->
+                error = e
+                latch.countDown()
+            }
         )
         val completed = latch.await(5, TimeUnit.SECONDS)
         if (!completed) {
@@ -1526,15 +1570,15 @@ class DeviceManager {
         var result: Map<String, Any>? = null
         var error: String? = null
         live.setGlassesMediaVolume(
-                level,
-                { m ->
-                    result = m
-                    latch.countDown()
-                },
-                { e ->
-                    error = e
-                    latch.countDown()
-                }
+            level,
+            { m ->
+                result = m
+                latch.countDown()
+            },
+            { e ->
+                error = e
+                latch.countDown()
+            }
         )
         val completed = latch.await(5, TimeUnit.SECONDS)
         if (!completed) {
@@ -1566,26 +1610,27 @@ class DeviceManager {
     }
 
     fun startVideoRecording(
-            requestId: String,
-            save: Boolean,
-            sound: Boolean,
-            width: Int = 0,
-            height: Int = 0,
-            fps: Int = 0,
-            maxRecordingTimeMinutes: Int = 0,
+        requestId: String,
+        save: Boolean,
+        sound: Boolean,
+        width: Int = 0,
+        height: Int = 0,
+        fps: Int = 0,
+        maxRecordingTimeMinutes: Int = 0,
     ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, sound=$sound, " +
-                        "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
+            "MAN: onStartVideoRecording: requestId=$requestId, save=$save, sound=$sound, " +
+                "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
         sgc?.startVideoRecording(
-                requestId, save, sound, width, height, fps, maxRecordingTimeMinutes)
+            requestId, save, sound, width, height, fps, maxRecordingTimeMinutes
+        )
     }
 
     fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
         Bridge.log(
-                "MAN: onStopVideoRecording: requestId=$requestId, webhook=" +
-                        if (webhookUrl.isNullOrEmpty()) "none" else "set"
+            "MAN: onStopVideoRecording: requestId=$requestId, webhook=" +
+                if (webhookUrl.isNullOrEmpty()) "none" else "set"
         )
         sgc?.stopVideoRecording(requestId, webhookUrl, authToken)
     }
@@ -1607,25 +1652,25 @@ class DeviceManager {
 
     fun requestPhoto(request: PhotoRequest) {
         val exposureNs: Long? =
-                request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
-                    when {
-                        v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
-                        else -> v.toLong()
-                    }
+            request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                when {
+                    v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+                    else -> v.toLong()
                 }
+            }
         val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
         val routed =
-                request.copy(
-                        exposureTimeNs = exposureNs?.toDouble(),
-                        iso = manualIso,
-                )
+            request.copy(
+                exposureTimeNs = exposureNs?.toDouble(),
+                iso = manualIso,
+            )
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
             Bridge.log(
-                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
+                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
             )
             return
         }
@@ -1633,13 +1678,13 @@ class DeviceManager {
     }
 
     fun rgbLedControl(
-            requestId: String,
-            packageName: String?,
-            action: String,
-            color: String?,
-            onDurationMs: Int,
-            offDurationMs: Int,
-            count: Int
+        requestId: String,
+        packageName: String?,
+        action: String,
+        color: String?,
+        onDurationMs: Int,
+        offDurationMs: Int,
+        count: Int
     ) {
         Bridge.log("MAN: RGB LED control: action=$action, color=$color, requestId=$requestId")
         sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
@@ -1760,7 +1805,11 @@ class DeviceManager {
         DeviceStore.apply("glasses", "deviceModel", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
+        DeviceStore.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        )
         // disconnect the controller as well:
         searchingController = false
         DeviceStore.apply("glasses", "controllerConnected", false)

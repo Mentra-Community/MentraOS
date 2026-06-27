@@ -1,6 +1,6 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
 import type {Permission} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -405,6 +405,43 @@ export default function PairingPrepScreen() {
     )
   }
 
+  const NimoPairingGuide = () => {
+    return (
+      <View className="flex-1 mt-6">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="1. Make sure your NIMO glasses are fully charged and turned on."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="2. Disconnect your glasses from the NIMO app, or uninstall the NIMO app."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="3. If your glasses were previously connected to the NIMO app, force stop that app, then try connecting again."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="4. If the glasses aren't responding, close both arms for about 8 seconds, then try again."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="5. If nothing else works, reset the glasses by holding the left and right touch areas at the same time for a few seconds, then restart them."
+          />
+          {Platform.OS === "ios" && (
+            <Text
+              className="text-lg text-secondary-foreground mb-2"
+              text="6. If prompted, allow the Bluetooth pairing request."
+            />
+          )}
+          <View className="h-6" />
+        </ScrollView>
+      </View>
+    )
+  }
+
   const renderGuide = () => {
     switch (deviceModel) {
       case DeviceTypes.SIMULATED:
@@ -421,6 +458,8 @@ export default function PairingPrepScreen() {
         return <VuzixZ100PairingGuide />
       case DeviceTypes.NEX:
         return <MentraDisplayGlassesPairingGuide />
+      case DeviceTypes.NIMO:
+        return <NimoPairingGuide />
     }
 
     throw new Error(`Unknown model name: ${deviceModel}`)

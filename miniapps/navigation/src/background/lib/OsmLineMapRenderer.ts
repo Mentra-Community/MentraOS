@@ -57,6 +57,26 @@ class Raster {
       }
     }
   }
+  /**
+   * Hollow circle outline of radius `r` and `thickness` px, centered at
+   * (cx, cy). Used for the destination marker on the route. A pixel is "on"
+   * when its distance from center falls within [r - thickness, r].
+   */
+  ring(cx: number, cy: number, r: number, v: number, thickness: number): void {
+    cx = Math.round(cx)
+    cy = Math.round(cy)
+    const rOuter = Math.max(1, Math.round(r))
+    const rInner = Math.max(0, rOuter - Math.max(1, Math.round(thickness)))
+    const o2 = rOuter * rOuter
+    const i2 = rInner * rInner
+    for (let dy = -rOuter; dy <= rOuter; dy++) {
+      for (let dx = -rOuter; dx <= rOuter; dx++) {
+        const d2 = dx * dx + dy * dy
+        if (d2 <= o2 && d2 >= i2) this.set(cx + dx, cy + dy, v)
+      }
+    }
+  }
+
   /** Filled triangle via barycentric coverage test (used for the heading arrow). */
   triangle(
     ax: number,
@@ -127,6 +147,11 @@ export type OsmLineMapOptions = {
   /** Width of the route overlay line (defaults to lineWidthPx + 2). */
   routeWidthPx?: number
   /**
+   * Destination point — drawn as a small hollow circle at the end of the
+   * route so the user can see where they're headed. Omit / null for none.
+   */
+  destination?: LatLng | null
+  /**
    * "You are here" heading marker, drawn last (on top) as a filled arrow.
    * `at` is projected like any other point; `headingDeg` is a compass bearing
    * (0 = north/up, 90 = east/right) — pass the route's forward direction to
@@ -135,6 +160,15 @@ export type OsmLineMapOptions = {
   marker?: {at: LatLng; headingDeg: number} | null
   /** Arrow size in target pixels (tip-to-base length). Default 9. */
   markerSizePx?: number
+  /**
+   * Heading-up rotation. When set, the whole map is rotated so this compass
+   * bearing (0 = north, 90 = east) points UP on the display — i.e. the map
+   * faces the user's direction of travel. Pass the route's forward bearing to
+   * keep "the way you're going" always at the top. When omitted/null the map
+   * is drawn north-up (legacy behaviour). The heading marker is drawn pointing
+   * straight up in this mode, since the rotation already aligns it with travel.
+   */
+  rotationDeg?: number | null
 }
 
 /**
@@ -207,11 +241,24 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
   const cx = hiW / 2
   const cy = hiH / 2
 
+  // Heading-up rotation. Rotate the local-meter frame so the given compass
+  // bearing points up. A bearing θ has world vector (sinθ, cosθ) in (east,
+  // north); to bring it onto +north we rotate every point by −θ. cos/sin are
+  // hoisted out of the per-point hot path. rot==null → identity (north-up).
+  const rotDeg = opts.rotationDeg ?? null
+  const rotRad = rotDeg != null ? (-rotDeg * Math.PI) / 180 : 0
+  const rCos = Math.cos(rotRad)
+  const rSin = Math.sin(rotRad)
+
   const project = (p: LatLng): {x: number; y: number} => {
     const m = toLocalMeters(p, center)
+    // Rotate the (east, north) meter vector before projecting to pixels so the
+    // chosen bearing ends up pointing up.
+    const ex = m.x * rCos - m.y * rSin
+    const ny = m.x * rSin + m.y * rCos
     return {
-      x: cx + m.x * pxPerMeter,
-      y: cy - m.y * pxPerMeter, // Y flipped: north is up
+      x: cx + ex * pxPerMeter,
+      y: cy - ny * pxPerMeter, // Y flipped: north(-of-rotated-frame) is up
     }
   }
 
@@ -234,6 +281,18 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
     }
   }
 
+  // Destination: a small hollow circle at the route's end so the user can see
+  // where they're headed. Drawn after the route, before the heading marker.
+  // Kept small + thin so it's "barely visible" — just enough to read as a
+  // target without dominating the tiny minimap.
+  const destination = opts.destination
+  if (destination) {
+    const d = project(destination)
+    const ringR = 3.9 * ss // ~3.9px target radius (30% larger than the prior 3px)
+    const ringT = Math.max(1, Math.round(ss)) // ~1px stroke
+    raster.ring(d.x, d.y, ringR, ROUTE, ringT)
+  }
+
   // Heading marker: a filled arrowhead at the user's position, rotated to the
   // route's forward bearing. Drawn last so it sits on top of roads + route.
   const marker = opts.marker
@@ -241,7 +300,11 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
     const c = project(marker.at)
     const size = (opts.markerSizePx ?? 14) * ss
     // Bearing 0 = north = up (−y). Rotate the arrow's local geometry by it.
-    const rad = (marker.headingDeg * Math.PI) / 180
+    // In heading-up mode the map is already rotated to travel direction, so the
+    // arrow points straight up (effective bearing = headingDeg − rotationDeg,
+    // which is ~0 when the marker uses the same bearing the map is rotated to).
+    const effHeading = rotDeg != null ? marker.headingDeg - rotDeg : marker.headingDeg
+    const rad = (effHeading * Math.PI) / 180
     const sin = Math.sin(rad)
     const cos = Math.cos(rad)
     // Local arrow (pointing up): tip ahead, two base corners behind.

@@ -623,6 +623,8 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
+        } else if wearable.contains(DeviceTypes.NIMO) {
+            sgc = Nimo()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
@@ -1250,6 +1252,10 @@ struct ViewState {
 
     func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
+    }
+
+    func sendCameraTuningConfig(requestId: String, anrOn: Bool, gainOn: Bool) throws {
+        try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
 
     /// Request version info from glasses.

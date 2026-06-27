@@ -97,11 +97,15 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // When on, LC3 audio received from Nex glasses is played back (Android only).
-  nex_audio_playback: {
-    key: "nex_audio_playback",
+  // Local-only dev toggle: defaults off and never synced to the cloud account
+  // (saveOnServer: false); persists locally so it survives app restarts.
+  // Key renamed from the legacy `nex_audio_playback` so stale server/local
+  // values (saved back when this was saveOnServer:true) can't re-enable it.
+  nex_lc3_audio_playback: {
+    key: "nex_lc3_audio_playback",
     defaultValue: () => false,
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   china_deployment: {
@@ -109,6 +113,23 @@ export const SETTINGS: Record<string, Setting> = {
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
     override: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
     writable: false,
+    saveOnServer: false,
+    persist: true,
+  },
+  store_url: {
+    key: "store_url",
+    defaultValue: () => {
+      if (process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE) {
+        return process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE
+      }
+      if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
+        return "https://apps.mentraglass.cn"
+      }
+      return "https://apps.mentra.glass"
+    },
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE,
+    writable: true,
     saveOnServer: false,
     persist: true,
   },
@@ -149,8 +170,25 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
+  // runtimeUrl} — core + runtime are saved together because they are always
+  // applied as a matched set (presets fill both; Save & Test verifies both).
+  saved_cloud_url_pairs: {
+    key: "saved_cloud_url_pairs",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  saved_store_urls: {
+    key: "saved_store_urls",
     defaultValue: () => [],
     writable: true,
     saveOnServer: true,
@@ -676,7 +714,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.gallery_mode.key,
   // Mentra Nex feature flags:
   SETTINGS.nex_chinese_captions.key,
-  SETTINGS.nex_audio_playback.key,
+  SETTINGS.nex_lc3_audio_playback.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]

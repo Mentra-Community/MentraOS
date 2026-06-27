@@ -44,6 +44,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {BlobStore} from "./BlobStore"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
@@ -701,6 +702,10 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     audioPlaybackService.stopForApp(packageName)
 
+    // Tear down this app's blob state: abort in-flight uploads + close readers
+    // so a crashed/closed miniapp doesn't leak partial files or file handles.
+    this.blobStore.onAppGone(packageName)
+
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
     // so glasses publishing and managed Cloudflare inputs do not leak.
@@ -868,6 +873,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_REVERSE_GEOCODE:
         this.navigationHandlers.handleReverseGeocode(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_PLACE_AUTOCOMPLETE:
+        this.navigationHandlers.handlePlaceAutocomplete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_PLACE_DETAILS:
+        this.navigationHandlers.handlePlaceDetails(packageName, payload, requestId)
+        break
       case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
         this.navigationHandlers.handleRequestPermission(packageName, requestId)
         break
@@ -929,6 +940,53 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
+      // Persistent binary blob storage (session.blob)
+      case MiniappRequestType.BLOB_CREATE:
+        this.blobStore.handleCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_WRITE:
+        this.blobStore.handleWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_COMMIT:
+        this.blobStore.handleCommit(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_ABORT:
+        this.blobStore.handleAbort(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SET_FROM_URL:
+        void this.blobStore.handleSetFromUrl(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_IMPORT:
+        void this.blobStore.handleImport(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_GET:
+        this.blobStore.handleGet(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_LIST:
+        this.blobStore.handleList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_USAGE:
+        this.blobStore.handleUsage(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_DELETE:
+        this.blobStore.handleDelete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLEAR:
+        this.blobStore.handleClear(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_OPEN_READ:
+        this.blobStore.handleOpenRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_READ:
+        this.blobStore.handleRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLOSE_READ:
+        this.blobStore.handleCloseRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SHARE:
+        void this.blobStore.handleShare(packageName, payload, requestId)
+        break
+
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
@@ -987,7 +1045,11 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private async handleConnect(packageName: string, _payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleConnect(
+    packageName: string,
+    _payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
     // Register if not already
@@ -1054,7 +1116,11 @@ class LocalMiniappRuntime {
     return cloudClientService.getMiniappAuthToken(authPackageName, opts)
   }
 
-  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleAuthRefresh(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
       if (!auth) {
@@ -1477,9 +1543,7 @@ class LocalMiniappRuntime {
 
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
-        !voiceExplicit ||
-        voice === "default" ||
-        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+        !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
       const cloudConnected = cloudClientService.isConnected()
@@ -1700,6 +1764,18 @@ class LocalMiniappRuntime {
     (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
     (packageName, requestId, ok, result, error) => this.sendResult(packageName, requestId, ok, result, error),
   )
+
+  /**
+   * `session.blob` — persistent, per-app binary storage. Like NavigationHandlers,
+   * the BLOB_* dispatcher cases delegate here. It's a generic byte store; audio
+   * recording lives entirely in the miniapp (mic.onAudioChunk → chunked
+   * BLOB_WRITE), so nothing audio-specific runs in the host.
+   */
+  private readonly blobStore = new BlobStore({
+    sendResult: (packageName, requestId, ok, result, error) =>
+      this.sendResult(packageName, requestId, ok, result, error),
+    getUserId: () => useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
+  })
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -2254,7 +2330,10 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     try {
-      await phoneVideoCoordinator.stopRecording(packageName, payload.recordingId as string | undefined)
+      await phoneVideoCoordinator.stopRecording(packageName, payload.recordingId as string | undefined, {
+        uploadUrl: payload.uploadUrl as string | undefined,
+        uploadAuthToken: payload.uploadAuthToken as string | undefined,
+      })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2679,14 +2758,21 @@ class LocalMiniappRuntime {
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
-    // exact streamType, so per-gesture subscribers (`touch_event:click`,
+    // exact streamType, so per-gesture subscribers (`touch_event:single_tap`,
     // etc.) need their own EVENT envelope with the gesture-tagged streamType.
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
+    let outboundData = data
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
-      const kind = (data as {kind?: string} | null)?.kind
-      if (typeof kind === "string" && kind.length > 0) {
-        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${kind}`
+      // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
+      // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it
+      // to miniapps as `TouchData.kind` and tag a per-gesture stream so
+      // onTouch("single_tap", ...) routes correctly.
+      const touch = data as {gestureName?: string; kind?: string} | null
+      const gesture = touch?.gestureName ?? touch?.kind
+      if (typeof gesture === "string" && gesture.length > 0) {
+        outboundData = {...(touch as object), kind: gesture}
+        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${gesture}`
       }
     }
 
@@ -2711,7 +2797,7 @@ class LocalMiniappRuntime {
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
-        data,
+        data: outboundData,
       })
     }
 
@@ -2724,7 +2810,7 @@ class LocalMiniappRuntime {
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,
             streamType: perGestureStream,
-            data,
+            data: outboundData,
           })
         }
       }

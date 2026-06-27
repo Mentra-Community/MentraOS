@@ -12,7 +12,6 @@
 import {
   cameraPackageName,
   feedbackPackageName,
-  lmaInstallerPackageName,
   mirrorPackageName,
   settingsPackageName,
 } from "@/constants/miniapps"
@@ -22,7 +21,6 @@ export const OFFLINE_HOSTED_PACKAGES = new Set([
   mirrorPackageName,
   cameraPackageName,
   feedbackPackageName,
-  lmaInstallerPackageName,
 ])
 
 export const isOfflineHosted = (packageName: string) => OFFLINE_HOSTED_PACKAGES.has(packageName)

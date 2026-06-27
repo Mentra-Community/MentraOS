@@ -24,7 +24,7 @@ export async function runReview(
   const promptPath = join(repoRoot, '.github/pr-agent/prompts', SLOT_PROMPT[slot]);
   const basePrompt = readFileSync(promptPath, 'utf8');
 
-  const diff = execSync(`git diff origin/${baseRef}...HEAD --stat`, {
+  const diffStat = execSync(`git diff origin/${baseRef}...HEAD --stat`, {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim();
@@ -36,6 +36,20 @@ export async function runReview(
     .trim()
     .split('\n')
     .filter(Boolean);
+
+  // Feed the actual unified diff, not just the stat, so the reviewer can see
+  // the real code changes. Cap the size so a huge PR cannot blow the context
+  // window; when truncated the agent is told to read the files directly.
+  const MAX_DIFF_CHARS = 180_000;
+  const fullDiff = execSync(`git diff origin/${baseRef}...HEAD`, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const diffTruncated = fullDiff.length > MAX_DIFF_CHARS;
+  const diffBody = diffTruncated
+    ? `${fullDiff.slice(0, MAX_DIFF_CHARS)}\n\n... [diff truncated at ${MAX_DIFF_CHARS} chars — open the changed files directly to review the rest] ...`
+    : fullDiff || '(no diff)';
 
   const context = `
 PR #${prNumber}
@@ -55,11 +69,23 @@ ${JSON.stringify(
 )}
 \`\`\`
 
+## How to review
+You are running inside a checkout of this PR's HEAD at \`${repoRoot}\`. The full
+diff is below, but it only shows the changed lines. For anything non-trivial,
+**open the changed files and the symbols they touch** (constructors, factories,
+callers, callees, lifecycle hooks) to understand runtime behavior across files —
+do not review from the diff hunks alone.
+
 ## Changed files
 ${changedFiles.map((f) => `- ${f}`).join('\n')}
 
 ## Diff stat
-${diff || '(no diff)'}
+${diffStat || '(no diff)'}
+
+## Diff
+\`\`\`diff
+${diffBody}
+\`\`\`
 `;
 
   const fullPrompt = `${basePrompt}\n\n---\n\n${context}`;

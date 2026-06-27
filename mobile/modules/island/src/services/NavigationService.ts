@@ -15,8 +15,6 @@ import CrustModule from "@mentra/crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"
-import restComms from "./RestComms"
-import {useSettingsStore} from "../stores/settings"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -315,8 +313,15 @@ class NavigationService {
   }
 
   /**
+   * @deprecated Route computation moved to the v2 cloud maps service
+   * (cloud.runtime.maps.directions), which holds the provider token
+   * server-side and caches results. The miniapp bridge now routes
+   * NAVIGATION_COMPUTE_ROUTE to NavigationHandlers -> cloud.maps; this direct
+   * Mapbox path is no longer reached from miniapps. Kept only as reference /
+   * for any non-bridge caller; do not add new callers.
+   *
    * Compute one or more routes without starting a trip. Implemented by
-   * calling Google's Routes API (REST) so we don't disturb the active
+   * calling Mapbox's Directions API (REST) so we don't disturb the active
    * Navigator. Returns `{ok: false}` plus an error string when the engine
    * can't produce a route — mirrors the SDK's ComputeRouteResult shape so
    * the host can pass it back to miniapps unchanged.
@@ -335,8 +340,14 @@ class NavigationService {
   }
 
   /**
+   * @deprecated Reverse geocoding moved to the v2 cloud maps service
+   * (cloud.runtime.maps.reverseGeocode). The miniapp bridge now routes
+   * NAVIGATION_REVERSE_GEOCODE to NavigationHandlers -> cloud.maps; this direct
+   * Mapbox path is no longer reached from miniapps. Kept only as reference; do
+   * not add new callers.
+   *
    * Reverse-geocode a coordinate into a short road/route name via
-   * Google's Geocoding REST API. Backs the SDK pivot engine's
+   * Mapbox's Geocoding REST API. Backs the SDK pivot engine's
    * last-resort fallback when a Routes-API instruction didn't carry a
    * parseable road. Returns `{ok: true, road: null}` when the
    * coordinate is genuinely off-grid (mid-park, water) — that's a
@@ -437,37 +448,35 @@ export default navigationService
 // Routes API (REST)
 // ---------------------------------------------------------------------------
 
-// Web-service calls (Routes + Geocoding) go through the MentraOS cloud, which
-// holds the Google web-service key server-side. The key is never shipped in the
-// app — only the on-device Navigation SDK key lives here (in the native
-// manifest/Info.plist), locked down by application restriction in GCP.
-const NAV_ROUTE_ENDPOINT = "/api/client/navigation/route"
-const NAV_REVERSE_GEOCODE_ENDPOINT = "/api/client/navigation/reverse-geocode"
+// Mapbox migration: Routes + Geocoding now go DIRECT to Mapbox from the
+// phone process, authenticated with the public runtime token
+// (EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN, inlined at build). No cloud proxy in
+// this cut — the token is a public pk.… that's safe to ship; moving it
+// server-side (re-introducing the proxy) is a later hardening step. See
+// issues/mapbox-navigation-migration.md §8a.
+const MAPBOX_DIRECTIONS_BASE = "https://api.mapbox.com/directions/v5/mapbox"
+const MAPBOX_GEOCODE_REVERSE = "https://api.mapbox.com/search/geocode/v6/reverse"
 
-/**
- * Auth header + absolute URL for a cloud navigation endpoint. Uses the same
- * core token and backend base URL as RestComms so these calls follow whichever
- * backend the app is pointed at (local/staging/prod).
- */
-function navCloudRequest(endpoint: string): {url: string; headers: Record<string, string>} | null {
-  const token = restComms.getCoreToken()
-  if (!token) return null
-  const baseUrl = useSettingsStore.getState().getRestUrl()
-  return {
-    url: `${baseUrl}${endpoint}`,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-    },
-  }
+/** The public Mapbox token, inlined at build time. Empty in misconfigured builds. */
+function mapboxToken(): string {
+  return process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
 }
 
 /**
- * Phone-side helper: hit Google Routes API directly. Lives here (not in
- * Kotlin) because the API key is already exposed via env to the WebView,
- * and going through the JS bridge keeps this independent of which
- * platform the user is on. Returns the SDK-shaped result with primary +
- * alternates.
+ * @deprecated Superseded by the v2 cloud maps service
+ * (cloud.runtime.maps.directions). This direct-to-Mapbox call from the device
+ * is no longer on the miniapp path; the token now lives server-side. Retained
+ * for reference only — do not add new callers.
+ *
+ * Phone-side helper: hit the Mapbox Directions API directly. Lives here
+ * (not in Kotlin) so it's platform-independent across the JS bridge.
+ * Returns the SDK-shaped result with primary + alternates.
+ *
+ * Mapbox Directions differs from Google Routes in shape: numeric
+ * `distance`/`duration`, `polyline6` geometry per-route AND per-step, and
+ * `maneuver = {location:[lng,lat], type, modifier, instruction}`. We
+ * synthesize the SDK's `ComputedRouteStep` (lat/lng start, endLat/endLng
+ * = next step's start) from the ordered step list.
  */
 async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promise<{
   ok: boolean
@@ -508,81 +517,83 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
     return {ok: false, error: "computeRoute: at least one stop required"}
   }
 
-  const req = navCloudRequest(NAV_ROUTE_ENDPOINT)
-  if (!req) return {ok: false, error: "computeRoute: not authenticated"}
+  const token = mapboxToken()
+  if (!token) return {ok: false, error: "computeRoute: EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN not set"}
 
-  const finalDest = stops[stops.length - 1]
-  const intermediates = stops.slice(0, -1).map((s) => ({location: {latLng: {latitude: s.lat, longitude: s.lng}}}))
-  const body: Record<string, unknown> = {
-    origin: {location: {latLng: {latitude: oLat, longitude: oLng}}},
-    destination: {location: {latLng: {latitude: finalDest.lat, longitude: finalDest.lng}}},
-    travelMode: routesApiTravelMode(mode),
-    computeAlternativeRoutes: alternatives > 1,
-    routeModifiers: {
-      avoidHighways: avoid.highways === true,
-      avoidTolls: avoid.tolls === true,
-      avoidFerries: avoid.ferries === true,
-    },
-    // Without this Google defaults to OVERVIEW — sparse polyline with
-    // vertices that drift 10-20m from actual road centerlines at
-    // intersections, putting our turn-pivot dots off the visible roads.
-    // HIGH_QUALITY traces the road tightly.
-    polylineQuality: "HIGH_QUALITY",
-  }
-  if (intermediates.length > 0) body.intermediates = intermediates
+  // Mapbox path is a semicolon-joined `lng,lat` list: origin then each stop.
+  const coords = [`${oLng},${oLat}`, ...stops.map((s) => `${s.lng},${s.lat}`)].join(";")
+  const exclude = mapboxExclude(avoid)
+  const params = new URLSearchParams({
+    alternatives: String(alternatives > 1),
+    geometries: "polyline6",
+    overview: "full",
+    steps: "true",
+    banner_instructions: "true",
+    voice_instructions: "false",
+    access_token: token,
+  })
+  if (exclude) params.set("exclude", exclude)
+  const url = `${MAPBOX_DIRECTIONS_BASE}/${mapboxProfile(mode)}/${coords}?${params.toString()}`
 
   try {
-    // The cloud proxy adds the Google web-service key and the X-Goog-FieldMask
-    // server-side, then returns the Routes API JSON unchanged.
-    const res = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify(body),
-    })
+    const res = await fetch(url, {method: "GET"})
     if (!res.ok) {
-      return {ok: false, error: `Routes API ${res.status}`}
+      return {ok: false, error: `Directions API ${res.status}`}
     }
     const json = (await res.json()) as {
+      code?: string
+      message?: string
       routes?: Array<{
-        polyline?: {encodedPolyline?: string}
-        distanceMeters?: number
-        duration?: string
-        description?: string
+        geometry?: string
+        distance?: number
+        duration?: string | number
+        weight_name?: string
         legs?: Array<{
+          summary?: string
           steps?: Array<{
-            startLocation?: {latLng?: {latitude?: number; longitude?: number}}
-            endLocation?: {latLng?: {latitude?: number; longitude?: number}}
-            distanceMeters?: number
-            navigationInstruction?: {maneuver?: string; instructions?: string}
+            geometry?: string
+            name?: string
+            distance?: number
+            maneuver?: {location?: [number, number]; type?: string; modifier?: string; instruction?: string}
           }>
         }>
       }>
     }
-    // Resolve `road` for every step in each route before returning. The
-    // resolver hits Geocoding API for steps whose instruction had no
-    // road name (slip lanes, "Slight right", "Destination ahead"). All
-    // resolutions per route fire concurrently; alternates resolve in
-    // parallel too. Adds latency proportional to the number of unnamed
-    // steps — typically 1-3 per walking route in dense urban areas.
+    if (json.code && json.code !== "Ok") {
+      return {ok: false, error: json.message ?? `Directions code ${json.code}`}
+    }
+    // Resolve `road` for every step whose Mapbox `name` was blank (slip
+    // lanes, unnamed paths, arrival legs) via reverse-geocode. Per-route
+    // and per-alternate resolution fire concurrently.
     const routes = await Promise.all(
       (json.routes ?? []).slice(0, alternatives).map(async (r) => {
-        const rawSteps = (r.legs ?? []).flatMap((leg) =>
-          (leg.steps ?? []).map((s) => ({
-            lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
-            lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
-            endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
-            endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
-            distanceMeters: s.distanceMeters ?? 0,
-            maneuver: s.navigationInstruction?.maneuver,
-            instruction: s.navigationInstruction?.instructions,
-          })),
-        )
+        const legs = r.legs ?? []
+        const flatSteps = legs.flatMap((leg) => leg.steps ?? [])
+        const rawSteps = flatSteps.map((s, i) => {
+          const here = s.maneuver?.location // [lng, lat]
+          const next = flatSteps[i + 1]?.maneuver?.location
+          const lat = here?.[1] ?? Number.NaN
+          const lng = here?.[0] ?? Number.NaN
+          return {
+            lat,
+            lng,
+            // End of step i == start of step i+1; final step ends at itself.
+            endLat: next?.[1] ?? lat,
+            endLng: next?.[0] ?? lng,
+            distanceMeters: Math.round(s.distance ?? 0),
+            maneuver: mapboxManeuverToKind(s.maneuver?.type, s.maneuver?.modifier),
+            instruction: s.maneuver?.instruction,
+            // Mapbox gives the road name inline as `step.name`; prefer it
+            // over geocoding. Blank names fall through to resolveStepRoads.
+            road: s.name && s.name.trim().length > 0 ? s.name.trim() : undefined,
+          }
+        })
         const steps = await resolveStepRoads(rawSteps, reverseGeocodeRoadViaGeocodingApi)
         return {
-          points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
-          totalDistanceMeters: r.distanceMeters ?? 0,
-          totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
-          summary: r.description,
+          points: decodePolyline(r.geometry ?? "", 6),
+          totalDistanceMeters: Math.round(r.distance ?? 0),
+          totalDurationSeconds: parseDurationSeconds(r.duration ?? 0),
+          summary: legs[0]?.summary,
           steps: steps.length > 0 ? steps : undefined,
         }
       }),
@@ -594,30 +605,90 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
   }
 }
 
-function routesApiTravelMode(mode: string): string {
+/** SDK-agnostic mode → Mapbox Directions profile. two_wheeler → driving. */
+function mapboxProfile(mode: string): string {
   switch (mode) {
     case "walking":
-      return "WALK"
+      return "walking"
     case "cycling":
-      return "BICYCLE"
+      return "cycling"
     case "two_wheeler":
-      return "TWO_WHEELER"
+      return "driving"
     default:
-      return "DRIVE"
+      return "driving-traffic"
+  }
+}
+
+/** Avoid flags → Mapbox `exclude` param. Null when nothing to exclude. */
+function mapboxExclude(avoid: Record<string, unknown>): string | null {
+  const ex: string[] = []
+  if (avoid.tolls === true) ex.push("toll")
+  if (avoid.ferries === true) ex.push("ferry")
+  if (avoid.highways === true) ex.push("motorway")
+  return ex.length > 0 ? ex.join(",") : null
+}
+
+/**
+ * Map Mapbox `maneuver.type` + `modifier` to the SDK's ManeuverKind
+ * vocabulary — the JS-side mirror of NavigationManager.kt's mapManeuver
+ * (issues/mapbox-navigation-migration.md §7). Kept here so the
+ * computeRoute preview path labels turns the same way the live trip does.
+ */
+function mapboxManeuverToKind(type?: string, modifier?: string): string | undefined {
+  switch (type) {
+    case "depart":
+      return "DEPART"
+    case "arrive":
+      return "ARRIVE"
+    case "new name":
+      return "NAME_CHANGE"
+    case "continue":
+    case "merge":
+      return "CONTINUE"
+    case "notification":
+      return "STRAIGHT"
+    default:
+      break
+  }
+  switch (modifier) {
+    case "uturn":
+      return "U_TURN"
+    case "sharp left":
+      return "SHARP_LEFT"
+    case "left":
+      return "TURN_LEFT"
+    case "slight left":
+      return "SLIGHT_LEFT"
+    case "straight":
+      return "STRAIGHT"
+    case "slight right":
+      return "SLIGHT_RIGHT"
+    case "right":
+      return "TURN_RIGHT"
+    case "sharp right":
+      return "SHARP_RIGHT"
+    default:
+      return type ? "STRAIGHT" : undefined
   }
 }
 
 /**
- * Reverse-geocode a coordinate via the MentraOS cloud (which proxies Google's
- * Geocoding REST API with the server-side key) and return the short name of the
- * `route` address component (e.g. "Octavia Blvd"). When no route component is
- * present in any of the returned results — the coordinate is genuinely off-grid
- * (water, park interior) — resolves with `{ok: true, road: null}`. Network
- * failures and missing auth resolve with `{ok: false, error}`.
+ * @deprecated Superseded by the v2 cloud maps service
+ * (cloud.runtime.maps.reverseGeocode). This direct-to-Mapbox call from the
+ * device is no longer on the miniapp path; the token now lives server-side.
+ * Retained for reference only — do not add new callers.
  *
- * The cloud applies `result_type=route` and returns the Geocoding JSON
- * unchanged; we rely on Google to default-order results from most-specific to
- * least, then take the first `route` we encounter.
+ * Reverse-geocode a coordinate via the Mapbox Geocoding v6 API directly and
+ * return the road/street name (e.g. "Octavia Blvd"). When no street is
+ * present — the coordinate is genuinely off-grid (water, park interior) —
+ * resolves with `{ok: true, road: null}`. Network failures and missing
+ * token resolve with `{ok: false, error}`.
+ *
+ * Mapbox v6 returns a GeoJSON FeatureCollection; the street name lives at
+ * `features[0].properties.context.street.name`. We also accept a feature
+ * whose own `feature_type` is `street` (its `name` is the road). We prefer
+ * the most-specific feature (the first), matching how the Google-era code
+ * took the first `route` component.
  */
 async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: number}): Promise<{
   ok: boolean
@@ -627,33 +698,36 @@ async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: numbe
   if (!Number.isFinite(coord.lat) || !Number.isFinite(coord.lng)) {
     return {ok: false, error: "reverseGeocode: invalid coord"}
   }
-  const req = navCloudRequest(NAV_REVERSE_GEOCODE_ENDPOINT)
-  if (!req) return {ok: false, error: "reverseGeocode: not authenticated"}
+  const token = mapboxToken()
+  if (!token) return {ok: false, error: "reverseGeocode: EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN not set"}
+  const params = new URLSearchParams({
+    longitude: String(coord.lng),
+    latitude: String(coord.lat),
+    // Bias toward address/street features so the street context is present.
+    types: "address,street",
+    limit: "1",
+    access_token: token,
+  })
   try {
-    const res = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify({lat: coord.lat, lng: coord.lng}),
-    })
+    const res = await fetch(`${MAPBOX_GEOCODE_REVERSE}?${params.toString()}`, {method: "GET"})
     if (!res.ok) return {ok: false, error: `Geocoding API ${res.status}`}
     const json = (await res.json()) as {
-      status?: string
-      results?: Array<{
-        address_components?: Array<{short_name?: string; long_name?: string; types?: string[]}>
+      features?: Array<{
+        properties?: {
+          feature_type?: string
+          name?: string
+          context?: {street?: {name?: string}}
+        }
       }>
     }
-    if (json.status && json.status !== "OK" && json.status !== "ZERO_RESULTS") {
-      return {ok: false, error: `Geocoding API status ${json.status}`}
-    }
-    // First "route" component in the first result is the road name we want.
-    // Prefer short_name ("Octavia Blvd" over "Octavia Boulevard").
-    for (const result of json.results ?? []) {
-      for (const comp of result.address_components ?? []) {
-        if ((comp.types ?? []).includes("route")) {
-          const name = (comp.short_name ?? comp.long_name ?? "").trim()
-          if (name) return {ok: true, road: name}
-        }
-      }
+    for (const feature of json.features ?? []) {
+      const props = feature.properties
+      // A street-type feature's own name is the road; otherwise read the
+      // street from context.
+      const fromStreetType =
+        props?.feature_type === "street" ? props?.name : undefined
+      const name = (fromStreetType ?? props?.context?.street?.name ?? "").trim()
+      if (name) return {ok: true, road: name}
     }
     return {ok: true, road: null}
   } catch (err) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env zx
 
 import { setBuildEnv } from './set-build-env.mjs';
-import { withRetry, isSentryTransientError, writeSummary } from './release-utils.mjs';
+import { withRetry, isSPMOrSentryTransientError, writeSummary } from './release-utils.mjs';
 import { getBuildNumber } from './build-number.mjs';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -27,7 +27,11 @@ function ipaPrefix(version) {
 // ── Load App Store Connect credentials ────────────────────────────────────────
 
 function loadASCConfig() {
-  const configPath = path.join(os.homedir(), '.mentra', 'credentials', 'appstore-connect.env');
+  // CI injects credentials from secrets into a temp dir and points here via
+  // MENTRA_ASC_CONFIG_PATH; local dev falls back to ~/.mentra/credentials.
+  const configPath =
+    process.env.MENTRA_ASC_CONFIG_PATH ||
+    path.join(os.homedir(), '.mentra', 'credentials', 'appstore-connect.env');
   if (!existsSync(configPath)) {
     return null;
   }
@@ -75,6 +79,18 @@ await $({ stdio: 'inherit' })`bun expo prebuild --platform ios`;
 // Copy .env to ios/.xcode.env.local so build env vars are available
 await $({ stdio: 'inherit' })`cp .env ios/.xcode.env.local`;
 
+// Pin NODE_BINARY to THIS node (the one running release:ios, i.e. the Node 20
+// from setup-node). Xcode's "[CP-User] Generate app.config" build phase sources
+// .xcode.env(.local) and otherwise resolves `command -v node` against Xcode's
+// minimal PATH, which on the self-hosted runners hits the SYSTEM node symlink
+// (/usr/local/bin/node → Node 18). Node 18 lacks util.parseEnv, so @expo/env
+// throws "parseEnv is not a function" and the archive fails with exit 65.
+// .xcode.env.local is sourced after .xcode.env, so this overrides it.
+await import('fs').then(fs =>
+  fs.appendFileSync('ios/.xcode.env.local', `\nexport NODE_BINARY=${process.execPath}\n`),
+);
+console.log(`Pinned NODE_BINARY=${process.execPath} (node ${process.version}) for Xcode build phases`);
+
 // In CI, switch the Mentra app target's Release config to MANUAL signing
 // with the fastlane match-installed AppStore profile. Without this,
 // Expo's prebuild leaves the project in Automatic mode which on a CI
@@ -117,6 +133,50 @@ if (isCIForSigning) {
   console.log('Patched pbxproj: Mentra Release → Manual signing with match profile');
 }
 
+// ── Step 3.5: Resolve Mapbox SPM + make archive retry the build-order race ─────
+//
+// Why this exists: the `Crust` pod (`modules/crust/ios`) does `import
+// MapboxDirections` / `MapboxNavigationCore`, but those are Swift Package
+// products linked to the APP target (see plugins/mapbox-nav-ios.ts), NOT a
+// CocoaPods dependency. Crust only gets COMPILE-TIME visibility via search
+// paths pointing at ${PODS_CONFIGURATION_BUILD_DIR}, where SPM drops the
+// .swiftmodule. For that to resolve, the Mapbox swiftmodules must already exist
+// in the build-products dir *before* Crust compiles.
+//
+// In an incremental `bun ios` build they're already on disk, so it works. But a
+// clean archive builds targets in parallel against a fresh ArchiveIntermediates
+// dir, and Crust can get scheduled BEFORE SPM emits MapboxDirections.swiftmodule
+// → `error: no such module 'MapboxDirections'` → ARCHIVE FAILED. The crust-link
+// plugin only *claims* to guarantee order; it actually just scrubs link-deps.
+//
+// Fix (two parts):
+//   1. Resolve SPM packages up front so the package graph is fully checked out
+//      before the archive starts (a partially-resolved graph is one way Crust
+//      races ahead of the Mapbox products).
+//   2. Make the archive itself RETRY on this specific "no such module" error.
+//      The race is non-deterministic, and a failed partial build still emits the
+//      Mapbox .swiftmodule into DerivedData — so the retry almost always finds it
+//      present and succeeds. Previously this error aborted immediately because
+//      the retry predicate only matched Sentry/network errors.
+
+// Per-workspace DerivedData. By DEFAULT xcodebuild uses
+// ~/Library/Developer/Xcode/DerivedData — which is MACHINE-GLOBAL and shared by
+// every runner process on a self-hosted Mac (bigbob runs 3). Concurrent iOS
+// builds then share the same DerivedData + ModuleCache.noindex / SDKStatCaches,
+// which corrupts/locks the module cache and makes a build hang mid-compile then
+// fail ~30min later with no error (the recurring staging iOS failure). Pinning
+// DerivedData inside the runner workspace makes each build fully isolated. The
+// path is absolute under cwd (mobile/), i.e. under RUNNER_WORKSPACE in CI.
+const derivedDataPath = path.resolve('build/DerivedData');
+
+console.log('\n━━━ Step 3.5: Resolving Mapbox SPM packages ━━━');
+
+await withRetry(
+  'xcodebuild resolve packages',
+  () => $({ stdio: 'inherit' })`xcodebuild -resolvePackageDependencies -workspace ios/Mentra.xcworkspace -scheme Mentra -derivedDataPath ${derivedDataPath}`,
+  { shouldRetry: isSPMOrSentryTransientError },
+);
+
 // ── Step 4: Archive ───────────────────────────────────────────────────────────
 
 console.log('\n━━━ Step 4: Archiving ━━━');
@@ -139,12 +199,12 @@ const archivePath = path.resolve('build/Mentra.xcarchive');
 await withRetry(
   'xcodebuild archive',
   () => {
-    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
+    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
     p.stdout.pipe(process.stdout);
     p.stderr.pipe(process.stderr);
     return p;
   },
-  { shouldRetry: isSentryTransientError }
+  { shouldRetry: isSPMOrSentryTransientError }
 );
 
 if (!existsSync(archivePath)) {
@@ -164,6 +224,10 @@ const exportOptionsPlist = isCIForSigning
   ? path.resolve('ci/ios-export/ExportOptions-Match.plist')
   : path.resolve('ci/ios-export/ExportOptions.plist');
 
+// NOTE: -exportArchive does NOT take -derivedDataPath (xcodebuild errors:
+// "The flag -scheme, -testProductsPath, or -xctestrun is required when
+// specifying -derivedDataPath", exit 64). Export works from the archive itself,
+// so it needs no DerivedData isolation. Keep -derivedDataPath on resolve+archive only.
 await $({ stdio: 'inherit' })`xcodebuild -exportArchive -archivePath ${archivePath} -exportOptionsPlist ${exportOptionsPlist} -exportPath ${exportPath} -allowProvisioningUpdates`;
 
 // Find the exported IPA

@@ -565,6 +565,23 @@ class MentraBluetoothSdk private constructor(
         return result
     }
 
+    /**
+     * Configure camera HAL tuning on Mentra Live glasses.
+     *
+     * The phone sends a {@code camera_tuning_config} BLE message; the ASG client relays it as a
+     * {@code camconfig} broadcast to SystemUI's CTReceiver so the camera HAL picks up the new
+     * parameters without a reboot.
+     *
+     * @param anrOn  {@code true} = ANR enabled, {@code false} = ANR disabled (pixsmart param)
+     * @param gainOn {@code true} = stock gain params, {@code false} = pixsmart gain-off params
+     */
+    fun setCameraTuningConfig(anrOn: Boolean, gainOn: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "camera_tuning",
+            updateStore = { _ -> },
+            send = { requestId -> deviceManager.sendCameraTuningConfig(requestId, anrOn, gainOn) },
+        )
+
     fun setMicState(
         enabled: Boolean,
         useGlassesMic: Boolean = true,
@@ -1102,7 +1119,7 @@ class MentraBluetoothSdk private constructor(
 
     private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {
         val parsed = buildNumber.toIntOrNull()
-        return parsed != null && parsed < 100_000
+        return parsed != null && parsed < 39
     }
 
     internal fun sendShutdown() {

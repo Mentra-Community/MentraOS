@@ -148,7 +148,8 @@ export interface VadData {
 }
 
 export interface TouchData {
-  kind: "click" | "double_click" | "scroll_top" | "scroll_bottom" | string
+  /** The gesture: single_tap, double_tap, triple_tap, long_press, swipe_up, or swipe_down. */
+  kind: "single_tap" | "double_tap" | "triple_tap" | "long_press" | "swipe_up" | "swipe_down" | string
 }
 
 export interface AudioChunkData {

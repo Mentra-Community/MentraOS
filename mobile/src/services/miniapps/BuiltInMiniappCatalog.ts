@@ -10,7 +10,7 @@ import {
   useAppStatusStore,
 } from "@mentra/island"
 
-import {DevToolsIcon} from "@/components/miniapps/DevIcons"
+import {DevIcon} from "@/components/miniapps/DevIcons"
 import {translate} from "@/i18n"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
@@ -18,12 +18,15 @@ import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {
   cameraPackageName,
   captionsPackageName,
+  CHINA_HIDDEN_APPS,
   feedbackPackageName,
-  lmaInstallerPackageName,
+  isChinaBuild,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
 } from "@/constants/miniapps"
+
+const lmaLoaderPackageName = "com.mentra.miniappdev"
 
 /**
  * Registers the Mentra app's built-in/offline miniapps.
@@ -232,11 +235,11 @@ class BuiltInMiniappCatalog {
       useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
     ) {
       apps.push({
-        packageName: lmaInstallerPackageName,
-        name: translate("miniApps:lmaInstaller"),
+        packageName: lmaLoaderPackageName,
+        name: translate("miniApps:lmaLoader"),
         type: "standard",
         offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
+        offlineRoute: "/miniapps/settings/miniapp-dev",
         local: false,
         webviewUrl: "",
         permissions: [],
@@ -246,8 +249,12 @@ class BuiltInMiniappCatalog {
         hidden: false,
         hardwareRequirements: [],
         logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevToolsIcon),
+        iconComponent: createElement(DevIcon),
       })
+    }
+
+    if (isChinaBuild()) {
+      return apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName))
     }
 
     return apps

@@ -474,6 +474,25 @@ export const cloudClientService = {
     },
   },
 
+  maps: {
+    directions(req: Parameters<CloudClient["runtime"]["maps"]["directions"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.directions(req)
+    },
+    reverseGeocode(coord: Parameters<CloudClient["runtime"]["maps"]["reverseGeocode"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.reverseGeocode(coord)
+    },
+    placeAutocomplete(req: Parameters<CloudClient["runtime"]["maps"]["placeAutocomplete"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.placeAutocomplete(req)
+    },
+    placeDetails(req: Parameters<CloudClient["runtime"]["maps"]["placeDetails"]>[0]) {
+      if (!client) throw new Error("cloud client not connected")
+      return client.runtime.maps.placeDetails(req)
+    },
+  },
+
   hasAudioSubscriptions(): boolean {
     return audioSubscriptions.length > 0
   },

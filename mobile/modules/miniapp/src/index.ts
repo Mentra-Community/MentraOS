@@ -102,6 +102,7 @@ export type {
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
+  StopVideoRecordingOptions,
   TakePhotoOptions,
   VideoRecordingStarted,
 } from "./modules/camera"
@@ -109,12 +110,11 @@ export type {DashboardMode} from "./modules/dashboard"
 export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {
-  ManagedStreamResult,
-  StartManagedOptions,
-  StartUnmanagedOptions,
+  RestreamDestination,
+  StartStreamOptions,
   StreamAudioConfig,
-  StreamPublisherStartResult,
   StreamResolvedConfig,
+  StreamResult,
   StreamStatus,
   StreamVideoConfig,
 } from "./modules/stream"
@@ -146,6 +146,8 @@ export type {
   NavManeuver,
   NavOffRoute,
   NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
   NavRerouting,
   NavRoute,
   NavState,

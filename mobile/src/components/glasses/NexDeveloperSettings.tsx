@@ -269,8 +269,8 @@ export default function NexDeveloperSettings() {
   const [commandSender, setCommandSender] = useState<BleCommand | null>(null)
   const [commandReceiver, setCommandReceiver] = useState<BleCommand | null>(null)
 
-  // LC3 Audio Control — persisted feature flag synced to the Bluetooth SDK (off by default).
-  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
+  // LC3 Audio Control — local-only dev flag synced to the Bluetooth SDK (off by default, not saved to cloud).
+  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_lc3_audio_playback.key)
 
   // Chinese captions — persisted feature flag synced to the Bluetooth SDK (off by default).
   // When on, the Nex display skips ASCII-only sanitization so CJK text renders.

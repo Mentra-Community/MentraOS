@@ -310,9 +310,7 @@ export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "
   status: "recording_stopped"
 }
 
-export type VideoRecordingSuccessStatusEvent =
-  | VideoRecordingStartedStatusEvent
-  | VideoRecordingStoppedStatusEvent
+export type VideoRecordingSuccessStatusEvent = VideoRecordingStartedStatusEvent | VideoRecordingStoppedStatusEvent
 
 export type MediaUploadSuccessEvent = {
   type: "media_success"
@@ -398,6 +396,7 @@ export type SettingsAckSetting =
   | "button_video_recording"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_tuning"
 
 export type SettingsAckEvent = {
   type: "settings_ack"
@@ -415,6 +414,10 @@ export type SettingsAckEvent = {
   fps?: number
   enabled?: boolean
   minutes?: number
+  /** ANR enabled flag; present when setting === "camera_tuning" */
+  anr?: boolean
+  /** Stock-gain flag; present when setting === "camera_tuning" */
+  gain?: boolean
   errorCode?: string
   errorMessage?: string
 }
@@ -478,6 +481,7 @@ export const DeviceModels = {
   Mach1: "Mentra Mach1",
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
+  Nimo: "NIMO",
   R1: "Even Realities R1",
 } as const
 
@@ -943,6 +947,20 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   *
+   * The phone sends a {@code camera_tuning_config} BLE command; the glasses relay it as a
+   * {@code camconfig} broadcast to the camera HAL so parameters take effect without a reboot.
+   *
+   * **Scan-mode convention**: call with `(false, false)` when activating scan mode to disable ANR
+   * and pixsmart gain for sharper text/barcode captures. Call with `(true, true)` to restore
+   * defaults when exiting scan mode.
+   *
+   * @param anrOn  `true` = ANR enabled (default), `false` = ANR disabled
+   * @param gainOn `true` = stock gain params (default), `false` = pixsmart gain-off params
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   startVideoRecording(

@@ -85,7 +85,7 @@ export class ManeuverFormatter {
       case "SHARP_RIGHT":
         return "sharp right"
       case "U_TURN":
-        return "make a U-turn"
+        return "turn around"
       case "STRAIGHT":
       case "CONTINUE":
         return "continue straight"

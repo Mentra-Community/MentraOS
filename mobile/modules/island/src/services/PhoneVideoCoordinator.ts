@@ -108,7 +108,11 @@ export class PhoneVideoCoordinator {
     }
   }
 
-  async stopRecording(packageName: string, recordingId?: string): Promise<void> {
+  async stopRecording(
+    packageName: string,
+    recordingId?: string,
+    opts?: {uploadUrl?: string; uploadAuthToken?: string},
+  ): Promise<void> {
     if (!recordingId) {
       throw new VideoError("INVALID_RECORDING_ID", "recordingId is required to stop a recording")
     }
@@ -121,7 +125,9 @@ export class PhoneVideoCoordinator {
     }
 
     try {
-      const status = await BluetoothSdk.stopVideoRecording(recordingId)
+      // When uploadUrl is set the glasses upload the finished clip there (multipart
+      // POST); otherwise the recording stays on the glasses (local save).
+      const status = await BluetoothSdk.stopVideoRecording(recordingId, opts?.uploadUrl, opts?.uploadAuthToken)
       if (status.status !== "recording_stopped") {
         throw new VideoError(status.status || "VIDEO_STOP_FAILED", status.details || "Glasses did not stop recording")
       }
