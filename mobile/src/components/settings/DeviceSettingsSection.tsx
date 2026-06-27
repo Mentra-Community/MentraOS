@@ -115,7 +115,7 @@ export function DeviceSettingsSection() {
       {glassesConnected && <BatteryStatus compact />}
 
       {/* Display position — binocular glasses only */}
-      {defaultWearable && (features?.display?.count ?? 0 > 1) && (
+      {defaultWearable && (features?.display?.count ?? 0) > 1 && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:positionSettings")}
