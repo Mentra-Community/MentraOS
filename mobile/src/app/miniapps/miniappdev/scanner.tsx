@@ -19,7 +19,6 @@ import {
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
-import {DEV_APP_NAME} from "@mentra/island/src/services/AppRegistry"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -117,10 +116,12 @@ export default function MiniappDeveloperScannerScreen() {
       // Persist a home-tile record so the dev miniapp is re-launchable
       // without re-scanning. Dev apps load over HTTP and aren't installed
       // to disk, so the lmas/ scan can't surface them. registerDevApp owns
-      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) and renames
-      // the tile to DEV_APP_NAME — pass the manifest's REAL packageName so
-      // it survives as sourcePackageName (clearDevArtifacts needs it to drop
-      // the dev slot when the released package is installed/uninstalled).
+      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) but keeps the
+      // manifest's real name + icon on the tile (marked dev by DevMiniappBadge).
+      // Pass the manifest's REAL packageName: registerDevApp forces the tile's
+      // packageName to the single dev slot for routing, but preserves the real
+      // one as sourcePackageName — which MantleManager uses as the miniapp-token
+      // audience, so the dev backend's JWKS verify (aud === real package) passes.
       if (manifest) {
         // A fetched manifest means a real dev app loaded — latch the per-account
         // "this user is a developer" signal (idempotent). Gated on the manifest
@@ -130,9 +131,8 @@ export default function MiniappDeveloperScannerScreen() {
 
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
-          packageName: DEV_APP_PACKAGE_NAME,
-          name: DEV_APP_NAME,
-          // name: name ?? packageName,
+          packageName,
+          name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl: devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
