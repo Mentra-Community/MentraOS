@@ -70,6 +70,16 @@ export interface BuildMiniappGlobalsOptions {
    * the top inset so its coords match where it's actually drawn on screen.
    */
   webviewFillsStatusBar?: boolean
+  /**
+   * True when the WebView container renders edge-to-edge under the *navigation
+   * bar* (no bottom safe-area padding applied by the host). In that case we
+   * default the miniapp's body padding to the bottom inset so its document flow
+   * sits above the Android 3-button nav bar out of the box (no-op on slim/
+   * gesture nav, where the inset is ~0). Leave false when the host already pads
+   * the container by the bottom inset (e.g. the cloud webview's Screen
+   * safeAreaEdges), to avoid double-counting it.
+   */
+  webviewFillsNavBar?: boolean
   /** Current host color scheme. Miniapps may follow this to match the phone. */
   colorScheme?: MiniappColorScheme
 }
@@ -124,6 +134,14 @@ export function buildMiniappGlobalsScript(opts: BuildMiniappGlobalsOptions): str
   const cssVarsBlock = Object.entries(cssVars)
     .map(([k, v]) => `${k}: ${v};`)
     .join(" ")
+
+  // Default the miniapp's document flow above the Android nav bar, but only
+  // when the WebView itself fills the area behind it (edge-to-edge SDK host).
+  // No-op on slim/gesture nav (--mentra-safe-bottom ~0). Overridable by the
+  // miniapp via `body { padding: 0 }` or fixed/absolute elements.
+  const bodySafeAreaBlock = opts.webviewFillsNavBar
+    ? "body { box-sizing: border-box; padding-bottom: var(--mentra-safe-bottom); }"
+    : ""
 
   // Console-tap shim: wrap console.log/warn/error/info/debug so each call
   // also forwards a `dev_log` envelope back to the phone via
@@ -233,7 +251,8 @@ export function buildMiniappGlobalsScript(opts: BuildMiniappGlobalsOptions): str
         styleEl.setAttribute("data-mentra-injected", "1");
         styleEl.textContent =
           ":root { ${cssVarsBlock} }" +
-          "html, body { touch-action: manipulation; -ms-content-zooming: none; }";
+          "html, body { touch-action: manipulation; -ms-content-zooming: none; }" +
+          "${bodySafeAreaBlock}";
         (document.head || document.documentElement).appendChild(styleEl);
       } catch (e) { /* ignore */ }
 

@@ -808,6 +808,10 @@ class Nimo: NSObject, SGCManager {
         pendingText = " "
     }
 
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
     func sendTextWall(_ text: String) async {
         // Coalesced: only the most recent pending text survives until the next 100ms drain.
         pendingText = text
@@ -1024,11 +1028,7 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - SGCManager: Camera & Media (no camera)
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?,
-        iso _: Int?
-    ) {
+    func requestPhoto(_: PhotoRequest) {
         Bridge.log("NIMO: requestPhoto - not supported (no camera)")
     }
 
@@ -1042,7 +1042,7 @@ class Nimo: NSObject, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {
         Bridge.log("NIMO: startVideoRecording - not supported")
     }
 
@@ -1062,7 +1062,7 @@ class Nimo: NSObject, SGCManager {
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl _: String?) {}
     func sendOtaQueryStatus() {}
 
     // MARK: - SGCManager: User Context / Gallery / Version
