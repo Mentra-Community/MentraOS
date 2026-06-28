@@ -10,6 +10,7 @@ import {BgTimer} from "../../utils/timers"
 
 import {localStorageService} from "./localStorageService"
 import {validateDownloadedMediaFile} from "./galleryMediaValidation"
+import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 
 export class AsgCameraApiClient {
   private baseUrl: string
@@ -821,15 +822,26 @@ export class AsgCameraApiClient {
           throw new Error("Sync cancelled")
         }
 
+        const mediaKind = file.role === "sidecar" ? "unknown" : isVideo ? "video" : "photo"
         try {
-          const mediaKind = file.role === "sidecar" ? "unknown" : isVideo ? "video" : "photo"
           await validateDownloadedMediaFile({
             path: localFilePath,
             name: file.name,
             expectedSize: file.size,
             mediaKind,
           })
-        } catch (validationErr) {
+        } catch (validationErr: any) {
+          const reason = validationErr?.message || validationErr?.toString?.() || JSON.stringify(validationErr)
+          reportInvalidGalleryMedia({
+            name: file.name,
+            path: localFilePath,
+            mediaKind,
+            stage: "download_capture_validation",
+            reason,
+            expectedSize: file.size,
+            captureId: capture.capture_id,
+            duration: capture.duration,
+          })
           await RNFS.unlink(localFilePath).catch(() => {})
           throw validationErr
         }
@@ -1067,7 +1079,16 @@ export class AsgCameraApiClient {
           expectedSize: sizeToCheck,
           mediaKind: isVideo ? "video" : "photo",
         })
-      } catch (validationErr) {
+      } catch (validationErr: any) {
+        const reason = validationErr?.message || validationErr?.toString?.() || JSON.stringify(validationErr)
+        reportInvalidGalleryMedia({
+          name: filename,
+          path: localFilePath,
+          mediaKind: isVideo ? "video" : "photo",
+          stage: "download_validation",
+          reason,
+          expectedSize: sizeToCheck,
+        })
         await RNFS.unlink(localFilePath).catch(() => {})
         throw validationErr
       }

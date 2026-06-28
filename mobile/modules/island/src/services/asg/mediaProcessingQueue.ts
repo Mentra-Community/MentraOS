@@ -11,6 +11,7 @@ import CrustModule from "@mentra/crust"
 import {asgCameraApi} from "./asgCameraApi"
 import {localStorageService} from "./localStorageService"
 import {INVALID_DOWNLOADED_MEDIA, validateDownloadedMediaFile} from "./galleryMediaValidation"
+import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 import {useGallerySyncStore} from "../../stores/gallerySync"
 import {BgTimer} from "../../utils/timers"
 import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
@@ -235,6 +236,16 @@ class MediaProcessingQueue {
           validationError.message
         : `${INVALID_DOWNLOADED_MEDIA}: ${item.id}`
       console.error(`${TAG} Validation failed for ${item.id}: ${reason}`)
+      reportInvalidGalleryMedia({
+        name: item.id,
+        path: filePathToSave,
+        mediaKind: item.type,
+        stage: "processing_validation",
+        reason,
+        expectedSize: item.totalSize,
+        duration: item.duration,
+        glassesModel: item.glassesModel,
+      })
       const store = useGallerySyncStore.getState()
       store.onFileFailed(item.id, reason)
       await RNFS.unlink(filePathToSave).catch(() => {})
