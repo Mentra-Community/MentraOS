@@ -26,9 +26,15 @@ interface AppIconProps {
   onClick?: () => void
   style?: StyleProp<ViewStyle>
   disableLoader?: boolean
+  /**
+   * Skip the fade-in transition. Use when the caller has already prefetched the
+   * image and wants it to appear instantly (e.g. the all-apps grid reveals every
+   * icon at once after gating on prefetch completion).
+   */
+  instant?: boolean
 }
 
-const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
+const AppIcon = ({app, onClick, style, disableLoader, instant}: AppIconProps) => {
   const {theme} = useAppTheme()
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
@@ -41,7 +47,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
+    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-20"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -69,7 +75,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
               source={imageSource}
               style={{width: "100%", height: "100%", resizeMode: "cover"}}
               contentFit="cover"
-              transition={200}
+              transition={instant ? 0 : 200}
               cachePolicy="memory-disk"
             />
           )}

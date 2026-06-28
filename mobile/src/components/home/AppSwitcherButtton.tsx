@@ -199,10 +199,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
     })
   }
 
-  let paddingTop: number = Platform.OS === "android" ? theme.spacing.s14 : theme.spacing.s16
-  if (Platform.OS === "android" && !androidBlur) {
-    paddingTop = theme.spacing.s10
-  }
+  let paddingTop: number = Platform.OS === "android" ? 0 : theme.spacing.s16
 
   const renderGridButton = () => {
     return (

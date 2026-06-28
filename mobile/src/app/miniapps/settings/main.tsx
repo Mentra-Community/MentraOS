@@ -19,6 +19,7 @@ export default function MainSettingsPage() {
   const {push} = useNavigationStore.getState()
   const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [appearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
@@ -49,7 +50,7 @@ export default function MainSettingsPage() {
           <DeviceSettingsSection />
 
           <Group title={translate("account:appSettings")}>
-            {superMode && (
+            {appearanceMenuEnabled && (
               <RouteButton
                 icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
                 label={translate("settings:appAppearance")}

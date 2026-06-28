@@ -408,6 +408,8 @@ const en = {
     stopTrying: "Stop trying",
     running: "Running",
     appsCount: "{{count}} Apps",
+    appsCount_one: "{{count}} App",
+    appsCount_other: "{{count}} Apps",
   },
   permissions: {
     backgroundLocationPermissionRequiredMessage:

@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useState} from "react"
-import {Platform, TextInput, TouchableOpacity, View} from "react-native"
+import {BackHandler, Platform, TextInput, TouchableOpacity, View} from "react-native"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import BottomSheet, {BottomSheetBackdrop, BottomSheetScrollView} from "@gorhom/bottom-sheet"
@@ -30,6 +30,19 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
       }, 100)
     })
   }, [])
+
+  // Android: the hardware/native back gesture should dismiss the sheet. It's an
+  // overlay (not a route), so navigation never sees it — register a BackHandler
+  // while open and consume the event so it doesn't fall through to navigating
+  // away from home.
+  useEffect(() => {
+    if (Platform.OS !== "android" || !isOpen) return
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      bottomSheetRef.current?.close()
+      return true
+    })
+    return () => sub.remove()
+  }, [isOpen, bottomSheetRef])
 
   return (
     <>
@@ -93,6 +106,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
             <View className="h-2" />
             <AppsGrid
               showPlaceholders={!isOpen}
+              gateOnIconsReady={true}
               showAllApps={true}
               searchQuery={searchQuery}
               onOpenApp={() => {

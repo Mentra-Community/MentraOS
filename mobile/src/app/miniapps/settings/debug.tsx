@@ -41,6 +41,8 @@ export default function DebugSettingsScreen() {
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
+  const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
+  const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
@@ -95,6 +97,20 @@ export default function DebugSettingsScreen() {
               subtitle="Use iOS-style squircle app icons instead of circles"
               value={enableSquircles}
               onValueChange={(value) => setEnableSquircles(value)}
+            />
+
+            <ToggleSetting
+              label="Appearance Menu"
+              subtitle="Show the Appearance settings menu"
+              value={appearanceMenuEnabled}
+              onValueChange={(value) => setAppearanceMenuEnabled(value)}
+            />
+
+            <ToggleSetting
+              label="App Boot Extra Info"
+              subtitle="Show the current boot state under the logo on the loading screen"
+              value={appBootExtraInfo}
+              onValueChange={(value) => setAppBootExtraInfo(value)}
             />
           </Group>
 

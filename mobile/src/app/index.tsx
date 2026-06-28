@@ -57,6 +57,8 @@ export default function InitScreen() {
   const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
+  const [bootPhase, setBootPhase] = useState<string>("Starting up…")
   const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
 
   // Helper Functions
@@ -133,6 +135,7 @@ export default function InitScreen() {
 
   const handleTokenExchange = async (): Promise<void> => {
     console.log("INDEX: handleTokenExchange()")
+    setBootPhase("Exchanging auth token…")
     const token = session?.token
     if (!token) {
       setState("auth")
@@ -152,8 +155,10 @@ export default function InitScreen() {
 
     socketComms.setAuthCreds(coreToken, uid)
     console.log("INDEX: Socket comms auth creds set")
+    setBootPhase("Initializing core…")
     await mantle.init()
 
+    setBootPhase("Navigating…")
     await navigateToDestination()
   }
 
@@ -164,6 +169,7 @@ export default function InitScreen() {
     } else {
       setIsRetrying(true)
     }
+    setBootPhase("Checking for updates…")
 
     const localVer = getLocalVersion()
     console.log("INDEX: Local version:", localVer)
@@ -322,7 +328,7 @@ export default function InitScreen() {
   if (state === "loading") {
     return (
       <Screen preset="fixed">
-        <SplashVideo colorOverride={superMode ? theme.colors.chart_4 : undefined} />
+        <SplashVideo label={appBootExtraInfo ? bootPhase : undefined} />
       </Screen>
     )
   }

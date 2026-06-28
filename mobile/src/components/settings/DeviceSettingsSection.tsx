@@ -17,7 +17,6 @@ import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/pac
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
-import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
@@ -39,10 +38,10 @@ export function useHasDeviceInfo(): boolean {
  * The device/glasses settings, rendered as a single flat card stack under the
  * paired device's name — matching Parth's flattened Settings design. Every row
  * is conditional on the device's capabilities; for a connected Even Realities
- * G1 the visible order is battery → display position → dashboard →
- * auto-brightness → microphone → device info → disconnect → unpair (the design's
- * reference layout), with capability-specific rows (G2 menu, WiFi, OTA, Nex,
- * Mentra Live button, super-mode tools) slotting in where applicable.
+ * G1 the visible order is display position → dashboard → auto-brightness →
+ * microphone → device info → disconnect → unpair (the design's reference
+ * layout), with capability-specific rows (G2 menu, WiFi, OTA, Nex, Mentra Live
+ * button, super-mode tools) slotting in where applicable.
  *
  * Embedded inline on the flattened main settings page. Returns null when no
  * device is paired.
@@ -109,9 +108,6 @@ export function DeviceSettingsSection() {
       {/* Reconnect affordances when paired but not connected */}
       {!glassesConnected && <ConnectDeviceButton />}
       {!glassesConnected && <NotConnectedInfo />}
-
-      {/* Battery (Glasses | Case) */}
-      {glassesConnected && <BatteryStatus compact />}
 
       {/* Display position — binocular glasses only */}
       {defaultWearable && (features?.display?.count ?? 0) > 1 && (
