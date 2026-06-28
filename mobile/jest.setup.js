@@ -436,6 +436,7 @@ jest.mock("@mentra/island", () => {
         setDefault: jest.fn(() => Promise.resolve()),
         onPairFailure: subscribeVia("pair_failure"),
         onGlassesNotReady: subscribeVia("glasses_not_ready"),
+        waitForReady: jest.fn(() => Promise.resolve(false)),
       },
       miniapps: {
         list: jest.fn(() => []),

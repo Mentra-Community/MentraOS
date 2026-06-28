@@ -9,7 +9,112 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
+import {useGlassesStore} from "../stores/glasses"
+import {waitForGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
+import {submitAutomaticReport, type ReportSubmitResult} from "./reports"
+
+export interface PairingReadyWaitOptions {
+  deviceModel?: string
+  deviceName?: string
+  timeoutMs?: number
+  route?: string
+  signal?: AbortSignal
+}
+
+const DEFAULT_PAIRING_BOOT_TIMEOUT_MS = 35_000
+const DEFAULT_PAIRING_ROUTE = "/pairing/loading"
+const LOG_TAG = "PairingTimeoutReport"
+
+function buildSubmitStatus(result: ReportSubmitResult):
+  | {status: "filed"; reportId: string}
+  | {status: "skipped"; reason: string}
+  | {status: "failed"; error: string} {
+  if (result.status === "submitted") {
+    return {status: "filed", reportId: result.reportId}
+  }
+  if (result.status === "skipped") {
+    return {status: "skipped", reason: result.reason}
+  }
+  return {status: "failed", error: result.error}
+}
+
+export async function submitPairingBootTimeoutReport(params: {
+  deviceModel?: string
+  deviceName?: string
+  showGlassesBooting: boolean
+  elapsedMs: number
+  route?: string
+}): Promise<ReturnType<typeof buildSubmitStatus>> {
+  const {deviceModel, deviceName, showGlassesBooting, elapsedMs, route = DEFAULT_PAIRING_ROUTE} = params
+  const result = await submitAutomaticReport({
+    kind: "automatic",
+    trigger: {
+      type: "automatic",
+      source: "pairing_loading",
+      reason: "glasses_connect_timeout",
+    },
+    report: {
+      expectedBehavior: `Glasses should connect successfully within ${Math.round(elapsedMs / 1000)} seconds.`,
+      actualBehavior: JSON.stringify(
+        {
+          deviceModel,
+          deviceName,
+          showGlassesBooting,
+          elapsedMs,
+          route,
+        },
+        null,
+        2,
+      ),
+      systemPriority: "medium",
+    },
+    dedupeKey: `pairing_timeout|${deviceModel || "unknown"}|${deviceName || "unknown"}`,
+  })
+
+  const status = buildSubmitStatus(result)
+  if (status.status === "filed") {
+    console.log(`[${LOG_TAG}] Report filed:`, status.reportId)
+  } else if (status.status === "skipped") {
+    console.log(`[${LOG_TAG}] Skipping duplicate within window:`, deviceModel, deviceName)
+  } else {
+    console.error(`[${LOG_TAG}] submit failed:`, status.error)
+  }
+  return status
+}
+
+async function waitForReadyDuringPairing(options: PairingReadyWaitOptions = {}): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PAIRING_BOOT_TIMEOUT_MS
+  let showGlassesBooting = false
+  const notReadySub = BluetoothSdk.addListener("glasses_not_ready", () => {
+    showGlassesBooting = true
+  })
+
+  try {
+    const ready = await waitForGlassesReady({
+      getConnection: () => useGlassesStore.getState().connection,
+      subscribe: (listener) => useGlassesStore.subscribe((state) => state.connection, listener),
+      timeoutMs,
+      signal: options.signal,
+    })
+
+    if (!ready && !options.signal?.aborted) {
+      void submitPairingBootTimeoutReport({
+        deviceModel: options.deviceModel,
+        deviceName: options.deviceName,
+        showGlassesBooting,
+        elapsedMs: timeoutMs,
+        route: options.route,
+      }).catch((error) => {
+        console.error(`[${LOG_TAG}] Unexpected error:`, error)
+      })
+    }
+
+    return ready
+  } finally {
+    notReadySub.remove()
+  }
+}
 
 export const pairing = {
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
@@ -48,4 +153,6 @@ export const pairing = {
     const sub = BluetoothSdk.addListener("glasses_not_ready", cb)
     return () => sub.remove()
   },
+  /** Wait for paired glasses to finish booting; island files the timeout diagnostic. */
+  waitForReady: waitForReadyDuringPairing,
 }

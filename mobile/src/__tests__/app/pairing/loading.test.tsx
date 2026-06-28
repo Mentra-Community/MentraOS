@@ -4,7 +4,6 @@ import type {ReactNode} from "react"
 import {toolkit} from "@mentra/island"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
-import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
 import {useGlassesStore} from "@/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -27,10 +26,6 @@ jest.mock("@/contexts/NavigationHistoryContext", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
-}))
-
-jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugReport: jest.fn(() => Promise.resolve({status: "filed", reportId: "rep-1"})),
 }))
 
 jest.mock("@/components/ignite", () => {
@@ -144,6 +139,15 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
+    expect(toolkit.pairing.waitForReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+        timeoutMs: 35_000,
+        route: "/pairing/loading",
+        signal: expect.any(AbortSignal),
+      }),
+    )
 
     first.unmount()
     resetBluetoothSdkMock()
@@ -155,16 +159,14 @@ describe("pairing loading screen", () => {
       jest.advanceTimersByTime(35_000)
     })
 
-    await waitFor(() => {
-      expect(submitAutomaticBugReport).toHaveBeenCalledWith(
-        expect.objectContaining({
-          categorization: expect.objectContaining({
-            triggerSource: "pairing_loading",
-            triggerReason: "glasses_connect_timeout",
-          }),
-          dedupeKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
-        }),
-      )
-    })
+    expect(toolkit.pairing.waitForReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+        timeoutMs: 35_000,
+        route: "/pairing/loading",
+        signal: expect.any(AbortSignal),
+      }),
+    )
   })
 })
