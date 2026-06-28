@@ -38,7 +38,7 @@ const LOG_TAG = "LocalMiniappRuntime"
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
-/** Cache subdir holding short-lived, properly-named copies handed to the OS share sheet. */
+/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one unique subdir per share). */
 const SHARE_DIR_NAME = "mentra_blob_share"
 const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
@@ -589,16 +589,15 @@ export class BlobStore {
     // Copy to a temp file that carries the real display name + extension, share
     // that, then clean it up.
     const shareName = shareFileName(meta)
-    let temp: File | null = null
+    // Copy into a per-share unique subdir so two concurrent shares that resolve
+    // to the same display name can't clobber each other's temp file while
+    // Share.open still references it. The file keeps `shareName` as its basename
+    // so the OS share sheet shows the right name + extension.
+    let tempDir: Directory | null = null
     try {
-      const dir = new Directory(Paths.cache, SHARE_DIR_NAME)
-      if (!dir.exists) dir.create({intermediates: true})
-      temp = new File(dir, shareName)
-      try {
-        if (temp.exists) temp.delete()
-      } catch {
-        /* ignore */
-      }
+      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, this.makeId())
+      tempDir.create({intermediates: true})
+      const temp = new File(tempDir, shareName)
       file.copy(temp)
       await Share.open({
         url: temp.uri,
@@ -614,9 +613,9 @@ export class BlobStore {
         this.hooks.sendResult(packageName, requestId, true, {success: false})
       }
     } finally {
-      if (temp) {
+      if (tempDir) {
         try {
-          if (temp.exists) temp.delete()
+          if (tempDir.exists) tempDir.delete()
         } catch {
           /* ignore */
         }

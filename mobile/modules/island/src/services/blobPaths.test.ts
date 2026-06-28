@@ -46,6 +46,17 @@ describe("shareFileName", () => {
   it("leaves the name extension-less only when the mime is unknown", () => {
     expect(shareFileName({name: "blob", fileName: "x", mimeType: "application/x-unknown"})).toBe("blob")
   })
+  it("bounds an over-long name while preserving the extension", () => {
+    const out = shareFileName({name: "a".repeat(500) + ".wav", fileName: "x", mimeType: "audio/wav"})
+    expect(out.length).toBeLessThanOrEqual(120)
+    expect(out.endsWith(".wav")).toBe(true)
+    expect(out.startsWith("a")).toBe(true)
+  })
+  it("bounds a long extension-less name and still appends the mime extension", () => {
+    const out = shareFileName({name: "b".repeat(500), fileName: "x", mimeType: "audio/wav"})
+    expect(out.length).toBeLessThanOrEqual(120)
+    expect(out.endsWith(".wav")).toBe(true)
+  })
 })
 
 describe("extForMime", () => {

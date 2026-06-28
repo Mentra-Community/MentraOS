@@ -24,11 +24,21 @@ export function shareFileName(meta: {name?: string; fileName: string; mimeType: 
   // eslint-disable-next-line no-control-regex
   let safe = raw.replace(/[/\\<>:"|?*\x00-\x1f]/g, "_").trim()
   if (!safe) safe = meta.fileName
+  // Split base + extension: use an extension already on the name, else derive
+  // one from the mimeType.
   const dot = safe.lastIndexOf(".")
   const hasExt = dot > 0 && dot < safe.length - 1
-  if (hasExt) return safe
-  const ext = extForMime(meta.mimeType)
-  return ext ? `${safe}.${ext}` : safe
+  let base = hasExt ? safe.slice(0, dot) : safe
+  const ext = hasExt ? safe.slice(dot + 1) : extForMime(meta.mimeType)
+  const suffix = ext ? `.${ext}` : ""
+  // Bound the total length: common filesystems reject names over ~255 bytes, so
+  // a huge app-provided name would make the share's file copy throw. Truncate
+  // the base while preserving the extension (mirrors sanitizeSegment's ceiling).
+  const MAX_LEN = 120
+  if (base.length + suffix.length > MAX_LEN) {
+    base = base.slice(0, Math.max(1, MAX_LEN - suffix.length))
+  }
+  return base + suffix
 }
 
 /** Best-effort file extension (no dot) for a MIME type. Inverse of inferMime in BlobStore. */
