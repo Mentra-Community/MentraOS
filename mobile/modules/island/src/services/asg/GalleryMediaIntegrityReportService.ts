@@ -1,4 +1,9 @@
-import {submitAutomaticReport, type ReportSubmitResult} from "../../facades/reports"
+import {submitAutomaticReport} from "../../facades/reports"
+import {
+  logAutomaticReportSubmissionStatus,
+  type AutomaticReportSubmissionStatus,
+  toAutomaticReportSubmissionStatus,
+} from "../AutomaticReportResult"
 import type {MediaKind} from "./galleryMediaValidation"
 
 const LOG_TAG = "GalleryMediaIntegrityReport"
@@ -16,26 +21,13 @@ export interface InvalidGalleryMediaReportInput {
   glassesModel?: string
 }
 
-function buildSubmitStatus(result: ReportSubmitResult):
-  | {status: "filed"; reportId: string}
-  | {status: "skipped"; reason: string}
-  | {status: "failed"; error: string} {
-  if (result.status === "submitted") {
-    return {status: "filed", reportId: result.reportId}
-  }
-  if (result.status === "skipped") {
-    return {status: "skipped", reason: result.reason}
-  }
-  return {status: "failed", error: result.error}
-}
-
 export function galleryMediaIntegrityDedupeKey(input: InvalidGalleryMediaReportInput): string {
   return ["gallery_media_integrity", input.mediaKind, input.stage, input.captureId || input.name, input.reason].join("|")
 }
 
 export async function submitInvalidGalleryMediaReport(
   input: InvalidGalleryMediaReportInput,
-): Promise<ReturnType<typeof buildSubmitStatus>> {
+): Promise<AutomaticReportSubmissionStatus> {
   const result = await submitAutomaticReport({
     kind: "automatic",
     trigger: {
@@ -66,14 +58,8 @@ export async function submitInvalidGalleryMediaReport(
     dedupeWindowMs: DEDUPE_WINDOW_MS,
   })
 
-  const status = buildSubmitStatus(result)
-  if (status.status === "filed") {
-    console.log(`[${LOG_TAG}] Report filed:`, status.reportId)
-  } else if (status.status === "skipped") {
-    console.log(`[${LOG_TAG}] Skipping duplicate within window:`, input.name)
-  } else {
-    console.error(`[${LOG_TAG}] submit failed:`, status.error)
-  }
+  const status = toAutomaticReportSubmissionStatus(result)
+  logAutomaticReportSubmissionStatus(LOG_TAG, status, input.name)
   return status
 }
 

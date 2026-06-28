@@ -1,19 +1,7 @@
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
-// Inlined from the host @/utils/e2eMetrics (both are pure) so this store is
-// self-contained inside island. Emits the same `E2E_METRIC` console lines the
-// e2e harness reads; the host util keeps emitting its non-display metrics.
-const E2E_METRICS_ENABLED = process.env.EXPO_PUBLIC_ENABLE_E2E_METRICS === "true"
-
-function logE2EMetric(event: string, payload: Record<string, unknown> = {}): void {
-  if (!E2E_METRICS_ENABLED) return
-  try {
-    console.log(`E2E_METRIC ${JSON.stringify({event, ts_ms: Date.now(), ...payload})}`)
-  } catch (error) {
-    console.warn("E2E_METRIC: failed to serialize payload", error)
-  }
-}
+import {logE2EMetric} from "../utils/e2eMetrics"
 
 function extractDisplayText(displayEvent: any): string[] {
   const layout = displayEvent?.layout

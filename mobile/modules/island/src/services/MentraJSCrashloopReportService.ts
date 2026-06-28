@@ -1,5 +1,10 @@
-import {submitAutomaticReport, type ReportSubmitResult} from "../facades/reports"
+import {submitAutomaticReport} from "../facades/reports"
 import {useAppStatusStore} from "../stores/apps"
+import {
+  logAutomaticReportSubmissionStatus,
+  toAutomaticReportSubmissionStatus,
+  type AutomaticReportSubmissionStatus,
+} from "./AutomaticReportResult"
 import {getMiniappEngine} from "./MiniappEngine"
 import {islandNotifications, type IslandNotification} from "./NotificationsEmitter"
 
@@ -7,24 +12,11 @@ const LOG_TAG = "MentraJSCrashloopReport"
 
 let unsubscribe: (() => void) | null = null
 
-function buildSubmitStatus(result: ReportSubmitResult):
-  | {status: "filed"; reportId: string}
-  | {status: "skipped"; reason: string}
-  | {status: "failed"; error: string} {
-  if (result.status === "submitted") {
-    return {status: "filed", reportId: result.reportId}
-  }
-  if (result.status === "skipped") {
-    return {status: "skipped", reason: result.reason}
-  }
-  return {status: "failed", error: result.error}
-}
-
 export async function submitMentraJSCrashloopReport(params: {
   packageName: string
   reason: string
   lastLogLines?: string[]
-}): Promise<ReturnType<typeof buildSubmitStatus>> {
+}): Promise<AutomaticReportSubmissionStatus> {
   const {packageName, reason, lastLogLines = []} = params
   const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
   const appName = app?.name ?? packageName
@@ -45,14 +37,8 @@ export async function submitMentraJSCrashloopReport(params: {
     dedupeKey: `mentrajs_crashloop:${packageName}`,
   })
 
-  const status = buildSubmitStatus(result)
-  if (status.status === "filed") {
-    console.log(`[${LOG_TAG}] Report filed:`, status.reportId)
-  } else if (status.status === "skipped") {
-    console.log(`[${LOG_TAG}] Skipping duplicate within window:`, packageName)
-  } else {
-    console.error(`[${LOG_TAG}] submit failed:`, status.error)
-  }
+  const status = toAutomaticReportSubmissionStatus(result)
+  logAutomaticReportSubmissionStatus(LOG_TAG, status, packageName)
   return status
 }
 

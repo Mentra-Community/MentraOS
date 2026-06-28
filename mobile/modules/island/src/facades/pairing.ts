@@ -11,8 +11,13 @@ import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {waitForGlassesReady} from "../services/GlassesReadiness"
+import {
+  logAutomaticReportSubmissionStatus,
+  toAutomaticReportSubmissionStatus,
+  type AutomaticReportSubmissionStatus,
+} from "../services/AutomaticReportResult"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
-import {submitAutomaticReport, type ReportSubmitResult} from "./reports"
+import {submitAutomaticReport} from "./reports"
 
 export interface PairingReadyWaitOptions {
   deviceModel?: string
@@ -26,26 +31,13 @@ const DEFAULT_PAIRING_BOOT_TIMEOUT_MS = 35_000
 const DEFAULT_PAIRING_ROUTE = "/pairing/loading"
 const LOG_TAG = "PairingTimeoutReport"
 
-function buildSubmitStatus(result: ReportSubmitResult):
-  | {status: "filed"; reportId: string}
-  | {status: "skipped"; reason: string}
-  | {status: "failed"; error: string} {
-  if (result.status === "submitted") {
-    return {status: "filed", reportId: result.reportId}
-  }
-  if (result.status === "skipped") {
-    return {status: "skipped", reason: result.reason}
-  }
-  return {status: "failed", error: result.error}
-}
-
 export async function submitPairingBootTimeoutReport(params: {
   deviceModel?: string
   deviceName?: string
   showGlassesBooting: boolean
   elapsedMs: number
   route?: string
-}): Promise<ReturnType<typeof buildSubmitStatus>> {
+}): Promise<AutomaticReportSubmissionStatus> {
   const {deviceModel, deviceName, showGlassesBooting, elapsedMs, route = DEFAULT_PAIRING_ROUTE} = params
   const result = await submitAutomaticReport({
     kind: "automatic",
@@ -72,14 +64,8 @@ export async function submitPairingBootTimeoutReport(params: {
     dedupeKey: `pairing_timeout|${deviceModel || "unknown"}|${deviceName || "unknown"}`,
   })
 
-  const status = buildSubmitStatus(result)
-  if (status.status === "filed") {
-    console.log(`[${LOG_TAG}] Report filed:`, status.reportId)
-  } else if (status.status === "skipped") {
-    console.log(`[${LOG_TAG}] Skipping duplicate within window:`, deviceModel, deviceName)
-  } else {
-    console.error(`[${LOG_TAG}] submit failed:`, status.error)
-  }
+  const status = toAutomaticReportSubmissionStatus(result)
+  logAutomaticReportSubmissionStatus(LOG_TAG, status, deviceModel, deviceName)
   return status
 }
 

@@ -1,6 +1,12 @@
 import CrustModule from "@mentra/crust"
 
-import {submitAutomaticReport, type ReportSubmitResult} from "../facades/reports"
+import {submitAutomaticReport} from "../facades/reports"
+import {
+  logAutomaticReportSubmissionStatus,
+  logUnexpectedAutomaticReportError,
+  toAutomaticReportSubmissionStatus,
+  type AutomaticReportSubmissionStatus,
+} from "./AutomaticReportResult"
 
 const LOG_TAG = "CaptionsTesterBugReport"
 const EVENT_NAME = "captions_tester_incident"
@@ -12,25 +18,12 @@ function readString(event: Record<string, unknown>, key: string): string | undef
   return typeof value === "string" && value.trim().length > 0 ? value : undefined
 }
 
-function buildSubmitStatus(result: ReportSubmitResult):
-  | {status: "filed"; reportId: string}
-  | {status: "skipped"; reason: string}
-  | {status: "failed"; error: string} {
-  if (result.status === "submitted") {
-    return {status: "filed", reportId: result.reportId}
-  }
-  if (result.status === "skipped") {
-    return {status: "skipped", reason: result.reason}
-  }
-  return {status: "failed", error: result.error}
-}
-
 function logIncidentResult(params: {
   alertId?: string
   testRunId?: string
   failureCode: string
   scenarioName?: string
-  result: ReturnType<typeof buildSubmitStatus>
+  result: AutomaticReportSubmissionStatus
 }): void {
   const {alertId, testRunId, failureCode, scenarioName, result} = params
   const reportId = result.status === "filed" ? result.reportId : undefined
@@ -92,18 +85,11 @@ export async function submitCaptionsTesterIncidentReport(rawEvent: unknown): Pro
       dedupeKey,
     })
 
-    const result = buildSubmitStatus(submitResult)
-    if (result.status === "filed") {
-      console.log(`[${LOG_TAG}] Report filed:`, result.reportId)
-    } else if (result.status === "skipped") {
-      console.log(`[${LOG_TAG}] Skipping duplicate within window:`, dedupeKey)
-    } else {
-      console.error(`[${LOG_TAG}] submit failed:`, result.error)
-    }
+    const result = toAutomaticReportSubmissionStatus(submitResult)
+    logAutomaticReportSubmissionStatus(LOG_TAG, result, dedupeKey)
     logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
   } catch (error) {
-    const result = {status: "failed" as const, error: error instanceof Error ? error.message : String(error)}
-    console.error(`[${LOG_TAG}] Unexpected error:`, error)
+    const result = logUnexpectedAutomaticReportError(LOG_TAG, error)
     logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
   }
 }

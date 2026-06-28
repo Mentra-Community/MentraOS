@@ -2,49 +2,44 @@
 
 **Status:** Implemented in branch
 
-## What We Are Building
+## Goal
 
-Cloud V2 reports are the single user/system reporting primitive for the
-smartglasses OS. A report can be a manual bug report, an automatic runtime
-report, or feature/general feedback. It is not a direct copy of the Cloud V1
-`feedback + phoneState + logs` shape, and Cloud V1 under `cloud/` remains
-untouched.
+Cloud V2 reports are the single reporting primitive for the smartglasses OS.
+They cover:
 
-The system should let the mobile runtime say:
+- `bug`: user-authored bug reports.
+- `feedback`: user-authored feature/general feedback.
+- `automatic`: runtime-detected failures.
 
-1. Something happened: a manual user report or an automatic OS/runtime trigger.
-2. This is what was observed: expected behavior, actual behavior, and optional
-   severity/priority metadata.
-3. This is the runtime context: phone, glasses, settings, cloud status, running
-   miniapps, and other OS state that the toolkit can collect consistently.
-4. These are the evidence artifacts: phone logs, glasses logs, screenshots, and
-   future state snapshots.
+This is a clean Cloud V2 implementation under `cloud-v2/`; Cloud V1 under
+`cloud/` remains untouched.
 
-Cloud V2 adds a clean reports API under `cloud-v2/`, and mobile code reaches
-it through `cloud-v2/packages/cloud-client/`.
+## Boundary
 
-## Ownership Boundary
+Public OEM/host API:
 
-Inside `@mentra/island` / toolkit:
+- Host UI calls `toolkit.reports.submit({ kind: "bug", ... })`.
+- Host UI calls `toolkit.reports.submit({ kind: "feedback", ... })`.
+- Host UI owns screens, wording, navigation, rating controls, screenshot picker
+  UX, alerts, and host-specific telemetry such as Sentry.
 
-- Collect runtime context from island-owned stores.
-- Read the recent phone log ring buffer.
-- Submit reports through `@mentra/cloud-client`.
-- Add logs and screenshots as typed artifacts.
-- Notify connected glasses with the report id so they can upload logs.
-- Apply local automatic dedupe before creating duplicate cases.
+Island/toolkit internals:
 
-Outside toolkit, in OEM/host UI:
+- Island collects diagnostic context from runtime-owned stores.
+- Island reads recent phone logs and attaches artifacts.
+- Island submits through `@mentra/cloud-client`.
+- Island notifies connected glasses with the report id so glasses can upload
+  logs.
+- Island owns automatic report detection, classification, local dedupe, and
+  submission.
 
-- Present forms, wording, alerts, rating controls, screenshot picker UX, and
-  success/error screens.
-- Decide user-facing categories and trigger labels.
-- Pass only the trigger, user-authored report/feedback content, optional
-  contact email, and selected screenshots into toolkit.
+Public `toolkit.reports` intentionally does **not** accept
+`kind: "automatic"`. Automatic reports remain valid Cloud V2 records, but they
+are created through island-internal services.
 
-## Cloud V2 API
+## Cloud V2 Routes
 
-Primary mobile/toolkit route:
+Primary mobile/toolkit API:
 
 ```text
 POST /api/client/reports
@@ -52,239 +47,85 @@ POST /api/client/reports/:reportId/artifacts
 POST /api/client/reports/:reportId/complete
 ```
 
-Compatibility log-ingress adapter for current glasses upload code:
+Glasses log-ingress adapter:
 
 ```text
 POST /api/incidents/:incidentId/logs
 ```
 
-The adapter is only for glasses log upload after mobile has created a Cloud V2
-report and relayed the id/base URL. It is not the primary mobile reports API,
-and it does not replace or delete Cloud V1 endpoints.
+The `/api/incidents/:incidentId/logs` route is not a mobile report-submission
+alias. It exists so glasses-side log upload code can post logs after mobile has
+created a Cloud V2 report and relayed the id/base URL.
 
-### Submit Bug Report
+## Mobile Flow
 
-```http
-POST /api/client/reports
-Authorization: Bearer <core access token>
-Content-Type: application/json
-```
+Manual bug report:
 
-Request:
+1. Host UI builds a manual trigger and user-authored report details.
+2. Host calls `toolkit.reports.submit({ kind: "bug", trigger, report,
+   screenshots? })`.
+3. Island collects context, creates the report, attaches phone logs and optional
+   screenshots, notifies glasses, and completes collection.
 
-```json
-{
-  "kind": "bug",
-  "trigger": {
-    "type": "manual",
-    "source": "feedback_screen",
-    "reason": "manual_bug_report",
-    "sourceAppletPackageName": "com.example"
-  },
-  "report": {
-    "expectedBehavior": "Video should play.",
-    "actualBehavior": "Video failed.",
-    "userSeverity": 4,
-    "systemPriority": "high",
-    "contactEmail": "user@example.com"
-  },
-  "context": {
-    "app": {},
-    "phone": {},
-    "glasses": {},
-    "runtime": {},
-    "apps": {},
-    "settings": {}
-  },
-  "dedupeKey": "gallery|video|com.example",
-  "dedupeWindowMs": 90000
-}
-```
+Feedback:
 
-Response:
+1. Host UI builds the feedback payload.
+2. Host calls `toolkit.reports.submit({ kind: "feedback", feedback })`.
+3. Island collects context and creates the feedback report.
 
-```json
-{
-  "reportId": "rep_...",
-  "status": "collecting",
-  "created": true
-}
-```
+Automatic report:
 
-`created: false` means server-side dedupe found a recent open report with the
-same user and `dedupeKey`.
+1. Island observes an OS/runtime condition.
+2. The relevant island service calls the internal `submitAutomaticReport(...)`
+   helper.
+3. Island applies local dedupe, collects context/logs, submits to Cloud V2,
+   notifies glasses, and completes collection.
 
-### Add Logs
+## Implemented Automatic Sources
 
-```http
-POST /api/client/reports/:reportId/artifacts
-Authorization: Bearer <core access token>
-Content-Type: application/json
-```
+MentraJS crashloop:
 
-Request:
+- Trigger: `miniapp_crashloop` / `mentrajs_crashloop_disabled`.
+- Detection: `MentraJSRouter` emits an island notification when the crash
+  controller disables a miniapp.
+- Submission: `mobile/modules/island/src/services/MentraJSCrashloopReportService.ts`.
+- Host remains responsible for Sentry and user-facing alert copy in
+  `mobile/src/services/mentraJsBootstrap.ts`.
 
-```json
-{
-  "type": "logs",
-  "source": "phone",
-  "entries": [
-    {
-      "timestamp": 1710000000000,
-      "level": "info",
-      "message": "..."
-    }
-  ]
-}
-```
+Miniapp start failure:
 
-Response:
+- The old Cloud V1/RestComms online-miniapp start diagnostic was removed.
+- Miniapps V2 do not use that start path, so there is no replacement automatic
+  report.
 
-```json
-{
-  "stored": 1
-}
-```
+Pairing boot timeout:
 
-### Add Screenshots
+- Trigger: `pairing_loading` / `glasses_connect_timeout`.
+- Detection/submission:
+  `mobile/modules/island/src/facades/pairing.ts`.
+- Host loading screen keeps UI/navigation and calls `toolkit.pairing.waitForReady(...)`.
 
-```http
-POST /api/client/reports/:reportId/artifacts
-Authorization: Bearer <core access token>
-Content-Type: multipart/form-data
-```
+Gallery media integrity:
 
-Fields:
+- Trigger: `gallery_media_integrity` / `invalid_downloaded_media`.
+- Submission:
+  `mobile/modules/island/src/services/asg/GalleryMediaIntegrityReportService.ts`.
+- Current checks cover download/storage integrity: missing files, zero-byte
+  files, expected-size mismatches, and cheap photo/video container signatures.
+- Host video playback errors are UI-local. A native decoder-level probe
+  (`MediaMetadataRetriever`/`AVAsset` style) is a separate follow-up if we want
+  to prove device-playability before the user opens a video.
 
-- `type`: `screenshot`
-- `source`: `phone`
-- `files`: one or more image files
+Captions tester laptop report:
 
-Response:
-
-```json
-{
-  "stored": 1
-}
-```
-
-### Complete Report Collection
-
-```http
-POST /api/client/reports/:reportId/complete
-Authorization: Bearer <core access token>
-```
-
-Response:
-
-```json
-{
-  "status": "ready"
-}
-```
-
-### Submit Automatic Report
-
-```http
-POST /api/client/reports
-Authorization: Bearer <core access token>
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "kind": "automatic",
-  "trigger": {
-    "type": "automatic",
-    "source": "gallery_video",
-    "reason": "gallery_video_on_error"
-  },
-  "report": {
-    "expectedBehavior": "Video should play.",
-    "actualBehavior": "Video failed.",
-    "systemPriority": "high"
-  },
-  "context": {},
-  "dedupeKey": "gallery|video",
-  "dedupeWindowMs": 90000
-}
-```
-
-Response:
-
-```json
-{
-  "reportId": "rep_...",
-  "status": "collecting",
-  "created": true
-}
-```
-
-### Submit Feedback
-
-Feature requests and general feedback use the same reports collection and route:
-
-```http
-POST /api/client/reports
-Authorization: Bearer <core access token>
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "kind": "feedback",
-  "feedback": {
-    "type": "feature",
-    "message": "..."
-  },
-  "context": {}
-}
-```
-
-Response:
-
-```json
-{
-  "reportId": "rep_...",
-  "status": "ready",
-  "created": true
-}
-```
-
-### Glasses Log Ingress Adapter
-
-```http
-POST /api/incidents/:incidentId/logs
-Authorization: Bearer <core access token>
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "source": "glasses",
-  "logs": [
-    {
-      "timestamp": 1710000000000,
-      "level": "info",
-      "message": "..."
-    }
-  ]
-}
-```
-
-Response:
-
-```json
-{
-  "stored": 1
-}
-```
+- Trigger: Android internal Crust event `captions_tester_incident`.
+- Submission:
+  `mobile/modules/island/src/services/CaptionsTesterReportService.ts`.
+- The service emits the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat marker.
+- Cloud V2 transcript test logging is emitted from island via
+  `mobile/modules/island/src/services/CloudTranscriptE2EMetrics.ts`, and the
+  laptop monitor records the marker in
+  `mobile/e2e-tests/scripts/live_word_monitor.py`.
 
 ## Data Model
 
@@ -303,26 +144,38 @@ Response:
 
 ## Why This Shape
 
-- `trigger` answers why this case exists.
+- `trigger` answers why the case exists.
 - `report` answers what was observed.
 - `context` answers what the smartglasses OS/runtime looked like.
-- `artifacts` make evidence extensible without adding a new route for every
-  future evidence type.
+- `artifacts` keep evidence extensible without adding a route for every future
+  evidence type.
 - `userSeverity` and `systemPriority` avoid mixing subjective user pain with
-  automatic report priority.
-- `created` avoids a vague success boolean and makes dedupe explicit.
-- `kind` avoids splitting feedback and bug reports into separate products when
-  they are one reporting workflow with different payload shapes.
+  runtime priority.
+- `created` makes server dedupe explicit.
+- `kind` keeps bugs, feedback, and automatic diagnostics in one reporting
+  product while preserving different payload shapes.
 
 ## Implementation Anchors
+
+Cloud V2:
 
 - `cloud-v2/packages/core/src/api/client/reports.api.ts`
 - `cloud-v2/packages/core/src/services/report.service.ts`
 - `cloud-v2/packages/core/src/models/report.model.ts`
 - `cloud-v2/packages/cloud-client/src/modules/core/reports.ts`
+
+Island/toolkit:
+
 - `mobile/modules/island/src/facades/reports.ts`
 - `mobile/modules/island/src/utils/diagnosticContext.ts`
+- `mobile/modules/island/src/services/MentraJSCrashloopReportService.ts`
+- `mobile/modules/island/src/facades/pairing.ts`
+- `mobile/modules/island/src/services/asg/GalleryMediaIntegrityReportService.ts`
+- `mobile/modules/island/src/services/CaptionsTesterReportService.ts`
+- `mobile/modules/island/src/services/CloudTranscriptE2EMetrics.ts`
+
+Host UI:
+
 - `mobile/src/services/bugReport/bugReportSubmission.ts`
 - `mobile/src/services/bugReport/bugReportCategorization.ts`
-- `mobile/src/services/bugReport/automaticBugReport.ts`
 - `mobile/src/app/miniapps/settings/feedback.tsx`

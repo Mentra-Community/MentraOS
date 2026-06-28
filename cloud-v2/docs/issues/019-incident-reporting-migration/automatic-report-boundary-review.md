@@ -1,6 +1,6 @@
 # Automatic Report Boundary Review
 
-**Status:** Draft for review
+**Status:** Implemented
 
 ## What We Are Doing
 
@@ -35,8 +35,8 @@ condition. That observation, classification, dedupe, and submission should live
 inside the toolkit/runtime layer, not in OEM UI code calling a generic public
 `kind: "automatic"` report API.
 
-This document reviews the current automatic-report call sites against that
-boundary before we change code.
+This document records the automatic-report call-site review that drove the
+implemented host/toolkit boundary.
 
 The current branch has a single report model in Cloud V2, which is still the
 right backend shape:
@@ -62,7 +62,7 @@ Proposed rule:
 The five current automatic-report paths below are the places we need to review
 before changing the public toolkit surface.
 
-## Current Inventory
+## Original Inventory
 
 | Area | Current location | Trigger | What it observes |
 | --- | --- | --- | --- |
@@ -74,19 +74,19 @@ before changing the public toolkit surface.
 
 ## 1. MentraJS Crashloop
 
-Current behavior:
+Original behavior:
 
 - `bootstrapMentraJS()` calls `ensureMiniappEngine()`.
 - It attaches `router.onCrashloop` and `router.onRestartToast`.
 - On crashloop it snapshots recent miniapp logs, sends a Sentry event, files an
   automatic report, and shows a user alert.
 
-Current ownership:
+Original ownership:
 
 - Island already owns the MentraJS engine, crash controller, JS router, UI
   router, Crust binding, and log ring.
 - The host shim owns Sentry tags/breadcrumbs and alert copy.
-- The automatic report is currently filed from host code through the public
+- The automatic report was filed from host code through the public
   toolkit reporting surface.
 
 Judgment:
@@ -99,7 +99,7 @@ Judgment:
   forcing host code to be the automatic-report caller. A small event/listener
   shape is cleaner than one host-owned `onCrashloop` callback doing everything.
 
-Proposed move:
+Implemented move:
 
 - Add an island-internal automatic report service.
 - Have `MentraJSRouter` or `MiniappEngine` file the automatic report when the
@@ -110,7 +110,7 @@ Proposed move:
 
 ## 2. Miniapp Start Failure
 
-Current behavior:
+Original behavior:
 
 - `submitMiniappStartFailedBugReport()` serialized Axios errors and built a
   `miniapp_start_failed` automatic report payload for the old online miniapp
@@ -121,12 +121,12 @@ Current behavior:
   `restComms.startApp()` fails for online/cloud miniapps:
   - `retryStart()` reports `phase: "retry_start"`.
   - `beforeStart()` reports `phase: "initial_start"`.
-- On `aisraelov/island-namespace-wifi`, a grep currently finds only the helper
+- On `aisraelov/island-namespace-wifi`, a grep found only the helper
   definition and no callers, which matches the removal of the Cloud V1 miniapp
   start path.
 - The problem this helper reported does not exist for miniapps v2.
 
-Current ownership:
+Original ownership:
 
 - The `dev` callers belonged to host `MiniappCatalog`, which owned the legacy
   RestComms/cloud miniapp start glue.
@@ -144,7 +144,7 @@ Judgment:
 - The helper should be deleted rather than moved.
 - We should not preserve this as a public toolkit use case.
 
-Proposed move:
+Implemented move:
 
 - Delete `mobile/src/services/bugReport/miniappStartBugReport.ts`.
 - Do not add a replacement automatic report for miniapps v2 unless a new,
@@ -152,7 +152,7 @@ Proposed move:
 
 ## 3. Pairing Boot Timeout
 
-Current behavior:
+Original behavior:
 
 - The pairing loading screen calls `waitForGlassesReady()` with a 35 second
   timeout.
@@ -160,11 +160,11 @@ Current behavior:
   route, elapsed time, and whether the booting state was shown.
 - The same screen owns navigation to success/failure and troubleshooting UI.
 
-Current ownership:
+Original ownership:
 
 - Island owns the readiness predicate and wait primitive.
 - The host screen owns navigation, UI state, copy, and troubleshooting.
-- The automatic timeout report is currently in host UI code.
+- The automatic timeout report was in host UI code.
 
 Judgment:
 
@@ -175,7 +175,7 @@ Judgment:
 - The host may need to pass UI route/display metadata if island cannot derive
   it, but it should not build or submit the automatic report.
 
-Proposed move:
+Implemented move:
 
 - Move the pairing boot timeout watch into an island pairing coordinator or
   pairing service.
@@ -186,7 +186,7 @@ Proposed move:
 
 ## 4. Gallery Video Integrity Failure
 
-Current behavior:
+Original behavior:
 
 - The host gallery viewer's video component handles `onError`.
 - It updates UI error state, serializes the React Native video error, computes a
@@ -194,17 +194,17 @@ Current behavior:
 - The existing island gallery validators catch pre-playback integrity failures:
   missing files, zero-byte files, expected-size mismatches, and invalid first
   bytes/container signatures.
-- They do not prove that the entire video can be parsed and decoded by the
-  platform player. The current `gallery_video_on_error` report is therefore a
+- They did not prove that the entire video could be parsed and decoded by the
+  platform player. The original `gallery_video_on_error` report was therefore a
   player-observed failure, not a general pre-playback corruption detector.
 
-Current ownership:
+Original ownership:
 
 - Host owns the concrete gallery screen and video player UI.
 - Island already owns much of the gallery sync/storage/media pipeline.
 - Download/storage integrity validation belongs in island and already runs before
   persisted gallery metadata is exposed.
-- Decode/playback failure is currently detected in UI because the
+- Decode/playback failure was detected in UI because the
   `react-native-video` component is host-rendered.
 
 Judgment:
@@ -220,7 +220,7 @@ Judgment:
   a native media-probe capability; the current sync validators cannot answer
   that question.
 
-Proposed move:
+Implemented move:
 
 - Keep only lightweight transfer-safety checks in the blocking sync path:
   existence, non-zero size, expected byte count/checksum when available, and a
@@ -260,7 +260,7 @@ Research note:
 
 ## 5. Captions Tester Laptop Report
 
-Current behavior:
+Original behavior:
 
 - `MantleManager` listens for Crust `captions_tester_incident` events.
 - It extracts failure/test metadata, files an automatic report, and logs a
@@ -281,7 +281,7 @@ Current behavior:
   local miniapps: `SocketComms` drops v1 `data_stream`, and
   `sendLocalTranscription()` is a no-op compatibility stub.
 
-Current ownership:
+Original ownership:
 
 - The laptop e2e monitor owns captions-test failure detection and report-filing
   policy/triggering.
@@ -306,7 +306,7 @@ Judgment:
 - The test harness can keep its own alert bookkeeping by reading the existing
   `CAPTIONS_TESTER_INCIDENT_RESULT` log line emitted after toolkit submission.
 
-Proposed move:
+Implemented move:
 
 - Delete the host `captions_tester_incident` automatic-report listener from
   `MantleManager`.

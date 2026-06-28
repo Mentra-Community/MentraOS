@@ -1,15 +1,9 @@
 import type {TranscriptionData} from "@mentra/cloud-runtime/protocol"
 
-const E2E_METRIC_PREFIX = "E2E_METRIC"
-
-function e2eMetricsEnabled(): boolean {
-  return process.env.EXPO_PUBLIC_ENABLE_E2E_METRICS === "true"
-}
+import {buildE2EMetric, logE2EMetricPayload} from "../utils/e2eMetrics"
 
 export function buildCloudV2TranscriptMetric(data: TranscriptionData): Record<string, unknown> {
-  return {
-    event: "cloud_v2_transcript",
-    ts_ms: Date.now(),
+  return buildE2EMetric("cloud_v2_transcript", {
     text: data.text,
     state: data.isFinal ? "final" : "interim",
     is_final: data.isFinal,
@@ -25,14 +19,9 @@ export function buildCloudV2TranscriptMetric(data: TranscriptionData): Record<st
     timestamp_ms: data.timestamp,
     token_count: data.tokens.length,
     subscription: data.subscription,
-  }
+  })
 }
 
 export function logCloudV2TranscriptMetric(data: TranscriptionData): void {
-  if (!e2eMetricsEnabled()) return
-  try {
-    console.log(`${E2E_METRIC_PREFIX} ${JSON.stringify(buildCloudV2TranscriptMetric(data))}`)
-  } catch (error) {
-    console.warn("E2E_METRIC: failed to serialize cloud_v2_transcript", error)
-  }
+  logE2EMetricPayload(buildCloudV2TranscriptMetric(data), "cloud_v2_transcript")
 }
