@@ -52,7 +52,7 @@ export async function submitGalleryVideoPlaybackBugReport(
       },
       expectedBehavior: "Video should play in the glasses gallery.",
       actualBehavior,
-      severityRating: 5,
+      systemPriority: "high",
       dedupeKey: key,
       dedupeWindowMs: GALLERY_VIDEO_REPORT_DEDUPE_MS,
       logTag: "GalleryVideoBugReport",

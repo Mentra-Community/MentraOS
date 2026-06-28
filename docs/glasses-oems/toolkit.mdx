@@ -255,19 +255,23 @@ toolkit.settings.keys()                 // all known keys
 
 ## `toolkit.incidents`
 
-Bug-report / feedback submission. The OEM writes its own report screen + gathers
-diagnostics (phone-state, logs, screenshots — native-coupled); island owns the
-submission orchestration.
+Incident-report and feedback submission. The OEM writes its own report screen,
+trigger labels, and screenshot picker UX; island owns runtime context
+collection, recent phone logs, Cloud V2 submission, and glasses notification.
 
 ```ts
-// one-call: create -> upload logs -> notify glasses -> upload screenshots
-const { incidentId } = await toolkit.incidents.file({ feedbackData, phoneState, logs, screenshots })
+const { incidentId } = await toolkit.incidents.file({
+  trigger,
+  report,
+  screenshots,
+})
 
 // or drive the steps yourself:
-const r = await toolkit.incidents.create(feedbackData, phoneState)
-await toolkit.incidents.uploadLogs(incidentId, logs)
-await toolkit.incidents.uploadAttachments(incidentId, images)
-await toolkit.incidents.sendFeedback(feedback)
+const r = await toolkit.incidents.create({ trigger, report, context })
+await toolkit.incidents.addLogs(incidentId, "phone", logs)
+await toolkit.incidents.addScreenshots(incidentId, images)
+await toolkit.incidents.complete(incidentId)
+await toolkit.incidents.sendFeedback({ feedback })
 ```
 
 ## `toolkit.dev`

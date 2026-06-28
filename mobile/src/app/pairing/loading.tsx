@@ -100,7 +100,7 @@ export default function GlassesPairingLoadingScreen() {
         },
         expectedBehavior: "Glasses should connect successfully within 35 seconds.",
         actualBehavior,
-        severityRating: 4,
+        systemPriority: "medium",
         dedupeKey: `pairing_timeout|${deviceModel}|${deviceName || "unknown"}`,
         logTag: "PairingTimeoutBugReport",
       })

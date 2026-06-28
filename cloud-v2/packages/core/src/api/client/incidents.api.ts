@@ -1,12 +1,14 @@
 /**
  * @fileoverview Device-called incident and feedback endpoints.
  *
- * Mounted at:
- *   /api/incidents        — compatibility path used by the current mobile flow
- *   /api/client/feedback  — non-bug feedback path
+ * Primary Cloud V2 incident API:
+ *   /api/client/incidents
  *
- * Cloud V1 keeps its own /api/incidents implementation. This is Cloud V2 core's
- * additive implementation, authenticated with a Core access token.
+ * Glasses log-ingress adapter:
+ *   /api/incidents/:incidentId/logs
+ *
+ * The adapter exists for the current glasses upload command path. Mobile and
+ * toolkit code should use the clean /api/client/incidents artifact API.
  */
 
 import { Hono } from "hono";
@@ -14,46 +16,68 @@ import { z } from "zod";
 import { userAuth } from "../middleware/user-auth.middleware";
 import { InvalidRequest } from "../../types/oauth.types";
 import type { AppContext, AppEnv } from "../../types/hono.types";
+import { sendFeedback } from "../../services/feedback.service";
 import {
-  appendIncidentAttachments,
-  appendIncidentLogs,
+  addLogArtifact,
+  addScreenshotArtifacts,
   createIncident,
-  sendFeedback,
+  markIncidentReady,
   type IncidentAttachmentInput,
 } from "../../services/incident.service";
 
 const incidentsApp = new Hono<AppEnv>();
+export const incidentLogIngressApp = new Hono<AppEnv>();
 export const feedbackApp = new Hono<AppEnv>();
 
 const recordSchema = z.record(z.unknown());
 const nonEmptyStringSchema = z.string().trim().min(1);
-const incidentBugFeedbackSchema = z.object({
-  type: z.literal("bug"),
-  expectedBehavior: nonEmptyStringSchema,
-  actualBehavior: nonEmptyStringSchema,
-  severityRating: z.number().finite(),
-  submissionMode: z.enum(["USER_INITIATED", "AUTOMATIC"]),
-  triggerArea: nonEmptyStringSchema,
-  triggerReason: nonEmptyStringSchema,
-  systemInfo: recordSchema,
-  contactEmail: z.string().email().optional(),
-  glassesInfo: recordSchema.optional(),
-  sourceAppletPackageName: nonEmptyStringSchema.optional(),
-  sourceAppletName: nonEmptyStringSchema.optional(),
-}).passthrough();
-const createIncidentSchema = z.object({
-  feedback: incidentBugFeedbackSchema,
-  phoneState: recordSchema,
-});
+const optionalNonEmptyStringSchema = nonEmptyStringSchema.optional();
 const logEntrySchema = z.object({
   timestamp: z.number(),
   level: z.string(),
   message: z.string(),
   source: z.string().optional(),
 });
-const uploadLogsSchema = z.object({
-  source: z.string().optional(),
-  logs: z.array(logEntrySchema),
+const incidentTriggerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("manual"),
+    surface: nonEmptyStringSchema,
+    reason: nonEmptyStringSchema,
+    sourceAppletPackageName: optionalNonEmptyStringSchema,
+    sourceAppletName: optionalNonEmptyStringSchema,
+  }),
+  z.object({
+    type: z.literal("automatic"),
+    area: nonEmptyStringSchema,
+    reason: nonEmptyStringSchema,
+    sourceAppletPackageName: optionalNonEmptyStringSchema,
+    sourceAppletName: optionalNonEmptyStringSchema,
+  }),
+]);
+const incidentReportSchema = z.object({
+  actualBehavior: nonEmptyStringSchema,
+  expectedBehavior: optionalNonEmptyStringSchema,
+  userSeverity: z.union([
+    z.literal(1),
+    z.literal(2),
+    z.literal(3),
+    z.literal(4),
+    z.literal(5),
+  ]).optional(),
+  systemPriority: z.enum(["low", "medium", "high", "critical"]).optional(),
+  contactEmail: z.string().email().optional(),
+}).passthrough();
+const createIncidentSchema = z.object({
+  trigger: incidentTriggerSchema,
+  report: incidentReportSchema,
+  context: recordSchema,
+  dedupeKey: optionalNonEmptyStringSchema,
+  dedupeWindowMs: z.number().int().positive().optional(),
+});
+const logsArtifactSchema = z.object({
+  type: z.literal("logs"),
+  source: nonEmptyStringSchema,
+  entries: z.array(logEntrySchema),
 });
 const sendFeedbackSchema = z.object({
   feedback: z.union([z.string(), recordSchema]),
@@ -63,8 +87,9 @@ const sendFeedbackSchema = z.object({
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 incidentsApp.post("/", userAuth, postCreateIncident);
-incidentsApp.post("/:incidentId/logs", userAuth, postIncidentLogs);
-incidentsApp.post("/:incidentId/attachments", userAuth, postIncidentAttachments);
+incidentsApp.post("/:incidentId/artifacts", userAuth, postIncidentArtifacts);
+incidentsApp.post("/:incidentId/complete", userAuth, postIncidentComplete);
+incidentLogIngressApp.post("/:incidentId/logs", userAuth, postIncidentLogIngress);
 feedbackApp.post("/", userAuth, postFeedback);
 
 async function postCreateIncident(c: AppContext) {
@@ -77,56 +102,72 @@ async function postCreateIncident(c: AppContext) {
 
   const result = await createIncident({
     mentraUserId: user.mentraUserId,
-    feedback: parsed.data.feedback,
-    phoneState: parsed.data.phoneState,
+    ...parsed.data,
   });
   return c.json(result, 200);
 }
 
-async function postIncidentLogs(c: AppContext) {
+async function postIncidentArtifacts(c: AppContext) {
   const user = requireUser(c);
-  const incidentId = (c.req.param("incidentId") ?? "").trim();
-  if (!incidentId) throw new InvalidRequest("incidentId is required");
+  const incidentId = readIncidentId(c);
+  const contentType = c.req.header("content-type") ?? "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const files = await readAttachmentFiles(c);
+    if (files.length === 0) {
+      throw new InvalidRequest("at least one artifact file is required");
+    }
+    const result = await addScreenshotArtifacts({
+      mentraUserId: user.mentraUserId,
+      incidentId,
+      files,
+    });
+    if (!result) return c.json({ error: "incident not found" }, 404);
+    return c.json(result, 200);
+  }
 
   const body = await readJsonObject(c);
-  const parsed = uploadLogsSchema.safeParse(body);
+  const parsed = logsArtifactSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new InvalidRequest("invalid incident artifact body");
+  }
+  const result = await addLogArtifact({
+    mentraUserId: user.mentraUserId,
+    incidentId,
+    source: parsed.data.source,
+    entries: parsed.data.entries,
+  });
+  if (!result) return c.json({ error: "incident not found" }, 404);
+  return c.json(result, 200);
+}
+
+async function postIncidentComplete(c: AppContext) {
+  const user = requireUser(c);
+  const incidentId = readIncidentId(c);
+  const status = await markIncidentReady({ mentraUserId: user.mentraUserId, incidentId });
+  if (!status) return c.json({ error: "incident not found" }, 404);
+  return c.json({ status }, 200);
+}
+
+async function postIncidentLogIngress(c: AppContext) {
+  const user = requireUser(c);
+  const incidentId = readIncidentId(c);
+  const body = await readJsonObject(c);
+  const parsed = z.object({
+    source: nonEmptyStringSchema.default("glasses"),
+    logs: z.array(logEntrySchema),
+  }).safeParse(body);
   if (!parsed.success) {
     throw new InvalidRequest("invalid incident logs body");
   }
 
-  const logs = parsed.data.logs.map((entry) => ({
-    ...entry,
-    source: entry.source ?? parsed.data.source,
-  }));
-  const found = await appendIncidentLogs({
+  const result = await addLogArtifact({
     mentraUserId: user.mentraUserId,
     incidentId,
-    logs,
+    source: parsed.data.source,
+    entries: parsed.data.logs,
   });
-  if (!found) {
-    return c.json({ error: "incident not found" }, 404);
-  }
-  return c.json({ success: true }, 200);
-}
-
-async function postIncidentAttachments(c: AppContext) {
-  const user = requireUser(c);
-  const incidentId = (c.req.param("incidentId") ?? "").trim();
-  if (!incidentId) throw new InvalidRequest("incidentId is required");
-
-  const files = await readAttachmentFiles(c);
-  if (files.length === 0) {
-    throw new InvalidRequest("at least one attachment file is required");
-  }
-
-  const result = await appendIncidentAttachments({
-    mentraUserId: user.mentraUserId,
-    incidentId,
-    files,
-  });
-  if (!result) {
-    return c.json({ error: "incident not found" }, 404);
-  }
+  if (!result) return c.json({ error: "incident not found" }, 404);
   return c.json(result, 200);
 }
 
@@ -154,6 +195,12 @@ function requireUser(c: AppContext): NonNullable<AppEnv["Variables"]["user"]> {
   return user;
 }
 
+function readIncidentId(c: AppContext): string {
+  const incidentId = (c.req.param("incidentId") ?? "").trim();
+  if (!incidentId) throw new InvalidRequest("incidentId is required");
+  return incidentId;
+}
+
 async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
   try {
     const parsed = await c.req.json();
@@ -177,10 +224,10 @@ async function readAttachmentFiles(c: AppContext): Promise<IncidentAttachmentInp
     if (typeof value === "string") continue;
     const bytes = new Uint8Array(await value.arrayBuffer());
     if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
-      throw new InvalidRequest(`attachment ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+      throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
     }
     files.push({
-      filename: value.name || `attachment-${Date.now()}`,
+      filename: value.name || `artifact-${Date.now()}`,
       contentType: value.type || "application/octet-stream",
       bytes,
     });

@@ -1,6 +1,4 @@
 import {toolkit} from "@mentra/island"
-import {logBuffer} from "@/utils/dev/logging"
-import {buildBugReportFeedbackDataForBug, buildBugReportPhoneState} from "./bugReportIncident"
 import {submitAutomaticBugIncident} from "./automaticBugReport"
 
 jest.mock("@mentra/island", () => ({
@@ -11,26 +9,12 @@ jest.mock("@mentra/island", () => ({
   },
 }))
 
-jest.mock("@/utils/dev/logging", () => ({
-  logBuffer: {
-    getRecentLogs: jest.fn(),
-  },
-}))
-
-jest.mock("./bugReportIncident", () => ({
-  buildBugReportFeedbackDataForBug: jest.fn(),
-  buildBugReportPhoneState: jest.fn(),
-}))
-
 describe("submitAutomaticBugIncident", () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    ;(buildBugReportFeedbackDataForBug as jest.Mock).mockResolvedValue({type: "bug"})
-    ;(buildBugReportPhoneState as jest.Mock).mockReturnValue({phone: "state"})
-    ;(logBuffer.getRecentLogs as jest.Mock).mockReturnValue([{timestamp: 1, level: "info", message: "hello"}])
   })
 
-  it("builds diagnostics and delegates automatic filing to toolkit", async () => {
+  it("builds trigger/report inputs and delegates automatic filing to toolkit", async () => {
     ;(toolkit.incidents.fileAutomatic as jest.Mock).mockResolvedValue({status: "filed", incidentId: "inc_1"})
 
     const result = await submitAutomaticBugIncident({
@@ -43,34 +27,60 @@ describe("submitAutomaticBugIncident", () => {
       },
       expectedBehavior: "Video should play.",
       actualBehavior: "Video failed.",
-      severityRating: 5,
+      systemPriority: "high",
       dedupeKey: "gallery|video",
       dedupeWindowMs: 1234,
       screenshots: [{uri: "file:///tmp/shot.jpg"} as never],
     })
 
-    expect(buildBugReportFeedbackDataForBug).toHaveBeenCalledWith({
-      expectedBehavior: "Video should play.",
-      actualBehavior: "Video failed.",
-      severityRating: 5,
-      contactEmail: undefined,
-      extraFeedbackFields: {
-        submissionMode: "AUTOMATIC",
-        triggerArea: "gallery_video",
-        triggerReason: "gallery_video_on_error",
+    expect(toolkit.incidents.fileAutomatic).toHaveBeenCalledWith({
+      trigger: {
+        type: "automatic",
+        area: "gallery_video",
+        reason: "gallery_video_on_error",
         sourceAppletPackageName: "com.example",
         sourceAppletName: "Example",
       },
-    })
-    expect(toolkit.incidents.fileAutomatic).toHaveBeenCalledWith({
-      feedbackData: {type: "bug"},
-      phoneState: {phone: "state"},
-      logs: [{timestamp: 1, level: "info", message: "hello"}],
+      report: {
+        expectedBehavior: "Video should play.",
+        actualBehavior: "Video failed.",
+        systemPriority: "high",
+      },
       screenshots: [{uri: "file:///tmp/shot.jpg"}],
       dedupeKey: "gallery|video",
       dedupeWindowMs: 1234,
     })
     expect(result).toEqual({status: "filed", incidentId: "inc_1"})
+  })
+
+  it("defaults automatic incidents to medium system priority", async () => {
+    ;(toolkit.incidents.fileAutomatic as jest.Mock).mockResolvedValue({status: "filed", incidentId: "inc_2"})
+
+    await submitAutomaticBugIncident({
+      categorization: {
+        submissionMode: "USER_INITIATED",
+        triggerArea: "pairing",
+        triggerReason: "timeout",
+      },
+      expectedBehavior: "Connect.",
+      actualBehavior: "Timed out.",
+      dedupeKey: "pairing|timeout",
+    })
+
+    expect(toolkit.incidents.fileAutomatic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: {
+          type: "automatic",
+          area: "pairing",
+          reason: "timeout",
+        },
+        report: {
+          expectedBehavior: "Connect.",
+          actualBehavior: "Timed out.",
+          systemPriority: "medium",
+        },
+      }),
+    )
   })
 
   it("passes through toolkit duplicate skips", async () => {
@@ -88,7 +98,7 @@ describe("submitAutomaticBugIncident", () => {
         },
         expectedBehavior: "Connect.",
         actualBehavior: "Timed out.",
-        severityRating: 4,
+        systemPriority: "medium",
         dedupeKey: "pairing|timeout",
       }),
     ).resolves.toEqual({status: "skipped", reason: "duplicate_within_window"})

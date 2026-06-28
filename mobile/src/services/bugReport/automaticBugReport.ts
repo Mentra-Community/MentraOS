@@ -1,15 +1,15 @@
 import type * as ImagePicker from "expo-image-picker"
 
-import {toolkit} from "@mentra/island"
-import {logBuffer} from "@/utils/dev/logging"
-import {buildBugReportFeedbackDataForBug, buildBugReportPhoneState, submitBugIncident} from "./bugReportIncident"
-import {buildIncidentCategorization, type IncidentCategorization} from "./incidentCategorization"
+import {toolkit, type IncidentReport} from "@mentra/island"
+import {buildIncidentReport, submitBugIncident} from "./bugReportIncident"
+import {buildIncidentTrigger, type IncidentCategorization} from "./incidentCategorization"
 
 export interface SubmitCategorizedBugIncidentParams {
   categorization: IncidentCategorization
   expectedBehavior: string
   actualBehavior: string
-  severityRating: number
+  userSeverity?: 1 | 2 | 3 | 4 | 5
+  systemPriority?: IncidentReport["systemPriority"]
   contactEmail?: string
   screenshots?: ImagePicker.ImagePickerAsset[]
 }
@@ -17,15 +17,19 @@ export interface SubmitCategorizedBugIncidentParams {
 export async function submitCategorizedBugIncident(
   params: SubmitCategorizedBugIncidentParams,
 ): Promise<{ok: true; incidentId: string} | {ok: false; error: Error}> {
-  const feedbackData = await buildBugReportFeedbackDataForBug({
-    expectedBehavior: params.expectedBehavior,
-    actualBehavior: params.actualBehavior,
-    severityRating: params.severityRating,
-    contactEmail: params.contactEmail,
-    extraFeedbackFields: buildIncidentCategorization(params.categorization),
-  })
-
-  return submitBugIncident(feedbackData, {screenshots: params.screenshots})
+  return submitBugIncident(
+    {
+      trigger: buildIncidentTrigger(params.categorization),
+      report: buildIncidentReport({
+        expectedBehavior: params.expectedBehavior,
+        actualBehavior: params.actualBehavior,
+        userSeverity: params.userSeverity,
+        systemPriority: params.systemPriority,
+        contactEmail: params.contactEmail,
+      }),
+    },
+    {screenshots: params.screenshots},
+  )
 }
 
 export interface SubmitAutomaticBugIncidentParams extends SubmitCategorizedBugIncidentParams {
@@ -45,17 +49,17 @@ export async function submitAutomaticBugIncident(
   const logTag = params.logTag || "AutomaticBugReport"
 
   try {
-    const feedbackData = await buildBugReportFeedbackDataForBug({
-      expectedBehavior: params.expectedBehavior,
-      actualBehavior: params.actualBehavior,
-      severityRating: params.severityRating,
-      contactEmail: params.contactEmail,
-      extraFeedbackFields: buildIncidentCategorization(params.categorization),
-    })
     const result = await toolkit.incidents.fileAutomatic({
-      feedbackData,
-      phoneState: buildBugReportPhoneState(),
-      logs: logBuffer.getRecentLogs(),
+      trigger: buildIncidentTrigger({
+        ...params.categorization,
+        submissionMode: "AUTOMATIC",
+      }),
+      report: buildIncidentReport({
+        expectedBehavior: params.expectedBehavior,
+        actualBehavior: params.actualBehavior,
+        systemPriority: params.systemPriority ?? "medium",
+        contactEmail: params.contactEmail,
+      }),
       screenshots: params.screenshots,
       dedupeKey: params.dedupeKey,
       dedupeWindowMs: params.dedupeWindowMs,

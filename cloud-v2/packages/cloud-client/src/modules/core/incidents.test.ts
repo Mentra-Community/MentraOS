@@ -1,17 +1,22 @@
 import { describe, expect, test } from "bun:test";
 
 import type { HttpClient } from "../../http";
-import { Incidents, type IncidentBugFeedback } from "./incidents";
+import { Incidents, type CreateIncidentInput } from "./incidents";
 
-const bugFeedback: IncidentBugFeedback = {
-  type: "bug",
-  expectedBehavior: "The app should work.",
-  actualBehavior: "The app crashed.",
-  severityRating: 4,
-  submissionMode: "USER_INITIATED",
-  triggerArea: "feedback_screen",
-  triggerReason: "manual_bug_report",
-  systemInfo: { appVersion: "test" },
+const incidentInput: CreateIncidentInput = {
+  trigger: {
+    type: "manual",
+    surface: "feedback_screen",
+    reason: "manual_bug_report",
+  },
+  report: {
+    expectedBehavior: "The app should work.",
+    actualBehavior: "The app crashed.",
+    userSeverity: 4,
+  },
+  context: {
+    app: { appVersion: "test" },
+  },
 };
 
 function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>): HttpClient {
@@ -20,14 +25,17 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
     head: async () => new Response(null, { status: 200 }),
     post: async <T>(path: string, body?: unknown): Promise<T> => {
       calls.push({ method: "POST", path, body });
-      if (path === "/api/incidents") {
-        return { success: true, incidentId: "inc_test" } as T;
+      if (path === "/api/client/incidents") {
+        return { incidentId: "inc_test", status: "collecting", created: true } as T;
       }
-      return { success: true } as T;
+      if (path.endsWith("/complete")) {
+        return { status: "ready" } as T;
+      }
+      return { stored: 1 } as T;
     },
     postForm: async <T>(path: string, form: FormData): Promise<T> => {
       calls.push({ method: "POST_FORM", path, body: form });
-      return { uploaded: 1, errors: 0 } as T;
+      return { stored: 1 } as T;
     },
     put: async () => undefined as never,
     delete: async () => undefined as never,
@@ -36,67 +44,69 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core incidents client", () => {
-  test("creates incidents on the compatibility mount", async () => {
+  test("creates incidents through the Cloud V2 client route", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const incidents = new Incidents({ http: fakeHttp(calls) });
 
-    const result = await incidents.create(bugFeedback, { app: "state" });
+    const result = await incidents.create(incidentInput);
 
-    expect(result).toEqual({ success: true, incidentId: "inc_test" });
+    expect(result).toEqual({ incidentId: "inc_test", status: "collecting", created: true });
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/api/incidents",
-        body: { feedback: bugFeedback, phoneState: { app: "state" } },
+        path: "/api/client/incidents",
+        body: incidentInput,
       },
     ]);
   });
 
-  test("uploads phone logs against an incident id", async () => {
+  test("adds phone logs as typed artifacts", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const incidents = new Incidents({ http: fakeHttp(calls) });
 
-    await incidents.uploadLogs("inc_123", [{ timestamp: 1, level: "info", message: "hello" }]);
+    await incidents.addLogs("inc_123", "phone", [{ timestamp: 1, level: "info", message: "hello" }]);
 
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/api/incidents/inc_123/logs",
+        path: "/api/client/incidents/inc_123/artifacts",
         body: {
+          type: "logs",
           source: "phone",
-          logs: [{ timestamp: 1, level: "info", message: "hello" }],
+          entries: [{ timestamp: 1, level: "info", message: "hello" }],
         },
       },
     ]);
   });
 
-  test("uploads attachments as multipart form data", async () => {
+  test("adds screenshots as multipart artifacts", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const incidents = new Incidents({ http: fakeHttp(calls) });
 
-    const result = await incidents.uploadAttachments("inc_123", [
+    const result = await incidents.addScreenshots("inc_123", [
       { blob: new Blob(["image"], { type: "image/jpeg" }), fileName: "screen.jpg", mimeType: "image/jpeg" },
     ]);
 
-    expect(result).toEqual({ uploaded: 1, errors: 0 });
+    expect(result).toEqual({ stored: 1 });
     expect(calls).toHaveLength(1);
     expect(calls[0].method).toBe("POST_FORM");
-    expect(calls[0].path).toBe("/api/incidents/inc_123/attachments");
+    expect(calls[0].path).toBe("/api/client/incidents/inc_123/artifacts");
     expect(calls[0].body).toBeInstanceOf(FormData);
   });
 
-  test("sends non-bug feedback through the client feedback route", async () => {
+  test("marks incidents ready after artifact collection", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const incidents = new Incidents({ http: fakeHttp(calls) });
 
-    await incidents.sendFeedback({ type: "feature", message: "more buttons" });
+    await expect(incidents.complete("inc_123")).resolves.toEqual({ status: "ready" });
 
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/api/client/feedback",
-        body: { feedback: { type: "feature", message: "more buttons" } },
+        path: "/api/client/incidents/inc_123/complete",
+        body: {},
       },
     ]);
   });
+
 });

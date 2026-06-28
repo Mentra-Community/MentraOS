@@ -1,4 +1,4 @@
-import {buildIncidentCategorization, normalizeOptionalIncidentString} from "./incidentCategorization"
+import {buildIncidentTrigger, normalizeOptionalIncidentString} from "./incidentCategorization"
 
 describe("normalizeOptionalIncidentString", () => {
   it("trims non-empty strings", () => {
@@ -12,10 +12,10 @@ describe("normalizeOptionalIncidentString", () => {
   })
 })
 
-describe("buildIncidentCategorization", () => {
-  it("builds the canonical categorization payload", () => {
+describe("buildIncidentTrigger", () => {
+  it("builds manual triggers for user-initiated reports", () => {
     expect(
-      buildIncidentCategorization({
+      buildIncidentTrigger({
         submissionMode: "USER_INITIATED",
         triggerArea: "applet_capsule_menu",
         triggerReason: "manual_bug_report",
@@ -23,17 +23,17 @@ describe("buildIncidentCategorization", () => {
         sourceAppletName: "Demo",
       }),
     ).toEqual({
-      submissionMode: "USER_INITIATED",
-      triggerArea: "applet_capsule_menu",
-      triggerReason: "manual_bug_report",
+      type: "manual",
+      surface: "applet_capsule_menu",
+      reason: "manual_bug_report",
       sourceAppletPackageName: "com.mentra.demo",
       sourceAppletName: "Demo",
     })
   })
 
-  it("omits blank optional applet fields", () => {
+  it("builds automatic triggers and omits blank optional applet fields", () => {
     expect(
-      buildIncidentCategorization({
+      buildIncidentTrigger({
         submissionMode: "AUTOMATIC",
         triggerArea: "gallery_video",
         triggerReason: "gallery_video_on_error",
@@ -41,9 +41,9 @@ describe("buildIncidentCategorization", () => {
         sourceAppletName: "",
       }),
     ).toEqual({
-      submissionMode: "AUTOMATIC",
-      triggerArea: "gallery_video",
-      triggerReason: "gallery_video_on_error",
+      type: "automatic",
+      area: "gallery_video",
+      reason: "gallery_video_on_error",
     })
   })
 })

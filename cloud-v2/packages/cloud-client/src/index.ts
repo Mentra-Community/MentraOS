@@ -56,8 +56,16 @@ export type {
 } from "./modules/runtime/runtime";
 
 export type {
+  AddIncidentArtifactsResult,
+  CreateIncidentInput,
+  CreateIncidentResult,
   IncidentAttachmentInput,
-  IncidentBugFeedback,
+  IncidentContext,
   IncidentLogEntry,
-  IncidentSubmissionMode,
+  IncidentReport,
+  IncidentStatus,
+  IncidentSystemPriority,
+  IncidentTrigger,
+  SendFeedbackInput,
+  SendFeedbackResult,
 } from "./modules/core/core";

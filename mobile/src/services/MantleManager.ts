@@ -632,7 +632,7 @@ class MantleManager {
               },
               expectedBehavior,
               actualBehavior,
-              severityRating: 4,
+              systemPriority: "medium",
               dedupeKey,
               logTag: "CaptionsTesterBugReport",
             })

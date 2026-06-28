@@ -1,38 +1,71 @@
 /**
  * @fileoverview Core incident-reporting API.
  *
- * Thin client over Cloud V2 core's device-called incident endpoints. The
- * toolkit owns the filing flow; this module owns auth, paths, JSON/multipart
- * request mechanics, and response typing.
+ * Clean Cloud V2 incident surface: callers create a diagnostic case from a
+ * trigger, a report, and a runtime context snapshot, then attach evidence as
+ * typed artifacts. This deliberately avoids the Cloud V1 "feedback plus logs"
+ * shape.
  */
 
 import type { HttpClient } from "../../http";
 
-const INCIDENTS_PATH = "/api/incidents";
-const FEEDBACK_PATH = "/api/client/feedback";
+const INCIDENTS_PATH = "/api/client/incidents";
+
+export type IncidentStatus = "collecting" | "ready" | "closed";
+export type IncidentSystemPriority = "low" | "medium" | "high" | "critical";
+
+export type IncidentTrigger =
+  | {
+      type: "manual";
+      surface: string;
+      reason: string;
+      sourceAppletPackageName?: string;
+      sourceAppletName?: string;
+    }
+  | {
+      type: "automatic";
+      area: string;
+      reason: string;
+      sourceAppletPackageName?: string;
+      sourceAppletName?: string;
+    };
+
+export interface IncidentReport {
+  actualBehavior: string;
+  expectedBehavior?: string;
+  userSeverity?: 1 | 2 | 3 | 4 | 5;
+  systemPriority?: IncidentSystemPriority;
+  contactEmail?: string;
+}
+
+export interface IncidentContext extends Record<string, unknown> {
+  app?: Record<string, unknown>;
+  phone?: Record<string, unknown>;
+  glasses?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
+  apps?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+}
+
+export interface CreateIncidentInput {
+  trigger: IncidentTrigger;
+  report: IncidentReport;
+  context: IncidentContext;
+  dedupeKey?: string;
+  dedupeWindowMs?: number;
+}
+
+export interface CreateIncidentResult {
+  incidentId: string;
+  status: IncidentStatus;
+  created: boolean;
+}
 
 export interface IncidentLogEntry {
   timestamp: number;
   level: string;
   message: string;
   source?: string;
-}
-
-export type IncidentSubmissionMode = "USER_INITIATED" | "AUTOMATIC";
-
-export interface IncidentBugFeedback extends Record<string, unknown> {
-  type: "bug";
-  expectedBehavior: string;
-  actualBehavior: string;
-  severityRating: number;
-  submissionMode: IncidentSubmissionMode;
-  triggerArea: string;
-  triggerReason: string;
-  systemInfo: Record<string, unknown>;
-  contactEmail?: string;
-  glassesInfo?: Record<string, unknown>;
-  sourceAppletPackageName?: string;
-  sourceAppletName?: string;
 }
 
 export interface IncidentAttachmentInput {
@@ -42,14 +75,8 @@ export interface IncidentAttachmentInput {
   blob?: Blob;
 }
 
-export interface CreateIncidentResult {
-  success: boolean;
-  incidentId: string;
-}
-
-export interface UploadIncidentAttachmentsResult {
-  uploaded: number;
-  errors: number;
+export interface AddIncidentArtifactsResult {
+  stored: number;
 }
 
 export interface IncidentsDeps {
@@ -63,31 +90,32 @@ export class Incidents {
     this.http = deps.http;
   }
 
-  create(
-    feedback: IncidentBugFeedback,
-    phoneState: Record<string, unknown>,
-  ): Promise<CreateIncidentResult> {
-    return this.http.post<CreateIncidentResult>(INCIDENTS_PATH, {
-      feedback,
-      phoneState,
-    });
+  create(input: CreateIncidentInput): Promise<CreateIncidentResult> {
+    return this.http.post<CreateIncidentResult>(INCIDENTS_PATH, input);
   }
 
-  async uploadLogs(incidentId: string, logs: IncidentLogEntry[]): Promise<void> {
-    await this.http.post<{ success: boolean }>(
-      `${INCIDENTS_PATH}/${encodeURIComponent(incidentId)}/logs`,
+  async addLogs(
+    incidentId: string,
+    source: string,
+    entries: IncidentLogEntry[],
+  ): Promise<AddIncidentArtifactsResult> {
+    return await this.http.post<AddIncidentArtifactsResult>(
+      `${INCIDENTS_PATH}/${encodeURIComponent(incidentId)}/artifacts`,
       {
-        source: "phone",
-        logs,
+        type: "logs",
+        source,
+        entries,
       },
     );
   }
 
-  uploadAttachments(
+  addScreenshots(
     incidentId: string,
     images: IncidentAttachmentInput[],
-  ): Promise<UploadIncidentAttachmentsResult> {
+  ): Promise<AddIncidentArtifactsResult> {
     const form = new FormData();
+    form.append("type", "screenshot");
+    form.append("source", "phone");
     for (const image of images) {
       const filename = image.fileName || `screenshot-${Date.now()}.jpg`;
       const mimeType = image.mimeType || "image/jpeg";
@@ -96,7 +124,7 @@ export class Incidents {
         continue;
       }
       if (!image.uri) {
-        throw new Error("incident attachment requires either blob or uri");
+        throw new Error("incident screenshot requires either blob or uri");
       }
       // React Native FormData accepts a {uri,name,type} file object. The DOM
       // typing only knows Blob/File, so narrow this platform object at the
@@ -108,19 +136,16 @@ export class Incidents {
       } as unknown as Blob);
     }
 
-    return this.http.postForm<UploadIncidentAttachmentsResult>(
-      `${INCIDENTS_PATH}/${encodeURIComponent(incidentId)}/attachments`,
+    return this.http.postForm<AddIncidentArtifactsResult>(
+      `${INCIDENTS_PATH}/${encodeURIComponent(incidentId)}/artifacts`,
       form,
     );
   }
 
-  sendFeedback(
-    feedback: string | Record<string, unknown>,
-    phoneState?: Record<string, unknown>,
-  ): Promise<{ success: boolean }> {
-    return this.http.post<{ success: boolean }>(FEEDBACK_PATH, {
-      feedback,
-      ...(phoneState && { phoneState }),
-    });
+  complete(incidentId: string): Promise<{ status: IncidentStatus }> {
+    return this.http.post<{ status: IncidentStatus }>(
+      `${INCIDENTS_PATH}/${encodeURIComponent(incidentId)}/complete`,
+      {},
+    );
   }
 }

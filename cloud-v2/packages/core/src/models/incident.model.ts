@@ -1,35 +1,33 @@
 /**
  * @fileoverview `incidents` collection.
  *
- * Device-filed bug reports and feedback diagnostics. This is durable user data,
- * so it lives in cloud-core (Mongo) rather than runtime. Runtime may contribute
- * logs later, but core owns the incident record and user authorization.
+ * Cloud V2 incidents are diagnostic cases, not feedback rows. The root record
+ * captures why the case exists (`trigger`), what was observed (`report`), the
+ * runtime snapshot (`context`), and typed evidence (`artifacts`).
  */
 
 import { Schema, model, type InferSchemaType } from "mongoose";
 
-const IncidentLogEntrySchema = new Schema(
+const IncidentArtifactSchema = new Schema(
   {
-    timestamp: { type: Number, required: true },
-    level: { type: String, required: true },
-    message: { type: String, required: true },
-    source: { type: String, default: null },
-  },
-  { _id: false },
-);
-
-const IncidentAttachmentSchema = new Schema(
-  {
-    filename: { type: String, required: true },
-    contentType: { type: String, required: true },
-    sizeBytes: { type: Number, required: true },
+    artifactId: { type: String, required: true },
+    type: {
+      type: String,
+      enum: ["logs", "screenshot", "state_snapshot"],
+      required: true,
+    },
+    source: { type: String, required: true },
+    data: { type: Schema.Types.Mixed, default: null },
+    filename: { type: String, default: null },
+    contentType: { type: String, default: null },
+    sizeBytes: { type: Number, default: null },
     /**
      * Temporary inline storage until cloud-core's storage-service is specced.
      * Kept behind the incident service so it can move to object storage without
      * changing the client/API contract.
      */
-    dataBase64: { type: String, required: true },
-    uploadedAt: { type: Date, required: true },
+    dataBase64: { type: String, default: null },
+    createdAt: { type: Date, required: true },
   },
   { _id: false },
 );
@@ -38,14 +36,15 @@ const IncidentSchema = new Schema(
   {
     incidentId: { type: String, required: true, unique: true, index: true },
     mentraUserId: { type: String, required: true, index: true },
-    feedback: { type: Schema.Types.Mixed, required: true },
-    phoneState: { type: Schema.Types.Mixed, default: null },
-    phoneLogs: { type: [IncidentLogEntrySchema], default: [] },
-    attachments: { type: [IncidentAttachmentSchema], default: [] },
+    trigger: { type: Schema.Types.Mixed, required: true },
+    report: { type: Schema.Types.Mixed, required: true },
+    context: { type: Schema.Types.Mixed, required: true },
+    dedupeKey: { type: String, default: null, index: true },
+    artifacts: { type: [IncidentArtifactSchema], default: [] },
     status: {
       type: String,
-      enum: ["open", "processing", "closed"],
-      default: "open",
+      enum: ["collecting", "ready", "closed"],
+      default: "collecting",
       index: true,
     },
   },
@@ -53,7 +52,7 @@ const IncidentSchema = new Schema(
 );
 
 IncidentSchema.index({ mentraUserId: 1, createdAt: -1 });
+IncidentSchema.index({ mentraUserId: 1, dedupeKey: 1, createdAt: -1 });
 
 export type Incident = InferSchemaType<typeof IncidentSchema>;
 export const IncidentModel = model("Incident", IncidentSchema);
-

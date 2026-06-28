@@ -18,17 +18,36 @@
  */
 import type { HttpClient } from "../../http";
 import {
+  Feedback,
+  type SendFeedbackInput,
+  type SendFeedbackResult,
+} from "./feedback";
+import {
   Incidents,
   type IncidentAttachmentInput,
-  type IncidentBugFeedback,
+  type AddIncidentArtifactsResult,
+  type CreateIncidentInput,
+  type CreateIncidentResult,
+  type IncidentContext,
   type IncidentLogEntry,
+  type IncidentReport,
+  type IncidentStatus,
+  type IncidentSystemPriority,
+  type IncidentTrigger,
 } from "./incidents";
 
+export type { SendFeedbackInput, SendFeedbackResult } from "./feedback";
 export type {
+  AddIncidentArtifactsResult,
+  CreateIncidentInput,
+  CreateIncidentResult,
   IncidentAttachmentInput,
-  IncidentBugFeedback,
+  IncidentContext,
   IncidentLogEntry,
-  IncidentSubmissionMode,
+  IncidentReport,
+  IncidentStatus,
+  IncidentSystemPriority,
+  IncidentTrigger,
 } from "./incidents";
 
 /**
@@ -123,24 +142,26 @@ export class Core {
     getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
   };
   readonly incidents: {
-    create(
-      feedback: IncidentBugFeedback,
-      phoneState: Record<string, unknown>,
-    ): Promise<{ success: boolean; incidentId: string }>;
-    uploadLogs(incidentId: string, logs: IncidentLogEntry[]): Promise<void>;
-    uploadAttachments(
+    create(input: CreateIncidentInput): Promise<CreateIncidentResult>;
+    addLogs(
+      incidentId: string,
+      source: string,
+      entries: IncidentLogEntry[],
+    ): Promise<AddIncidentArtifactsResult>;
+    addScreenshots(
       incidentId: string,
       images: IncidentAttachmentInput[],
-    ): Promise<{ uploaded: number; errors: number }>;
-    sendFeedback(
-      feedback: string | Record<string, unknown>,
-      phoneState?: Record<string, unknown>,
-    ): Promise<{ success: boolean }>;
+    ): Promise<AddIncidentArtifactsResult>;
+    complete(incidentId: string): Promise<{ status: IncidentStatus }>;
+  };
+  readonly feedback: {
+    send(input: SendFeedbackInput): Promise<SendFeedbackResult>;
   };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
     const incidents = new Incidents({ http });
+    const feedback = new Feedback({ http });
 
     this.miniapps = {
       /**
@@ -186,9 +207,12 @@ export class Core {
     };
     this.incidents = {
       create: incidents.create.bind(incidents),
-      uploadLogs: incidents.uploadLogs.bind(incidents),
-      uploadAttachments: incidents.uploadAttachments.bind(incidents),
-      sendFeedback: incidents.sendFeedback.bind(incidents),
+      addLogs: incidents.addLogs.bind(incidents),
+      addScreenshots: incidents.addScreenshots.bind(incidents),
+      complete: incidents.complete.bind(incidents),
+    };
+    this.feedback = {
+      send: feedback.send.bind(feedback),
     };
   }
 }

@@ -75,7 +75,7 @@ export function bootstrapMentraJS() {
       },
       expectedBehavior: `${appName} should run without crashing.`,
       actualBehavior: JSON.stringify({reason, lastLogLines}, null, 2),
-      severityRating: 7,
+      systemPriority: "critical",
       dedupeKey: `mentrajs_crashloop:${packageName}`,
       logTag: "MentraJSCrashloop",
     })

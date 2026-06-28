@@ -108,7 +108,14 @@ export {
 // The namespaced OEM-facing toolkit API (the "(A) host API"). Additive — grows one
 // facade at a time alongside the flat exports below. See ./island.
 export {toolkit} from "./island"
-export type {IncidentBugFeedbackData} from "./facades/incidents"
+export type {
+  IncidentAttachmentInput,
+  IncidentContext,
+  IncidentLogEntry,
+  IncidentReport,
+  IncidentStatus,
+  IncidentTrigger,
+} from "./facades/incidents"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
@@ -156,6 +163,7 @@ export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
 // live runtime surfaces happen here; the host's @/services/cloudClient is a thin
 // delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
 export {cloudClientService} from "./services/CloudClientService"
+export {logBuffer, type LogEntry} from "./utils/devLogging"
 // Settings store + RestComms — the mutually-coupled v1-comms pair, moved into
 // island together (settings needs RestComms for cloud-sync; RestComms needs
 // settings for the backend URL). Re-exported via host shims (@/stores/settings,

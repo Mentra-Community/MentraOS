@@ -16,7 +16,7 @@ import {loadDateFnsLocale} from "@/utils/formatDate"
 import {AllEffects} from "@/effects/AllEffects"
 import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
-import {logBuffer} from "@/utils/dev/logging"
+import {logBuffer} from "@mentra/island"
 
 SentrySetup()
 logBuffer.startConsoleInterception()

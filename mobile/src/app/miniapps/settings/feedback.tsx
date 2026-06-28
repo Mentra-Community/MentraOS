@@ -3,25 +3,23 @@ import * as ImagePicker from "expo-image-picker"
 import Constants from "expo-constants"
 import * as Location from "expo-location"
 import NetInfo from "@react-native-community/netinfo"
-import {useState, useEffect, useCallback, useRef} from "react"
+import {useState, useEffect, useRef} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
+import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {Button, Icon, Screen, Text} from "@/components/ignite"
-import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {buildBugReportFeedbackDataForBug, submitBugIncident} from "@/services/bugReport/bugReportIncident"
-import {buildIncidentCategorization} from "@/services/bugReport/incidentCategorization"
-import {toolkit, useAppStatusStore} from "@mentra/island"
-
-import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
+import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
+import {buildIncidentReport, submitBugIncident} from "@/services/bugReport/bugReportIncident"
+import {buildIncidentTrigger} from "@/services/bugReport/incidentCategorization"
+import {useNavigationStore} from "@/stores/navigation"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
-import {useNavigationStore} from "@/stores/navigation"
-import { useRegisterCapsule } from "@/stores/capsule"
+import {useRegisterCapsule} from "@/stores/capsule"
+import {toolkit, useAppStatusStore} from "@mentra/island"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
@@ -55,16 +53,6 @@ export default function FeedbackPage() {
     viewShotRef,
     visibleOnRoutes: ["/miniapps/settings/feedback"],
   })
-
-  const resolveScreenshotPackageName = useCallback(() => {
-    if (apps.some((app) => app.packageName === feedbackPackageName && app.running)) {
-      return feedbackPackageName
-    }
-    if (apps.some((app) => app.packageName === settingsPackageName && app.running)) {
-      return settingsPackageName
-    }
-    return null
-  }, [apps])
 
   // Glasses info for bug reports
   const glassesConnected = useGlassesStore(selectGlassesConnected)
@@ -142,25 +130,25 @@ export default function FeedbackPage() {
 
     // Bug reports use the incidents endpoint, feature requests use feedback endpoint
     if (feedbackType === "bug") {
-      const feedbackData = await buildBugReportFeedbackDataForBug({
+      const trigger = buildIncidentTrigger({
+        submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
+        triggerArea: typeof params.triggerArea === "string" ? params.triggerArea : "feedback_screen",
+        triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
+        sourceAppletPackageName:
+          typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,
+        sourceAppletName: typeof params.sourceAppletName === "string" ? params.sourceAppletName : undefined,
+      })
+      const report = buildIncidentReport({
         expectedBehavior,
         actualBehavior,
-        severityRating: severityRating!,
+        userSeverity: severityRating as 1 | 2 | 3 | 4 | 5,
         contactEmail: isApplePrivateRelay && email.trim() ? email.trim() : undefined,
-        extraFeedbackFields: buildIncidentCategorization({
-          submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
-          triggerArea: typeof params.triggerArea === "string" ? params.triggerArea : "feedback_screen",
-          triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
-          sourceAppletPackageName:
-            typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,
-          sourceAppletName: typeof params.sourceAppletName === "string" ? params.sourceAppletName : undefined,
-        }),
       })
 
-      console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
+      console.log("Incident submitted:", JSON.stringify({trigger, report}, null, 2))
       console.log("Phone backend URL (incident creation):", useSettingsStore.getState().getRestUrl())
 
-      const submitRes = await submitBugIncident(feedbackData, {screenshots})
+      const submitRes = await submitBugIncident({trigger, report}, {screenshots})
 
       if (!submitRes.ok) {
         setIsSubmitting(false)
@@ -231,7 +219,7 @@ export default function FeedbackPage() {
       const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
       const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
 
-      const feedbackData = {
+      const feedbackPayload = {
         type: feedbackType,
         feedbackText: feedbackText,
         experienceRating: experienceRating ?? undefined,
@@ -272,10 +260,10 @@ export default function FeedbackPage() {
         }),
       }
 
-      console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
+      console.log("Feedback submitted:", JSON.stringify(feedbackPayload, null, 2))
       // Feature request - use feedback endpoint
       try {
-        await toolkit.incidents.sendFeedback({feedback: feedbackData})
+        await toolkit.incidents.sendFeedback({feedback: feedbackPayload})
       } catch (error) {
         setIsSubmitting(false)
         console.error("Error sending feedback:", error)
@@ -289,7 +277,6 @@ export default function FeedbackPage() {
         ])
         return
       }
-
     }
 
     setIsSubmitting(false)
@@ -338,7 +325,7 @@ export default function FeedbackPage() {
       return false
     }
     if (feedbackType === "bug") {
-      return !!((expectedBehavior.trim() || actualBehavior.trim()) && severityRating !== null)
+      return !!(actualBehavior.trim() && severityRating !== null)
     } else {
       return !!(feedbackText.trim() && experienceRating !== null)
     }

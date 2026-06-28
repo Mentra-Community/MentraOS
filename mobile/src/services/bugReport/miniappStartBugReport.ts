@@ -71,7 +71,7 @@ export async function submitMiniappStartFailedBugReport(
     },
     expectedBehavior: `${applet.name} should start and become reachable.`,
     actualBehavior,
-    severityRating: 4,
+    systemPriority: "medium",
     dedupeKey,
     logTag: "MiniappStartBugReport",
   })
