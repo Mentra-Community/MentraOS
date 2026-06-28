@@ -3,7 +3,6 @@ import {waitFor} from "@testing-library/react-native"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
@@ -109,10 +108,6 @@ jest.mock("@/services/Livekit", () => ({
 
 jest.mock("@/services/Migrations", () => ({
   migrate: jest.fn(() => Promise.resolve()),
-}))
-
-jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugReport: jest.fn(async () => ({status: "filed", reportId: "report-1"})),
 }))
 
 jest.mock("@/utils/PermissionsUtils", () => ({
@@ -397,39 +392,6 @@ describe("MantleManager", () => {
         notificationKey: "key-1",
         packageName: "com.calendar",
       })
-    })
-  })
-
-  it("files captions tester reports from Crust instead of Bluetooth SDK", async () => {
-    ;(submitAutomaticBugReport as jest.Mock).mockClear()
-
-    emitBluetoothSdkEvent("captions_tester_incident", {
-      failure_code: "stale_transcript",
-      failure_message: "Bluetooth SDK should not own this app-level flow",
-      test_run_id: "run-from-sdk",
-    })
-
-    expect(submitAutomaticBugReport).not.toHaveBeenCalled()
-
-    emitCrustEvent("captions_tester_incident", {
-      failure_code: "stale_transcript",
-      failure_message: "Transcript stayed stale",
-      test_run_id: "run-1",
-      scenario_name: "live_words",
-    })
-
-    await waitFor(() => {
-      expect(submitAutomaticBugReport).toHaveBeenCalledWith(
-        expect.objectContaining({
-          categorization: expect.objectContaining({
-            triggerSource: "captions_tester",
-            triggerReason: "captions_incident_detected",
-          }),
-          actualBehavior: expect.stringContaining("Transcript stayed stale"),
-          dedupeKey: "captions_tester|stale_transcript|live_words|run-1",
-          logTag: "CaptionsTesterBugReport",
-        }),
-      )
     })
   })
 

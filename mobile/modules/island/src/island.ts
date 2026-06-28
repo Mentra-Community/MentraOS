@@ -16,6 +16,7 @@ import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
+import {startCaptionsTesterReportService, stopCaptionsTesterReportService} from "./services/CaptionsTesterReportService"
 import {ensureMiniappEngine, stopMiniappEngine} from "./services/MiniappEngine"
 import localMiniappRuntime from "./services/LocalMiniappRuntime"
 import displayProcessor from "./services/DisplayProcessor"
@@ -72,6 +73,9 @@ export const toolkit = {
     startGlassesSettingsSync()
     // Same for phone-notification config -> the native listener (Android).
     startPhoneNotificationsSync()
+    // Android internal/e2e: laptop captions tester can broadcast a failure intent;
+    // island owns turning that into a Cloud V2 report.
+    startCaptionsTesterReportService()
     // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
     // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor
@@ -92,6 +96,7 @@ export const toolkit = {
     stopOtaService()
     stopAudioCloudUplink()
     stopPhoneNotificationsSync()
+    stopCaptionsTesterReportService()
     await stopMiniappEngine()
     localMiniappRuntime.cleanup()
     displayProcessor.detachFromRuntime()

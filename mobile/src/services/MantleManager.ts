@@ -18,7 +18,6 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {gallerySyncService} from "@mentra/island"
-import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
   configureRuntime,
@@ -591,65 +590,6 @@ class MantleManager {
           if (res.is_error()) {
             console.error("Failed to send phone notification dismissal:", res.error)
           }
-        }),
-      )
-
-      this.subs.push(
-        (CrustModule.addListener as any)("captions_tester_incident", (event: any) => {
-          const failureCode = typeof event.failure_code === "string" ? event.failure_code : "unknown"
-          const failureMessage =
-            typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
-          const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
-          const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
-          const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
-          const dashboardUrl = typeof event.dashboard_url === "string" ? event.dashboard_url : undefined
-          const expectedBehavior = dashboardUrl
-            ? `Captions tester runs should complete without a captions incident. Check live dashboard: ${dashboardUrl}.`
-            : "Captions tester runs should complete without a captions incident."
-
-          const actualBehavior = JSON.stringify(
-            {
-              failureCode,
-              failureMessage,
-              testRunId,
-              scenarioName,
-              event,
-            },
-            null,
-            2,
-          )
-
-          const dedupeKey = ["captions_tester", failureCode, scenarioName || "unknown", testRunId || "unknown"].join(
-            "|",
-          )
-
-          void (async () => {
-            const result = await submitAutomaticBugReport({
-              categorization: {
-                submissionMode: "AUTOMATIC",
-                triggerSource: "captions_tester",
-                triggerReason: "captions_incident_detected",
-              },
-              expectedBehavior,
-              actualBehavior,
-              systemPriority: "medium",
-              dedupeKey,
-              logTag: "CaptionsTesterBugReport",
-            })
-
-            console.log(
-              `CAPTIONS_TESTER_INCIDENT_RESULT ${JSON.stringify({
-                alert_id: alertId,
-                test_run_id: testRunId,
-                failure_code: failureCode,
-                scenario_name: scenarioName,
-                status: result.status,
-                report_id: result.status === "filed" ? result.reportId : undefined,
-                reason: result.status === "skipped" ? result.reason : undefined,
-                error: result.status === "failed" ? result.error : undefined,
-              })}`,
-            )
-          })()
         }),
       )
 
