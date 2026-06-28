@@ -602,23 +602,18 @@ export const cloudClientService = {
   },
 
   core: {
-    incidents: {
-      create(...args: Parameters<CloudCore["incidents"]["create"]>) {
-        return getCoreClient().incidents.create(...args)
+    reports: {
+      submit(...args: Parameters<CloudCore["reports"]["submit"]>) {
+        return getCoreClient().reports.submit(...args)
       },
-      addLogs(...args: Parameters<CloudCore["incidents"]["addLogs"]>) {
-        return getCoreClient().incidents.addLogs(...args)
+      addLogs(...args: Parameters<CloudCore["reports"]["addLogs"]>) {
+        return getCoreClient().reports.addLogs(...args)
       },
-      addScreenshots(...args: Parameters<CloudCore["incidents"]["addScreenshots"]>) {
-        return getCoreClient().incidents.addScreenshots(...args)
+      addScreenshots(...args: Parameters<CloudCore["reports"]["addScreenshots"]>) {
+        return getCoreClient().reports.addScreenshots(...args)
       },
-      complete(...args: Parameters<CloudCore["incidents"]["complete"]>) {
-        return getCoreClient().incidents.complete(...args)
-      },
-    },
-    feedback: {
-      send(...args: Parameters<CloudCore["feedback"]["send"]>) {
-        return getCoreClient().feedback.send(...args)
+      complete(...args: Parameters<CloudCore["reports"]["complete"]>) {
+        return getCoreClient().reports.complete(...args)
       },
     },
   },

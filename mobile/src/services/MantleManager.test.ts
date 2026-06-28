@@ -3,7 +3,7 @@ import {waitFor} from "@testing-library/react-native"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
@@ -112,7 +112,7 @@ jest.mock("@/services/Migrations", () => ({
 }))
 
 jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugIncident: jest.fn(async () => ({status: "filed", incidentId: "incident-1"})),
+  submitAutomaticBugReport: jest.fn(async () => ({status: "filed", reportId: "report-1"})),
 }))
 
 jest.mock("@/utils/PermissionsUtils", () => ({
@@ -400,8 +400,8 @@ describe("MantleManager", () => {
     })
   })
 
-  it("files captions tester incidents from Crust instead of Bluetooth SDK", async () => {
-    ;(submitAutomaticBugIncident as jest.Mock).mockClear()
+  it("files captions tester reports from Crust instead of Bluetooth SDK", async () => {
+    ;(submitAutomaticBugReport as jest.Mock).mockClear()
 
     emitBluetoothSdkEvent("captions_tester_incident", {
       failure_code: "stale_transcript",
@@ -409,7 +409,7 @@ describe("MantleManager", () => {
       test_run_id: "run-from-sdk",
     })
 
-    expect(submitAutomaticBugIncident).not.toHaveBeenCalled()
+    expect(submitAutomaticBugReport).not.toHaveBeenCalled()
 
     emitCrustEvent("captions_tester_incident", {
       failure_code: "stale_transcript",
@@ -419,7 +419,7 @@ describe("MantleManager", () => {
     })
 
     await waitFor(() => {
-      expect(submitAutomaticBugIncident).toHaveBeenCalledWith(
+      expect(submitAutomaticBugReport).toHaveBeenCalledWith(
         expect.objectContaining({
           categorization: expect.objectContaining({
             triggerArea: "captions_tester",

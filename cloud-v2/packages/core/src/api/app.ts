@@ -7,9 +7,8 @@
  *   /api/* + request-context    — per-request reqId + logger
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
- *   /api/client/incidents/*     — device-filed incident reports
+ *   /api/client/reports/*       — device-filed reports
  *   /api/incidents/*            — glasses log-ingress adapter
- *   /api/client/feedback        — device-filed non-bug feedback
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -28,7 +27,7 @@ import { OauthError } from "../types/oauth.types";
 import { requestContext } from "./middleware/context.middleware";
 import adminPreinstalled from "./admin/preinstalled.api";
 import clientAuth from "./client/auth.api";
-import clientIncidents, { feedbackApp, incidentLogIngressApp } from "./client/incidents.api";
+import clientReports, { reportLogIngressApp } from "./client/reports.api";
 import clientMiniapps from "./client/miniapps.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
@@ -77,9 +76,8 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
 
   // Audience mounts. Device-called auth lives under /api/client/*.
   app.route("/api/client/auth", clientAuth);
-  app.route("/api/client/incidents", clientIncidents);
-  app.route("/api/incidents", incidentLogIngressApp);
-  app.route("/api/client/feedback", feedbackApp);
+  app.route("/api/client/reports", clientReports);
+  app.route("/api/incidents", reportLogIngressApp);
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);

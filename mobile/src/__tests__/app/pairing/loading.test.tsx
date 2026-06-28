@@ -4,7 +4,7 @@ import type {ReactNode} from "react"
 import {toolkit} from "@mentra/island"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
 import {useGlassesStore} from "@/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -30,7 +30,7 @@ jest.mock("@/stores/navigation", () => ({
 }))
 
 jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugIncident: jest.fn(() => Promise.resolve({status: "filed", incidentId: "inc-1"})),
+  submitAutomaticBugReport: jest.fn(() => Promise.resolve({status: "filed", reportId: "rep-1"})),
 }))
 
 jest.mock("@/components/ignite", () => {
@@ -131,7 +131,7 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("navigates to success after boot and files a timeout incident after 35 seconds", async () => {
+  it("navigates to success after boot and files a timeout report after 35 seconds", async () => {
     const first = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
@@ -156,7 +156,7 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(submitAutomaticBugIncident).toHaveBeenCalledWith(
+      expect(submitAutomaticBugReport).toHaveBeenCalledWith(
         expect.objectContaining({
           categorization: expect.objectContaining({
             triggerArea: "pairing_loading",

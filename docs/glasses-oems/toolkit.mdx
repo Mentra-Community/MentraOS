@@ -1,6 +1,6 @@
 ---
 title: "Mentra OEM Integration Toolkit"
-description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, pairing, device + user settings, wifi, speech, display, cloud session, miniapps, permissions, notifications, and incidents, over a device-agnostic runtime."
+description: "The toolkit.* API an OEM host calls to drive MentraOS on its glasses — connection, pairing, device + user settings, wifi, speech, display, cloud session, miniapps, permissions, notifications, and reports, over a device-agnostic runtime."
 ---
 
 <Note>
@@ -253,25 +253,33 @@ toolkit.settings.descriptor(key)        // schema (type/default/options)
 toolkit.settings.keys()                 // all known keys
 ```
 
-## `toolkit.incidents`
+## `toolkit.reports`
 
-Incident-report and feedback submission. The OEM writes its own report screen,
-trigger labels, and screenshot picker UX; island owns runtime context
-collection, recent phone logs, Cloud V2 submission, and glasses notification.
+Bug report and feedback submission. The OEM writes its own report screen,
+trigger labels, rating controls, and screenshot picker UX; island owns runtime
+context collection, recent phone logs, Cloud V2 submission, artifact upload,
+dedupe, and glasses notification.
 
 ```ts
-const { incidentId } = await toolkit.incidents.file({
+const bug = await toolkit.reports.submit({
+  kind: "bug",
   trigger,
   report,
   screenshots,
 })
 
-// or drive the steps yourself:
-const r = await toolkit.incidents.create({ trigger, report, context })
-await toolkit.incidents.addLogs(incidentId, "phone", logs)
-await toolkit.incidents.addScreenshots(incidentId, images)
-await toolkit.incidents.complete(incidentId)
-await toolkit.incidents.sendFeedback({ feedback })
+const automatic = await toolkit.reports.submit({
+  kind: "automatic",
+  trigger: {type: "automatic", area, reason},
+  report,
+  screenshots,
+  dedupeKey,
+})
+
+const feedback = await toolkit.reports.submit({
+  kind: "feedback",
+  feedback: {type, message, experienceRating},
+})
 ```
 
 ## `toolkit.dev`

@@ -26,7 +26,7 @@ import {speech} from "./facades/speech"
 import {session} from "./facades/session"
 import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
-import {incidents} from "./facades/incidents"
+import {reports} from "./facades/reports"
 import {ota} from "./facades/ota"
 import {gallery} from "./facades/gallery"
 import {miniapps} from "./facades/miniapps"
@@ -107,8 +107,8 @@ export const toolkit = {
   settings,
   /** Developer/debug surface (backend+cloud URL overrides, reconnect, min version). */
   dev,
-  /** Bug-report / feedback submission over the island-owned cloud-v2 client. */
-  incidents,
+  /** Bug-report, automatic runtime report, and feedback submission. */
+  reports,
   /** Firmware OTA read/observe surface (updateAvailable/status + on* subscriptions). */
   ota,
   /** Gallery sync: status/onStatus · onNotice (host renders) · sync/cancel. */

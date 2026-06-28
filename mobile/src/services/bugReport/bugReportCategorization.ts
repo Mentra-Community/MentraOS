@@ -1,24 +1,24 @@
-import type {IncidentTrigger} from "@mentra/island"
+import type {ReportTrigger} from "@mentra/island"
 
-export type IncidentSubmissionMode = "USER_INITIATED" | "AUTOMATIC"
+export type ReportSubmissionMode = "USER_INITIATED" | "AUTOMATIC"
 
-export interface IncidentCategorization {
-  submissionMode: IncidentSubmissionMode
+export interface BugReportCategorization {
+  submissionMode: ReportSubmissionMode
   triggerArea: string
   triggerReason: string
   sourceAppletPackageName?: string
   sourceAppletName?: string
 }
 
-export function normalizeOptionalIncidentString(value: unknown): string | undefined {
+export function normalizeOptionalReportString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-export function buildIncidentTrigger(categorization: IncidentCategorization): IncidentTrigger {
-  const sourceAppletPackageName = normalizeOptionalIncidentString(categorization.sourceAppletPackageName)
-  const sourceAppletName = normalizeOptionalIncidentString(categorization.sourceAppletName)
+export function buildReportTrigger(categorization: BugReportCategorization): ReportTrigger {
+  const sourceAppletPackageName = normalizeOptionalReportString(categorization.sourceAppletPackageName)
+  const sourceAppletName = normalizeOptionalReportString(categorization.sourceAppletName)
   const source = {
     ...(sourceAppletPackageName && {sourceAppletPackageName}),
     ...(sourceAppletName && {sourceAppletName}),

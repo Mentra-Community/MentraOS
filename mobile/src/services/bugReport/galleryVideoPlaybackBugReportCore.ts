@@ -33,7 +33,7 @@ export function serializeReactNativeVideoOnError(error: unknown): SerializedVide
   }
 }
 
-export function galleryVideoIncidentDedupeKey(photoName: string, parsed: SerializedVideoPlayerError): string {
+export function galleryVideoReportDedupeKey(photoName: string, parsed: SerializedVideoPlayerError): string {
   return `${photoName}|${parsed.domain ?? ""}|${String(parsed.code ?? "")}`
 }
 

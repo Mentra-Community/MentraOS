@@ -18,7 +18,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {gallerySyncService} from "@mentra/island"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
   configureRuntime,
@@ -624,7 +624,7 @@ class MantleManager {
           )
 
           void (async () => {
-            const result = await submitAutomaticBugIncident({
+            const result = await submitAutomaticBugReport({
               categorization: {
                 submissionMode: "AUTOMATIC",
                 triggerArea: "captions_tester",
@@ -644,7 +644,7 @@ class MantleManager {
                 failure_code: failureCode,
                 scenario_name: scenarioName,
                 status: result.status,
-                incident_id: result.status === "filed" ? result.incidentId : undefined,
+                report_id: result.status === "filed" ? result.reportId : undefined,
                 reason: result.status === "skipped" ? result.reason : undefined,
                 error: result.status === "failed" ? result.error : undefined,
               })}`,

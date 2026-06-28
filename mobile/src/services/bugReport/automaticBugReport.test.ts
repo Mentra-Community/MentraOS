@@ -1,23 +1,28 @@
 import {toolkit} from "@mentra/island"
-import {submitAutomaticBugIncident} from "./automaticBugReport"
+import {submitAutomaticBugReport} from "./automaticBugReport"
 
 jest.mock("@mentra/island", () => ({
   toolkit: {
-    incidents: {
-      fileAutomatic: jest.fn(),
+    reports: {
+      submit: jest.fn(),
     },
   },
 }))
 
-describe("submitAutomaticBugIncident", () => {
+describe("submitAutomaticBugReport", () => {
   beforeEach(() => {
     jest.clearAllMocks()
   })
 
   it("builds trigger/report inputs and delegates automatic filing to toolkit", async () => {
-    ;(toolkit.incidents.fileAutomatic as jest.Mock).mockResolvedValue({status: "filed", incidentId: "inc_1"})
+    ;(toolkit.reports.submit as jest.Mock).mockResolvedValue({
+      status: "submitted",
+      reportId: "rep_1",
+      reportStatus: "ready",
+      created: true,
+    })
 
-    const result = await submitAutomaticBugIncident({
+    const result = await submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
         triggerArea: "gallery_video",
@@ -33,7 +38,8 @@ describe("submitAutomaticBugIncident", () => {
       screenshots: [{uri: "file:///tmp/shot.jpg"} as never],
     })
 
-    expect(toolkit.incidents.fileAutomatic).toHaveBeenCalledWith({
+    expect(toolkit.reports.submit).toHaveBeenCalledWith({
+      kind: "automatic",
       trigger: {
         type: "automatic",
         area: "gallery_video",
@@ -50,13 +56,18 @@ describe("submitAutomaticBugIncident", () => {
       dedupeKey: "gallery|video",
       dedupeWindowMs: 1234,
     })
-    expect(result).toEqual({status: "filed", incidentId: "inc_1"})
+    expect(result).toEqual({status: "filed", reportId: "rep_1"})
   })
 
-  it("defaults automatic incidents to medium system priority", async () => {
-    ;(toolkit.incidents.fileAutomatic as jest.Mock).mockResolvedValue({status: "filed", incidentId: "inc_2"})
+  it("defaults automatic reports to medium system priority", async () => {
+    ;(toolkit.reports.submit as jest.Mock).mockResolvedValue({
+      status: "submitted",
+      reportId: "rep_2",
+      reportStatus: "ready",
+      created: true,
+    })
 
-    await submitAutomaticBugIncident({
+    await submitAutomaticBugReport({
       categorization: {
         submissionMode: "USER_INITIATED",
         triggerArea: "pairing",
@@ -67,8 +78,9 @@ describe("submitAutomaticBugIncident", () => {
       dedupeKey: "pairing|timeout",
     })
 
-    expect(toolkit.incidents.fileAutomatic).toHaveBeenCalledWith(
+    expect(toolkit.reports.submit).toHaveBeenCalledWith(
       expect.objectContaining({
+        kind: "automatic",
         trigger: {
           type: "automatic",
           area: "pairing",
@@ -84,13 +96,13 @@ describe("submitAutomaticBugIncident", () => {
   })
 
   it("passes through toolkit duplicate skips", async () => {
-    ;(toolkit.incidents.fileAutomatic as jest.Mock).mockResolvedValue({
+    ;(toolkit.reports.submit as jest.Mock).mockResolvedValue({
       status: "skipped",
       reason: "duplicate_within_window",
     })
 
     await expect(
-      submitAutomaticBugIncident({
+      submitAutomaticBugReport({
         categorization: {
           submissionMode: "AUTOMATIC",
           triggerArea: "pairing",

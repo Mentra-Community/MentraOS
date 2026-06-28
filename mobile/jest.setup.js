@@ -475,15 +475,10 @@ jest.mock("@mentra/island", () => {
         reconnectCloud: jest.fn(),
         getMemoryMB: jest.fn(() => 0),
       },
-      incidents: {
-        file: jest.fn(() => Promise.resolve({incidentId: "test", status: "collecting"})),
-        fileAutomatic: jest.fn(() => Promise.resolve({status: "filed", incidentId: "test"})),
-        notifyGlasses: jest.fn(),
-        create: jest.fn(() => Promise.resolve({incidentId: "test", status: "collecting", created: true})),
-        addLogs: jest.fn(() => Promise.resolve({stored: 1})),
-        addScreenshots: jest.fn(() => Promise.resolve({stored: 1})),
-        complete: jest.fn(() => Promise.resolve({status: "ready"})),
-        sendFeedback: jest.fn(() => Promise.resolve({success: true})),
+      reports: {
+        submit: jest.fn(() =>
+          Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready", created: true}),
+        ),
       },
       ota: {
         updateAvailable: jest.fn(() => null),

@@ -1,7 +1,7 @@
 import axios from "axios"
 
 import type {ClientApp} from "@mentra/island"
-import {submitAutomaticBugIncident} from "./automaticBugReport"
+import {submitAutomaticBugReport} from "./automaticBugReport"
 
 interface SerializedStartAppError {
   message: string
@@ -61,7 +61,7 @@ export async function submitMiniappStartFailedBugReport(
     2,
   )
 
-  await submitAutomaticBugIncident({
+  await submitAutomaticBugReport({
     categorization: {
       submissionMode: "AUTOMATIC",
       triggerArea: "miniapp_launch",

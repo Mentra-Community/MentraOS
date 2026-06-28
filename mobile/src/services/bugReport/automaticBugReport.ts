@@ -1,26 +1,26 @@
 import type * as ImagePicker from "expo-image-picker"
 
-import {toolkit, type IncidentReport} from "@mentra/island"
-import {buildIncidentReport, submitBugIncident} from "./bugReportIncident"
-import {buildIncidentTrigger, type IncidentCategorization} from "./incidentCategorization"
+import {toolkit, type ReportDetails} from "@mentra/island"
+import {buildReportTrigger, type BugReportCategorization} from "./bugReportCategorization"
+import {buildReportDetails, submitBugReport} from "./bugReportSubmission"
 
-export interface SubmitCategorizedBugIncidentParams {
-  categorization: IncidentCategorization
+export interface SubmitCategorizedBugReportParams {
+  categorization: BugReportCategorization
   expectedBehavior: string
   actualBehavior: string
   userSeverity?: 1 | 2 | 3 | 4 | 5
-  systemPriority?: IncidentReport["systemPriority"]
+  systemPriority?: ReportDetails["systemPriority"]
   contactEmail?: string
   screenshots?: ImagePicker.ImagePickerAsset[]
 }
 
-export async function submitCategorizedBugIncident(
-  params: SubmitCategorizedBugIncidentParams,
-): Promise<{ok: true; incidentId: string} | {ok: false; error: Error}> {
-  return submitBugIncident(
+export async function submitCategorizedBugReport(
+  params: SubmitCategorizedBugReportParams,
+): Promise<{ok: true; reportId: string} | {ok: false; error: Error}> {
+  return submitBugReport(
     {
-      trigger: buildIncidentTrigger(params.categorization),
-      report: buildIncidentReport({
+      trigger: buildReportTrigger(params.categorization),
+      report: buildReportDetails({
         expectedBehavior: params.expectedBehavior,
         actualBehavior: params.actualBehavior,
         userSeverity: params.userSeverity,
@@ -32,29 +32,35 @@ export async function submitCategorizedBugIncident(
   )
 }
 
-export interface SubmitAutomaticBugIncidentParams extends SubmitCategorizedBugIncidentParams {
+export interface SubmitAutomaticBugReportParams extends SubmitCategorizedBugReportParams {
   dedupeKey?: string
   dedupeWindowMs?: number
   logTag?: string
 }
 
-export type AutomaticBugIncidentResult =
-  | {status: "filed"; incidentId: string}
+export type AutomaticBugReportResult =
+  | {status: "filed"; reportId: string}
   | {status: "skipped"; reason: string}
   | {status: "failed"; error: string}
 
-export async function submitAutomaticBugIncident(
-  params: SubmitAutomaticBugIncidentParams,
-): Promise<AutomaticBugIncidentResult> {
+export async function submitAutomaticBugReport(
+  params: SubmitAutomaticBugReportParams,
+): Promise<AutomaticBugReportResult> {
   const logTag = params.logTag || "AutomaticBugReport"
 
   try {
-    const result = await toolkit.incidents.fileAutomatic({
-      trigger: buildIncidentTrigger({
-        ...params.categorization,
-        submissionMode: "AUTOMATIC",
-      }),
-      report: buildIncidentReport({
+    const trigger = buildReportTrigger({
+      ...params.categorization,
+      submissionMode: "AUTOMATIC",
+    })
+    if (trigger.type !== "automatic") {
+      return {status: "failed", error: "automatic bug report trigger was not automatic"}
+    }
+
+    const result = await toolkit.reports.submit({
+      kind: "automatic",
+      trigger,
+      report: buildReportDetails({
         expectedBehavior: params.expectedBehavior,
         actualBehavior: params.actualBehavior,
         systemPriority: params.systemPriority ?? "medium",
@@ -70,12 +76,12 @@ export async function submitAutomaticBugIncident(
       return result
     }
     if (result.status === "failed") {
-      console.error(`[${logTag}] submitBugIncident failed:`, result.error)
+      console.error(`[${logTag}] submitAutomaticBugReport failed:`, result.error)
       return result
     }
 
-    console.log(`[${logTag}] Incident filed:`, result.incidentId)
-    return result
+    console.log(`[${logTag}] Report filed:`, result.reportId)
+    return {status: "filed", reportId: result.reportId}
   } catch (error) {
     console.error(`[${logTag}] Unexpected error:`, error)
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}

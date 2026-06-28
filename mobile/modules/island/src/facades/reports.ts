@@ -1,0 +1,147 @@
+/**
+ * reports facade — `toolkit.reports`: user/system report submission over the
+ * Cloud V2 core client.
+ *
+ * Host/OEM code owns UI and wording. Island owns MentraOS mechanics: context
+ * collection, recent phone logs, Cloud V2 calls, local automatic dedupe,
+ * screenshots, and notifying connected glasses.
+ */
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import type {
+  ReportAttachmentInput,
+  ReportContext,
+  ReportStatus,
+  ReportTrigger,
+  SubmitReportInput,
+} from "@mentra/cloud-client"
+import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected} from "../services/GlassesReadiness"
+import {cloudClientService} from "../services/CloudClientService"
+import {collectDiagnosticContext} from "../utils/diagnosticContext"
+import {logBuffer} from "../utils/devLogging"
+
+export type {
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportStatus,
+  ReportTrigger,
+} from "@mentra/cloud-client"
+
+export type ToolkitSubmitReportInput =
+  | (Omit<Extract<SubmitReportInput, {kind: "bug"}>, "context"> & {
+      context?: Partial<ReportContext>
+      screenshots?: ReportAttachmentInput[]
+    })
+  | (Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
+      context?: Partial<ReportContext>
+      screenshots?: ReportAttachmentInput[]
+    })
+  | (Omit<Extract<SubmitReportInput, {kind: "feedback"}>, "context"> & {
+      context?: Partial<ReportContext>
+    })
+
+export type ReportSubmitResult =
+  | {status: "submitted"; reportId: string; reportStatus: ReportStatus; created: boolean}
+  | {status: "skipped"; reason: "duplicate_within_window"}
+  | {status: "failed"; error: string}
+
+const DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS = 90_000
+const automaticReportDedupeRegistry = new Map<string, number>()
+
+function automaticDedupeShouldSkip(key: string, nowMs: number, windowMs: number): boolean {
+  const previous = automaticReportDedupeRegistry.get(key)
+  if (previous !== undefined && nowMs - previous < windowMs) return true
+
+  automaticReportDedupeRegistry.set(key, nowMs)
+  for (const [entryKey, entryTime] of automaticReportDedupeRegistry) {
+    if (nowMs - entryTime > windowMs * 3) {
+      automaticReportDedupeRegistry.delete(entryKey)
+    }
+  }
+  return false
+}
+
+function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
+  if (!isGlassesConnected(useGlassesStore.getState().connection)) return
+  BluetoothSdk.sendIncidentId(reportId, apiBaseUrl ?? cloudClientService.getCoreUrl())
+}
+
+export const reports = {
+  async submit(input: ToolkitSubmitReportInput): Promise<ReportSubmitResult> {
+    if (input.kind === "automatic" && input.dedupeKey) {
+      const shouldSkip = automaticDedupeShouldSkip(
+        input.dedupeKey,
+        Date.now(),
+        input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
+      )
+      if (shouldSkip) return {status: "skipped", reason: "duplicate_within_window"}
+    }
+
+    const context = await collectDiagnosticContext(input.context)
+    let reportId: string
+    let reportStatus: ReportStatus
+    let created: boolean
+    try {
+      const res =
+        input.kind === "feedback"
+          ? await cloudClientService.core.reports.submit({
+              kind: "feedback",
+              feedback: input.feedback,
+              context,
+            })
+          : input.kind === "bug"
+            ? await cloudClientService.core.reports.submit({
+                kind: "bug",
+                trigger: input.trigger,
+                report: input.report,
+                context,
+                dedupeKey: input.dedupeKey,
+                dedupeWindowMs: input.dedupeWindowMs,
+              })
+            : await cloudClientService.core.reports.submit({
+                kind: "automatic",
+                trigger: input.trigger,
+                report: input.report,
+                context,
+                dedupeKey: input.dedupeKey,
+                dedupeWindowMs: input.dedupeWindowMs,
+              })
+      reportId = res.reportId
+      reportStatus = res.status
+      created = res.created
+    } catch (error) {
+      return {status: "failed", error: error instanceof Error ? error.message : String(error)}
+    }
+
+    if (input.kind !== "feedback") {
+      const logs = logBuffer.getRecentLogs()
+      if (logs.length > 0) {
+        try {
+          await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
+        } catch (error) {
+          console.warn("reports.submit: add phone logs failed:", error instanceof Error ? error.message : error)
+        }
+      }
+
+      notifyGlasses(reportId, cloudClientService.getCoreUrl())
+
+      if (input.screenshots && input.screenshots.length > 0) {
+        try {
+          await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots)
+        } catch (error) {
+          console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
+        }
+      }
+
+      try {
+        const completed = await cloudClientService.core.reports.complete(reportId)
+        reportStatus = completed.status
+      } catch (error) {
+        console.warn("reports.submit: complete report failed:", error instanceof Error ? error.message : error)
+      }
+    }
+
+    return {status: "submitted", reportId, reportStatus, created}
+  },
+}

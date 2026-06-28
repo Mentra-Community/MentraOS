@@ -25,7 +25,7 @@ describe("createHttpClient", () => {
     try {
       const http = createHttpClient({ baseUrl: "https://core.test", logger });
       try {
-        await http.post("/api/client/incidents", {});
+        await http.post("/api/client/reports", {});
         throw new Error("expected request to fail");
       } catch (err) {
         expect(err).toBeInstanceOf(HttpError);
@@ -33,7 +33,7 @@ describe("createHttpClient", () => {
         expect(httpError.status).toBe(400);
         expect(httpError.code).toBe("invalid_request");
         expect(httpError.message).toBe(
-          "HTTP 400 on POST /api/client/incidents: request body must be a JSON object",
+          "HTTP 400 on POST /api/client/reports: request body must be a JSON object",
         );
       }
     } finally {

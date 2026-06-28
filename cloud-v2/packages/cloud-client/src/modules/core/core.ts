@@ -6,9 +6,9 @@
  * helper, which attaches the access token from `cloud.auth` as the Bearer, so
  * core never touches credentials itself.
  *
- * Today it exposes the miniapp lookups the device needs at launch plus
- * incident/feedback reporting. It is meant to grow as miniapp-service and other
- * core resources are specced.
+ * Today it exposes the miniapp lookups the device needs at launch plus the
+ * unified report submission surface. It is meant to grow as miniapp-service and
+ * other core resources are specced.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -18,37 +18,33 @@
  */
 import type { HttpClient } from "../../http";
 import {
-  Feedback,
-  type SendFeedbackInput,
-  type SendFeedbackResult,
-} from "./feedback";
-import {
-  Incidents,
-  type IncidentAttachmentInput,
-  type AddIncidentArtifactsResult,
-  type CreateIncidentInput,
-  type CreateIncidentResult,
-  type IncidentContext,
-  type IncidentLogEntry,
-  type IncidentReport,
-  type IncidentStatus,
-  type IncidentSystemPriority,
-  type IncidentTrigger,
-} from "./incidents";
+  Reports,
+  type AddReportArtifactsResult,
+  type ReportAttachmentInput,
+  type ReportContext,
+  type ReportDetails,
+  type ReportKind,
+  type ReportLogEntry,
+  type ReportStatus,
+  type ReportSystemPriority,
+  type ReportTrigger,
+  type SubmitReportInput,
+  type SubmitReportResult,
+} from "./reports";
 
-export type { SendFeedbackInput, SendFeedbackResult } from "./feedback";
 export type {
-  AddIncidentArtifactsResult,
-  CreateIncidentInput,
-  CreateIncidentResult,
-  IncidentAttachmentInput,
-  IncidentContext,
-  IncidentLogEntry,
-  IncidentReport,
-  IncidentStatus,
-  IncidentSystemPriority,
-  IncidentTrigger,
-} from "./incidents";
+  AddReportArtifactsResult,
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportKind,
+  ReportLogEntry,
+  ReportStatus,
+  ReportSystemPriority,
+  ReportTrigger,
+  SubmitReportInput,
+  SubmitReportResult,
+} from "./reports";
 
 /**
  * A single miniapp entry as returned by the listing.
@@ -141,27 +137,23 @@ export class Core {
     getBundle(packageName: string, version?: string): Promise<MiniappBundle>;
     getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
   };
-  readonly incidents: {
-    create(input: CreateIncidentInput): Promise<CreateIncidentResult>;
+  readonly reports: {
+    submit(input: SubmitReportInput): Promise<SubmitReportResult>;
     addLogs(
-      incidentId: string,
+      reportId: string,
       source: string,
-      entries: IncidentLogEntry[],
-    ): Promise<AddIncidentArtifactsResult>;
+      entries: ReportLogEntry[],
+    ): Promise<AddReportArtifactsResult>;
     addScreenshots(
-      incidentId: string,
-      images: IncidentAttachmentInput[],
-    ): Promise<AddIncidentArtifactsResult>;
-    complete(incidentId: string): Promise<{ status: IncidentStatus }>;
-  };
-  readonly feedback: {
-    send(input: SendFeedbackInput): Promise<SendFeedbackResult>;
+      reportId: string,
+      images: ReportAttachmentInput[],
+    ): Promise<AddReportArtifactsResult>;
+    complete(reportId: string): Promise<{ status: ReportStatus }>;
   };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
-    const incidents = new Incidents({ http });
-    const feedback = new Feedback({ http });
+    const reports = new Reports({ http });
 
     this.miniapps = {
       /**
@@ -205,14 +197,11 @@ export class Core {
         return http.get<PreinstalledMiniappRegistry>(`/api/client/miniapps/registry${query}`);
       },
     };
-    this.incidents = {
-      create: incidents.create.bind(incidents),
-      addLogs: incidents.addLogs.bind(incidents),
-      addScreenshots: incidents.addScreenshots.bind(incidents),
-      complete: incidents.complete.bind(incidents),
-    };
-    this.feedback = {
-      send: feedback.send.bind(feedback),
+    this.reports = {
+      submit: reports.submit.bind(reports),
+      addLogs: reports.addLogs.bind(reports),
+      addScreenshots: reports.addScreenshots.bind(reports),
+      complete: reports.complete.bind(reports),
     };
   }
 }

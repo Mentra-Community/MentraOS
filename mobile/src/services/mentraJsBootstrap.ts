@@ -4,7 +4,7 @@
  * binds them to the native Crust module + the launcher, and starts the pump).
  *
  * This host shim attaches Mentra-app telemetry around the island-owned engine:
- * Sentry events, automatic incident filing, and the user-facing alert via
+ * Sentry events, automatic report filing, and the user-facing alert via
  * `router.onCrashloop` / `router.onRestartToast`.
  *
  * Called once from MantleManager.initServices. Idempotent — the island engine is
@@ -16,7 +16,7 @@ import * as Sentry from "@sentry/react-native"
 
 import {ensureMiniappEngine, getMiniappEngine, useAppStatusStore} from "@mentra/island"
 
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
@@ -59,13 +59,13 @@ export function bootstrapMentraJS() {
       /* Sentry not initialized in dev */
     }
 
-    // Look up the miniapp's display name for the alert + incident.
+    // Look up the miniapp's display name for the alert + report.
     const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
 
-    // File an automatic incident. Dedupe so a flapping miniapp doesn't
-    // generate one incident per crashloop transition.
-    void submitAutomaticBugIncident({
+    // File an automatic report. Dedupe so a flapping miniapp doesn't
+    // generate one report per crashloop transition.
+    void submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
         triggerArea: "miniapp_crashloop",
@@ -80,11 +80,11 @@ export function bootstrapMentraJS() {
       logTag: "MentraJSCrashloop",
     })
 
-    // User-facing alert. Last so even if Sentry/incident fail the user
+    // User-facing alert. Last so even if Sentry/reporting fails the user
     // still sees something.
     showAlert(
       `${appName} stopped working`,
-      "We've filed an incident report. Try opening it again later — if the issue persists, please send us feedback.",
+      "We've filed a bug report. Try opening it again later — if the issue persists, please send us feedback.",
       [{text: "OK"}],
     )
   }

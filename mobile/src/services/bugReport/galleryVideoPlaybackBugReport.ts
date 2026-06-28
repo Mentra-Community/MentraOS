@@ -1,21 +1,21 @@
 import type {PhotoInfo} from "@/types/asg"
-import {submitAutomaticBugIncident} from "./automaticBugReport"
+import {submitAutomaticBugReport} from "./automaticBugReport"
 import {
   GALLERY_VIDEO_REPORT_DEDUPE_MS,
-  galleryVideoIncidentDedupeKey,
+  galleryVideoReportDedupeKey,
   serializeReactNativeVideoOnError,
   uriSchemeFromPlaybackUrl,
 } from "./galleryVideoPlaybackBugReportCore"
 
 export {
   GALLERY_VIDEO_REPORT_DEDUPE_MS,
-  galleryVideoIncidentDedupeKey,
+  galleryVideoReportDedupeKey,
   serializeReactNativeVideoOnError,
 } from "./galleryVideoPlaybackBugReportCore"
 export type {SerializedVideoPlayerError} from "./galleryVideoPlaybackBugReportCore"
 
 /**
- * Fire-and-forget from gallery Video onError: same incident pipeline as Feedback (severity 5).
+ * Fire-and-forget from gallery Video onError through the toolkit reports pipeline.
  */
 export async function submitGalleryVideoPlaybackBugReport(
   photo: PhotoInfo,
@@ -23,7 +23,7 @@ export async function submitGalleryVideoPlaybackBugReport(
   isActive: boolean,
 ): Promise<void> {
   const parsed = serializeReactNativeVideoOnError(error)
-  const key = galleryVideoIncidentDedupeKey(photo.name, parsed)
+  const key = galleryVideoReportDedupeKey(photo.name, parsed)
 
   const videoUrl = photo.download || photo.url
   const uriScheme = uriSchemeFromPlaybackUrl(videoUrl)
@@ -44,7 +44,7 @@ export async function submitGalleryVideoPlaybackBugReport(
   )
 
   try {
-    const submitRes = await submitAutomaticBugIncident({
+    const submitRes = await submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
         triggerArea: "gallery_video",
@@ -58,7 +58,7 @@ export async function submitGalleryVideoPlaybackBugReport(
       logTag: "GalleryVideoBugReport",
     })
     if (submitRes.status === "filed") {
-      console.log("[GalleryVideoBugReport] Incident filed:", submitRes.incidentId)
+      console.log("[GalleryVideoBugReport] Report filed:", submitRes.reportId)
     }
   } catch (e) {
     console.error("[GalleryVideoBugReport] Unexpected error:", e)

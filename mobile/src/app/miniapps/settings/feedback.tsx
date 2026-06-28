@@ -1,8 +1,5 @@
 import {useLocalSearchParams} from "expo-router"
 import * as ImagePicker from "expo-image-picker"
-import Constants from "expo-constants"
-import * as Location from "expo-location"
-import NetInfo from "@react-native-community/netinfo"
 import {useState, useEffect, useRef} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
@@ -11,15 +8,14 @@ import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
-import {buildIncidentReport, submitBugIncident} from "@/services/bugReport/bugReportIncident"
-import {buildIncidentTrigger} from "@/services/bugReport/incidentCategorization"
+import {buildReportDetails, submitBugReport} from "@/services/bugReport/bugReportSubmission"
+import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {useRegisterCapsule} from "@/stores/capsule"
-import {toolkit, useAppStatusStore} from "@mentra/island"
+import {toolkit} from "@mentra/island"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
@@ -43,8 +39,6 @@ export default function FeedbackPage() {
   const MAX_SCREENSHOTS = 5
 
   const {theme} = useAppTheme()
-  const apps = useAppStatusStore((state) => state.apps)
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const viewShotRef = useRef<View>(null)
   const {goBack} = useNavigationStore.getState()
 
@@ -53,22 +47,6 @@ export default function FeedbackPage() {
     viewShotRef,
     visibleOnRoutes: ["/miniapps/settings/feedback"],
   })
-
-  // Glasses info for bug reports
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const deviceModel = useGlassesStore((state) => state.deviceModel)
-  const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
-  const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesFirmwareVersion = useGlassesStore((state) => state.firmwareVersion)
-  const appVersion = useGlassesStore((state) => state.appVersion)
-  const serialNumber = useGlassesStore((state) => state.serialNumber)
-  const androidVersion = useGlassesStore((state) => state.androidVersion)
-  const glassesWifi = useGlassesStore((state) => state.wifi)
-  const glassesWifiInfo =
-    glassesWifi.state === "connected"
-      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
-      : {wifiConnected: false}
-  const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
 
   const [userEmail, setUserEmail] = useState("")
 
@@ -128,9 +106,9 @@ export default function FeedbackPage() {
     // Check if user rated 4-5 stars on feature request
     const shouldPromptAppRating = feedbackType === "feature" && experienceRating !== null && experienceRating >= 4
 
-    // Bug reports use the incidents endpoint, feature requests use feedback endpoint
+    // Bug reports and feature requests both go through the toolkit reports surface.
     if (feedbackType === "bug") {
-      const trigger = buildIncidentTrigger({
+      const trigger = buildReportTrigger({
         submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
         triggerArea: typeof params.triggerArea === "string" ? params.triggerArea : "feedback_screen",
         triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
@@ -138,21 +116,20 @@ export default function FeedbackPage() {
           typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,
         sourceAppletName: typeof params.sourceAppletName === "string" ? params.sourceAppletName : undefined,
       })
-      const report = buildIncidentReport({
+      const report = buildReportDetails({
         expectedBehavior,
         actualBehavior,
         userSeverity: severityRating as 1 | 2 | 3 | 4 | 5,
         contactEmail: isApplePrivateRelay && email.trim() ? email.trim() : undefined,
       })
 
-      console.log("Incident submitted:", JSON.stringify({trigger, report}, null, 2))
-      console.log("Phone backend URL (incident creation):", useSettingsStore.getState().getRestUrl())
+      console.log("Bug report submitted:", JSON.stringify({trigger, report}, null, 2))
 
-      const submitRes = await submitBugIncident({trigger, report}, {screenshots})
+      const submitRes = await submitBugReport({trigger, report}, {screenshots})
 
       if (!submitRes.ok) {
         setIsSubmitting(false)
-        console.error("Error creating incident:", submitRes.error)
+        console.error("Error creating bug report:", submitRes.error)
         showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
           {
             text: translate("common:ok"),
@@ -164,106 +141,19 @@ export default function FeedbackPage() {
         return
       }
     } else {
-      const customBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
-      const isBetaBuild = !!customBackendUrl
-      const osVersion = `${Platform.OS} ${Platform.Version}`
-      const deviceName = Constants.deviceName || "deviceName"
-      const mobileAppVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
-      const buildCommit = process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit"
-      const buildBranch = process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch"
-      const buildTime = process.env.EXPO_PUBLIC_BUILD_TIME || "time"
-      const buildUser = process.env.EXPO_PUBLIC_BUILD_USER || "user"
-
-      const offlineMode = await useSettingsStore.getState().getSetting(SETTINGS.offline_mode.key)
-
-      let networkInfo = {type: "unknown", isConnected: false, isInternetReachable: false}
-      try {
-        const netState = await NetInfo.fetch()
-        networkInfo = {
-          type: netState.type,
-          isConnected: netState.isConnected ?? false,
-          isInternetReachable: netState.isInternetReachable ?? false,
-        }
-      } catch (e) {
-        console.log("Failed to get network info:", e)
-      }
-
-      let locationInfo: string | undefined
-      let locationPlace: string | undefined
-      try {
-        const {status} = await Location.getForegroundPermissionsAsync()
-        if (status === "granted") {
-          const location = await Location.getLastKnownPositionAsync()
-          if (location) {
-            locationInfo = `${location.coords.latitude.toFixed(4)}, ${location.coords.longitude.toFixed(4)}`
-            try {
-              const [place] = await Location.reverseGeocodeAsync({
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-              })
-              if (place) {
-                const parts = [place.city, place.region, place.country].filter(Boolean)
-                if (parts.length > 0) {
-                  locationPlace = parts.join(", ")
-                }
-              }
-            } catch (e) {
-              console.log("Failed to reverse geocode:", e)
-            }
-          }
-        }
-      } catch (e) {
-        console.log("Failed to get location:", e)
-      }
-
-      const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
-      const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
-
       const feedbackPayload = {
         type: feedbackType,
-        feedbackText: feedbackText,
+        message: feedbackText.trim(),
         experienceRating: experienceRating ?? undefined,
-        ...(isApplePrivateRelay && email && {contactEmail: email}),
-        systemInfo: {
-          appVersion: mobileAppVersion,
-          deviceName,
-          osVersion,
-          platform: Platform.OS,
-          glassesConnected,
-          defaultWearable: defaultWearable as string,
-          runningApps,
-          offlineMode: !!offlineMode,
-          networkType: networkInfo.type,
-          networkConnected: networkInfo.isConnected,
-          internetReachable: networkInfo.isInternetReachable,
-          ...(locationInfo && {location: locationInfo}),
-          ...(locationPlace && {locationPlace}),
-          ...(isBetaBuild && {isBetaBuild: true}),
-          ...(isBetaBuild && customBackendUrl && {backendUrl: customBackendUrl}),
-          buildCommit,
-          buildBranch,
-          buildTime,
-          buildUser,
-        },
-        ...(glassesConnected && {
-          glassesInfo: {
-            deviceModel: deviceModel || undefined,
-            bluetoothId: glassesBluetoothId || undefined,
-            serialNumber: serialNumber || undefined,
-            buildNumber: buildNumber || undefined,
-            firmwareVersion: glassesFirmwareVersion || undefined,
-            appVersion: appVersion || undefined,
-            androidVersion: androidVersion || undefined,
-            ...glassesWifiInfo,
-            ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
-          },
-        }),
+        ...(isApplePrivateRelay && email.trim() && {contactEmail: email.trim()}),
       }
 
       console.log("Feedback submitted:", JSON.stringify(feedbackPayload, null, 2))
-      // Feature request - use feedback endpoint
       try {
-        await toolkit.incidents.sendFeedback({feedback: feedbackPayload})
+        await toolkit.reports.submit({
+          kind: "feedback",
+          feedback: feedbackPayload,
+        })
       } catch (error) {
         setIsSubmitting(false)
         console.error("Error sending feedback:", error)

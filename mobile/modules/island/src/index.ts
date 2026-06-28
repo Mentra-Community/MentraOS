@@ -109,13 +109,14 @@ export {
 // facade at a time alongside the flat exports below. See ./island.
 export {toolkit} from "./island"
 export type {
-  IncidentAttachmentInput,
-  IncidentContext,
-  IncidentLogEntry,
-  IncidentReport,
-  IncidentStatus,
-  IncidentTrigger,
-} from "./facades/incidents"
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportStatus,
+  ReportTrigger,
+  ReportSubmitResult,
+  ToolkitSubmitReportInput,
+} from "./facades/reports"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"

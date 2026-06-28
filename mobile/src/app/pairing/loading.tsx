@@ -10,7 +10,7 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -20,7 +20,7 @@ export default function GlassesPairingLoadingScreen() {
   const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const showGlassesBootingRef = useRef(false)
-  const hasSubmittedTimeoutIncidentRef = useRef(false)
+  const hasSubmittedTimeoutReportRef = useRef(false)
   const hasNavigatedRef = useRef(false)
   const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
@@ -66,7 +66,7 @@ export default function GlassesPairingLoadingScreen() {
   }, [showGlassesBooting])
 
   useEffect(() => {
-    hasSubmittedTimeoutIncidentRef.current = false
+    hasSubmittedTimeoutReportRef.current = false
     const controller = new AbortController()
 
     void waitForGlassesReady({
@@ -76,10 +76,10 @@ export default function GlassesPairingLoadingScreen() {
       signal: controller.signal,
     }).then((ready) => {
       // Booted in time (or the screen unmounted) — nothing to report.
-      if (ready || controller.signal.aborted || hasSubmittedTimeoutIncidentRef.current) {
+      if (ready || controller.signal.aborted || hasSubmittedTimeoutReportRef.current) {
         return
       }
-      hasSubmittedTimeoutIncidentRef.current = true
+      hasSubmittedTimeoutReportRef.current = true
       const actualBehavior = JSON.stringify(
         {
           deviceModel,
@@ -92,7 +92,7 @@ export default function GlassesPairingLoadingScreen() {
         2,
       )
 
-      void submitAutomaticBugIncident({
+      void submitAutomaticBugReport({
         categorization: {
           submissionMode: "AUTOMATIC",
           triggerArea: "pairing_loading",

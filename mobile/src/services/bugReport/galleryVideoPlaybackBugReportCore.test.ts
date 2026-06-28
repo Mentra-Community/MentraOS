@@ -1,5 +1,5 @@
 import {
-  galleryVideoIncidentDedupeKey,
+  galleryVideoReportDedupeKey,
   serializeReactNativeVideoOnError,
 } from "./galleryVideoPlaybackBugReportCore"
 
@@ -24,9 +24,9 @@ describe("serializeReactNativeVideoOnError", () => {
   })
 })
 
-describe("galleryVideoIncidentDedupeKey", () => {
+describe("galleryVideoReportDedupeKey", () => {
   it("is stable for same inputs", () => {
     const p = serializeReactNativeVideoOnError({error: {code: 1, domain: "D"}})
-    expect(galleryVideoIncidentDedupeKey("IMG_1", p)).toBe("IMG_1|D|1")
+    expect(galleryVideoReportDedupeKey("IMG_1", p)).toBe("IMG_1|D|1")
   })
 })

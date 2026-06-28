@@ -1,21 +1,21 @@
-import {buildIncidentTrigger, normalizeOptionalIncidentString} from "./incidentCategorization"
+import {buildReportTrigger, normalizeOptionalReportString} from "./bugReportCategorization"
 
-describe("normalizeOptionalIncidentString", () => {
+describe("normalizeOptionalReportString", () => {
   it("trims non-empty strings", () => {
-    expect(normalizeOptionalIncidentString("  hello  ")).toBe("hello")
+    expect(normalizeOptionalReportString("  hello  ")).toBe("hello")
   })
 
   it("returns undefined for empty or non-string values", () => {
-    expect(normalizeOptionalIncidentString("   ")).toBeUndefined()
-    expect(normalizeOptionalIncidentString(undefined)).toBeUndefined()
-    expect(normalizeOptionalIncidentString(7)).toBeUndefined()
+    expect(normalizeOptionalReportString("   ")).toBeUndefined()
+    expect(normalizeOptionalReportString(undefined)).toBeUndefined()
+    expect(normalizeOptionalReportString(7)).toBeUndefined()
   })
 })
 
-describe("buildIncidentTrigger", () => {
+describe("buildReportTrigger", () => {
   it("builds manual triggers for user-initiated reports", () => {
     expect(
-      buildIncidentTrigger({
+      buildReportTrigger({
         submissionMode: "USER_INITIATED",
         triggerArea: "applet_capsule_menu",
         triggerReason: "manual_bug_report",
@@ -33,7 +33,7 @@ describe("buildIncidentTrigger", () => {
 
   it("builds automatic triggers and omits blank optional applet fields", () => {
     expect(
-      buildIncidentTrigger({
+      buildReportTrigger({
         submissionMode: "AUTOMATIC",
         triggerArea: "gallery_video",
         triggerReason: "gallery_video_on_error",
