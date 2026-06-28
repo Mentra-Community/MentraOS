@@ -143,6 +143,7 @@ function fakeHttp(): HttpClient {
     get: async () => undefined as never,
     head: async () => new Response(null, { status: 200, headers: { "content-type": "audio/mpeg" } }),
     post: async () => undefined as never,
+    postForm: async () => undefined as never,
     put: async () => undefined as never,
     delete: async () => undefined as never,
     url: (path: string) => `https://runtime.test${path}`,

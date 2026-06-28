@@ -12,8 +12,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {buildBugReportFeedbackDataForBug, submitBugIncident} from "@/services/bugReport/bugReportIncident"
 import {buildIncidentCategorization} from "@/services/bugReport/incidentCategorization"
-import restComms from "@/services/RestComms"
-import {useAppStatusStore} from "@mentra/island"
+import {toolkit, useAppStatusStore} from "@mentra/island"
 
 import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
@@ -275,11 +274,11 @@ export default function FeedbackPage() {
 
       console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
       // Feature request - use feedback endpoint
-      const res = await restComms.sendFeedback(feedbackData)
-
-      if (res.is_error()) {
+      try {
+        await toolkit.incidents.sendFeedback({feedback: feedbackData})
+      } catch (error) {
         setIsSubmitting(false)
-        console.error("Error sending feedback:", res.error)
+        console.error("Error sending feedback:", error)
         showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
           {
             text: translate("common:ok"),
@@ -290,6 +289,7 @@ export default function FeedbackPage() {
         ])
         return
       }
+
     }
 
     setIsSubmitting(false)

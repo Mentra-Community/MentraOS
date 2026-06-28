@@ -1,37 +1,9 @@
-import * as ImagePicker from "expo-image-picker"
+import type * as ImagePicker from "expo-image-picker"
 
-import restComms from "@/services/RestComms"
-import {buildBugReportFeedbackDataForBug, submitBugIncident} from "./bugReportIncident"
+import {toolkit} from "@mentra/island"
+import {logBuffer} from "@/utils/dev/logging"
+import {buildBugReportFeedbackDataForBug, buildBugReportPhoneState, submitBugIncident} from "./bugReportIncident"
 import {buildIncidentCategorization, type IncidentCategorization} from "./incidentCategorization"
-
-export const DEFAULT_AUTOMATIC_INCIDENT_DEDUPE_MS = 90_000
-
-const automaticIncidentDedupeRegistry = new Map<string, number>()
-
-export function automaticIncidentReportDedupeShouldSkip(
-  key: string,
-  nowMs: number,
-  windowMs: number,
-  registry: Map<string, number>,
-): boolean {
-  const previous = registry.get(key)
-  if (previous !== undefined && nowMs - previous < windowMs) {
-    return true
-  }
-
-  registry.set(key, nowMs)
-  for (const [entryKey, entryTime] of registry) {
-    if (nowMs - entryTime > windowMs * 3) {
-      registry.delete(entryKey)
-    }
-  }
-
-  return false
-}
-
-export function resetAutomaticIncidentDedupeRegistryForTests(): void {
-  automaticIncidentDedupeRegistry.clear()
-}
 
 export interface SubmitCategorizedBugIncidentParams {
   categorization: IncidentCategorization
@@ -72,31 +44,34 @@ export async function submitAutomaticBugIncident(
 ): Promise<AutomaticBugIncidentResult> {
   const logTag = params.logTag || "AutomaticBugReport"
 
-  if (!restComms.getCoreToken()) {
-    console.log(`[${logTag}] Skipping: no core token`)
-    return {status: "skipped", reason: "no_core_token"}
-  }
-
-  if (params.dedupeKey) {
-    const now = Date.now()
-    const dedupeWindowMs = params.dedupeWindowMs ?? DEFAULT_AUTOMATIC_INCIDENT_DEDUPE_MS
-    if (
-      automaticIncidentReportDedupeShouldSkip(params.dedupeKey, now, dedupeWindowMs, automaticIncidentDedupeRegistry)
-    ) {
-      console.log(`[${logTag}] Skipping duplicate within window:`, params.dedupeKey)
-      return {status: "skipped", reason: "duplicate_within_window"}
-    }
-  }
-
   try {
-    const submitRes = await submitCategorizedBugIncident(params)
-    if (!submitRes.ok) {
-      console.error(`[${logTag}] submitBugIncident failed:`, submitRes.error)
-      return {status: "failed", error: submitRes.error.message}
+    const feedbackData = await buildBugReportFeedbackDataForBug({
+      expectedBehavior: params.expectedBehavior,
+      actualBehavior: params.actualBehavior,
+      severityRating: params.severityRating,
+      contactEmail: params.contactEmail,
+      extraFeedbackFields: buildIncidentCategorization(params.categorization),
+    })
+    const result = await toolkit.incidents.fileAutomatic({
+      feedbackData,
+      phoneState: buildBugReportPhoneState(),
+      logs: logBuffer.getRecentLogs(),
+      screenshots: params.screenshots,
+      dedupeKey: params.dedupeKey,
+      dedupeWindowMs: params.dedupeWindowMs,
+    })
+
+    if (result.status === "skipped") {
+      console.log(`[${logTag}] Skipping duplicate within window:`, params.dedupeKey)
+      return result
+    }
+    if (result.status === "failed") {
+      console.error(`[${logTag}] submitBugIncident failed:`, result.error)
+      return result
     }
 
-    console.log(`[${logTag}] Incident filed:`, submitRes.incidentId)
-    return {status: "filed", incidentId: submitRes.incidentId}
+    console.log(`[${logTag}] Incident filed:`, result.incidentId)
+    return result
   } catch (error) {
     console.error(`[${logTag}] Unexpected error:`, error)
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}

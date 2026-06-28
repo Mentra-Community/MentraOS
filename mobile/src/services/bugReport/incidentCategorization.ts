@@ -1,3 +1,5 @@
+import type {IncidentBugFeedbackData} from "@mentra/island"
+
 export type IncidentSubmissionMode = "USER_INITIATED" | "AUTOMATIC"
 
 export interface IncidentCategorization {
@@ -16,7 +18,14 @@ export function normalizeOptionalIncidentString(value: unknown): string | undefi
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-export function buildIncidentCategorization(categorization: IncidentCategorization): Record<string, unknown> {
+export type IncidentCategorizationFields = Pick<
+  IncidentBugFeedbackData,
+  "submissionMode" | "triggerArea" | "triggerReason"
+> &
+  Partial<Pick<IncidentBugFeedbackData, "sourceAppletPackageName" | "sourceAppletName">> &
+  Record<string, unknown>
+
+export function buildIncidentCategorization(categorization: IncidentCategorization): IncidentCategorizationFields {
   const sourceAppletPackageName = normalizeOptionalIncidentString(categorization.sourceAppletPackageName)
   const sourceAppletName = normalizeOptionalIncidentString(categorization.sourceAppletName)
 

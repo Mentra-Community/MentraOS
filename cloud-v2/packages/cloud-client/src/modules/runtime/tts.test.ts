@@ -8,6 +8,7 @@ function fakeHttp(head: HttpClient["head"]): HttpClient {
     get: async () => undefined as never,
     head,
     post: async () => undefined as never,
+    postForm: async () => undefined as never,
     put: async () => undefined as never,
     delete: async () => undefined as never,
     url: (path: string) => `https://runtime.test${path}`,

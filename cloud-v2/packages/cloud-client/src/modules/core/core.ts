@@ -6,9 +6,9 @@
  * helper, which attaches the access token from `cloud.auth` as the Bearer, so
  * core never touches credentials itself.
  *
- * Today it exposes only the miniapp lookups the device needs at launch: list the
- * miniapps available to this user, and fetch the downloadable bundle for one. It
- * is meant to grow as miniapp-service is specced.
+ * Today it exposes the miniapp lookups the device needs at launch plus
+ * incident/feedback reporting. It is meant to grow as miniapp-service and other
+ * core resources are specced.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -17,6 +17,19 @@
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";
+import {
+  Incidents,
+  type IncidentAttachmentInput,
+  type IncidentBugFeedback,
+  type IncidentLogEntry,
+} from "./incidents";
+
+export type {
+  IncidentAttachmentInput,
+  IncidentBugFeedback,
+  IncidentLogEntry,
+  IncidentSubmissionMode,
+} from "./incidents";
 
 /**
  * A single miniapp entry as returned by the listing.
@@ -109,9 +122,25 @@ export class Core {
     getBundle(packageName: string, version?: string): Promise<MiniappBundle>;
     getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
   };
+  readonly incidents: {
+    create(
+      feedback: IncidentBugFeedback,
+      phoneState: Record<string, unknown>,
+    ): Promise<{ success: boolean; incidentId: string }>;
+    uploadLogs(incidentId: string, logs: IncidentLogEntry[]): Promise<void>;
+    uploadAttachments(
+      incidentId: string,
+      images: IncidentAttachmentInput[],
+    ): Promise<{ uploaded: number; errors: number }>;
+    sendFeedback(
+      feedback: string | Record<string, unknown>,
+      phoneState?: Record<string, unknown>,
+    ): Promise<{ success: boolean }>;
+  };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
+    const incidents = new Incidents({ http });
 
     this.miniapps = {
       /**
@@ -154,6 +183,12 @@ export class Core {
           : "";
         return http.get<PreinstalledMiniappRegistry>(`/api/client/miniapps/registry${query}`);
       },
+    };
+    this.incidents = {
+      create: incidents.create.bind(incidents),
+      uploadLogs: incidents.uploadLogs.bind(incidents),
+      uploadAttachments: incidents.uploadAttachments.bind(incidents),
+      sendFeedback: incidents.sendFeedback.bind(incidents),
     };
   }
 }

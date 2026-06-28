@@ -1,17 +1,17 @@
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
-import * as ImagePicker from "expo-image-picker"
+import type * as ImagePicker from "expo-image-picker"
 import * as Location from "expo-location"
 import {Platform} from "react-native"
 
-import restComms from "@/services/RestComms"
-import {toolkit, useAppStatusStore} from "@mentra/island"
+import {toolkit, useAppStatusStore, type IncidentBugFeedbackData} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {logBuffer} from "@/utils/dev/logging"
+import type {IncidentCategorizationFields} from "./incidentCategorization"
 
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
@@ -22,7 +22,7 @@ export interface BuildBugReportFeedbackDataForBugParams {
   severityRating: number
   contactEmail?: string
   /** Merged into root of feedback payload (e.g. automatic, source). */
-  extraFeedbackFields?: Record<string, unknown>
+  extraFeedbackFields: IncidentCategorizationFields
 }
 
 export function buildBugReportPhoneState(): Record<string, unknown> {
@@ -94,7 +94,7 @@ export function buildBugReportPhoneState(): Record<string, unknown> {
  */
 export async function buildBugReportFeedbackDataForBug(
   params: BuildBugReportFeedbackDataForBugParams,
-): Promise<Record<string, unknown>> {
+): Promise<IncidentBugFeedbackData> {
   const {expectedBehavior, actualBehavior, severityRating, contactEmail, extraFeedbackFields} = params
 
   const customBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
@@ -168,7 +168,7 @@ export async function buildBugReportFeedbackDataForBug(
 
   const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
 
-  const feedbackData: Record<string, unknown> = {
+  const feedbackData: IncidentBugFeedbackData = {
     type: "bug",
     expectedBehavior,
     actualBehavior,
@@ -219,39 +219,25 @@ export interface SubmitBugIncidentOptions {
 }
 
 /**
- * createIncident + phone logs + sendIncidentId (+ optional screenshots).
+ * File through toolkit: create incident + phone logs + sendIncidentId
+ * (+ optional screenshots). Host code only builds native-coupled diagnostics.
  * Mirrors the bug branch of Feedback after feedbackData is built.
  */
 export async function submitBugIncident(
-  feedbackData: Record<string, unknown>,
+  feedbackData: IncidentBugFeedbackData,
   options?: SubmitBugIncidentOptions,
 ): Promise<{ok: true; incidentId: string} | {ok: false; error: Error}> {
   const phoneState = buildBugReportPhoneState()
-  const phoneBackendUrl = useSettingsStore.getState().getRestUrl()
-  const res = await restComms.createIncident(feedbackData, phoneState)
-  if (res.is_error()) {
-    return {ok: false, error: res.error}
-  }
-
-  const {incidentId} = res.value
-
   const phoneLogs = logBuffer.getRecentLogs()
-  if (phoneLogs.length > 0) {
-    const logsRes = await restComms.uploadIncidentLogs(incidentId, phoneLogs)
-    if (logsRes.is_error()) {
-      console.error("Error uploading phone logs:", logsRes.error)
-    }
+  const res = await toolkit.incidents.file({
+    feedbackData,
+    phoneState,
+    logs: phoneLogs,
+    screenshots: options?.screenshots,
+  })
+  if (res.error || !res.incidentId) {
+    return {ok: false, error: new Error(res.error ?? "incident creation failed")}
   }
 
-  // Notify the glasses of the incident id (the facade no-ops if disconnected).
-  toolkit.incidents.notifyGlasses(incidentId, phoneBackendUrl)
-
-  if (options?.screenshots && options.screenshots.length > 0) {
-    const uploadRes = await restComms.uploadIncidentAttachments(incidentId, options.screenshots)
-    if (uploadRes.is_error()) {
-      console.error("Error uploading screenshots:", uploadRes.error)
-    }
-  }
-
-  return {ok: true, incidentId}
+  return {ok: true, incidentId: res.incidentId}
 }

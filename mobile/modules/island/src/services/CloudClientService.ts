@@ -28,6 +28,7 @@ import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 
 const LOG_TAG = "cloudClient"
+type CloudCore = NonNullable<CloudClient["core"]>
 
 // Persistent cloud-disconnect detector: the cloud-client reconnect loop is infinite
 // and never surfaces a "giving up" signal, so "persistent failure" = the session has
@@ -80,6 +81,13 @@ function resolveEndpoints(): {core: string; runtime: string} {
     core: cfg.coreUrl?.trim() || FALLBACK_CORE_URL,
     runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
   }
+}
+
+function getCoreClient(): CloudCore {
+  if (!client) construct()
+  const core = client?.core
+  if (!core) throw new Error("cloud client core not configured")
+  return core
 }
 
 function frameSizeBytes(): Lc3FrameSizeBytes {
@@ -556,6 +564,10 @@ export const cloudClientService = {
     return currentRuntimeStatus()
   },
 
+  getCoreUrl(): string {
+    return resolveEndpoints().core
+  },
+
   onStatusChanged(cb: (snapshot: CloudClientStatusSnapshot) => void): () => void {
     statusListeners.add(cb)
     return () => {
@@ -586,6 +598,23 @@ export const cloudClientService = {
     placeDetails(req: Parameters<CloudClient["runtime"]["maps"]["placeDetails"]>[0]) {
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.placeDetails(req)
+    },
+  },
+
+  core: {
+    incidents: {
+      create(...args: Parameters<CloudCore["incidents"]["create"]>) {
+        return getCoreClient().incidents.create(...args)
+      },
+      uploadLogs(...args: Parameters<CloudCore["incidents"]["uploadLogs"]>) {
+        return getCoreClient().incidents.uploadLogs(...args)
+      },
+      uploadAttachments(...args: Parameters<CloudCore["incidents"]["uploadAttachments"]>) {
+        return getCoreClient().incidents.uploadAttachments(...args)
+      },
+      sendFeedback(...args: Parameters<CloudCore["incidents"]["sendFeedback"]>) {
+        return getCoreClient().incidents.sendFeedback(...args)
+      },
     },
   },
 

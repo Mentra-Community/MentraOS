@@ -54,3 +54,10 @@ export type {
   RuntimeTtsSpeakOptions,
   RuntimeTtsSpeechSource,
 } from "./modules/runtime/runtime";
+
+export type {
+  IncidentAttachmentInput,
+  IncidentBugFeedback,
+  IncidentLogEntry,
+  IncidentSubmissionMode,
+} from "./modules/core/core";

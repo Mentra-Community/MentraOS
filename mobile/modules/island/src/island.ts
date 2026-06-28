@@ -107,7 +107,7 @@ export const toolkit = {
   settings,
   /** Developer/debug surface (backend+cloud URL overrides, reconnect, min version). */
   dev,
-  /** Bug-report / feedback submission (island-owned RestComms). */
+  /** Bug-report / feedback submission over the island-owned cloud-v2 client. */
   incidents,
   /** Firmware OTA read/observe surface (updateAvailable/status + on* subscriptions). */
   ota,

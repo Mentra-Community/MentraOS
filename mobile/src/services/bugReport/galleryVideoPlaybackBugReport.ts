@@ -1,10 +1,8 @@
-import restComms from "@/services/RestComms"
 import type {PhotoInfo} from "@/types/asg"
-import {submitCategorizedBugIncident} from "./automaticBugReport"
+import {submitAutomaticBugIncident} from "./automaticBugReport"
 import {
   GALLERY_VIDEO_REPORT_DEDUPE_MS,
   galleryVideoIncidentDedupeKey,
-  galleryVideoReportDedupeShouldSkip,
   serializeReactNativeVideoOnError,
   uriSchemeFromPlaybackUrl,
 } from "./galleryVideoPlaybackBugReportCore"
@@ -12,17 +10,9 @@ import {
 export {
   GALLERY_VIDEO_REPORT_DEDUPE_MS,
   galleryVideoIncidentDedupeKey,
-  galleryVideoReportDedupeShouldSkip,
   serializeReactNativeVideoOnError,
 } from "./galleryVideoPlaybackBugReportCore"
 export type {SerializedVideoPlayerError} from "./galleryVideoPlaybackBugReportCore"
-
-const reportDedupeRegistry = new Map<string, number>()
-
-/** Clears in-memory dedupe map (for integration tests only). */
-export function resetGalleryVideoReportDedupeRegistryForTests(): void {
-  reportDedupeRegistry.clear()
-}
 
 /**
  * Fire-and-forget from gallery Video onError: same incident pipeline as Feedback (severity 5).
@@ -32,18 +22,8 @@ export async function submitGalleryVideoPlaybackBugReport(
   error: unknown,
   isActive: boolean,
 ): Promise<void> {
-  if (!restComms.getCoreToken()) {
-    console.log("[GalleryVideoBugReport] Skipping: no core token")
-    return
-  }
-
   const parsed = serializeReactNativeVideoOnError(error)
   const key = galleryVideoIncidentDedupeKey(photo.name, parsed)
-  const now = Date.now()
-  if (galleryVideoReportDedupeShouldSkip(key, now, GALLERY_VIDEO_REPORT_DEDUPE_MS, reportDedupeRegistry)) {
-    console.log("[GalleryVideoBugReport] Skipping duplicate within window:", key)
-    return
-  }
 
   const videoUrl = photo.download || photo.url
   const uriScheme = uriSchemeFromPlaybackUrl(videoUrl)
@@ -64,7 +44,7 @@ export async function submitGalleryVideoPlaybackBugReport(
   )
 
   try {
-    const submitRes = await submitCategorizedBugIncident({
+    const submitRes = await submitAutomaticBugIncident({
       categorization: {
         submissionMode: "AUTOMATIC",
         triggerArea: "gallery_video",
@@ -73,10 +53,11 @@ export async function submitGalleryVideoPlaybackBugReport(
       expectedBehavior: "Video should play in the glasses gallery.",
       actualBehavior,
       severityRating: 5,
+      dedupeKey: key,
+      dedupeWindowMs: GALLERY_VIDEO_REPORT_DEDUPE_MS,
+      logTag: "GalleryVideoBugReport",
     })
-    if (!submitRes.ok) {
-      console.error("[GalleryVideoBugReport] submitBugIncident failed:", submitRes.error)
-    } else {
+    if (submitRes.status === "filed") {
       console.log("[GalleryVideoBugReport] Incident filed:", submitRes.incidentId)
     }
   } catch (e) {
