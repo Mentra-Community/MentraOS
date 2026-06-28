@@ -1,9 +1,6 @@
 import type {ReportTrigger} from "@mentra/island"
 
-export type ReportSubmissionMode = "USER_INITIATED" | "AUTOMATIC"
-
 export interface BugReportCategorization {
-  submissionMode: ReportSubmissionMode
   triggerSource: string
   triggerReason: string
   sourceAppletPackageName?: string
@@ -22,15 +19,6 @@ export function buildReportTrigger(categorization: BugReportCategorization): Rep
   const source = {
     ...(sourceAppletPackageName && {sourceAppletPackageName}),
     ...(sourceAppletName && {sourceAppletName}),
-  }
-
-  if (categorization.submissionMode === "AUTOMATIC") {
-    return {
-      type: "automatic",
-      source: categorization.triggerSource,
-      reason: categorization.triggerReason,
-      ...source,
-    }
   }
 
   return {

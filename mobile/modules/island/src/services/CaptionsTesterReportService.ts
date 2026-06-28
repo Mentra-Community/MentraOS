@@ -1,6 +1,6 @@
 import CrustModule from "@mentra/crust"
 
-import {reports, type ReportSubmitResult} from "../facades/reports"
+import {submitAutomaticReport, type ReportSubmitResult} from "../facades/reports"
 
 const LOG_TAG = "CaptionsTesterBugReport"
 const EVENT_NAME = "captions_tester_incident"
@@ -77,7 +77,7 @@ export async function submitCaptionsTesterIncidentReport(rawEvent: unknown): Pro
   const dedupeKey = ["captions_tester", failureCode, scenarioName || "unknown", testRunId || "unknown"].join("|")
 
   try {
-    const submitResult = await reports.submit({
+    const submitResult = await submitAutomaticReport({
       kind: "automatic",
       trigger: {
         type: "automatic",

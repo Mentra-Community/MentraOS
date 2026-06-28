@@ -33,10 +33,6 @@ export type ToolkitSubmitReportInput =
       context?: Partial<ReportContext>
       screenshots?: ReportAttachmentInput[]
     })
-  | (Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
-      context?: Partial<ReportContext>
-      screenshots?: ReportAttachmentInput[]
-    })
   | (Omit<Extract<SubmitReportInput, {kind: "feedback"}>, "context"> & {
       context?: Partial<ReportContext>
     })
@@ -45,6 +41,8 @@ export type ToolkitSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, 
   context?: Partial<ReportContext>
   screenshots?: ReportAttachmentInput[]
 }
+
+type InternalSubmitReportInput = ToolkitSubmitReportInput | ToolkitSubmitAutomaticReportInput
 
 export type ReportSubmitResult =
   | {status: "submitted"; reportId: string; reportStatus: ReportStatus; created: boolean}
@@ -72,85 +70,89 @@ function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
   BluetoothSdk.sendIncidentId(reportId, apiBaseUrl ?? cloudClientService.getCoreUrl())
 }
 
-export const reports = {
-  async submit(input: ToolkitSubmitReportInput): Promise<ReportSubmitResult> {
-    if (input.kind === "automatic" && input.dedupeKey) {
-      const shouldSkip = automaticDedupeShouldSkip(
-        input.dedupeKey,
-        Date.now(),
-        input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
-      )
-      if (shouldSkip) return {status: "skipped", reason: "duplicate_within_window"}
-    }
+async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
+  if (input.kind === "automatic" && input.dedupeKey) {
+    const shouldSkip = automaticDedupeShouldSkip(
+      input.dedupeKey,
+      Date.now(),
+      input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
+    )
+    if (shouldSkip) return {status: "skipped", reason: "duplicate_within_window"}
+  }
 
-    const context = await collectDiagnosticContext(input.context)
-    let reportId: string
-    let reportStatus: ReportStatus
-    let created: boolean
-    try {
-      const res =
-        input.kind === "feedback"
+  const context = await collectDiagnosticContext(input.context)
+  let reportId: string
+  let reportStatus: ReportStatus
+  let created: boolean
+  try {
+    const res =
+      input.kind === "feedback"
+        ? await cloudClientService.core.reports.submit({
+            kind: "feedback",
+            feedback: input.feedback,
+            context,
+          })
+        : input.kind === "bug"
           ? await cloudClientService.core.reports.submit({
-              kind: "feedback",
-              feedback: input.feedback,
+              kind: "bug",
+              trigger: input.trigger,
+              report: input.report,
               context,
+              dedupeKey: input.dedupeKey,
+              dedupeWindowMs: input.dedupeWindowMs,
             })
-          : input.kind === "bug"
-            ? await cloudClientService.core.reports.submit({
-                kind: "bug",
-                trigger: input.trigger,
-                report: input.report,
-                context,
-                dedupeKey: input.dedupeKey,
-                dedupeWindowMs: input.dedupeWindowMs,
-              })
-            : await cloudClientService.core.reports.submit({
-                kind: "automatic",
-                trigger: input.trigger,
-                report: input.report,
-                context,
-                dedupeKey: input.dedupeKey,
-                dedupeWindowMs: input.dedupeWindowMs,
-              })
-      reportId = res.reportId
-      reportStatus = res.status
-      created = res.created
-    } catch (error) {
-      return {status: "failed", error: error instanceof Error ? error.message : String(error)}
-    }
+          : await cloudClientService.core.reports.submit({
+              kind: "automatic",
+              trigger: input.trigger,
+              report: input.report,
+              context,
+              dedupeKey: input.dedupeKey,
+              dedupeWindowMs: input.dedupeWindowMs,
+            })
+    reportId = res.reportId
+    reportStatus = res.status
+    created = res.created
+  } catch (error) {
+    return {status: "failed", error: error instanceof Error ? error.message : String(error)}
+  }
 
-    if (input.kind !== "feedback") {
-      const logs = logBuffer.getRecentLogs()
-      if (logs.length > 0) {
-        try {
-          await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
-        } catch (error) {
-          console.warn("reports.submit: add phone logs failed:", error instanceof Error ? error.message : error)
-        }
-      }
-
-      notifyGlasses(reportId, cloudClientService.getCoreUrl())
-
-      if (input.screenshots && input.screenshots.length > 0) {
-        try {
-          await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots)
-        } catch (error) {
-          console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
-        }
-      }
-
+  if (input.kind !== "feedback") {
+    const logs = logBuffer.getRecentLogs()
+    if (logs.length > 0) {
       try {
-        const completed = await cloudClientService.core.reports.complete(reportId)
-        reportStatus = completed.status
+        await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
       } catch (error) {
-        console.warn("reports.submit: complete report failed:", error instanceof Error ? error.message : error)
+        console.warn("reports.submit: add phone logs failed:", error instanceof Error ? error.message : error)
       }
     }
 
-    return {status: "submitted", reportId, reportStatus, created}
+    notifyGlasses(reportId, cloudClientService.getCoreUrl())
+
+    if (input.screenshots && input.screenshots.length > 0) {
+      try {
+        await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots)
+      } catch (error) {
+        console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
+      }
+    }
+
+    try {
+      const completed = await cloudClientService.core.reports.complete(reportId)
+      reportStatus = completed.status
+    } catch (error) {
+      console.warn("reports.submit: complete report failed:", error instanceof Error ? error.message : error)
+    }
+  }
+
+  return {status: "submitted", reportId, reportStatus, created}
+}
+
+export const reports = {
+  submit(input: ToolkitSubmitReportInput): Promise<ReportSubmitResult> {
+    return submitReportInternal(input)
   },
 }
 
 export function submitAutomaticReport(input: ToolkitSubmitAutomaticReportInput): Promise<ReportSubmitResult> {
-  return reports.submit(input)
+  return submitReportInternal(input)
 }

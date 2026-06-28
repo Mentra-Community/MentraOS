@@ -4,7 +4,7 @@ import {
   startCaptionsTesterReportService,
   stopCaptionsTesterReportService,
 } from "../../../modules/island/src/services/CaptionsTesterReportService"
-import {reports} from "../../../modules/island/src/facades/reports"
+import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
 import {emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 
 jest.mock("@mentra/crust", () => {
@@ -16,9 +16,7 @@ jest.mock("@mentra/crust", () => {
 })
 
 jest.mock("../../../modules/island/src/facades/reports", () => ({
-  reports: {
-    submit: jest.fn(),
-  },
+  submitAutomaticReport: jest.fn(),
 }))
 
 describe("CaptionsTesterReportService", () => {
@@ -27,8 +25,8 @@ describe("CaptionsTesterReportService", () => {
 
   beforeEach(() => {
     resetCrustModuleMock()
-    ;(reports.submit as jest.Mock).mockClear()
-    ;(reports.submit as jest.Mock).mockResolvedValue({
+    ;(submitAutomaticReport as jest.Mock).mockClear()
+    ;(submitAutomaticReport as jest.Mock).mockResolvedValue({
       status: "submitted",
       reportId: "report-1",
       reportStatus: "ready",
@@ -55,7 +53,7 @@ describe("CaptionsTesterReportService", () => {
     })
 
     await waitFor(() => {
-      expect(reports.submit).toHaveBeenCalledWith(
+      expect(submitAutomaticReport).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: "automatic",
           trigger: {
@@ -68,7 +66,7 @@ describe("CaptionsTesterReportService", () => {
       )
     })
 
-    const submitInput = (reports.submit as jest.Mock).mock.calls[0][0]
+    const submitInput = (submitAutomaticReport as jest.Mock).mock.calls[0][0]
     expect(submitInput.report.actualBehavior).toContain("Transcript stayed stale")
     expect(submitInput.report.expectedBehavior).toContain("https://captions.example.test")
 
@@ -99,6 +97,6 @@ describe("CaptionsTesterReportService", () => {
     })
 
     await Promise.resolve()
-    expect(reports.submit).not.toHaveBeenCalled()
+    expect(submitAutomaticReport).not.toHaveBeenCalled()
   })
 })

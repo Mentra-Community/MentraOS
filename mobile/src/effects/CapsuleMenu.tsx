@@ -270,7 +270,6 @@ export async function captureScreenshot(
 //     const handleFeedback = useCallback(() => {
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().push("/miniapps/settings/feedback", {
-//         submissionMode: "USER_INITIATED",
 //         triggerSource: "applet_capsule_menu",
 //         triggerReason: "manual_bug_report",
 //         sourceAppletPackageName: packageName,

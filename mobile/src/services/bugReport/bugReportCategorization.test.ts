@@ -16,7 +16,6 @@ describe("buildReportTrigger", () => {
   it("builds manual triggers for user-initiated reports", () => {
     expect(
       buildReportTrigger({
-        submissionMode: "USER_INITIATED",
         triggerSource: "applet_capsule_menu",
         triggerReason: "manual_bug_report",
         sourceAppletPackageName: "com.mentra.demo",
@@ -31,19 +30,18 @@ describe("buildReportTrigger", () => {
     })
   })
 
-  it("builds automatic triggers and omits blank optional applet fields", () => {
+  it("omits blank optional applet fields", () => {
     expect(
       buildReportTrigger({
-        submissionMode: "AUTOMATIC",
-        triggerSource: "gallery_video",
-        triggerReason: "gallery_video_on_error",
+        triggerSource: "feedback_screen",
+        triggerReason: "manual_bug_report",
         sourceAppletPackageName: "   ",
         sourceAppletName: "",
       }),
     ).toEqual({
-      type: "automatic",
-      source: "gallery_video",
-      reason: "gallery_video_on_error",
+      type: "manual",
+      source: "feedback_screen",
+      reason: "manual_bug_report",
     })
   })
 })

@@ -19,7 +19,6 @@ import {toolkit} from "@mentra/island"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
-    submissionMode?: string
     triggerSource?: string
     triggerReason?: string
     sourceAppletPackageName?: string
@@ -109,7 +108,6 @@ export default function FeedbackPage() {
     // Bug reports and feature requests both go through the toolkit reports surface.
     if (feedbackType === "bug") {
       const trigger = buildReportTrigger({
-        submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
         triggerSource: typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen",
         triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
         sourceAppletPackageName:
