@@ -20,7 +20,7 @@ import {toolkit} from "@mentra/island"
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
     submissionMode?: string
-    triggerArea?: string
+    triggerSource?: string
     triggerReason?: string
     sourceAppletPackageName?: string
     sourceAppletName?: string
@@ -110,7 +110,7 @@ export default function FeedbackPage() {
     if (feedbackType === "bug") {
       const trigger = buildReportTrigger({
         submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
-        triggerArea: typeof params.triggerArea === "string" ? params.triggerArea : "feedback_screen",
+        triggerSource: typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen",
         triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
         sourceAppletPackageName:
           typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,

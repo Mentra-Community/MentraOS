@@ -95,7 +95,7 @@ export default function GlassesPairingLoadingScreen() {
       void submitAutomaticBugReport({
         categorization: {
           submissionMode: "AUTOMATIC",
-          triggerArea: "pairing_loading",
+          triggerSource: "pairing_loading",
           triggerReason: "glasses_connect_timeout",
         },
         expectedBehavior: "Glasses should connect successfully within 35 seconds.",

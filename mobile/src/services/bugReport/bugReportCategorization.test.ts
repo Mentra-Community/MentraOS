@@ -17,14 +17,14 @@ describe("buildReportTrigger", () => {
     expect(
       buildReportTrigger({
         submissionMode: "USER_INITIATED",
-        triggerArea: "applet_capsule_menu",
+        triggerSource: "applet_capsule_menu",
         triggerReason: "manual_bug_report",
         sourceAppletPackageName: "com.mentra.demo",
         sourceAppletName: "Demo",
       }),
     ).toEqual({
       type: "manual",
-      surface: "applet_capsule_menu",
+      source: "applet_capsule_menu",
       reason: "manual_bug_report",
       sourceAppletPackageName: "com.mentra.demo",
       sourceAppletName: "Demo",
@@ -35,14 +35,14 @@ describe("buildReportTrigger", () => {
     expect(
       buildReportTrigger({
         submissionMode: "AUTOMATIC",
-        triggerArea: "gallery_video",
+        triggerSource: "gallery_video",
         triggerReason: "gallery_video_on_error",
         sourceAppletPackageName: "   ",
         sourceAppletName: "",
       }),
     ).toEqual({
       type: "automatic",
-      area: "gallery_video",
+      source: "gallery_video",
       reason: "gallery_video_on_error",
     })
   })

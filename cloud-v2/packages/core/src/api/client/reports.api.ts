@@ -39,14 +39,14 @@ const logEntrySchema = z.object({
 const reportTriggerSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("manual"),
-    surface: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
     reason: nonEmptyStringSchema,
     sourceAppletPackageName: optionalNonEmptyStringSchema,
     sourceAppletName: optionalNonEmptyStringSchema,
   }),
   z.object({
     type: z.literal("automatic"),
-    area: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
     reason: nonEmptyStringSchema,
     sourceAppletPackageName: optionalNonEmptyStringSchema,
     sourceAppletName: optionalNonEmptyStringSchema,
@@ -54,7 +54,7 @@ const reportTriggerSchema = z.discriminatedUnion("type", [
 ]);
 const automaticReportTriggerSchema = z.object({
   type: z.literal("automatic"),
-  area: nonEmptyStringSchema,
+  source: nonEmptyStringSchema,
   reason: nonEmptyStringSchema,
   sourceAppletPackageName: optionalNonEmptyStringSchema,
   sourceAppletName: optionalNonEmptyStringSchema,

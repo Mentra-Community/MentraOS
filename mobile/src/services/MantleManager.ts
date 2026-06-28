@@ -627,7 +627,7 @@ class MantleManager {
             const result = await submitAutomaticBugReport({
               categorization: {
                 submissionMode: "AUTOMATIC",
-                triggerArea: "captions_tester",
+                triggerSource: "captions_tester",
                 triggerReason: "captions_incident_detected",
               },
               expectedBehavior,

@@ -77,7 +77,7 @@ Request:
   "kind": "bug",
   "trigger": {
     "type": "manual",
-    "surface": "feedback_screen",
+    "source": "feedback_screen",
     "reason": "manual_bug_report",
     "sourceAppletPackageName": "com.example"
   },
@@ -198,7 +198,7 @@ Request:
   "kind": "automatic",
   "trigger": {
     "type": "automatic",
-    "area": "gallery_video",
+    "source": "gallery_video",
     "reason": "gallery_video_on_error"
   },
   "report": {

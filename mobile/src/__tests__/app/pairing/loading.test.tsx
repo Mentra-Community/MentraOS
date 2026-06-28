@@ -159,7 +159,7 @@ describe("pairing loading screen", () => {
       expect(submitAutomaticBugReport).toHaveBeenCalledWith(
         expect.objectContaining({
           categorization: expect.objectContaining({
-            triggerArea: "pairing_loading",
+            triggerSource: "pairing_loading",
             triggerReason: "glasses_connect_timeout",
           }),
           dedupeKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",

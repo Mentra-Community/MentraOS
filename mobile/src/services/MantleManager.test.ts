@@ -422,7 +422,7 @@ describe("MantleManager", () => {
       expect(submitAutomaticBugReport).toHaveBeenCalledWith(
         expect.objectContaining({
           categorization: expect.objectContaining({
-            triggerArea: "captions_tester",
+            triggerSource: "captions_tester",
             triggerReason: "captions_incident_detected",
           }),
           actualBehavior: expect.stringContaining("Transcript stayed stale"),

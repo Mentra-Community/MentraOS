@@ -47,7 +47,7 @@ export async function submitGalleryVideoPlaybackBugReport(
     const submitRes = await submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
-        triggerArea: "gallery_video",
+        triggerSource: "gallery_video",
         triggerReason: "gallery_video_on_error",
       },
       expectedBehavior: "Video should play in the glasses gallery.",

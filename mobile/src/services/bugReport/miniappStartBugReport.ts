@@ -64,7 +64,7 @@ export async function submitMiniappStartFailedBugReport(
   await submitAutomaticBugReport({
     categorization: {
       submissionMode: "AUTOMATIC",
-      triggerArea: "miniapp_launch",
+      triggerSource: "miniapp_launch",
       triggerReason: "miniapp_start_failed",
       sourceAppletPackageName: applet.packageName,
       sourceAppletName: applet.name,

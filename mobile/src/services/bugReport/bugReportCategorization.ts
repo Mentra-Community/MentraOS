@@ -4,7 +4,7 @@ export type ReportSubmissionMode = "USER_INITIATED" | "AUTOMATIC"
 
 export interface BugReportCategorization {
   submissionMode: ReportSubmissionMode
-  triggerArea: string
+  triggerSource: string
   triggerReason: string
   sourceAppletPackageName?: string
   sourceAppletName?: string
@@ -27,7 +27,7 @@ export function buildReportTrigger(categorization: BugReportCategorization): Rep
   if (categorization.submissionMode === "AUTOMATIC") {
     return {
       type: "automatic",
-      area: categorization.triggerArea,
+      source: categorization.triggerSource,
       reason: categorization.triggerReason,
       ...source,
     }
@@ -35,7 +35,7 @@ export function buildReportTrigger(categorization: BugReportCategorization): Rep
 
   return {
     type: "manual",
-    surface: categorization.triggerArea,
+    source: categorization.triggerSource,
     reason: categorization.triggerReason,
     ...source,
   }

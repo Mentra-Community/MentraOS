@@ -14,21 +14,16 @@ export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
 export type ReportSystemPriority = "low" | "medium" | "high" | "critical";
 
+interface BaseReportTrigger {
+  source: string;
+  reason: string;
+  sourceAppletPackageName?: string;
+  sourceAppletName?: string;
+}
+
 export type ReportTrigger =
-  | {
-      type: "manual";
-      surface: string;
-      reason: string;
-      sourceAppletPackageName?: string;
-      sourceAppletName?: string;
-    }
-  | {
-      type: "automatic";
-      area: string;
-      reason: string;
-      sourceAppletPackageName?: string;
-      sourceAppletName?: string;
-    };
+  | (BaseReportTrigger & { type: "manual" })
+  | (BaseReportTrigger & { type: "automatic" });
 
 export interface ReportDetails {
   actualBehavior: string;

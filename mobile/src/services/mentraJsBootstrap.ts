@@ -68,7 +68,7 @@ export function bootstrapMentraJS() {
     void submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
-        triggerArea: "miniapp_crashloop",
+        triggerSource: "miniapp_crashloop",
         triggerReason: "mentrajs_crashloop_disabled",
         sourceAppletPackageName: packageName,
         sourceAppletName: appName,

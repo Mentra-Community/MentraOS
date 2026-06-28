@@ -270,7 +270,7 @@ const bug = await toolkit.reports.submit({
 
 const automatic = await toolkit.reports.submit({
   kind: "automatic",
-  trigger: {type: "automatic", area, reason},
+  trigger: {type: "automatic", source, reason},
   report,
   screenshots,
   dedupeKey,

@@ -7,7 +7,7 @@ const bugReportInput: SubmitReportInput = {
   kind: "bug",
   trigger: {
     type: "manual",
-    surface: "feedback_screen",
+    source: "feedback_screen",
     reason: "manual_bug_report",
   },
   report: {

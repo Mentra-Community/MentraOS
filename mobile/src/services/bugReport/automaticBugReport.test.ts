@@ -25,7 +25,7 @@ describe("submitAutomaticBugReport", () => {
     const result = await submitAutomaticBugReport({
       categorization: {
         submissionMode: "AUTOMATIC",
-        triggerArea: "gallery_video",
+        triggerSource: "gallery_video",
         triggerReason: "gallery_video_on_error",
         sourceAppletPackageName: "com.example",
         sourceAppletName: "Example",
@@ -42,7 +42,7 @@ describe("submitAutomaticBugReport", () => {
       kind: "automatic",
       trigger: {
         type: "automatic",
-        area: "gallery_video",
+        source: "gallery_video",
         reason: "gallery_video_on_error",
         sourceAppletPackageName: "com.example",
         sourceAppletName: "Example",
@@ -70,7 +70,7 @@ describe("submitAutomaticBugReport", () => {
     await submitAutomaticBugReport({
       categorization: {
         submissionMode: "USER_INITIATED",
-        triggerArea: "pairing",
+        triggerSource: "pairing",
         triggerReason: "timeout",
       },
       expectedBehavior: "Connect.",
@@ -83,7 +83,7 @@ describe("submitAutomaticBugReport", () => {
         kind: "automatic",
         trigger: {
           type: "automatic",
-          area: "pairing",
+          source: "pairing",
           reason: "timeout",
         },
         report: {
@@ -105,7 +105,7 @@ describe("submitAutomaticBugReport", () => {
       submitAutomaticBugReport({
         categorization: {
           submissionMode: "AUTOMATIC",
-          triggerArea: "pairing",
+          triggerSource: "pairing",
           triggerReason: "timeout",
         },
         expectedBehavior: "Connect.",
