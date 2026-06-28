@@ -26,6 +26,7 @@ import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
+import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -351,6 +352,7 @@ function construct(): void {
   })
   transcriptUnsubscribe = c.runtime.onTranscript((data) => {
     if (c !== client) return
+    logCloudV2TranscriptMetric(data)
     emitTranscript(data)
   })
   translationUnsubscribe = c.runtime.onTranslation((data) => {
