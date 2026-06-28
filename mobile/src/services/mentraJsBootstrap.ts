@@ -4,8 +4,8 @@
  * binds them to the native Crust module + the launcher, and starts the pump).
  *
  * This host shim attaches Mentra-app telemetry around the island-owned engine:
- * Sentry events, automatic report filing, and the user-facing alert via
- * `router.onCrashloop` / `router.onRestartToast`.
+ * Sentry events and the user-facing alert via `router.onCrashloop` /
+ * `router.onRestartToast`.
  *
  * Called once from MantleManager.initServices. Idempotent — the island engine is
  * a singleton and the host attach runs once.
@@ -16,7 +16,6 @@ import * as Sentry from "@sentry/react-native"
 
 import {ensureMiniappEngine, getMiniappEngine, useAppStatusStore} from "@mentra/island"
 
-import {submitAutomaticBugReport} from "@/services/bugReport/automaticBugReport"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
@@ -62,23 +61,6 @@ export function bootstrapMentraJS() {
     // Look up the miniapp's display name for the alert + report.
     const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
-
-    // File an automatic report. Dedupe so a flapping miniapp doesn't
-    // generate one report per crashloop transition.
-    void submitAutomaticBugReport({
-      categorization: {
-        submissionMode: "AUTOMATIC",
-        triggerSource: "miniapp_crashloop",
-        triggerReason: "mentrajs_crashloop_disabled",
-        sourceAppletPackageName: packageName,
-        sourceAppletName: appName,
-      },
-      expectedBehavior: `${appName} should run without crashing.`,
-      actualBehavior: JSON.stringify({reason, lastLogLines}, null, 2),
-      systemPriority: "critical",
-      dedupeKey: `mentrajs_crashloop:${packageName}`,
-      logTag: "MentraJSCrashloop",
-    })
 
     // User-facing alert. Last so even if Sentry/reporting fails the user
     // still sees something.

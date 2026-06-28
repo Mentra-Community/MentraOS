@@ -41,6 +41,11 @@ export type ToolkitSubmitReportInput =
       context?: Partial<ReportContext>
     })
 
+export type ToolkitSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
+  context?: Partial<ReportContext>
+  screenshots?: ReportAttachmentInput[]
+}
+
 export type ReportSubmitResult =
   | {status: "submitted"; reportId: string; reportStatus: ReportStatus; created: boolean}
   | {status: "skipped"; reason: "duplicate_within_window"}
@@ -144,4 +149,8 @@ export const reports = {
 
     return {status: "submitted", reportId, reportStatus, created}
   },
+}
+
+export function submitAutomaticReport(input: ToolkitSubmitAutomaticReportInput): Promise<ReportSubmitResult> {
+  return reports.submit(input)
 }

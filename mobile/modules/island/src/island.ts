@@ -17,6 +17,7 @@ import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloud
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {startCaptionsTesterReportService, stopCaptionsTesterReportService} from "./services/CaptionsTesterReportService"
+import {startMentraJSCrashloopReportService, stopMentraJSCrashloopReportService} from "./services/MentraJSCrashloopReportService"
 import {ensureMiniappEngine, stopMiniappEngine} from "./services/MiniappEngine"
 import localMiniappRuntime from "./services/LocalMiniappRuntime"
 import displayProcessor from "./services/DisplayProcessor"
@@ -76,6 +77,9 @@ export const toolkit = {
     // Android internal/e2e: laptop captions tester can broadcast a failure intent;
     // island owns turning that into a Cloud V2 report.
     startCaptionsTesterReportService()
+    // MentraJS crashloop-disabled is runtime state; island owns filing the
+    // automatic report while hosts only render alert/telemetry side effects.
+    startMentraJSCrashloopReportService()
     // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
     // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor
@@ -97,6 +101,7 @@ export const toolkit = {
     stopAudioCloudUplink()
     stopPhoneNotificationsSync()
     stopCaptionsTesterReportService()
+    stopMentraJSCrashloopReportService()
     await stopMiniappEngine()
     localMiniappRuntime.cleanup()
     displayProcessor.detachFromRuntime()
