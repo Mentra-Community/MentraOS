@@ -31,13 +31,15 @@ import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 
 import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
-import {sanitizeSegment} from "./blobPaths"
+import {sanitizeSegment, shareFileName} from "./blobPaths"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
+/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one unique subdir per share). */
+const SHARE_DIR_NAME = "mentra_blob_share"
 const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
@@ -580,11 +582,27 @@ export class BlobStore {
       })
       return
     }
+    // The on-disk blob name is a generated, extension-less id. react-native-share
+    // derives the shared file's name + extension from the URL's path (its
+    // `filename` option only applies to base64/data payloads, not file:// URLs),
+    // so sharing `file.uri` directly hands the recipient an extension-less file.
+    // Copy to a temp file that carries the real display name + extension, share
+    // that, then clean it up.
+    const shareName = shareFileName(meta)
+    // Copy into a per-share unique subdir so two concurrent shares that resolve
+    // to the same display name can't clobber each other's temp file while
+    // Share.open still references it. The file keeps `shareName` as its basename
+    // so the OS share sheet shows the right name + extension.
+    let tempDir: Directory | null = null
     try {
+      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, this.makeId())
+      tempDir.create({intermediates: true})
+      const temp = new File(tempDir, shareName)
+      file.copy(temp)
       await Share.open({
-        url: file.uri,
+        url: temp.uri,
         type: meta.mimeType || OCTET,
-        filename: meta.name || meta.fileName,
+        filename: shareName,
       })
       this.hooks.sendResult(packageName, requestId, true, {success: true})
     } catch (error: any) {
@@ -593,6 +611,14 @@ export class BlobStore {
       } else {
         console.error(`${LOG_TAG}: blob share error:`, error)
         this.hooks.sendResult(packageName, requestId, true, {success: false})
+      }
+    } finally {
+      if (tempDir) {
+        try {
+          if (tempDir.exists) tempDir.delete()
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
