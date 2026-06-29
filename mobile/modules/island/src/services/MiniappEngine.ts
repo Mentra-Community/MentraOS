@@ -130,6 +130,7 @@ export async function stopMiniappEngine(): Promise<void> {
       }
     }),
   )
+  engine = null
 }
 
 /** Returns the engine singletons if already constructed, else null. */
