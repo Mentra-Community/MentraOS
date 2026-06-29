@@ -46,10 +46,10 @@ export function DashboardPage() {
             <CardContent className="grid gap-3 p-4 sm:p-5 lg:grid-cols-3">
               <ActionRow
                 icon={PackagePlus}
-                title="Create miniapp"
-                body="Reserve a package name under your org prefix."
-                action="New miniapp"
-                to="/publish"
+                title="Your miniapps"
+                body="Browse packages, releases, and review status. New miniapps are created with the CLI."
+                action="Open miniapps"
+                to="/apps"
                 primary
               />
               <ActionRow
@@ -144,7 +144,7 @@ type ActionRowProps = {
   title: string;
   body: string;
   action: string;
-  to: "/publish" | "/tokens";
+  to: "/apps" | "/tokens";
   primary?: boolean;
 };
 

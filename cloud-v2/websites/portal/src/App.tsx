@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, Fingerprint, Globe2, Loader2, LogOut, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
+import { Building2, Clock, Fingerprint, Globe2, Loader2, LogOut, Mail, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,12 @@ type TrustedIssuer = {
   jwksUrl: string;
   subjectClaim: string;
   enabled: boolean;
+  updatedBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
+
+type JwksValidation = { reachable: boolean; keyCount: number; algorithms: string[]; error?: string };
 
 type PortalUser = {
   id: string;
@@ -145,22 +150,14 @@ function PortalPage() {
     >
       {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
       {page === "environments" ? (
-        <section className="space-y-6">
-          <IssuerForm
-            disabled={!org}
-            onSaved={async () => {
-              await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
-            }}
-          />
-          <IssuerList
-            issuers={issuers.data?.issuers ?? []}
-            loading={issuers.isLoading}
-            onChanged={async () => {
-              await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
-            }}
-          />
-          <ReferencePanel org={org} />
-        </section>
+        <EnvironmentsPage
+          org={org}
+          issuers={issuers.data?.issuers ?? []}
+          loading={issuers.isLoading}
+          onChanged={async () => {
+            await qc.invalidateQueries({ queryKey: ["trusted-issuers"] });
+          }}
+        />
       ) : null}
       {page === "access" ? <EnterpriseAccess org={org} /> : null}
     </AppShell>
@@ -208,33 +205,64 @@ function FocusShell({
 
 function EnterpriseOnboarding({ user, onSaved }: { user: PortalUser; onSaved: () => Promise<void> }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-      <OrgPanel org={null} user={user} onSaved={onSaved} />
-      <section className="space-y-4">
-        <InfoCard icon={<ShieldCheck className="size-5" />} title="Approval required" body="Creating an enterprise account submits it for admin approval. Runtime issuer configuration stays locked until approval." />
-        <InfoCard icon={<Users className="size-5" />} title="Invited orgs" body="If an admin invited you to an existing enterprise org, accept that invite instead of creating a new account." />
-        <InfoCard icon={<Building2 className="size-5" />} title="Request access" body="If your company already has an enterprise account, request access from that org owner." />
-      </section>
+    <div className="space-y-7">
+      <div>
+        <div className="inline-flex items-center gap-2 rounded-full border border-[#dfe3dc] bg-white px-3 py-1 text-xs font-medium text-[#5d6068]">
+          <Building2 className="size-3.5 text-[#087d50]" />
+          Step 1 · Set up your enterprise organization
+        </div>
+        <h1 className="mt-4 font-display text-[28px] font-bold leading-tight text-[#14151b]">Create your enterprise organization</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#68746d]">
+          Register your organization to manage the trusted identity issuers Mentra accepts for your runtime. New orgs are reviewed by a Mentra admin before configuration unlocks — or accept an invite if your company already has an account.
+        </p>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+        <OrgPanel org={null} user={user} onSaved={onSaved} />
+        <section className="space-y-4">
+          <InfoCard icon={<ShieldCheck className="size-5" />} title="Approval required" body="Creating an enterprise account submits it for admin approval. Runtime issuer configuration stays locked until approval." />
+          <InfoCard icon={<Users className="size-5" />} title="Invited orgs" body="If an admin invited you to an existing enterprise org, accept that invite instead of creating a new account." />
+          <InfoCard icon={<Building2 className="size-5" />} title="Request access" body="If your company already has an enterprise account, request access from that org owner." />
+        </section>
+      </div>
     </div>
   );
 }
 
 function ApprovalPending({ org }: { org: EnterpriseOrg }) {
   return (
-    <section className="rounded-[24px] border border-[#e0e4de] bg-white p-8 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-      <div className="flex max-w-2xl gap-5">
-        <div className="flex size-14 shrink-0 items-center justify-center rounded-[18px] bg-[#fff7df] text-[#a66a00]">
-          <Clock className="size-7" />
+    <div className="space-y-6">
+      <section className="rounded-[24px] border border-[#e0e4de] bg-white p-8 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+        <div className="flex max-w-2xl gap-5">
+          <div className="flex size-14 shrink-0 items-center justify-center rounded-[18px] bg-[#fff7df] text-[#a66a00]">
+            <Clock className="size-7" />
+          </div>
+          <div>
+            <span className="inline-flex rounded-full border border-[#f0e2b6] bg-[#fff7df] px-3 py-1 text-xs font-semibold text-[#a66a00]">Request submitted</span>
+            <h2 className="mt-3 text-2xl font-bold tracking-[-0.03em]">Waiting for admin approval</h2>
+            <p className="mt-2 leading-7 text-[#68746d]">
+              <span className="font-medium text-[#1c1d22]">{org.name}</span> is in the review queue. Trusted issuer and JWKS management unlocks as soon as a Mentra admin approves your enterprise account, and we'll email you when it's ready.
+            </p>
+            <div className="mt-5 rounded-[18px] bg-[#f5f7f4] p-4">
+              <div className="text-xs font-medium uppercase tracking-[0.08em] text-[#a0a3aa]">Your tenant ID</div>
+              <div className="mt-1 font-mono text-sm text-[#4f5d54]">{org.tenantId}</div>
+            </div>
+          </div>
         </div>
-        <div>
-          <h2 className="text-2xl font-bold tracking-[-0.03em]">Waiting for admin approval</h2>
-          <p className="mt-2 leading-7 text-[#68746d]">
-            {org.name} has been created, but issuer and JWKS management unlocks only after a Mentra admin approves the enterprise account.
-          </p>
-          <div className="mt-5 rounded-[18px] bg-[#f5f7f4] p-4 font-mono text-sm text-[#4f5d54]">{org.tenantId}</div>
-        </div>
+      </section>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <InfoCard
+          icon={<ShieldCheck className="size-5" />}
+          title="What Mentra is reviewing"
+          body="We confirm your organization details and that you're authorized to manage auth issuers for this company before unlocking configuration."
+        />
+        <InfoCard
+          icon={<Mail className="size-5" />}
+          title="Need it sooner?"
+          body="Reply to your Mentra onboarding thread or reach your Mentra representative to expedite review."
+        />
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -357,23 +385,75 @@ function OrgPanel({ org, user, onSaved }: { org: EnterpriseOrg | null; user: Por
   );
 }
 
-function IssuerForm({ disabled, onSaved }: { disabled: boolean; onSaved: () => Promise<void> }) {
+function EnvironmentsPage({ org, issuers, loading, onChanged }: { org: EnterpriseOrg; issuers: TrustedIssuer[]; loading: boolean; onChanged: () => Promise<void> }) {
+  const [editing, setEditing] = useState<TrustedIssuer | null>(null);
+  return (
+    <section className="space-y-6">
+      <IssuerForm
+        disabled={!org}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+        onSaved={async () => {
+          setEditing(null);
+          await onChanged();
+        }}
+      />
+      <IssuerList issuers={issuers} loading={loading} onChanged={onChanged} onEdit={setEditing} />
+      <ReferencePanel org={org} />
+    </section>
+  );
+}
+
+function IssuerForm({ disabled, editing, onCancelEdit, onSaved }: { disabled: boolean; editing: TrustedIssuer | null; onCancelEdit: () => void; onSaved: () => Promise<void> }) {
   const [environmentName, setEnvironmentName] = useState("sandbox");
   const [issuer, setIssuer] = useState("");
   const [jwksUrl, setJwksUrl] = useState("");
   const [subjectClaim, setSubjectClaim] = useState("sub");
-  const createIssuer = useMutation({
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  useEffect(() => {
+    if (!editing) return;
+    setEnvironmentName(editing.environmentName);
+    setIssuer(editing.issuer);
+    setJwksUrl(editing.jwksUrl);
+    setSubjectClaim(editing.subjectClaim);
+    setShowAdvanced(editing.subjectClaim !== "sub");
+  }, [editing]);
+
+  const save = useMutation({
     mutationFn: () => api<{ issuer: TrustedIssuer }>("/api/portal/trusted-issuers", {
       method: "POST",
       body: { environmentName, issuer, jwksUrl, subjectClaim },
     }),
     onSuccess: async () => {
-      setIssuer("");
-      setJwksUrl("");
+      if (!editing) {
+        setIssuer("");
+        setJwksUrl("");
+        setSubjectClaim("sub");
+        setShowAdvanced(false);
+      }
       await onSaved();
     },
   });
-  const canSubmit = !disabled && environmentName && issuer && jwksUrl && !createIssuer.isPending;
+
+  const validate = useMutation({
+    mutationFn: () => api<{ validation: JwksValidation }>("/api/portal/trusted-issuers/validate", {
+      method: "POST",
+      body: { jwksUrl },
+    }),
+  });
+
+  const canSubmit = !disabled && Boolean(environmentName && issuer && jwksUrl) && !save.isPending;
+
+  function reset() {
+    setEnvironmentName("sandbox");
+    setIssuer("");
+    setJwksUrl("");
+    setSubjectClaim("sub");
+    setShowAdvanced(false);
+    validate.reset();
+    onCancelEdit();
+  }
 
   return (
     <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_10px_28px_-24px_rgba(20,21,27,0.42)]">
@@ -383,7 +463,7 @@ function IssuerForm({ disabled, onSaved }: { disabled: boolean; onSaved: () => P
             <Fingerprint className="size-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold">Add trusted issuer</h2>
+            <h2 className="text-xl font-bold">{editing ? `Edit ${editing.environmentName} issuer` : "Add trusted issuer"}</h2>
             <p className="mt-1 text-sm leading-6 text-[#68746d]">Use exact HTTPS issuer URLs. Query strings and fragments are rejected.</p>
           </div>
         </div>
@@ -392,35 +472,80 @@ function IssuerForm({ disabled, onSaved }: { disabled: boolean; onSaved: () => P
         className="grid gap-4 p-5 md:grid-cols-2"
         onSubmit={event => {
           event.preventDefault();
-          if (canSubmit) createIssuer.mutate();
+          if (canSubmit) save.mutate();
         }}
       >
         <Field label="Environment">
-          <Input value={environmentName} onChange={event => setEnvironmentName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="sandbox" disabled={disabled} />
-        </Field>
-        <Field label="Subject claim (optional)">
-          <Input value={subjectClaim} onChange={event => setSubjectClaim(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="sub" disabled={disabled} />
-          <p className="mt-1 text-xs leading-5 text-[#8a8d85]">Which claim holds the user id. Defaults to <span className="font-mono">sub</span> — only change it if your IdP puts the id elsewhere.</p>
+          <Input value={environmentName} onChange={event => setEnvironmentName(event.target.value)} className="h-12 rounded-[12px] bg-white" placeholder="sandbox" disabled={disabled || Boolean(editing)} />
+          {editing ? <p className="mt-1 text-xs leading-5 text-[#8a8d85]">Environment is the lookup key and can't be changed; remove and re-add to rename.</p> : null}
         </Field>
         <Field label="Issuer URL">
           <Input value={issuer} onChange={event => setIssuer(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com" disabled={disabled} />
         </Field>
-        <Field label="JWKS URL">
-          <Input value={jwksUrl} onChange={event => setJwksUrl(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com/.well-known/jwks.json" disabled={disabled} />
-        </Field>
         <div className="md:col-span-2">
-          {createIssuer.isError ? <ErrorText error={createIssuer.error} /> : null}
-          <Button className="h-11 rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c]" disabled={!canSubmit}>
-            <Plus className="size-4" />
-            Add issuer
-          </Button>
+          <Field label="JWKS URL">
+            <div className="flex flex-wrap gap-2">
+              <Input value={jwksUrl} onChange={event => { setJwksUrl(event.target.value); validate.reset(); }} className="h-12 min-w-[240px] flex-1 rounded-[12px] bg-white font-mono" placeholder="https://auth.acme.com/.well-known/jwks.json" disabled={disabled} />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 rounded-[12px] px-4"
+                disabled={disabled || !jwksUrl || validate.isPending}
+                onClick={() => validate.mutate()}
+              >
+                {validate.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+                Test
+              </Button>
+            </div>
+            <JwksResult result={validate.data?.validation} error={validate.error} />
+          </Field>
+        </div>
+
+        <div className="md:col-span-2">
+          <button type="button" className="text-sm font-semibold text-[#087d50]" onClick={() => setShowAdvanced(value => !value)}>
+            {showAdvanced ? "Hide advanced" : "Advanced — subject claim"}
+          </button>
+          {showAdvanced ? (
+            <div className="mt-3">
+              <Field label="Subject claim">
+                <Input value={subjectClaim} onChange={event => setSubjectClaim(event.target.value)} className="h-12 rounded-[12px] bg-white font-mono" placeholder="sub" disabled={disabled} />
+                <p className="mt-1 text-xs leading-5 text-[#8a8d85]">Which claim holds the user id. Defaults to <span className="font-mono">sub</span> — only change it if your IdP puts the id elsewhere.</p>
+              </Field>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="md:col-span-2">
+          {save.isError ? <ErrorText error={save.error} /> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button className="h-11 rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c]" disabled={!canSubmit}>
+              <Plus className="size-4" />
+              {editing ? (save.isPending ? "Saving..." : "Update issuer") : (save.isPending ? "Adding..." : "Add issuer")}
+            </Button>
+            {editing ? (
+              <Button type="button" variant="outline" className="h-11 rounded-full px-5" onClick={reset}>Cancel</Button>
+            ) : null}
+          </div>
         </div>
       </form>
     </section>
   );
 }
 
-function IssuerList({ issuers, loading, onChanged }: { issuers: TrustedIssuer[]; loading: boolean; onChanged: () => Promise<void> }) {
+function JwksResult({ result, error }: { result?: JwksValidation; error: unknown }) {
+  if (error) return <p className="mt-2 text-sm text-[#a64235]">{error instanceof Error ? error.message : "Validation failed"}</p>;
+  if (!result) return null;
+  if (!result.reachable || result.error) {
+    return <p className="mt-2 text-sm font-medium text-[#a64235]">✕ {result.error ?? "Unreachable"}</p>;
+  }
+  return (
+    <p className="mt-2 text-sm font-medium text-[#087d50]">
+      ✓ Reachable · {result.keyCount} key{result.keyCount === 1 ? "" : "s"}{result.algorithms.length ? ` · ${result.algorithms.join(", ")}` : ""}
+    </p>
+  );
+}
+
+function IssuerList({ issuers, loading, onChanged, onEdit }: { issuers: TrustedIssuer[]; loading: boolean; onChanged: () => Promise<void>; onEdit: (issuer: TrustedIssuer) => void }) {
   const toggle = useMutation({
     mutationFn: (input: { id: string; enabled: boolean }) => api<{ issuer: TrustedIssuer }>(`/api/portal/trusted-issuers/${input.id}`, {
       method: "PATCH",
@@ -444,31 +569,39 @@ function IssuerList({ issuers, loading, onChanged }: { issuers: TrustedIssuer[];
         <div className="flex min-h-[220px] flex-col items-center justify-center p-6 text-center">
           <Fingerprint className="size-10 text-[#087d50]" />
           <h3 className="mt-4 text-lg font-bold">No issuers yet</h3>
-          <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">Create an enterprise org, then register the sandbox or production issuer your auth backend signs with. Tokens route by <span className="font-mono">tenantId</span> + <span className="font-mono">env</span>; the issuer URL is validated against the token's <span className="font-mono">iss</span>.</p>
+          <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">Register the sandbox or production issuer your auth backend signs with. Tokens route by <span className="font-mono">tenantId</span> + <span className="font-mono">env</span>; the issuer URL is validated against the token's <span className="font-mono">iss</span>.</p>
         </div>
       ) : (
         <div className="divide-y divide-[#eceeeb]">
           {issuers.map(issuer => (
-            <div key={issuer.id} className="grid gap-4 p-5 md:grid-cols-[140px_1fr_auto] md:items-center">
+            <div key={issuer.id} className="grid gap-4 p-5 md:grid-cols-[150px_1fr_auto] md:items-center">
               <div>
                 <div className="text-sm font-bold">{issuer.environmentName}</div>
-                <div className={`mt-1 text-xs font-semibold ${issuer.enabled ? "text-[#087d50]" : "text-[#a64235]"}`}>
+                <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${issuer.enabled ? "bg-[#e9f8f1] text-[#087d50]" : "bg-[#fff3f1] text-[#a64235]"}`}>
                   {issuer.enabled ? "Enabled" : "Disabled"}
-                </div>
+                </span>
               </div>
               <div className="min-w-0">
                 <div className="truncate font-mono text-sm">{issuer.issuer}</div>
                 <div className="mt-1 truncate font-mono text-xs text-[#747780]">{issuer.jwksUrl}</div>
+                {issuer.updatedAt ? (
+                  <div className="mt-1 truncate text-xs text-[#a0a3aa]">
+                    Updated {formatDate(issuer.updatedAt)}{issuer.updatedBy ? ` · ${issuer.updatedBy}` : ""}
+                  </div>
+                ) : null}
               </div>
-              <Button
-                variant="outline"
-                className="h-10 rounded-full px-4"
-                disabled={toggle.isPending}
-                onClick={() => toggle.mutate({ id: issuer.id, enabled: !issuer.enabled })}
-              >
-                {issuer.enabled ? <ToggleRight className="size-5 text-[#087d50]" /> : <ToggleLeft className="size-5" />}
-                {issuer.enabled ? "Disable" : "Enable"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" className="h-10 rounded-full px-4" onClick={() => onEdit(issuer)}>Edit</Button>
+                <Button
+                  variant="outline"
+                  className="h-10 rounded-full px-4"
+                  disabled={toggle.isPending}
+                  onClick={() => toggle.mutate({ id: issuer.id, enabled: !issuer.enabled })}
+                >
+                  {issuer.enabled ? <ToggleRight className="size-5 text-[#087d50]" /> : <ToggleLeft className="size-5" />}
+                  {issuer.enabled ? "Disable" : "Enable"}
+                </Button>
+              </div>
             </div>
           ))}
         </div>
@@ -580,6 +713,13 @@ function ErrorText({ error }: { error: unknown }) {
       {error instanceof Error ? error.message : "Request failed"}
     </div>
   );
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
 async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {

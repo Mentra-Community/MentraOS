@@ -110,6 +110,38 @@ export class EnterpriseService {
     return serializeTrustedIssuer(issuer.toObject());
   }
 
+  /**
+   * Fetch a JWKS URL server-side and report whether it is reachable and well
+   * formed, so a portal admin can validate an issuer before (or after) saving
+   * it. https-only + a short timeout keep this from being a useful SSRF probe.
+   */
+  async validateJwks(jwksUrl: string): Promise<{
+    reachable: boolean;
+    keyCount: number;
+    algorithms: string[];
+    error?: string;
+  }> {
+    const url = normalizeHttpsUrl(jwksUrl, "JWKS URL");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(url, { signal: controller.signal, headers: { accept: "application/json" } });
+      if (!res.ok) return { reachable: false, keyCount: 0, algorithms: [], error: `HTTP ${res.status}` };
+      const body = (await res.json()) as { keys?: Array<{ alg?: string }> };
+      const keys = Array.isArray(body.keys) ? body.keys : [];
+      if (keys.length === 0) {
+        return { reachable: true, keyCount: 0, algorithms: [], error: "No keys found in JWKS document" };
+      }
+      const algorithms = [...new Set(keys.map(key => key.alg).filter((alg): alg is string => Boolean(alg)))];
+      return { reachable: true, keyCount: keys.length, algorithms };
+    } catch (err) {
+      const error = err instanceof Error && err.name === "AbortError" ? "Request timed out" : err instanceof Error ? err.message : "fetch failed";
+      return { reachable: false, keyCount: 0, algorithms: [], error };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async requirePrimaryOrg(user: EnterpriseUserIdentity) {
     const org = await this.getPrimaryOrgForUser(user);
     if (!org) throw new EnterpriseServiceError("enterprise_org_required", "create an enterprise org first", 428);
@@ -216,6 +248,7 @@ function serializeTrustedIssuer(issuer: TrustedIssuer & { createdAt?: Date; upda
     jwksUrl: issuer.jwksUrl,
     subjectClaim: issuer.subjectClaim,
     enabled: issuer.enabled,
+    updatedBy: issuer.updatedBy ?? null,
     createdAt: issuer.createdAt?.toISOString() ?? null,
     updatedAt: issuer.updatedAt?.toISOString() ?? null,
   };

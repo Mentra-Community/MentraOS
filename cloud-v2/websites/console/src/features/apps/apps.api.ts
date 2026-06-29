@@ -46,8 +46,30 @@ export const developerAppsResponseSchema = z.object({
 
 export type DeveloperApp = z.infer<typeof developerAppSchema>;
 
+export const developerReleaseSchema = z.object({
+  id: z.string(),
+  version: z.string(),
+  status: z.enum(["draft", "submitted", "in_review", "accepted", "rejected", "published", "suspended"]),
+  releaseBundleAssetId: z.string().nullable().optional(),
+  bundleSha256: z.string().nullable().optional(),
+  bundleSizeBytes: z.number().nullable().optional(),
+  reviewedBy: z.string().nullable().optional(),
+  reviewNotes: z.string().nullable().optional(),
+  createdAt: z.string().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+});
+
+export type DeveloperRelease = z.infer<typeof developerReleaseSchema>;
+
 export function listDeveloperApps(): Promise<{ apps: DeveloperApp[] }> {
   return apiRequest("/console/apps", developerAppsResponseSchema);
+}
+
+export function listDeveloperReleases(packageName: string): Promise<{ releases: DeveloperRelease[] }> {
+  return apiRequest(
+    `/console/apps/${encodeURIComponent(packageName)}/releases`,
+    z.object({ releases: z.array(developerReleaseSchema) }),
+  );
 }
 
 export function createDeveloperApp(input: {

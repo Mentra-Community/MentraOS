@@ -1,4 +1,4 @@
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Boxes, Building2, FileText, Home, KeyRound, LogOut, Menu, MoreHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/select";
 import { displayNameForUser, initialsForUser, logoutConsoleSession } from "@/features/session/session.api";
 import { sessionQuery } from "@/features/session/session.queries";
+import { DevOnboarding } from "@/features/org/org-onboarding";
+import { OnboardingShell } from "@/components/onboarding-shell";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui-store";
 
@@ -32,10 +34,6 @@ const pageTitles: Record<string, { title: string; description: string }> = {
     title: "Miniapps",
     description: "Manage package identity, releases, and listings.",
   },
-  "/publish": {
-    title: "Create miniapp",
-    description: "Reserve package identity before publishing releases.",
-  },
   "/tokens": {
     title: "CLI & API keys",
     description: "Manage CLI login and API keys for CI/CD.",
@@ -53,7 +51,6 @@ type AppShellProps = {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = useRouterState({ select: state => state.location.pathname });
-  const navigate = useNavigate();
   const sidebarCollapsed = useUiStore(state => state.sidebarCollapsed);
   const toggleSidebar = useUiStore(state => state.toggleSidebar);
   const session = useQuery(sessionQuery());
@@ -63,8 +60,11 @@ export function AppShell({ children }: AppShellProps) {
   const email = user?.email;
   const profileName = user ? displayNameForUser(user) : "Loading";
   const initials = user ? initialsForUser(user) : "";
-  const page = pageTitles[pathname] ?? fallbackPageTitle;
-  const showNewMiniappAction = pathname === "/apps";
+  const page =
+    pageTitles[pathname] ??
+    (pathname.startsWith("/apps/")
+      ? { title: "Miniapp", description: "Package identity, releases, and review status." }
+      : fallbackPageTitle);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const developerOrgs = useMemo(() => {
     const orgs = session.data?.organizations;
@@ -81,12 +81,6 @@ export function AppShell({ children }: AppShellProps) {
   });
 
   useEffect(() => {
-    if (onboardingRequired && pathname !== "/organization") {
-      void navigate({ to: "/organization" });
-    }
-  }, [navigate, onboardingRequired, pathname]);
-
-  useEffect(() => {
     if (!developerOrgs.some(org => org.id === selectedOrgId)) {
       setSelectedOrgId(developerOrgs[0]?.id ?? "default");
     }
@@ -99,6 +93,21 @@ export function AppShell({ children }: AppShellProps) {
   useEffect(() => {
     setProfileMenuOpen(false);
   }, [pathname, sidebarCollapsed]);
+
+  // Onboarding gate: a developer with no org gets a dedicated, nav-free shell —
+  // no sidebar links to bounce off of. This supersedes whatever route they're on
+  // until they belong to an org, so the gate is inescapable by design.
+  if (sessionReady && onboardingRequired) {
+    return (
+      <OnboardingShell
+        userLabel={profileName}
+        onSignOut={() => logout.mutate()}
+        signingOut={logout.isPending}
+      >
+        <DevOnboarding />
+      </OnboardingShell>
+    );
+  }
 
   return (
     <div className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
@@ -281,11 +290,6 @@ export function AppShell({ children }: AppShellProps) {
                 <p className="mt-0.5 truncate text-xs text-[#747780] sm:text-sm">{page.description}</p>
               </div>
             </div>
-            {showNewMiniappAction ? (
-              <Button className="h-9 shrink-0 rounded-full bg-[#111217] px-4 text-sm text-white hover:bg-[#25262c] max-[420px]:basis-full md:h-10 md:px-5 md:text-base" asChild>
-                <Link to="/publish">New miniapp</Link>
-              </Button>
-            ) : null}
           </div>
         </header>
 

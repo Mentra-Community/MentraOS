@@ -28,12 +28,17 @@ const setIssuerEnabledSchema = z.object({
   enabled: z.boolean(),
 });
 
+const validateJwksSchema = z.object({
+  jwksUrl: z.string().min(1),
+});
+
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-portal" }));
 app.get("/me", getMe);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
 app.get("/trusted-issuers", getTrustedIssuers);
 app.post("/trusted-issuers", postTrustedIssuer);
+app.post("/trusted-issuers/validate", postValidateJwks);
 app.patch("/trusted-issuers/:trustedIssuerId", patchTrustedIssuer);
 
 async function getMe(c: AppContext) {
@@ -85,6 +90,18 @@ async function postTrustedIssuer(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid trusted issuer payload");
   try {
     return c.json({ issuer: await enterprise.upsertTrustedIssuer(auth.user, parsed.data) }, 201);
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+async function postValidateJwks(c: AppContext) {
+  const auth = await requirePortalUser(c);
+  if (!auth.ok) return auth.response;
+  const parsed = validateJwksSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid jwks payload");
+  try {
+    return c.json({ validation: await enterprise.validateJwks(parsed.data.jwksUrl) });
   } catch (error) {
     return serviceError(error);
   }

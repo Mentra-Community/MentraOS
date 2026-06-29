@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { displayNameForUser, type ConsoleUser } from "@/features/session/session.api";
+import { displayNameForUser } from "@/features/session/session.api";
 import { sessionQuery } from "@/features/session/session.queries";
+import { normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
 import {
   getDeveloperOrg,
   getOrgAccess,
@@ -459,24 +460,6 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor: string; c
       {children}
     </div>
   );
-}
-
-function suggestedOrgDefaults(user: ConsoleUser | undefined) {
-  const email = user?.email?.toLowerCase() ?? "";
-  const name = displayNameForUser(user);
-  if (email.endsWith("@mentraglass.com")) {
-    return { displayName: "Mentra Developers", packagePrefix: "com.mentra" };
-  }
-
-  const local = email.split("@")[0]?.replace(/[^a-z0-9_]+/g, ".").replace(/^\.+|\.+$/g, "") || "developer";
-  return {
-    displayName: `${name} Team`,
-    packagePrefix: `dev.${local}`,
-  };
-}
-
-function normalizePackagePrefix(value: string): string {
-  return value.trim().toLowerCase().replace(/\.+$/, "");
 }
 
 function initials(value: string): string {
