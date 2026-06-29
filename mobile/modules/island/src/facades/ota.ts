@@ -55,7 +55,10 @@ export const ota = {
   // versionName/updates/totalSize. Keep that behavior unchanged until the whole rich
   // availability check moves into island.
   // retry: () => BluetoothSdk.checkForOtaUpdate(),
-
+  /** Ask glasses for their active OTA session/status after reconnect or remount. */
+  queryStatus: () => BluetoothSdk.sendOtaQueryStatus(),
+  /** Keep glasses awake while an OTA session is actively progressing. */
+  ping: () => BluetoothSdk.ping(),
   /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
   checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
   /** Clear the available-update prompt state. */

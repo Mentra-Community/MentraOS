@@ -1,4 +1,3 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {toolkit, checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo} from "@mentra/island"
 import {useEffect, useState, useRef, useCallback} from "react"
 import {View, ActivityIndicator} from "react-native"
@@ -286,11 +285,11 @@ export default function OtaProgressScreen() {
 
     if (isOtaActive && glassesConnected) {
       // Send initial ping immediately
-      BluetoothSdk.ping().catch((err) => console.log("OTA: ping failed:", err))
+      toolkit.ota.ping().catch((err) => console.log("OTA: ping failed:", err))
 
       // Set up interval to ping (legacy: PING_INTERVAL_MS + LEGACY_EXTRA_TIMEOUT_MS)
       pingIntervalRef.current = window.setInterval(() => {
-        BluetoothSdk.ping().catch((err) => console.log("OTA: ping failed:", err))
+        toolkit.ota.ping().catch((err) => console.log("OTA: ping failed:", err))
       }, legacyPingIntervalMs)
 
       return () => {

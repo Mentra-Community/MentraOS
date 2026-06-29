@@ -1,4 +1,3 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import {toolkit} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -457,7 +456,7 @@ export default function OtaProgressScreen() {
 
     if (becameConnected) {
       console.log("[OTA_PROGRESS] connect-edge: reconnected, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
+      void toolkit.ota.queryStatus()
       armQueryReplyFallback("reconnect")
       return
     }
@@ -480,7 +479,7 @@ export default function OtaProgressScreen() {
       void sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
+      void toolkit.ota.queryStatus()
       armQueryReplyFallback("initial-mount")
     }
   }, [connected, sendOtaStartWithWatchdogs, clearPostApkDelay, armQueryReplyFallback])
@@ -503,7 +502,7 @@ export default function OtaProgressScreen() {
       clearProgressTimeout()
       onFirstActivity()
       onFirstNonZeroProgress()
-      void BluetoothSdk.sendOtaQueryStatus()
+      void toolkit.ota.queryStatus()
       toolkit.ota.markMtkUpdatedThisSession(true)
     }
     GlobalEventEmitter.on("ota_start_ack", handleAck)
@@ -518,9 +517,9 @@ export default function OtaProgressScreen() {
   useEffect(() => {
     const active = connected && (displayState === "starting" || displayState === "updating")
     if (active) {
-      void BluetoothSdk.ping().catch(() => {})
+      void toolkit.ota.ping().catch(() => {})
       pingIntervalRef.current = setInterval(() => {
-        void BluetoothSdk.ping().catch(() => {})
+        void toolkit.ota.ping().catch(() => {})
       }, PING_INTERVAL_MS)
       return () => {
         clearPingInterval()

@@ -563,6 +563,8 @@ jest.mock("@mentra/island", () => {
         // Thin passthroughs — delegate to the shared bluetoothSdkMock so btsdk-call
         // assertions (e.g. ota/progress.test) keep working.
         install: jest.fn((...a) => bluetoothSdkMock.startOtaUpdate(...a)),
+        queryStatus: jest.fn((...a) => bluetoothSdkMock.sendOtaQueryStatus(...a)),
+        ping: jest.fn((...a) => bluetoothSdkMock.ping(...a)),
         retry: jest.fn((...a) => bluetoothSdkMock.retryOtaVersionCheck(...a)),
       },
       gallery: {
@@ -573,11 +575,9 @@ jest.mock("@mentra/island", () => {
         cancel: jest.fn(() => Promise.resolve()),
       },
       stores: {
-        glasses: realGlasses.useGlassesStore,
         display: realDisplay.useDisplayStore,
         core: realCore.useCoreStore,
         connection: realConnection.useConnectionStore,
-        gallerySync: realGallerySync.useGallerySyncStore,
         cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
         settings: realSettings.useSettingsStore,
       },
