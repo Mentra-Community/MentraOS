@@ -9,6 +9,7 @@ jest.mock("@mentra/bluetooth-sdk", () => {
   return {
     __esModule: true,
     default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
   }
 })
 

@@ -15,8 +15,16 @@ const addListener = jest.fn((eventName: string, listener: Listener) => {
   }
 })
 
+const isConnectedGlassesConnectionStatus = (status: any) => status?.state === "connected"
+const isReadyGlassesConnectionStatus = (status: any) => status?.state === "connected" && status.fullyBooted
+const isBusyGlassesConnectionStatus = (status: any) =>
+  status?.state === "scanning" || status?.state === "connecting" || status?.state === "bonding"
+
 export const bluetoothSdkMock = {
   addListener,
+  isConnectedGlassesConnectionStatus,
+  isReadyGlassesConnectionStatus,
+  isBusyGlassesConnectionStatus,
   requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
   getBluetoothStatus: jest.fn(() =>
     Promise.resolve({
