@@ -28,14 +28,14 @@ export const ota = {
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
   status: (): OtaStatus | null => useGlassesStore.getState().otaStatus,
 
-  /** Subscribe to "an update became available" (null → info). Returns an unsubscribe. */
-  onUpdateAvailable: (cb: (info: OtaUpdateInfo) => void): (() => void) => {
+  /** Subscribe to OTA availability changes (info or null when cleared). Returns an unsubscribe. */
+  onUpdateAvailable: (cb: (info: OtaUpdateInfo | null) => void): (() => void) => {
     let last = useGlassesStore.getState().otaUpdateAvailable
     return useGlassesStore.subscribe(() => {
       const info = useGlassesStore.getState().otaUpdateAvailable
       if (info === last) return
       last = info
-      if (info) cb(info)
+      cb(info)
     })
   },
 

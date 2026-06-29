@@ -124,6 +124,25 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // while-in-use permission only. Blocking it avoids the Play Store
       // background-location declaration/video review.
       blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
+      intentFilters: [
+        {
+          action: "VIEW",
+          autoVerify: true,
+          data: [
+            {
+              scheme: "https",
+              host: "apps.mentra.glass",
+              pathPrefix: "/package/",
+            },
+            {
+              scheme: "https",
+              host: "apps.mentraglass.com",
+              pathPrefix: "/package/",
+            },
+          ],
+          category: ["DEFAULT", "BROWSABLE"],
+        },
+      ],
     },
     ios: {
       icon: variant.icon,
@@ -133,6 +152,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
+      associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
