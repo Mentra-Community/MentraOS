@@ -34,11 +34,18 @@ export interface IslandConfigValues {
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void
 
+export interface IslandUiActions {
+  /** Open the host's branded glasses Wi-Fi setup flow. */
+  openWifiSetup?: (reason?: string) => Promise<void> | void
+}
+
 export interface IslandConfigureOptions {
   /** REQUIRED — the only must-have seam. The host owns login; island owns the rest. */
   auth: IslandAuth
   config?: IslandConfigValues
   analytics?: IslandAnalytics
+  /** Host-owned UI transitions that island can request but must not render. */
+  ui?: IslandUiActions
 }
 
 let options: IslandConfigureOptions | null = null
@@ -78,4 +85,8 @@ export function getConfigValues(): IslandConfigValues {
 
 export function getAnalytics(): IslandAnalytics | null {
   return options?.analytics ?? null
+}
+
+export function getUiActions(): IslandUiActions {
+  return options?.ui ?? {}
 }

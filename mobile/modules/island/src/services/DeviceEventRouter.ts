@@ -19,13 +19,14 @@
  * Started by `toolkit.start()`. Idempotent.
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import {shallow} from "zustand/shallow"
 
 import restComms from "./RestComms"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
-import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
@@ -44,6 +45,23 @@ export function startDeviceEventRouter(): void {
       useGlassesStore.getState().setGlassesInfo({wifi})
     }),
   )
+
+  // Glasses Wi-Fi stream → local miniapps. Forward from the STORE, not directly
+  // from native events, so wifi_status_change, onGlassesStatus, and disconnects
+  // all converge into one effective connectivity snapshot.
+  const unsubscribeWifi = useGlassesStore.subscribe(
+    (s) => {
+      const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
+      return {
+        connected,
+        ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+        localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+      }
+    },
+    (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
+    {equalityFn: shallow},
+  )
+  subs.push({remove: unsubscribeWifi})
 
   // Hotspot status → glasses store + event bus. island's own gallerySyncService listens
   // on the bus for these, so without this bridge island's gallery sync is dead.

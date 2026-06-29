@@ -34,6 +34,7 @@ import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
+import {useNavigationStore} from "@/stores/navigation"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
@@ -119,6 +120,11 @@ class MantleManager {
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
       config: cloudConfigValues(),
+      ui: {
+        openWifiSetup: (reason?: string) => {
+          useNavigationStore.getState().push("/wifi/scan", reason ? {reason} : undefined)
+        },
+      },
     })
     await toolkit.start()
 
