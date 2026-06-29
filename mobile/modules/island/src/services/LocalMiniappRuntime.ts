@@ -989,10 +989,28 @@ class LocalMiniappRuntime {
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
         break
-      case MiniappResponseType.PONG:
+      case MiniappResponseType.PONG: {
         // Liveness already touched above for every inbound message; the
         // PONG carries no other action.
+        // BGCAP: measure PING→PONG round-trip ONLY here (a real pong), not in
+        // handlePong (which fires for every inbound envelope). RTT = how long
+        // the miniapp's own JS engine (Crust serial queue) took to answer — a
+        // large value means that queue was starved (the transcript→display
+        // layer). bgcapLastPingSentAt holds the OLDEST outstanding ping (see
+        // doPingRound), so a multi-round background stall reports its full
+        // duration on the first pong after resume.
+        if (BGCAP_TELEMETRY) {
+          const app = this.connectedApps.get(packageName)
+          if (app?.bgcapLastPingSentAt != null) {
+            const rtt = Date.now() - app.bgcapLastPingSentAt
+            if (rtt > 1500) {
+              console.log(`BGCAP: ${packageName} pong rtt=${rtt}ms (miniapp JS engine was starved)`)
+            }
+            app.bgcapLastPingSentAt = undefined
+          }
+        }
         break
+      }
 
       case MiniappRequestType.SHARE:
         this.handleShare(packageName, payload, requestId)
@@ -2898,12 +2916,18 @@ class LocalMiniappRuntime {
       // console.log(
       //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
       // )
-      if (BGCAP_TELEMETRY) {
-        bgcapNoteTranscriptForward(!!(data as {isFinal?: boolean} | null)?.isFinal)
-      }
     }
 
     if (matchedSubs.size === 0 && !perGestureStream) return
+
+    // BGCAP: count transcripts only once we know they're actually being handed
+    // to a subscriber. If the captions miniapp is unregistered/respawning (or
+    // hasn't subscribed yet) the cloud may still push transcripts that match no
+    // one — counting those would falsely show "forwarded" during the exact gap
+    // the diagnostic is meant to expose.
+    if (BGCAP_TELEMETRY && normalizedStream.startsWith("transcription:")) {
+      bgcapNoteTranscriptForward(!!(data as {isFinal?: boolean} | null)?.isFinal)
+    }
 
     for (const packageName of matchedSubs) {
       // While a nav trip is active the Nav SDK's road-snapped fixes are
@@ -3475,7 +3499,10 @@ class LocalMiniappRuntime {
       }
 
       // Send PING — SDK auto-replies with PONG
-      if (BGCAP_TELEMETRY) app.bgcapLastPingSentAt = now // BGCAP: for PONG RTT
+      // BGCAP: stamp the OLDEST outstanding ping only — don't overwrite, or a
+      // background stall (pings keep firing on the native BgTimer while the
+      // miniapp engine is frozen) would reset the clock and hide its duration.
+      if (BGCAP_TELEMETRY && app.bgcapLastPingSentAt == null) app.bgcapLastPingSentAt = now
       this.sendToMiniapp(packageName, {
         type: MiniappRequestType.PING,
       })
@@ -3496,19 +3523,7 @@ class LocalMiniappRuntime {
   public handlePong(packageName: string): void {
     const app = this.connectedApps.get(packageName)
     if (app) {
-      const now = Date.now()
-      // BGCAP: PING→PONG round-trip = how long the miniapp's own JS engine
-      // (Crust QuickJS/JSC serial queue) took to run. A large RTT means that
-      // queue is starved — the layer that turns transcripts into display calls.
-      // Only log slow ones to keep the signal clean.
-      if (BGCAP_TELEMETRY && app.bgcapLastPingSentAt) {
-        const rtt = now - app.bgcapLastPingSentAt
-        if (rtt > 1500) {
-          console.log(`BGCAP: ${packageName} pong rtt=${rtt}ms (miniapp JS engine was starved)`)
-        }
-        app.bgcapLastPingSentAt = undefined
-      }
-      app.lastPongAt = now
+      app.lastPongAt = Date.now()
       this.clearForegroundProbe(packageName)
     }
   }
