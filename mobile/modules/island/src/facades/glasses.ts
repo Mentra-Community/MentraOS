@@ -35,22 +35,39 @@ function projectStatus() {
   }
 }
 
+function projectControllerStatus() {
+  const s = useGlassesStore.getState()
+  return {
+    connected: s.controllerConnected,
+    fullyBooted: s.controllerFullyBooted,
+    battery: s.controllerBatteryLevel,
+    signal: s.controllerSignalStrength,
+  }
+}
+
 function projectInfo() {
   const s = useGlassesStore.getState()
   return {
     model: s.deviceModel,
     style: s.style,
     color: s.color,
+    bluetoothName: s.bluetoothName,
     firmwareVersion: s.firmwareVersion,
     mtkFirmware: s.mtkFirmwareVersion,
     besFirmware: s.besFirmwareVersion,
+    appVersion: s.appVersion,
+    androidVersion: s.androidVersion,
     serialNumber: s.serialNumber,
     buildNumber: s.buildNumber,
     btMac: s.bluetoothMacAddress,
+    leftMac: s.leftMacAddress,
+    rightMac: s.rightMacAddress,
+    wifi: s.wifi,
   }
 }
 
 export type GlassesStatusSnapshot = ReturnType<typeof projectStatus>
+export type ControllerStatusSnapshot = ReturnType<typeof projectControllerStatus>
 export type GlassesInfoSnapshot = ReturnType<typeof projectInfo>
 
 export const glasses = {
@@ -107,6 +124,16 @@ export const glasses = {
     })
   },
   info: (): GlassesInfoSnapshot => projectInfo(),
+  onInfo: (cb: (info: GlassesInfoSnapshot) => void): (() => void) => {
+    let last = JSON.stringify(projectInfo())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectInfo()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
+  },
   capabilities: () => getModelCapabilities(useGlassesStore.getState().deviceModel as DeviceTypes),
   /** Ask the glasses to report fresh firmware/version info (updates the store). */
   requestVersionInfo: () => BluetoothSdk.requestVersionInfo(),
@@ -126,6 +153,17 @@ export const glasses = {
     connectDefault: (): Promise<void> => BluetoothSdk.connectDefaultController(),
     disconnect: (): Promise<void> => BluetoothSdk.disconnectController(),
     forget: (): Promise<void> => BluetoothSdk.forgetController(),
+    status: (): ControllerStatusSnapshot => projectControllerStatus(),
+    onStatus: (cb: (status: ControllerStatusSnapshot) => void): (() => void) => {
+      let last = JSON.stringify(projectControllerStatus())
+      return useGlassesStore.subscribe(() => {
+        const snap = projectControllerStatus()
+        const key = JSON.stringify(snap)
+        if (key === last) return
+        last = key
+        cb(snap)
+      })
+    },
   },
 
   // --- audio (glasses media-volume + own-app playback hint) ---

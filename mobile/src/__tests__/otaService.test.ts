@@ -2,6 +2,7 @@
 // mocks): emitted OTA BLE events must project into the island glasses store, which is
 // the toolkit.ota read surface.
 import {startOtaService, stopOtaService} from "../../modules/island/src/services/OtaService"
+import {ota} from "../../modules/island/src/facades/ota"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
@@ -63,5 +64,26 @@ describe("OtaService projection", () => {
     stopOtaService()
     emitBluetoothSdkEvent("ota_update_available", {version_code: 9, version_name: "y", updates: [], total_size: 0})
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
+  })
+
+  it("snapshot() projects the OTA read model", () => {
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      versionCode: 1,
+      versionName: "x",
+      updates: ["apk"],
+      totalSize: 123,
+    })
+    useGlassesStore.getState().setOtaInProgress(true)
+
+    expect(ota.snapshot()).toEqual(
+      expect.objectContaining({
+        updateAvailable: expect.objectContaining({versionName: "x"}),
+        status: null,
+        legacyProgress: null,
+        inProgress: true,
+        mtkUpdatedThisSession: false,
+      }),
+    )
   })
 })

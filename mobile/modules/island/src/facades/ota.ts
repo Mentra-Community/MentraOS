@@ -10,8 +10,22 @@
  * toolkit.ota is deferred until we can preserve that contract end-to-end.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {useGlassesStore} from "../stores/glasses"
+
+function projectSnapshot() {
+  const s = useGlassesStore.getState()
+  return {
+    updateAvailable: s.otaUpdateAvailable,
+    status: s.otaStatus,
+    legacyProgress: s.otaProgress,
+    inProgress: s.otaInProgress,
+    mtkUpdatedThisSession: s.mtkUpdatedThisSession,
+  }
+}
+
+export type OtaSnapshot = ReturnType<typeof projectSnapshot>
+export type {OtaProgress, OtaStatus, OtaUpdateInfo}
 
 export const ota = {
   // --- actions ---
@@ -34,6 +48,8 @@ export const ota = {
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
   status: (): OtaStatus | null => useGlassesStore.getState().otaStatus,
+  /** Current OTA read model for update prompt/progress screens. */
+  snapshot: (): OtaSnapshot => projectSnapshot(),
 
   /** Subscribe to OTA availability changes (info or null when cleared). Returns an unsubscribe. */
   onUpdateAvailable: (cb: (info: OtaUpdateInfo | null) => void): (() => void) => {
@@ -54,6 +70,18 @@ export const ota = {
       if (status === last) return
       last = status
       cb(status)
+    })
+  },
+
+  /** Subscribe to OTA snapshot changes. Returns an unsubscribe. */
+  onSnapshot: (cb: (snapshot: OtaSnapshot) => void): (() => void) => {
+    let last = JSON.stringify(projectSnapshot())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectSnapshot()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
     })
   },
 }

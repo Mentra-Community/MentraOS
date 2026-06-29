@@ -10,7 +10,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk"
 import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
-import {waitForGlassesReady} from "../services/GlassesReadiness"
+import {isGlassesLinkLayerBusy, isGlassesReady, waitForGlassesReady} from "../services/GlassesReadiness"
 import {
   logAutomaticReportSubmissionStatus,
   toAutomaticReportSubmissionStatus,
@@ -28,8 +28,22 @@ export interface PairingReadyWaitOptions {
 }
 
 const DEFAULT_PAIRING_BOOT_TIMEOUT_MS = 35_000
+const DEFAULT_BT_CLASSIC_TIMEOUT_MS = 1_000
 const DEFAULT_PAIRING_ROUTE = "/pairing/loading"
 const LOG_TAG = "PairingTimeoutReport"
+
+function projectReadiness() {
+  const s = useGlassesStore.getState()
+  return {
+    state: s.connection.state,
+    connected: s.connection.state === "connected",
+    fullyBooted: isGlassesReady(s.connection),
+    bluetoothClassicConnected: s.bluetoothClassicConnected,
+    nativeLinkBusy: isGlassesLinkLayerBusy(s.connection),
+  }
+}
+
+export type PairingReadinessSnapshot = ReturnType<typeof projectReadiness>
 
 export async function submitPairingBootTimeoutReport(params: {
   deviceModel?: string
@@ -102,7 +116,67 @@ async function waitForReadyDuringPairing(options: PairingReadyWaitOptions = {}):
   }
 }
 
+async function waitForBluetoothClassic(
+  options: Pick<PairingReadyWaitOptions, "timeoutMs" | "signal"> = {},
+): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_BT_CLASSIC_TIMEOUT_MS
+  return new Promise((resolve) => {
+    if (options.signal?.aborted) {
+      resolve(false)
+      return
+    }
+
+    const initial = useGlassesStore.getState().bluetoothClassicConnected
+    if (initial) {
+      resolve(true)
+      return
+    }
+
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    let unsubscribe: (() => void) | null = null
+    let onAbort: (() => void) | null = null
+
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (unsubscribe) unsubscribe()
+      if (onAbort && options.signal) options.signal.removeEventListener("abort", onAbort)
+      resolve(value)
+    }
+
+    if (options.signal) {
+      onAbort = () => finish(false)
+      options.signal.addEventListener("abort", onAbort)
+    }
+
+    unsubscribe = useGlassesStore.subscribe(
+      (s) => s.bluetoothClassicConnected,
+      (connected) => {
+        if (connected) finish(true)
+      },
+    )
+
+    timeout = setTimeout(() => {
+      finish(useGlassesStore.getState().bluetoothClassicConnected)
+    }, timeoutMs)
+  })
+}
+
 export const pairing = {
+  readiness: (): PairingReadinessSnapshot => projectReadiness(),
+  onReadiness: (cb: (readiness: PairingReadinessSnapshot) => void): (() => void) => {
+    let last = JSON.stringify(projectReadiness())
+    return useGlassesStore.subscribe(() => {
+      const snap = projectReadiness()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
+  },
+
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),
   /** Whether a scan is currently in progress. */
@@ -141,4 +215,6 @@ export const pairing = {
   },
   /** Wait for paired glasses to finish booting; island files the timeout diagnostic. */
   waitForReady: waitForReadyDuringPairing,
+  /** Wait briefly for Bluetooth Classic to come up after BLE pairing. */
+  waitForBluetoothClassic,
 }

@@ -29,11 +29,21 @@ describe("glasses facade", () => {
   })
 
   it("info() projects device info from the store", () => {
-    useGlassesStore.setState({deviceModel: "Even Realities G1", firmwareVersion: "1.2.3", serialNumber: "SN1"})
+    useGlassesStore.setState({
+      deviceModel: "Even Realities G1",
+      firmwareVersion: "1.2.3",
+      serialNumber: "SN1",
+      bluetoothName: "MentraLive_664ebf",
+      appVersion: "39",
+      wifi: {state: "connected", ssid: "home", localIp: "192.168.1.5"},
+    })
     const info = glasses.info()
     expect(info.model).toBe("Even Realities G1")
     expect(info.firmwareVersion).toBe("1.2.3")
     expect(info.serialNumber).toBe("SN1")
+    expect(info.bluetoothName).toBe("MentraLive_664ebf")
+    expect(info.appVersion).toBe("39")
+    expect(info.wifi).toEqual({state: "connected", ssid: "home", localIp: "192.168.1.5"})
   })
 
   it("connectDefault / disconnect / forget delegate to bluetooth-sdk", async () => {
@@ -63,5 +73,33 @@ describe("glasses facade", () => {
     cb.mockClear()
     useGlassesStore.setState({batteryLevel: 10})
     expect(cb).not.toHaveBeenCalled()
+  })
+
+  it("onInfo() fires only when projected device info changes", () => {
+    const cb = jest.fn()
+    const unsub = glasses.onInfo(cb)
+    useGlassesStore.setState({batteryLevel: 42})
+    expect(cb).not.toHaveBeenCalled()
+    useGlassesStore.setState({bluetoothName: "MentraLive_664ebf"})
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({bluetoothName: "MentraLive_664ebf"}))
+    unsub()
+    cb.mockClear()
+    useGlassesStore.setState({bluetoothName: "MentraLive_aaaaaa"})
+    expect(cb).not.toHaveBeenCalled()
+  })
+
+  it("controller.status() projects controller state", () => {
+    useGlassesStore.setState({
+      controllerConnected: true,
+      controllerFullyBooted: true,
+      controllerBatteryLevel: 88,
+      controllerSignalStrength: -55,
+    })
+    expect(glasses.controller.status()).toEqual({
+      connected: true,
+      fullyBooted: true,
+      battery: 88,
+      signal: -55,
+    })
   })
 })

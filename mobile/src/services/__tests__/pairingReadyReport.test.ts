@@ -119,4 +119,39 @@ describe("pairing ready timeout reports", () => {
     await expect(readyPromise).resolves.toBe(true)
     expect(submitAutomaticReport).not.toHaveBeenCalled()
   })
+
+  it("readiness() projects pairing state without exposing the raw glasses store", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      bluetoothClassicConnected: true,
+    })
+
+    expect(pairing.readiness()).toEqual({
+      state: "connected",
+      connected: true,
+      fullyBooted: true,
+      bluetoothClassicConnected: true,
+      nativeLinkBusy: false,
+    })
+  })
+
+  it("waitForBluetoothClassic resolves when classic connects before timeout", async () => {
+    const waitPromise = pairing.waitForBluetoothClassic({timeoutMs: 1000})
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
+    })
+
+    await expect(waitPromise).resolves.toBe(true)
+  })
+
+  it("waitForBluetoothClassic resolves false on timeout", async () => {
+    const waitPromise = pairing.waitForBluetoothClassic({timeoutMs: 1000})
+
+    act(() => {
+      jest.advanceTimersByTime(1000)
+    })
+
+    await expect(waitPromise).resolves.toBe(false)
+  })
 })
