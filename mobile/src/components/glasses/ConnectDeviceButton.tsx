@@ -4,8 +4,8 @@ import {ActivityIndicator, View} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
@@ -15,7 +15,8 @@ export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const glassesConnected = glassesStatus.state === "connected"
   const isSearching = useCoreStore((state) => state.searching)
 
   if (glassesConnected) {
@@ -103,7 +104,10 @@ export const ConnectControllerButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const controllerStatus = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
+    toolkit.glasses.controller.onStatus(onChange),
+  )
+  const controllerConnected = controllerStatus.connected
   const isSearching = useCoreStore((state) => state.searchingController)
 
   if (controllerConnected) {

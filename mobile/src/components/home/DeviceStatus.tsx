@@ -5,10 +5,10 @@ import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropTy
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {decideConnectButtonAction, toolkit} from "@mentra/island"
-import {isGlassesConnected, isGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -63,17 +63,24 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
-  const glassesConnection = useGlassesStore((state) => state.connection)
-  const glassesConnected = isGlassesConnected(glassesConnection)
-  const glassesFullyBooted = isGlassesReady(glassesConnection)
-  const glassesStyle = useGlassesStore((state) => state.style)
-  const color = useGlassesStore((state) => state.color)
-  const caseRemoved = useGlassesStore((state) => state.caseRemoved)
-  const caseBatteryLevel = useGlassesStore((state) => state.caseBatteryLevel)
-  const caseOpen = useGlassesStore((state) => state.caseOpen)
-  const batteryLevel = useGlassesStore((state) => state.batteryLevel)
-  const charging = useGlassesStore((state) => state.charging)
-  const wifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
+  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
+  const pairingReadiness = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  )
+  const wifiStatus = useToolkitSnapshot(toolkit.glasses.wifi.status, (onChange) =>
+    toolkit.glasses.wifi.onStatus(onChange),
+  )
+  const glassesConnected = glassesStatus.state === "connected"
+  const glassesFullyBooted = glassesStatus.fullyBooted
+  const glassesStyle = glassesInfo.style
+  const color = glassesInfo.color
+  const caseRemoved = glassesStatus.case.removed
+  const caseBatteryLevel = glassesStatus.case.battery
+  const caseOpen = glassesStatus.case.open
+  const batteryLevel = glassesStatus.battery
+  const charging = glassesStatus.charging
+  const wifiConnected = wifiStatus.state === "connected"
   const searching = useCoreStore((state) => state.searching)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
@@ -94,7 +101,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     }
   }, [glassesFullyBooted, glassesConnected])
 
-  const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, glassesConnection)
+  const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
 
   if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
     return (
@@ -253,9 +260,12 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
-  const controllerFullyBooted = useGlassesStore((state) => state.controllerFullyBooted)
-  const controllerBatteryLevel = useGlassesStore((state) => state.controllerBatteryLevel)
+  const controllerStatus = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
+    toolkit.glasses.controller.onStatus(onChange),
+  )
+  const controllerConnected = controllerStatus.connected
+  const controllerFullyBooted = controllerStatus.fullyBooted
+  const controllerBatteryLevel = controllerStatus.battery
   const isSearching = useCoreStore((state) => state.searchingController)
 
   const handleConnectOrDisconnect = async () => {

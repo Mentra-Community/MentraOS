@@ -4,9 +4,9 @@ import {ConnectControllerButton} from "@/components/glasses/ConnectDeviceButton"
 import {Header, Screen, Icon} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
@@ -21,7 +21,9 @@ import {showAlert} from "@/contexts/ModalContext"
 function DeviceSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const controllerConnected = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
+    toolkit.glasses.controller.onStatus(onChange),
+  ).connected
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   const {push, goBack} = useNavigationStore.getState()
@@ -98,7 +100,9 @@ export default function ControllerSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
   const {goBack} = useNavigationStore.getState()
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const controllerConnected = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
+    toolkit.glasses.controller.onStatus(onChange),
+  ).connected
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
   let pageSubtitle

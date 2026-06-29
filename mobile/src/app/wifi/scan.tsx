@@ -12,8 +12,8 @@ import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
@@ -24,7 +24,10 @@ export default function WifiScanScreen() {
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
-  const connectedWifi = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi : null))
+  const wifiStatus = useToolkitSnapshot(toolkit.glasses.wifi.status, (onChange) =>
+    toolkit.glasses.wifi.onStatus(onChange),
+  )
+  const connectedWifi = wifiStatus.state === "connected" ? wifiStatus : null
   const connectedWifiSsid = connectedWifi?.ssid
   const {push, goBack, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
     useNavigationStore.getState()

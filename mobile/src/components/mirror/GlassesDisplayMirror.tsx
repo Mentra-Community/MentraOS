@@ -4,9 +4,10 @@ import Canvas, {Image as CanvasImage} from "react-native-canvas"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
+import {toolkit} from "@mentra/island"
 
 // Native glasses display resolution. Canvas (positioned_text / bitmap) layouts
 // give coordinates in this space; the mirror scales them to its rendered size.
@@ -31,7 +32,9 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   const containerRef = useRef<View | null>(null)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
   const {currentEvent} = useDisplayStore()
-  const batteryLevel = useGlassesStore((state) => state.batteryLevel)
+  const batteryLevel = useToolkitSnapshot(toolkit.glasses.status, (onChange) =>
+    toolkit.glasses.onStatus(onChange),
+  ).battery
 
   // Use demo layout if in demo mode, otherwise use real layout
   const layout = demoText !== "" ? {layoutType: "text_wall", text: demoText} : currentEvent.layout

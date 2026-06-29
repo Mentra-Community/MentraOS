@@ -16,10 +16,15 @@ import {onGalleryNotice, type GalleryNotice} from "../services/asg/galleryNotice
 
 function projectStatus() {
   const s = useGallerySyncStore.getState()
+  const progress = selectSyncProgress(s)
   return {
-    ...selectSyncProgress(s),
+    ...progress,
+    processingFiles: Array.from(progress.processingFiles),
+    processedFiles: s.processedFiles,
     isSyncing: selectIssyncing(s),
+    isStarting: gallerySyncService.isSyncStarting(),
     glassesGallery: selectGlassesGalleryStatus(s),
+    queue: s.queue,
     queueLength: s.queue.length,
     queueIndex: s.queueIndex,
   }
@@ -51,4 +56,12 @@ export const gallery = {
   sync: (): Promise<void> => gallerySyncService.startSync(),
   /** Cancel an in-progress sync. */
   cancel: (): Promise<void> => gallerySyncService.cancelSync(),
+  /** Ask glasses to refresh their gallery summary counts. */
+  refreshStatus: (): Promise<void> => gallerySyncService.queryGlassesGalleryStatus(),
+  /** Remove local files from the current gallery queue after host-owned deletion UI completes. */
+  removeFilesFromQueue: (fileNames: string[]): void => useGallerySyncStore.getState().removeFilesFromQueue(fileNames),
+  /** Clear the current gallery sync queue after host-owned bulk deletion completes. */
+  clearQueue: (): void => useGallerySyncStore.getState().clearQueue(),
+  /** Clear the cached glasses gallery summary when product UI observes disconnect. */
+  clearGlassesGalleryStatus: (): void => useGallerySyncStore.getState().clearGlassesGalleryStatus(),
 }

@@ -23,18 +23,16 @@ import {
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
-import {useShallow} from "zustand/react/shallow"
 
 import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySyncService, localStorageService, MediaLibraryPermissions, toolkit} from "@mentra/island"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {localStorageService, MediaLibraryPermissions, toolkit} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
@@ -83,26 +81,20 @@ export function GalleryScreen() {
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
 
-  // Subscribe to sync store
-  const syncState = useGallerySyncStore((state) => state.syncState)
-  const currentFile = useGallerySyncStore((state) => state.currentFile)
-  const currentFileProgress = useGallerySyncStore((state) => state.currentFileProgress)
-  const completedFiles = useGallerySyncStore((state) => state.completedFiles)
-  const totalFiles = useGallerySyncStore((state) => state.totalFiles)
-  const failedFiles = useGallerySyncStore((state) => state.failedFiles)
-  const processingFiles = useGallerySyncStore((state) => state.processingFiles)
-  const processedFiles = useGallerySyncStore((state) => state.processedFiles)
-  const syncQueue = useGallerySyncStore((state) => state.queue)
-  const glassesGalleryStatus = useGallerySyncStore(
-    useShallow((state) => ({
-      photos: state.glassesPhotoCount,
-      videos: state.glassesVideoCount,
-      total: state.glassesTotalCount,
-      hasContent: state.glassesHasContent,
-    })),
-  )
+  const galleryStatus = useToolkitSnapshot(toolkit.gallery.status, (onChange) => toolkit.gallery.onStatus(onChange))
+  const syncState = galleryStatus.syncState
+  const currentFile = galleryStatus.currentFile
+  const currentFileProgress = galleryStatus.currentFileProgress
+  const completedFiles = galleryStatus.completedFiles
+  const totalFiles = galleryStatus.totalFiles
+  const failedFiles = galleryStatus.failedFiles
+  const processingFiles = useMemo(() => new Set(galleryStatus.processingFiles), [galleryStatus.processingFiles])
+  const processedFiles = galleryStatus.processedFiles
+  const syncQueue = galleryStatus.queue
+  const glassesGalleryStatus = galleryStatus.glassesGallery
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -584,7 +576,7 @@ export function GalleryScreen() {
 
   // Handle sync button press - delegate to the island gallery service.
   const handleSyncPress = async () => {
-    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
+    if (galleryStatus.isSyncing || galleryStatus.isStarting) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
@@ -646,7 +638,7 @@ export function GalleryScreen() {
 
             if (deletedPhotoNames.length > 0) {
               setDownloadedPhotos((prev) => prev.filter((photo) => !deletedPhotoNames.includes(photo.name)))
-              useGallerySyncStore.getState().removeFilesFromQueue(deletedPhotoNames)
+              toolkit.gallery.removeFilesFromQueue(deletedPhotoNames)
             }
 
             // Refresh gallery
@@ -798,7 +790,7 @@ export function GalleryScreen() {
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
       console.log("[GalleryScreen] Glasses connected with gallery capability - querying gallery status")
-      gallerySyncService.queryGlassesGalleryStatus()
+      void toolkit.gallery.refreshStatus()
     }
 
     // Note: Sync service is initialized globally in GallerySyncEffect
@@ -808,7 +800,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (!glassesConnected) {
       console.log("[GalleryScreen] Glasses disconnected - clearing gallery state")
-      useGallerySyncStore.getState().clearGlassesGalleryStatus()
+      toolkit.gallery.clearGlassesGalleryStatus()
     }
   }, [glassesConnected])
 
@@ -1048,12 +1040,12 @@ export function GalleryScreen() {
                       ? "item"
                       : "items"
                     : glassesGalleryStatus.photos > 0
-                      ? glassesGalleryStatus.photos === 1
-                        ? "photo"
-                        : "photos"
-                      : glassesGalleryStatus.videos === 1
-                        ? "video"
-                        : "videos"}
+                    ? glassesGalleryStatus.photos === 1
+                      ? "photo"
+                      : "photos"
+                    : glassesGalleryStatus.videos === 1
+                    ? "video"
+                    : "videos"}
                 </Text>
               </View>
             </View>

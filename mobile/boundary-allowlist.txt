@@ -1,15 +1,6 @@
 # Temporary allowlist for production host files that still touch raw island
 # glasses/gallery stores during the glasses-status boundary migration.
 # Remove entries as files move onto toolkit facades.
-mobile/src/app/asg/gallery-settings.tsx
-mobile/src/app/home.tsx
-mobile/src/app/miniapps/gallery/gallery-settings.tsx
-mobile/src/app/miniapps/settings/camera.tsx
-mobile/src/app/miniapps/settings/controller.tsx
-mobile/src/app/miniapps/settings/dashboard.tsx
-mobile/src/app/miniapps/settings/device-info.tsx
-mobile/src/app/miniapps/settings/glasses.tsx
-mobile/src/app/miniapps/settings/position.tsx
 mobile/src/app/ota/check-for-updates.tsx
 mobile/src/app/ota/progress-legacy.tsx
 mobile/src/app/ota/progress.tsx
@@ -17,18 +8,10 @@ mobile/src/app/pairing/btclassic.tsx
 mobile/src/app/pairing/loading.tsx
 mobile/src/app/pairing/scan.tsx
 mobile/src/app/pairing/success.tsx
-mobile/src/app/wifi/scan.tsx
-mobile/src/components/glasses/ConnectDeviceButton.tsx
-mobile/src/components/glasses/Gallery/GalleryScreen.tsx
-mobile/src/components/glasses/info/BatteryStatus.tsx
-mobile/src/components/home/DeviceStatus.tsx
-mobile/src/components/mirror/GlassesDisplayMirror.tsx
-mobile/src/contexts/ConnectionOverlayContext.tsx
 mobile/src/effects/BtClassicPairing.tsx
 mobile/src/effects/NetworkMonitoring.tsx
 mobile/src/effects/OtaUpdateChecker.tsx
 mobile/src/effects/Reconnect.tsx
-mobile/src/hooks/useSearchingState.ts
 mobile/src/services/MantleManager.ts
 mobile/src/services/SocketComms.ts
 mobile/src/services/WebSocketManager.ts
