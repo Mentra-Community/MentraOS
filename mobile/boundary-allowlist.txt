@@ -4,7 +4,6 @@
 mobile/src/app/ota/check-for-updates.tsx
 mobile/src/app/ota/progress-legacy.tsx
 mobile/src/app/ota/progress.tsx
-mobile/src/effects/NetworkMonitoring.tsx
 mobile/src/effects/OtaUpdateChecker.tsx
 mobile/src/services/MantleManager.ts
 mobile/src/services/SocketComms.ts

@@ -9,6 +9,7 @@ import GlobalEventEmitter from "../../../modules/island/src/utils/GlobalEventEmi
 import restComms from "../../../modules/island/src/services/RestComms"
 import localMiniappRuntime from "../../../modules/island/src/services/LocalMiniappRuntime"
 import localSttFallbackCoordinator from "../../../modules/island/src/services/LocalSttFallbackCoordinator"
+import {asgCameraApi} from "../../../modules/island/src/services/asg/asgCameraApi"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("DeviceEventRouter", () => {
@@ -25,6 +26,7 @@ describe("DeviceEventRouter", () => {
 
   it("projects hotspot_status_change into the store AND onto the event bus (the gallery-sync feed)", () => {
     const emitSpy = jest.spyOn(GlobalEventEmitter, "emit")
+    const setServerSpy = jest.spyOn(asgCameraApi, "setServer")
     emitBluetoothSdkEvent("hotspot_status_change", {
       type: "hotspot_status_change",
       state: "enabled",
@@ -33,6 +35,7 @@ describe("DeviceEventRouter", () => {
       localIp: "192.168.1.1",
     })
     expect(useGlassesStore.getState().hotspot).toMatchObject({state: "enabled", ssid: "MentraHotspot"})
+    expect(setServerSpy).toHaveBeenCalledWith("192.168.1.1", 8089)
     expect(emitSpy).toHaveBeenCalledWith(
       "hotspot_status_change",
       expect.objectContaining({enabled: true, ssid: "MentraHotspot", local_ip: "192.168.1.1"}),

@@ -31,6 +31,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
+import {asgCameraApi} from "./asg/asgCameraApi"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -75,6 +76,9 @@ export function startDeviceEventRouter(): void {
       const password = enabled ? event.password : ""
       const localIp = enabled ? event.localIp : ""
       useGlassesStore.getState().setHotspotInfo(enabled, ssid, password, localIp)
+      if (localIp) {
+        asgCameraApi.setServer(localIp, 8089)
+      }
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
     }),
   )
