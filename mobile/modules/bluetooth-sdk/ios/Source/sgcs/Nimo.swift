@@ -113,18 +113,30 @@ enum NimoProtocol {
 
     // widget resTypes
     static let WIDGET_TEXT_NEW = 0x00
+    static let WIDGET_TEXT_APPEND = 0x01
+    static let WIDGET_RAW = 0x02
     static let WIDGET_PICTURE = 0x80
 
     // navigation widget resIds (appId 0x01): mini map 0x00, arrow 0x01, turn text 0x02,
     // status bar 0x03 (raw), tip 0x04, large map 0x05.
     static let NAV_RES_MINI_MAP = 0x00
+    static let NAV_RES_ARROW = 0x01
     static let NAV_RES_TURN_TEXT = 0x02
+    static let NAV_RES_INFO = 0x03
+    static let NAV_RES_TIP = 0x04
     static let NAV_RES_LARGE_MAP = 0x05
 
     // navigation image widget sizes (hard firmware requirements; see IMAGE_PROTOCOL).
     static let NAV_MINI_MAP_SIZE = 160
+    static let NAV_ARROW_SIZE = 48
     static let NAV_LARGE_MAP_WIDTH = 452
     static let NAV_LARGE_MAP_HEIGHT = 170
+
+    // naviInfo status struct (resId 0x03, raw): navType(1) + dist(32 UTF-8) + time(32 UTF-8).
+    static let NAV_INFO_STRUCT_SIZE = 65
+    static let NAV_TYPE_WALK = 0x00
+    static let NAV_TYPE_CYCLE = 0x01
+    static let NAV_TYPE_EBIKE = 0x02
 
     // phone types
     static let PHONE_TYPE_IOS = 0x01
@@ -582,6 +594,8 @@ class Nimo: NSObject, SGCManager {
         static let writeWatchdogSeconds: TimeInterval = 1
         // Fall back to the other ear if the preferred one goes quiet for this long.
         static let micSideFallbackSeconds: TimeInterval = 2
+        static let setTimeMaxAttempts = 3
+        static let setTimeRetrySeconds: TimeInterval = 0.5
     }
 
     // The text surface every sendTextWall renders into. The ASR note view (appId 0x04,
@@ -627,6 +641,7 @@ class Nimo: NSObject, SGCManager {
     private var twsConnected = false
     private var twsTimeoutItem: DispatchWorkItem?
     private var pairingTimeoutItem: DispatchWorkItem?
+    private var setTimeAttempts = 0
 
     // Pending acks keyed by (cmd << 8) | key
     private struct PendingAck {
@@ -656,6 +671,10 @@ class Nimo: NSObject, SGCManager {
     private var textAppEntered = false
     private var navAppEntered = false
     private var currentGlassesAppId = -1
+    // Last navigation HUD frame pushed, to coalesce the app's ~3s identical re-pushes.
+    private var lastNavHudKey = ""
+    // Arrow direction currently shown, so the icon is re-sent only when the turn changes.
+    private var lastNavArrow: NavArrow?
 
     // Battery
     private var lastBatteryLevel = -1
@@ -825,26 +844,38 @@ class Nimo: NSObject, SGCManager {
         _ text: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
         borderWidth _: Int32, borderRadius _: Int32
     ) async {
-        // Navigation pushes turn text via positioned_text. Nimo widgets have fixed geometry, so
-        // position/border are ignored — funnel the text through the same coalesced path as
-        // sendTextWall so it renders on the ASR note page. Without this override the base no-op
-        // silently dropped all navigation text.
-        // Bridge.log("NIMO: sendPositionedText(text=\(text))")
-        // pendingText = text
+        // The navigation app pushes its whole turn-by-turn HUD through positioned_text in one
+        // combined string (arrow / distance / instruction / ETA). Nimo widgets have fixed
+        // geometry, so x/y/border are ignored; instead we parse the string and fan the pieces
+        // out to the dedicated nav widgets (arrow icon, instruction, tip, status struct).
+        if handshakeState != .ready { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Blank pushes (e.g. the app clearing its loading-message region) must not wipe the
+        // current HUD — ignore them and keep the last frame on screen.
+        if trimmed.isEmpty { return }
+        let hud = parseNavHud(trimmed)
+        // Coalesce: the app re-pushes the same frame every ~3s; only redraw on real changes.
+        let key = hud.key
+        if key == lastNavHudKey { return }
+        lastNavHudKey = key
+        Bridge.log(
+            "NIMO: nav HUD → arrow=\(hud.arrow) instr=\"\(hud.instruction)\" tip=\"\(hud.tip)\" eta=\"\(hud.eta)\""
+        )
+        enterNavAppIfNeeded()
+        pushNavHud(hud)
     }
 
     func displayBitmap(
         base64ImageData: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?
     ) async -> Bool {
         // Nimo widgets have fixed geometry; x/y are not honored. Renders into the navigation
-        // large-map widget (appId 0x01, resId 0x05, 452x170 2bpp) — the full-width nav map,
-        // which shows far more than the small 160x160 mini-map (resId 0x00). bitmapToGrayscale
-        // aspect-fits onto black, so a non-matching source aspect letterboxes rather than
-        // distorts. The nav app must be foregrounded before pushing content (mirrors the text
-        // path). TODO: hardware-verify the large-map widget renders and the nav app-mode.
-        let targetWidth = NimoProtocol.NAV_LARGE_MAP_WIDTH
-        let targetHeight = NimoProtocol.NAV_LARGE_MAP_HEIGHT
-        Bridge.log("NIMO: displayBitmap → nav large map (navAppEntered=\(navAppEntered))")
+        // mini-map widget (appId 0x01, resId 0x00, 160x160 2bpp) — the compact "small screen"
+        // nav map. bitmapToGrayscale aspect-fits onto black, so a non-matching source aspect
+        // letterboxes rather than distorts. The nav app must be foregrounded before pushing
+        // content (mirrors the text path). TODO: hardware-verify the mini-map widget renders.
+        let targetWidth = NimoProtocol.NAV_MINI_MAP_SIZE
+        let targetHeight = NimoProtocol.NAV_MINI_MAP_SIZE
+        Bridge.log("NIMO: displayBitmap → nav mini map (navAppEntered=\(navAppEntered))")
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {
@@ -853,37 +884,266 @@ class Nimo: NSObject, SGCManager {
         }
         guard let grayscale = bitmapToGrayscale(image, width: targetWidth, height: targetHeight)
         else { return false }
+        let content = buildNavImageContent(grayscale, width: targetWidth, height: targetHeight)
+        enterNavAppIfNeeded()
+        enqueueNavWidget(resId: NimoProtocol.NAV_RES_MINI_MAP, resType: NimoProtocol.WIDGET_PICTURE, content: content)
+        return true
+    }
+
+    /// Foregrounds the nav app (appId 0x01) once; corrected by app-state reports.
+    private func enterNavAppIfNeeded() {
+        if navAppEntered { return }
+        sendFrame(
+            NimoFrameCodec.encodeFrame(
+                cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
+                key: NimoProtocol.CTRL_ENTER_APP,
+                payload: Data([UInt8(NimoProtocol.APP_ID_NAV), UInt8(NimoProtocol.APP_MODE_STANDALONE)])
+            )
+        )
+        navAppEntered = true
+    }
+
+    // MARK: - Navigation HUD Parsing
+
+    /// Turn direction for the arrow icon; none renders a blank icon (no arrow).
+    private enum NavArrow: String {
+        case left
+        case right
+        case straight
+        case none
+    }
+
+    /// The parsed pieces of one navigation HUD frame.
+    private struct NavHud {
+        let arrow: NavArrow
+        let instruction: String
+        let tip: String
+        let distance: String
+        let eta: String
+        // Whether to show the status struct (dist/ETA bar). Off for welcome/arrival frames.
+        let showStatus: Bool
+
+        // Coalesce key: identical frames must produce the same string (mirrors Kotlin toString()).
+        var key: String {
+            "\(arrow.rawValue)|\(instruction)|\(tip)|\(distance)|\(eta)|\(showStatus)"
+        }
+    }
+
+    /// Parses the navigation app's combined HUD string into the pieces the Nimo nav widgets
+    /// want. The app crams the whole frame into one positioned_text push, e.g.:
+    ///
+    ///   →            ← directional arrow glyph (←/→/↑)
+    ///   In 198 m     ← distance-to-turn ("In X" / "Now" / "Arriving in X")
+    ///   Turn right onto Octavia St
+    ///                ← blank line
+    ///   ⊙ 14 min     ← trip ETA
+    ///
+    /// Non-turn frames (Welcome / Rerouting… / Go back / Starting… / You have arrived …) have no
+    /// arrow and no ⊙ line; their text falls through to NavHud.instruction.
+    ///
+    /// The instruction is kept short (≤3 words — "Turn right", "Welcome to Maps", "Arrived"); any
+    /// "onto <road>" suffix is moved into the tip line next to the distance so the big line stays
+    /// a glanceable maneuver.
+    private func parseNavHud(_ text: String) -> NavHud {
+        var eta = ""
+        var content: [String] = []
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw).trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            // Drop the arrow GLYPH line: the app forces it to "↑" until ~10 m before the turn,
+            // so it reads "straight" for almost the whole leg. We derive the real direction
+            // from the maneuver instruction instead (see arrowForInstruction).
+            if line == "←" || line == "→" || line == "↑" || line == "↺" || line == "⇆" {
+                continue
+            }
+            if line.hasPrefix("⊙") {
+                eta = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+            } else {
+                content.append(line)
+            }
+        }
+        // The distance-to-turn line (used as the tip) vs the instruction line.
+        let distLine = content.first { line in
+            let lower = line.lowercased()
+            return lower.hasPrefix("in ") || lower == "now" || lower.hasPrefix("arriving")
+        } ?? ""
+        let rawInstruction = content.filter { $0 != distLine }.joined(separator: " ")
+        let (instruction, road) = shortenInstruction(rawInstruction)
+        // Arrow direction from the maneuver text, so it points at the turn the whole approach.
+        let arrow = arrowForInstruction(instruction)
+        // Welcome/arrival frames (arrow == none) carry no live nav data — hide the status bar.
+        let showStatus = arrow != .none
+        // Tip = distance line + road name (e.g. "In 198 m on Octavia St"); welcome gets a prompt.
+        var tip = [distLine, road].filter { !$0.isEmpty }.joined(separator: " on ")
+        if instruction.hasPrefix("Welcome") { tip = "Choose a location on the map" }
+        // Numeric distance for the status struct: strip the "In " / "Arriving in " prefix.
+        var distance = distLine
+        if let range = distance.range(
+            of: "^(arriving\\s+in|in)\\s+", options: [.regularExpression, .caseInsensitive]
+        ) {
+            distance.removeSubrange(range)
+        }
+        distance = distance.trimmingCharacters(in: .whitespaces)
+        return NavHud(
+            arrow: arrow, instruction: instruction, tip: tip, distance: distance, eta: eta,
+            showStatus: showStatus
+        )
+    }
+
+    /// Turn direction inferred from the maneuver phrase ("Turn left" → left, else straight).
+    private func arrowForInstruction(_ instruction: String) -> NavArrow {
+        let lower = instruction.lowercased()
+        if lower.contains("welcome") || lower.contains("arrived") { return .none }
+        if lower.contains("left") { return .left }
+        if lower.contains("right") { return .right }
+        return .straight
+    }
+
+    /// Reduces a raw instruction to a short maneuver phrase (≤3 words) and the road name it
+    /// referenced. "Turn right onto Octavia St" → ("Turn right", "Octavia St"); welcome/arrival
+    /// frames collapse to fixed short labels.
+    private func shortenInstruction(_ raw: String) -> (String, String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return ("", "") }
+        let lower = trimmed.lowercased()
+        if lower.contains("welcome") { return ("Welcome to Maps", "") }
+        if lower.contains("arrived") { return ("Arrived!", "") }
+        // Peel off the "onto <road>" suffix (or a leading "Onto <road>") into the road name.
+        var maneuver = trimmed
+        var road = ""
+        if let ontoRange = trimmed.range(of: " onto ", options: .caseInsensitive) {
+            maneuver = String(trimmed[trimmed.startIndex ..< ontoRange.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            road = String(trimmed[ontoRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+        } else if lower.hasPrefix("onto ") {
+            road = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            maneuver = ""
+        }
+        let capped = maneuver.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            .prefix(3).joined(separator: " ")
+        return (capped, road)
+    }
+
+    /// Pushes a parsed HUD frame into the nav widgets (arrow icon / instruction / tip / info).
+    private func pushNavHud(_ hud: NavHud) {
+        // naviInstruction (0x02): primary turn text.
+        enqueueNavWidget(
+            resId: NimoProtocol.NAV_RES_TURN_TEXT,
+            resType: NimoProtocol.WIDGET_TEXT_NEW,
+            content: Data((hud.instruction.isEmpty ? " " : hud.instruction).utf8)
+        )
+        // naviInstructionTip (0x04): distance-to-turn line.
+        enqueueNavWidget(
+            resId: NimoProtocol.NAV_RES_TIP,
+            resType: NimoProtocol.WIDGET_TEXT_NEW,
+            content: Data((hud.tip.isEmpty ? " " : hud.tip).utf8)
+        )
+        // naviInfo (0x03): 65-byte status struct — navType(1) + dist(32) + time(32). Skipped on
+        // welcome/arrival frames so no (empty) status bar shows there.
+        if hud.showStatus {
+            var info = Data(count: NimoProtocol.NAV_INFO_STRUCT_SIZE)
+            info[0] = UInt8(NimoProtocol.NAV_TYPE_WALK)
+            writeUtf8Padded(&info, offset: 1, text: hud.distance, maxLen: 32)
+            writeUtf8Padded(&info, offset: 33, text: hud.eta, maxLen: 32)
+            enqueueNavWidget(resId: NimoProtocol.NAV_RES_INFO, resType: NimoProtocol.WIDGET_RAW, content: info)
+        }
+        // naviIcon (0x01): turn-arrow. Only re-send when the DIRECTION changes — re-pushing the
+        // identical image on every distance tick made the arrow flicker/"move". The bitmap for
+        // each direction is rendered once and cached.
+        if hud.arrow != lastNavArrow {
+            lastNavArrow = hud.arrow
+            enqueueNavWidget(
+                resId: NimoProtocol.NAV_RES_ARROW,
+                resType: NimoProtocol.WIDGET_PICTURE,
+                content: navArrowContent(hud.arrow)
+            )
+        }
+    }
+
+    // Arrow widget content for every direction, rendered ONCE on first use and reused — the
+    // bitmaps are deterministic, so the send path just selects the pre-built bytes instead of
+    // re-rendering on each turn.
+    private lazy var navArrowCache: [NavArrow: Data] = {
+        var cache: [NavArrow: Data] = [:]
+        for arrow in [NavArrow.left, .right, .straight, .none] {
+            guard let bmp = buildNavArrowBitmap(arrow),
+                  let gray = bitmapToGrayscale(
+                      bmp, width: NimoProtocol.NAV_ARROW_SIZE, height: NimoProtocol.NAV_ARROW_SIZE
+                  )
+            else { continue }
+            cache[arrow] = buildNavImageContent(
+                gray, width: NimoProtocol.NAV_ARROW_SIZE, height: NimoProtocol.NAV_ARROW_SIZE
+            )
+        }
+        return cache
+    }()
+
+    private func navArrowContent(_ arrow: NavArrow) -> Data {
+        return navArrowCache[arrow] ?? Data()
+    }
+
+    /// A 48x48 white turn-arrow on black, rotated to point left/right/up per `arrow`.
+    private func buildNavArrowBitmap(_ arrow: NavArrow) -> UIImage? {
+        let size = NimoProtocol.NAV_ARROW_SIZE
+        let s = CGFloat(size)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: s, height: s))
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            cg.setFillColor(UIColor.black.cgColor)
+            cg.fill(CGRect(x: 0, y: 0, width: s, height: s))
+            // none → leave the icon blank (all black = nothing lit) for welcome/arrival frames.
+            if arrow == .none { return }
+            // Rotate the (upward) arrow around the center to face the turn direction.
+            let rotation: CGFloat
+            switch arrow {
+            case .left: rotation = -.pi / 2
+            case .right: rotation = .pi / 2
+            default: rotation = 0
+            }
+            cg.translateBy(x: s / 2, y: s / 2)
+            cg.rotate(by: rotation)
+            cg.translateBy(x: -s / 2, y: -s / 2)
+            let path = UIBezierPath()
+            path.move(to: CGPoint(x: s * 0.5, y: s * 0.15)) // tip
+            path.addLine(to: CGPoint(x: s * 0.85, y: s * 0.55)) // head bottom-right
+            path.addLine(to: CGPoint(x: s * 0.62, y: s * 0.55))
+            path.addLine(to: CGPoint(x: s * 0.62, y: s * 0.85)) // shaft bottom-right
+            path.addLine(to: CGPoint(x: s * 0.38, y: s * 0.85)) // shaft bottom-left
+            path.addLine(to: CGPoint(x: s * 0.38, y: s * 0.55))
+            path.addLine(to: CGPoint(x: s * 0.15, y: s * 0.55)) // head bottom-left
+            path.close()
+            UIColor.white.setFill()
+            path.fill()
+        }
+    }
+
+    // MARK: - Nav Widget Helpers
+
+    /// Enqueues a single nav-app content widget (chunked, appId 0x01, layout 0).
+    private func enqueueNavWidget(resId: Int, resType: Int, content: Data) {
+        enqueueFrames(
+            NimoFrameCodec.updateContentFrames(
+                appId: NimoProtocol.APP_ID_NAV,
+                layoutId: 0,
+                resId: resId,
+                resType: resType,
+                content: content
+            )
+        )
+    }
+
+    /// Builds the [imageHeader + payload] blob for a nav image widget from an L8 buffer.
+    private func buildNavImageContent(_ grayscale: Data, width: Int, height: Int) -> Data {
         let packed = packL8To2bpp(grayscale)
         let (payload, compression) = compressAdaptive(packed)
-        if !navAppEntered {
-            sendFrame(
-                NimoFrameCodec.encodeFrame(
-                    cmd: NimoProtocol.CMD_CONTROL_INSTRUCTION,
-                    key: NimoProtocol.CTRL_ENTER_APP,
-                    payload: Data([UInt8(NimoProtocol.APP_ID_NAV), UInt8(NimoProtocol.APP_MODE_STANDALONE)])
-                )
-            )
-            // Optimistic; corrected by app-state reports if the glasses refuse/exit.
-            navAppEntered = true
-        }
-        let content =
-            NimoFrameCodec.imageHeader(
-                width: targetWidth,
-                height: targetHeight,
-                formatBpp: NimoProtocol.FORMAT_2BPP,
-                compression: compression,
-                originalSize: packed.count,
-                compressedSize: compression == NimoProtocol.COMPRESSION_NONE ? 0 : payload.count
-            ) + payload
-        let frames = NimoFrameCodec.updateContentFrames(
-            appId: NimoProtocol.APP_ID_NAV,
-            layoutId: 0,
-            resId: NimoProtocol.NAV_RES_LARGE_MAP,
-            resType: NimoProtocol.WIDGET_PICTURE,
-            content: content
-        )
-        enqueueFrames(frames)
-        return true
+        return NimoFrameCodec.imageHeader(
+            width: width,
+            height: height,
+            formatBpp: NimoProtocol.FORMAT_2BPP,
+            compression: compression,
+            originalSize: packed.count,
+            compressedSize: compression == NimoProtocol.COMPRESSION_NONE ? 0 : payload.count
+        ) + payload
     }
 
     func showDashboard() {
@@ -922,22 +1182,15 @@ class Nimo: NSObject, SGCManager {
     // MARK: - SGCManager: Device Control
 
     func setHeadUpAngle(_ angle: Int) {
-        let clamped = max(0, min(90, angle))
-        Bridge.log("NIMO: setHeadUpAngle(\(clamped))")
-        // Enable the head-up display gesture, then set the wake angle.
+        Bridge.log("NIMO: setHeadUpAngle(\(angle)) — head-up display disabled for now")
+        // Head-up display is intentionally kept OFF for now (it auto-wakes the dashboard and the
+        // wake-angle semantics aren't dialed in). Force it disabled regardless of the requested
+        // angle. TODO: restore the enable + setAngle [optType, deg] path once verified.
         sendFrame(
             NimoFrameCodec.encodeFrame(
                 cmd: NimoProtocol.CMD_SET_PARAMETER,
                 key: NimoProtocol.SET_HEADUP_DISPLAY,
-                payload: Data([1])
-            )
-        )
-        // setAngle payload is [optType, deg]. TODO: hardware-verify optType semantics.
-        sendFrame(
-            NimoFrameCodec.encodeFrame(
-                cmd: NimoProtocol.CMD_SET_PARAMETER,
-                key: NimoProtocol.SET_ANGLE,
-                payload: Data([0x01, UInt8(clamped)])
+                payload: Data([0])
             )
         )
     }
@@ -1278,17 +1531,33 @@ class Nimo: NSObject, SGCManager {
         cancelTwsTimeout()
         handshakeState = .awaitingTimeAck
         Bridge.log("NIMO: TWS OK — sending setTime (awaiting ACK)")
+        setTimeAttempts = 0
+        attemptSetTime()
+    }
+
+    private func attemptSetTime() {
+        guard handshakeState == .awaitingTimeAck, peripheral != nil else { return }
+        setTimeAttempts += 1
         sendAwaitingAck(
             cmd: NimoProtocol.CMD_SET_PARAMETER,
             key: NimoProtocol.SET_TIME,
             payload: NimoFrameCodec.encodeDeviceTime()
         ) { [weak self] ok in
             guard let self else { return }
-            if !ok {
-                Bridge.log("NIMO: setTime ACK failed/timed out — handshake failed")
-                self.handshakeFailed()
-            } else {
+            if ok {
                 self.finishHandshake()
+            } else if self.setTimeAttempts < Const.setTimeMaxAttempts,
+                      self.handshakeState == .awaitingTimeAck,
+                      self.peripheral != nil {
+                // The firmware can answer "busy" right after the link comes up —
+                // give it a moment and retry instead of dropping the connection.
+                Bridge.log("NIMO: setTime attempt \(self.setTimeAttempts) failed — retrying")
+                DispatchQueue.main.asyncAfter(deadline: .now() + Const.setTimeRetrySeconds) {
+                    [weak self] in self?.attemptSetTime()
+                }
+            } else {
+                Bridge.log("NIMO: setTime failed after \(self.setTimeAttempts) attempts — handshake failed")
+                self.handshakeFailed()
             }
         }
     }
@@ -1301,6 +1570,16 @@ class Nimo: NSObject, SGCManager {
                 cmd: NimoProtocol.CMD_SET_PARAMETER,
                 key: NimoProtocol.SET_PHONE_TYPE,
                 payload: Data([UInt8(NimoProtocol.PHONE_TYPE_IOS)]),
+                needsAck: false
+            )
+        )
+        // Disable the on-device head-up gesture so raising your head doesn't auto-wake the
+        // dashboard. Disabled for now; re-enable once the wake-angle behaviour is dialed in.
+        sendFrame(
+            NimoFrameCodec.encodeFrame(
+                cmd: NimoProtocol.CMD_SET_PARAMETER,
+                key: NimoProtocol.SET_HEADUP_DISPLAY,
+                payload: Data([0]),
                 needsAck: false
             )
         )
@@ -1329,6 +1608,8 @@ class Nimo: NSObject, SGCManager {
         textAppEntered = false
         navAppEntered = false
         currentGlassesAppId = -1
+        lastNavHudKey = ""
+        lastNavArrow = nil
         pendingText = nil
         receiveAssembler.reset()
         writeQueue.removeAll()
@@ -1451,11 +1732,20 @@ class Nimo: NSObject, SGCManager {
                 case NimoProtocol.STATE_ENTER:
                     currentGlassesAppId = appId
                     if appId != textAppId { textAppEntered = false }
-                    if appId != NimoProtocol.APP_ID_NAV { navAppEntered = false }
+                    if appId != NimoProtocol.APP_ID_NAV {
+                        navAppEntered = false
+                        // Force a full HUD repaint next time the nav app reopens.
+                        lastNavHudKey = ""
+                        lastNavArrow = nil
+                    }
                 case NimoProtocol.STATE_EXIT:
                     if appId == currentGlassesAppId { currentGlassesAppId = -1 }
                     if appId == textAppId { textAppEntered = false }
-                    if appId == NimoProtocol.APP_ID_NAV { navAppEntered = false }
+                    if appId == NimoProtocol.APP_ID_NAV {
+                        navAppEntered = false
+                        lastNavHudKey = ""
+                        lastNavArrow = nil
+                    }
                 default:
                     break
                 }
@@ -1511,10 +1801,13 @@ class Nimo: NSObject, SGCManager {
         switch code {
         case NimoProtocol.INPUT_HEAD_UP:
             DeviceStore.shared.apply("glasses", "headUp", true)
-            Bridge.sendHeadUp(true)
+            // Head-up forwarding to the cloud is disabled for now (the wake-angle
+            // semantics aren't dialed in yet). Keep the local state; don't notify.
+            // Bridge.sendHeadUp(true)
         case NimoProtocol.INPUT_HEAD_DOWN:
             DeviceStore.shared.apply("glasses", "headUp", false)
-            Bridge.sendHeadUp(false)
+            // Head-up forwarding to the cloud is disabled for now (see INPUT_HEAD_UP).
+            // Bridge.sendHeadUp(false)
         case NimoProtocol.INPUT_CLICK_RIGHT, NimoProtocol.INPUT_CLICK_LEFT:
             Bridge.sendTouchEvent(
                 deviceModel: DeviceTypes.NIMO, gestureName: "single_tap", timestamp: timestamp
