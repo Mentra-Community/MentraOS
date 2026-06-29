@@ -60,6 +60,32 @@ import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
+// ===========================================================================
+// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove with the
+// matching block in LocalMiniappRuntime.ts after the "captions fall behind then
+// flood in waves" fix lands). Tracks the glasses-mic → cloud AUDIO UPLINK rate.
+// The mic_lc3 handler runs on the RN JS thread; if that thread is starved in
+// the background, audio stops flowing UP to the cloud and transcripts dry up at
+// the source. A drop/gap here means the stall is on the uplink side; steady
+// here while captions still fall behind points downstream (render side).
+// All lines prefixed "BGCAP:" for grep + easy removal.
+// ===========================================================================
+const BGCAP_TELEMETRY = true
+let bgcapMicFrames = 0
+let bgcapMicLastLogAt = 0
+let bgcapMicLastVia = ""
+function bgcapNoteMicFrame(via: string): void {
+  if (!BGCAP_TELEMETRY) return
+  bgcapMicFrames++
+  bgcapMicLastVia = via
+  const now = Date.now()
+  if (now - bgcapMicLastLogAt >= 1000) {
+    console.log(`BGCAP: mic_lc3 uplink=${bgcapMicFrames} frames in ${now - bgcapMicLastLogAt}ms via=${bgcapMicLastVia}`)
+    bgcapMicFrames = 0
+    bgcapMicLastLogAt = now
+  }
+}
+
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
  * MantleManager.installBundledMiniapps(). BUNDLED_MINIAPPS is code-generated
@@ -1054,8 +1080,10 @@ class MantleManager {
           if (udp.enabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
             udp.sendAudio(event.lc3)
+            bgcapNoteMicFrame("udp") // BGCAP diagnostic
           } else {
             socketComms.sendBinary(event.lc3)
+            bgcapNoteMicFrame("ws") // BGCAP diagnostic
           }
 
           // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
