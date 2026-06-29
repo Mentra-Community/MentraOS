@@ -4,8 +4,10 @@
  * exposes the snapshot + change subscriptions the host renders its update prompt and
  * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
  *
- * Install ACTIONS (check/install/retry) land in Phase 2 (the install orchestration
- * moves out of the host progress screen; bootloop-risk, needs on-device verification).
+ * The rich availability check/retry flow is still host-owned: the OTA check screen
+ * fetches the manifest, compares APK/MTK/BES versions, writes otaUpdateAvailable,
+ * and drives its local UI state from that result. Moving that full check behind
+ * toolkit.ota is deferred until we can preserve that contract end-to-end.
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import type {OtaStatus, OtaUpdateInfo} from "../../../bluetooth-sdk/build/_internal"
@@ -20,8 +22,13 @@ export const ota = {
    * resilience layer on top of this command.)
    */
   install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
-  /** Re-query the glasses for an available update (e.g. after a clock-fix or failure). */
-  retry: () => BluetoothSdk.checkForOtaUpdate(),
+  // Deferred: this facade entry was intended to become the toolkit-owned retry/check
+  // action, but BluetoothSdk.checkForOtaUpdate() only returns a boolean. Exposing it
+  // here would make callers think the rich otaUpdateAvailable read model is refreshed,
+  // while the original view still depends on the host-side manifest compare to build
+  // versionName/updates/totalSize. Keep that behavior unchanged until the whole rich
+  // availability check moves into island.
+  // retry: () => BluetoothSdk.checkForOtaUpdate(),
 
   /** Current available-update info (versionName/updates/totalSize), or null. */
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
