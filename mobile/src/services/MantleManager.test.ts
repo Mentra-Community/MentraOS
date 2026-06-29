@@ -5,7 +5,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
-import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {

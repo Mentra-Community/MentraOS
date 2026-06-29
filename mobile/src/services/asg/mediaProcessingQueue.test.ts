@@ -2,7 +2,7 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
 import {reportInvalidGalleryMedia} from "../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
+import {useGallerySyncStore} from "../../../modules/island/src/stores/gallerySync"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   exists: jest.fn(),

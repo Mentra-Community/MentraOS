@@ -24,6 +24,7 @@ cd "$ROOT_DIR"
 rg -l \
   'from ["'\'']@/stores/glasses|@/stores/gallerySync|useGlassesStore|useGallerySyncStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady|toolkit\.stores\.glasses|toolkit\.stores\.gallerySync' \
   mobile/src \
+  mobile/assets \
   -g '*.ts' \
   -g '*.tsx' \
   --glob '!**/__tests__/**' \
@@ -33,7 +34,7 @@ rg -l \
   --glob '!**/*.spec.tsx' \
   | sort >"$TMP_ACTUAL" || true
 
-grep -vE '^[[:space:]]*(#|$)' "$ALLOWLIST" | sort >"$TMP_ALLOWLIST"
+grep -vE '^[[:space:]]*(#|$)' "$ALLOWLIST" | sort >"$TMP_ALLOWLIST" || true
 
 comm -23 "$TMP_ACTUAL" "$TMP_ALLOWLIST" >"$TMP_NEW"
 

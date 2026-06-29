@@ -5,7 +5,7 @@ import {toolkit} from "@mentra/island"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {

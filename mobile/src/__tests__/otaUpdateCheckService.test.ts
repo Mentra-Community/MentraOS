@@ -51,7 +51,7 @@ describe("OtaUpdateCheckService", () => {
             },
           }),
       } as unknown as Response),
-    )
+    ) as unknown as typeof fetch
 
     const result = await checkCurrentGlassesForUpdate({
       refreshVersionInfo: false,
@@ -95,7 +95,7 @@ describe("OtaUpdateCheckService", () => {
             ],
           }),
       } as unknown as Response),
-    )
+    ) as unknown as typeof fetch
 
     const result = await checkCurrentGlassesForUpdate({
       refreshVersionInfo: false,

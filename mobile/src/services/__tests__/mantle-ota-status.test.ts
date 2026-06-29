@@ -1,4 +1,4 @@
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
 // otaLegacyMapping moved into island; this jest mapping test imports it by path.
 import {
   legacyOtaProgressFromOtaStatusEvent,

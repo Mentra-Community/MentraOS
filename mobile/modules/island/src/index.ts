@@ -91,7 +91,7 @@ export {
 } from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
-export type {CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
+export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
 export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 export {
@@ -147,32 +147,14 @@ export type {
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
-// Glasses device-state store — moved into island so island owns device state.
-// Re-exported through the host's @/stores/glasses shim so the app keeps its
-// imports. Also surfaced as toolkit.glassesStore (the escape hatch). Predicates
-// (isGlassesConnected/…) come from GlassesReadiness above, not re-exported here.
-export {
-  useGlassesStore,
-  selectGlassesConnected,
-  selectGlassesReady,
-  getGlasesInfoPartial,
-  getGlassesSystemTimeMs,
-  waitForGlassesState,
-} from "./stores/glasses"
 // Display/mirror store — also moved into island; re-exported through the host's
 // @/stores/display shim (and toolkit.displayStore). Read it via toolkit.display.mirror.
 export {useDisplayStore} from "./stores/display"
-// More device/runtime stores moved into island (re-exported via host shims +
-// toolkit.stores.*). WebSocketStatus + PhotoInfo were relocated off host modules.
+// More runtime stores moved into island (re-exported via host shims +
+// toolkit.stores.* while their typed facades mature). WebSocketStatus was relocated
+// off host modules.
 export {useCoreStore} from "./stores/core"
 export {useConnectionStore, WebSocketStatus} from "./stores/connection"
-export {
-  useGallerySyncStore,
-  selectSyncProgress,
-  selectIssyncing,
-  selectGlassesGalleryStatus,
-} from "./stores/gallerySync"
-export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from "./stores/gallerySync"
 // Cloud-client runtime status store + secure credential store — moved into
 // island as part of owning the cloud-v2 client. Re-exported via host shims
 // (@/stores/cloudClientStatus, @/utils/cloudClient/MmkvSecureStore).

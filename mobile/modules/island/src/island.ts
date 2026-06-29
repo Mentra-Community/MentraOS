@@ -36,11 +36,9 @@ import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
 import {permissions} from "./facades/permissions"
 import {notifications} from "./facades/notifications"
-import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
 import {useConnectionStore} from "./stores/connection"
-import {useGallerySyncStore} from "./stores/gallerySync"
 import {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 import {useSettingsStore} from "./stores/settings"
 import {logBuffer} from "./utils/devLogging"
@@ -144,17 +142,13 @@ export const toolkit = {
   notifications,
   display,
   /**
-   * Escape hatches — the raw device-state zustand stores, grouped under `stores`,
-   * exposed so the Mentra app keeps using them directly instead of rewriting every
-   * screen onto typed facades. These are Mentra-app convenience, NOT the OEM
-   * contract — OEMs use the typed facades above. Prefer a facade where one exists.
+   * Temporary host migration stores. Device/glasses and gallery runtime state
+   * must stay behind typed facades, not this escape hatch.
    */
   stores: {
-    glasses: useGlassesStore,
     display: useDisplayStore,
     core: useCoreStore,
     connection: useConnectionStore,
-    gallerySync: useGallerySyncStore,
     cloudClientStatus: useCloudClientStatusStore,
     settings: useSettingsStore,
   },

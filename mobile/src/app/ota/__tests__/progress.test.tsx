@@ -1,7 +1,7 @@
 import React from "react"
 import {render, act, fireEvent} from "@testing-library/react-native"
 
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"

@@ -145,7 +145,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
 import {useCoreStore} from "@/stores/core"
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 

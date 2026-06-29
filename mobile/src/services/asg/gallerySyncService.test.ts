@@ -10,8 +10,8 @@ import {gallerySyncNotifications} from "../../../modules/island/src/services/asg
 import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/island/src/services/asg/mediaProcessingQueue"
 import {gallerySyncService} from "../../../modules/island/src/services/asg/gallerySyncService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {useGlassesStore} from "@/stores/glasses"
+import {useGallerySyncStore} from "../../../modules/island/src/stores/gallerySync"
+import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 

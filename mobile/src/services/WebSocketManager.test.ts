@@ -38,7 +38,7 @@ describe("WebSocketManager", () => {
     globalThis.WebSocket = global.WebSocket
 
     useConnectionStore = require("@/stores/connection").useConnectionStore
-    useGlassesStore = require("@/stores/glasses").useGlassesStore
+    useGlassesStore = require("../../modules/island/src/stores/glasses").useGlassesStore
     useConnectionStore.getState().reset()
     useGlassesStore.getState().reset()
     useGlassesStore
