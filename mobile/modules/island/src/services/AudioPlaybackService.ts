@@ -40,20 +40,32 @@ class AudioPlaybackService {
   private constructor() {}
 
   /**
-   * Configure audio mode for background playback.
-   * Must be called before playing audio to ensure playback continues when app is backgrounded.
+   * Configure audio mode for playback, re-asserting it on EVERY play.
+   *
+   * This must run before each play — not just once — because other parts of the
+   * app put the shared iOS AVAudioSession into a record-oriented category and
+   * never restore it. In particular the phone mic (PhoneMic.swift) switches the
+   * session to `.playAndRecord` (sometimes `.voiceChat`/earpiece routing) while
+   * capturing and only deactivates it on stop, leaving the category sticky. A
+   * miniapp like the Recorder records and then immediately plays back through
+   * this service; if we kept the old "configure once" guard, playback would land
+   * in the leftover `.playAndRecord` session and be inaudible on the phone
+   * speaker (the symptom: the progress bar runs but no sound comes out). Calling
+   * setAudioModeAsync with no `allowsRecording` maps to category `.playback`,
+   * reclaiming the speaker route. `audioModeConfigured` is kept only to gate the
+   * one-time log.
    */
   private async ensureAudioModeConfigured(): Promise<void> {
-    if (this.audioModeConfigured) return
-
     try {
       await setAudioModeAsync({
         shouldPlayInBackground: true,
         playsInSilentMode: true,
         interruptionMode: "duckOthers",
       })
-      this.audioModeConfigured = true
-      console.log("AUDIO: Audio mode configured for background playback")
+      if (!this.audioModeConfigured) {
+        this.audioModeConfigured = true
+        console.log("AUDIO: Audio mode configured for playback")
+      }
     } catch (error) {
       console.error("AUDIO: Failed to configure audio mode:", error)
       // Don't block playback if audio mode config fails

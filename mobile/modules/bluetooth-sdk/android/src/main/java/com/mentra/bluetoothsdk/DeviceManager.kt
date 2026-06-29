@@ -279,12 +279,18 @@ class DeviceManager {
                 object : SherpaOnnxTranscriber.TranscriptListener {
                     override fun onPartialResult(text: String, language: String) {
                         Bridge.log("STT: Partial result: $text")
-                        Bridge.sendLocalTranscription(text, false, language)
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, false, language)
                     }
 
                     override fun onFinalResult(text: String, language: String) {
                         Bridge.log("STT: Final result: $text")
-                        Bridge.sendLocalTranscription(text, true, language)
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, true, language)
                     }
                 }
             )

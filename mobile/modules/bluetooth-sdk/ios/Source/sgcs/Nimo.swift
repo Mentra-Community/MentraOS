@@ -1050,7 +1050,7 @@ class Nimo: NSObject, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {
         Bridge.log("NIMO: startVideoRecording - not supported")
     }
 

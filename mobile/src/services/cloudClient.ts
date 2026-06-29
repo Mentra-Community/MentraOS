@@ -21,11 +21,14 @@ import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Team-friendly defaults for dev builds. Local Cloud V2 is still one tap away
-// via the METRO_AUTO dev-settings preset; it should not be the invisible
-// default because it depends on a local stack plus adb reverse/LAN reachability.
-const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
-const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
+// Team-friendly defaults for dev builds. Point every build at the Debug cloud
+// by default so a local build with no EXPO_PUBLIC_CLOUD_* env (see
+// .env.example) matches CI instead of silently diverging onto Cloud Dev. Local
+// Cloud V2 is still one tap away via the METRO_AUTO dev-settings preset; it
+// should not be the invisible default because it depends on a local stack plus
+// adb reverse/LAN reachability.
+const DEFAULT_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
@@ -43,7 +46,7 @@ function metroUrl(port: number): string | undefined {
  *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
  *      changing networks;
  *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
- *   3. Cloud Dev — the default shared backend for team testing.
+ *   3. Cloud Debug — the default shared backend for team testing.
  * Read via the settings store's `getState()` accessor (not a hook) so this
  * service stays React-free.
  */
