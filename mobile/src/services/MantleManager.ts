@@ -188,11 +188,10 @@ class MantleManager {
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       let loadedSettings = res.value
-      // Device/pairing identity is per-phone state and is now saveOnServer: false, so it
-      // should never come back from the server. These deletes are a migration guard: users
-      // paired before that flag flipped still have stale values persisted server-side, and
-      // restoring them would clobber the locally paired device and point reconnect-on-launch
-      // at the wrong BLE address.
+      // Device/pairing identity and core_token are phone-local state and are now
+      // saveOnServer: false, so they should never come back from the server. These
+      // deletes guard legacy values persisted before those flags flipped.
+      delete loadedSettings["core_token"]
       delete loadedSettings["default_wearable"]
       delete loadedSettings["pending_wearable"]
       delete loadedSettings["device_name"]

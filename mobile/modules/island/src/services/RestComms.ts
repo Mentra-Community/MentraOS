@@ -2,11 +2,7 @@ import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletInterface} from "../types"
-// Internal btsdk surface (RestComms needs updateBluetoothSettings, not on the
-// public entry). Relative path — `@mentra/bluetooth-sdk-internal` is a mobile-app
-// tsconfig alias that doesn't resolve in island's standalone build. Same path
-// island's index.ts uses, one level deeper from services/.
-import BluetoothSdk, {type PhotoResponseEvent} from "../../../bluetooth-sdk/build/_internal"
+import {type PhotoResponseEvent} from "../../../bluetooth-sdk/build/_internal"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useConnectionStore} from "../stores/connection"
 import {WebSocketStatus} from "../stores/connection"
@@ -52,12 +48,8 @@ class RestComms {
       }`,
     )
 
-    // Sync to native DeviceStore (and persist to SharedPreferences in BluetoothSdkModule when bridge runs)
-    const value = token ?? ""
-    const updateResult = BluetoothSdk.updateBluetoothSettings({core_token: value})
-    if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
-      ;(updateResult as Promise<void>).catch(() => {})
-    }
+    // This is the legacy Cloud V1 token. Cloud V2 glasses/report auth is synced
+    // by CloudClientService so V1 cannot overwrite the native Bluetooth slot.
 
     if (token) {
       console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`)

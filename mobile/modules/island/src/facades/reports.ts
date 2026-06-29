@@ -68,7 +68,14 @@ function rememberAutomaticDedupe(key: string, nowMs: number, windowMs: number): 
 
 function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
   if (!isGlassesConnected(useGlassesStore.getState().connection)) return
-  BluetoothSdk.sendIncidentId(reportId, apiBaseUrl ?? cloudClientService.getCoreUrl())
+  void (async () => {
+    try {
+      await cloudClientService.syncCoreTokenToBluetooth()
+      await BluetoothSdk.sendIncidentId(reportId, apiBaseUrl ?? cloudClientService.getCoreUrl())
+    } catch (error) {
+      console.warn("reports.submit: notify glasses failed:", error instanceof Error ? error.message : error)
+    }
+  })()
 }
 
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {

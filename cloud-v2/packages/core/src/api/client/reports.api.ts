@@ -3,12 +3,6 @@
  *
  * Primary Cloud V2 report API:
  *   /api/client/reports
- *
- * Glasses log-ingress adapter:
- *   /api/incidents/:incidentId/logs
- *
- * The adapter exists for the current glasses upload command path. Mobile and
- * toolkit code should use the clean /api/client/reports API.
  */
 
 import { Hono } from "hono";
@@ -25,7 +19,6 @@ import {
 } from "../../services/report.service";
 
 const reportsApp = new Hono<AppEnv>();
-export const reportLogIngressApp = new Hono<AppEnv>();
 
 const recordSchema = z.record(z.unknown());
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -106,7 +99,6 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 reportsApp.post("/", userAuth, postSubmitReport);
 reportsApp.post("/:reportId/artifacts", userAuth, postReportArtifacts);
 reportsApp.post("/:reportId/complete", userAuth, postReportComplete);
-reportLogIngressApp.post("/:incidentId/logs", userAuth, postReportLogIngress);
 
 async function postSubmitReport(c: AppContext) {
   const user = requireUser(c);
@@ -163,28 +155,6 @@ async function postReportComplete(c: AppContext) {
   const status = await markReportReady({ mentraUserId: user.mentraUserId, reportId });
   if (!status) return c.json({ error: "report not found" }, 404);
   return c.json({ status }, 200);
-}
-
-async function postReportLogIngress(c: AppContext) {
-  const user = requireUser(c);
-  const reportId = readReportId(c, "incidentId");
-  const body = await readJsonObject(c);
-  const parsed = z.object({
-    source: nonEmptyStringSchema.default("glasses"),
-    logs: z.array(logEntrySchema),
-  }).safeParse(body);
-  if (!parsed.success) {
-    throw new InvalidRequest("invalid report logs body");
-  }
-
-  const result = await addLogArtifact({
-    mentraUserId: user.mentraUserId,
-    reportId,
-    source: parsed.data.source,
-    entries: parsed.data.logs,
-  });
-  if (!result) return c.json({ error: "report not found" }, 404);
-  return c.json(result, 200);
 }
 
 function requireUser(c: AppContext): NonNullable<AppEnv["Variables"]["user"]> {

@@ -825,7 +825,7 @@ Persisted via `AsgSettings.setSaveInGalleryMode`.
 | `incidentId` | string | yes      | Backend incident id      |
 | `apiBaseUrl` | string | no       | Override server base URL |
 
-With WiFi: POSTs the last 600 logcat lines plus BES firmware logs to `<base>/api/incidents/<incidentId>/logs`. Without WiFi: relays the same payloads to the phone over two sequential K900 BLE file transfers; the phone POSTs them.
+With WiFi: POSTs the last 600 logcat lines plus BES firmware logs to `<base>/api/client/reports/<incidentId>/artifacts`. Without WiFi: relays the same artifact payloads to the phone over two sequential K900 BLE file transfers; the phone POSTs them.
 
 #### `ota_start`
 

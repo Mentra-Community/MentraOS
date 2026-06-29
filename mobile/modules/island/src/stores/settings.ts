@@ -203,8 +203,10 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   location_tier: {key: "location_tier", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
-  // state:
-  core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
+  // Volatile bearer synced to Bluetooth for glasses-side Cloud V2 calls. The
+  // key name is kept for BLE compatibility, but the value must never be loaded
+  // from or saved to the legacy Cloud V1 settings store.
+  core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   pending_wearable: {
     key: "pending_wearable",
@@ -757,7 +759,7 @@ export const useSettingsStore = create<SettingsState>()(
           }
 
           // Sync with server if needed
-          if (updateServer) {
+          if (updateServer && setting.saveOnServer) {
             const result = await restComms.writeUserSettings({[key]: value})
             if (result.is_error()) {
               throw new Error(`SETTINGS: couldn't sync setting to server: ${result.error}`)

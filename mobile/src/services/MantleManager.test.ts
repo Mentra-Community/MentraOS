@@ -186,7 +186,7 @@ describe("MantleManager", () => {
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         contextual_dashboard: true,
-        core_token: "server-token",
+        core_token: "",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
         voice_activity_detection_enabled: true,

@@ -121,7 +121,8 @@ class SocketComms {
     console.log(`SOCKET: setAuthCreds(): ${coreToken.substring(0, 10)}..., ${userid}`)
     this.coreToken = coreToken
     this.userid = userid
-    useSettingsStore.getState().setSetting(SETTINGS.core_token.key, coreToken)
+    // Keep the legacy Cloud V1 token private to SocketComms. Cloud V2 report
+    // auth is synced into the Bluetooth core_token slot by island.
     // this.connectWebsocket()
   }
 

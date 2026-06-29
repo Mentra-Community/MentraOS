@@ -18,6 +18,7 @@ import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-c
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 
+import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
@@ -89,6 +90,26 @@ function getCoreClient(): CloudCore {
   const core = client?.core
   if (!core) throw new Error("cloud client core not configured")
   return core
+}
+
+async function syncCoreAccessTokenToBluetooth(): Promise<string> {
+  if (!client) construct()
+  const c = client
+  if (!c) throw new Error("cloud client not initialized")
+
+  const token = await c.auth.getCoreToken()
+  const result = await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, token, false)
+  if (result.is_error()) {
+    throw result.error
+  }
+
+  try {
+    await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
+  } catch (err) {
+    console.warn(`${LOG_TAG}: direct Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`)
+  }
+
+  return token
 }
 
 function frameSizeBytes(): Lc3FrameSizeBytes {
@@ -408,6 +429,10 @@ function construct(): void {
     .then(() => console.log(`${LOG_TAG}: connect() resolved`))
     .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
 
+  syncCoreAccessTokenToBluetooth().catch((err) =>
+    console.warn(`${LOG_TAG}: initial Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`),
+  )
+
   startLc3FrameSizeWatcher()
 }
 
@@ -568,6 +593,10 @@ export const cloudClientService = {
 
   getCoreUrl(): string {
     return resolveEndpoints().core
+  },
+
+  syncCoreTokenToBluetooth(): Promise<string> {
+    return syncCoreAccessTokenToBluetooth()
   },
 
   onStatusChanged(cb: (snapshot: CloudClientStatusSnapshot) => void): () => void {
