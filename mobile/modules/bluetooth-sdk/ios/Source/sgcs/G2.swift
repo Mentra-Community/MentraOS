@@ -1670,29 +1670,47 @@ class G2: NSObject, SGCManager {
     // the phone and the stall is downstream (glasses firmware). Lines prefixed
     // "BGCAP:"; remove with the host-side block once the fix lands.
     private let bgcapTelemetry = true
-    private var bgcapDrainBlockedLogAt: Double = 0
-    private var bgcapQueueHighWater: Int = 0
-    private var bgcapWritesSinceLog: Int = 0
-    private var bgcapWasBlocked = false
+    // Per-side state: left and right are separate CBPeripherals with independent
+    // `canSendWriteWithoutResponse`, so one arm blocking must not clear or log
+    // the other arm's BLOCKED/RESUMED.
+    private struct BgcapSide {
+        var blockedLogAt: Double = 0
+        var highWater: Int = 0
+        var writesSinceLog: Int = 0
+        var wasBlocked = false
+    }
+    private var bgcapRight = BgcapSide()
+    private var bgcapLeft = BgcapSide()
 
-    private func bgcapNoteDrainBlocked(_ side: String, _ depth: Int) {
+    private func bgcapNoteWrite(right: Bool) {
         guard bgcapTelemetry else { return }
-        bgcapWasBlocked = true
-        if depth > bgcapQueueHighWater { bgcapQueueHighWater = depth }
+        if right { bgcapRight.writesSinceLog += 1 } else { bgcapLeft.writesSinceLog += 1 }
+    }
+    private func bgcapNoteDrainBlocked(right: Bool, depth: Int) {
+        guard bgcapTelemetry else { return }
+        if right { bgcapBlocked(&bgcapRight, "R", depth) } else { bgcapBlocked(&bgcapLeft, "L", depth) }
+    }
+    private func bgcapBlocked(_ st: inout BgcapSide, _ side: String, _ depth: Int) {
+        st.wasBlocked = true
+        if depth > st.highWater { st.highWater = depth }
         let now = Date().timeIntervalSince1970
-        if now - bgcapDrainBlockedLogAt >= 1.0 {
+        if now - st.blockedLogAt >= 1.0 {
             Bridge.log(
-                "BGCAP: g2 BLE drain BLOCKED side=\(side) queueDepth=\(depth) highWater=\(bgcapQueueHighWater) writesSinceLast=\(bgcapWritesSinceLog) (canSendWriteWithoutResponse=false — bytes NOT reaching glasses)"
+                "BGCAP: g2 BLE drain BLOCKED side=\(side) queueDepth=\(depth) highWater=\(st.highWater) writesSinceLast=\(st.writesSinceLog) (canSendWriteWithoutResponse=false — bytes NOT reaching glasses)"
             )
-            bgcapDrainBlockedLogAt = now
-            bgcapWritesSinceLog = 0
+            st.blockedLogAt = now
+            st.writesSinceLog = 0
         }
     }
-    private func bgcapNoteDrainedEmpty(_ side: String) {
-        guard bgcapTelemetry, bgcapWasBlocked else { return }
-        bgcapWasBlocked = false
-        Bridge.log("BGCAP: g2 BLE drain RESUMED side=\(side) — queue emptied, flushed highWater=\(bgcapQueueHighWater)")
-        bgcapQueueHighWater = 0
+    private func bgcapNoteDrainedEmpty(right: Bool) {
+        guard bgcapTelemetry else { return }
+        if right { bgcapDrained(&bgcapRight, "R") } else { bgcapDrained(&bgcapLeft, "L") }
+    }
+    private func bgcapDrained(_ st: inout BgcapSide, _ side: String) {
+        guard st.wasBlocked else { return }
+        st.wasBlocked = false
+        Bridge.log("BGCAP: g2 BLE drain RESUMED side=\(side) — queue emptied, flushed highWater=\(st.highWater)")
+        st.highWater = 0
     }
     // =======================================================================
 
@@ -1720,14 +1738,14 @@ class G2: NSObject, SGCManager {
         }
         while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
             guard peripheral.canSendWriteWithoutResponse else {
-                bgcapNoteDrainBlocked(right ? "R" : "L", (right ? rightWriteQueue : leftWriteQueue).count) // BGCAP
+                bgcapNoteDrainBlocked(right: right, depth: (right ? rightWriteQueue : leftWriteQueue).count) // BGCAP
                 return
             }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
-            if bgcapTelemetry { bgcapWritesSinceLog += 1 } // BGCAP
+            bgcapNoteWrite(right: right) // BGCAP
         }
-        bgcapNoteDrainedEmpty(right ? "R" : "L") // BGCAP: loop exited with empty queue
+        bgcapNoteDrainedEmpty(right: right) // BGCAP: loop exited with empty queue
     }
 
     private func sendEvenHubCommand(_ payload: Data, left: Bool = false, right: Bool = true) {
