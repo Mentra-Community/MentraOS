@@ -76,6 +76,8 @@ interface ConnectedMiniapp {
   subscriptions: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
+  /** BGCAP diagnostic: wall-clock of the most recent PING send, for PONG RTT. */
+  bgcapLastPingSentAt?: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
@@ -137,6 +139,72 @@ const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // respawn path wired (MentraJSRouter.start), a genuinely dead context still
 // comes back automatically — this threshold only bounds how long that takes.
 const PING_TIMEOUT_THRESHOLD = 6 // ~30s
+
+// ===========================================================================
+// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove after the
+// "captions fall behind then flood in waves" investigation lands a fix).
+//
+// Captions now run as a local miniapp inside the per-context JS engine
+// (Crust: QuickJS on Android / JSC on iOS), driven off a single serial
+// queue/executor with NO background awareness. The hypothesis is that the OS
+// starves/freezes that queue when the screen is off (iOS app suspension /
+// Android Doze), so inbound transcript deliveries pile up and drain in a burst
+// on resume. These logs measure exactly that. All lines are prefixed "BGCAP:"
+// so they're trivial to grep in incident logs and to delete. Cross-platform —
+// host-side only, no native changes.
+// ===========================================================================
+const BGCAP_TELEMETRY = true
+let bgcapHbTimer: ReturnType<typeof setInterval> | null = null
+let bgcapHbLast = 0
+let bgcapTxCount = 0
+let bgcapTxLastFinalAt = 0
+let bgcapTxLastLogAt = 0
+
+function bgcapStartHeartbeat(): void {
+  if (!BGCAP_TELEMETRY || bgcapHbTimer !== null) return
+  bgcapHbLast = Date.now()
+  // PLAIN setInterval (NOT BgTimer): a plain JS timer only fires when the RN
+  // JS thread is actually executing. A gap >> 1s between ticks therefore proves
+  // the JS thread was suspended/throttled (iOS suspend / Android Doze) for that
+  // long — the smoking gun for the freeze. Silent when healthy; logs the stall
+  // duration when it happens. Pair with the "App state changed to:" lines.
+  bgcapHbTimer = setInterval(() => {
+    const now = Date.now()
+    const gap = now - bgcapHbLast
+    bgcapHbLast = now
+    if (gap > 2000) {
+      console.log(`BGCAP: host-js stall — no tick for ${gap}ms (RN JS thread frozen/throttled)`)
+    }
+  }, 1000)
+}
+
+function bgcapStopHeartbeat(): void {
+  if (bgcapHbTimer !== null) {
+    clearInterval(bgcapHbTimer)
+    bgcapHbTimer = null
+  }
+}
+
+// Rate-limited (1/s) summary of transcripts being FORWARDED to miniapps. Shows
+// whether transcripts keep arriving + being handed to the captions miniapp
+// during background. Compare its rate against the native "MAN: displayEvent"
+// (render) rate: fwd keeps flowing but render lags => miniapp executor is
+// starved; fwd itself stops => upstream (cloud delivery / RN thread) is the gap.
+function bgcapNoteTranscriptForward(isFinal: boolean): void {
+  if (!BGCAP_TELEMETRY) return
+  bgcapTxCount++
+  if (isFinal) bgcapTxLastFinalAt = Date.now()
+  const now = Date.now()
+  if (now - bgcapTxLastLogAt >= 1000) {
+    console.log(
+      `BGCAP: tx forwarded=${bgcapTxCount} in last ${now - bgcapTxLastLogAt}ms (lastFinal ${
+        bgcapTxLastFinalAt ? now - bgcapTxLastFinalAt : -1
+      }ms ago)`,
+    )
+    bgcapTxCount = 0
+    bgcapTxLastLogAt = now
+  }
+}
 
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
@@ -2830,6 +2898,9 @@ class LocalMiniappRuntime {
       // console.log(
       //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
       // )
+      if (BGCAP_TELEMETRY) {
+        bgcapNoteTranscriptForward(!!(data as {isFinal?: boolean} | null)?.isFinal)
+      }
     }
 
     if (matchedSubs.size === 0 && !perGestureStream) return
@@ -3374,6 +3445,7 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   private ensurePingLoop(): void {
+    bgcapStartHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) return
 
     this.pingIntervalId = BgTimer.setInterval(() => {
@@ -3382,6 +3454,7 @@ class LocalMiniappRuntime {
   }
 
   private stopPingLoop(): void {
+    bgcapStopHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) {
       BgTimer.clearInterval(this.pingIntervalId)
       this.pingIntervalId = null
@@ -3402,6 +3475,7 @@ class LocalMiniappRuntime {
       }
 
       // Send PING — SDK auto-replies with PONG
+      if (BGCAP_TELEMETRY) app.bgcapLastPingSentAt = now // BGCAP: for PONG RTT
       this.sendToMiniapp(packageName, {
         type: MiniappRequestType.PING,
       })
@@ -3422,7 +3496,19 @@ class LocalMiniappRuntime {
   public handlePong(packageName: string): void {
     const app = this.connectedApps.get(packageName)
     if (app) {
-      app.lastPongAt = Date.now()
+      const now = Date.now()
+      // BGCAP: PING→PONG round-trip = how long the miniapp's own JS engine
+      // (Crust QuickJS/JSC serial queue) took to run. A large RTT means that
+      // queue is starved — the layer that turns transcripts into display calls.
+      // Only log slow ones to keep the signal clean.
+      if (BGCAP_TELEMETRY && app.bgcapLastPingSentAt) {
+        const rtt = now - app.bgcapLastPingSentAt
+        if (rtt > 1500) {
+          console.log(`BGCAP: ${packageName} pong rtt=${rtt}ms (miniapp JS engine was starved)`)
+        }
+        app.bgcapLastPingSentAt = undefined
+      }
+      app.lastPongAt = now
       this.clearForegroundProbe(packageName)
     }
   }
