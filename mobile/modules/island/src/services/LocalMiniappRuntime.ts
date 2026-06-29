@@ -1008,6 +1008,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
         break
+      case MiniappRequestType.REQUEST_WIFI_SETUP:
+        void this.handleRequestWifiSetup(packageName, payload, requestId)
+        break
 
       // Inter-miniapp interop (SYSTEM apps only)
       case MiniappRequestType.MINIAPPS_LIST:
@@ -1317,6 +1320,20 @@ class LocalMiniappRuntime {
           streamType: "glasses_connection",
           data: glassesState,
         })
+      } else if (stream === "glasses_wifi") {
+        // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
+        const wifiConnected = (glassesState as {wifiConnected?: boolean}).wifiConnected
+        if (typeof wifiConnected === "boolean") {
+          this.sendToMiniapp(packageName, {
+            type: MiniappResponseType.EVENT,
+            streamType: "glasses_wifi",
+            data: {
+              connected: wifiConnected,
+              ssid: (glassesState as {wifiSsid?: string}).wifiSsid || undefined,
+              timestamp: Date.now(),
+            },
+          })
+        }
       } else if (stream === "head_position") {
         const headUp = (glassesState as {headUp?: boolean}).headUp
         if (typeof headUp === "boolean") {
@@ -2482,6 +2499,35 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  /**
+   * session.glasses.requestWifiSetup — open the phone's glasses Wi-Fi setup
+   * flow. The host owns the actual UI via the `wifiSetup` runtime hook; this
+   * just forwards the request and reports success/failure.
+   */
+  private async handleRequestWifiSetup(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const wifiSetup = getRuntimeHooks().wifiSetup
+    if (!wifiSetup) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Wi-Fi setup is not configured on this host",
+      })
+      return
+    }
+    try {
+      await wifiSetup.requestSetup(payload.reason as string | undefined)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Wi-Fi setup failed",
+      })
+    }
   }
 
   /**

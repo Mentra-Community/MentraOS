@@ -3,6 +3,7 @@ import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
+import {router} from "expo-router"
 import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
@@ -281,6 +282,13 @@ class MantleManager {
         startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
         stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
         setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
+      },
+      wifiSetup: {
+        // session.glasses.requestWifiSetup → open the phone's glasses Wi-Fi
+        // setup flow (same screen pairing/deeplinks use for "wifi-setup").
+        requestSetup: () => {
+          router.push("/wifi/scan")
+        },
       },
     })
     // Wire the runtime's status fanout now that the streaming hook is in.
@@ -575,6 +583,15 @@ class MantleManager {
         // console.log("MANTLE: Glasses status changed", changed)
         useGlassesStore.getState().setGlassesInfo(changed)
         localMiniappRuntime.forwardEvent("glasses_connection_state", changed)
+        // Forward glasses Wi-Fi state to miniapps (session.glasses.onWifi) when it
+        // changes — streaming miniapps gate "go live" on this.
+        const wifi = changed as {wifiConnected?: boolean; wifiSsid?: string}
+        if (wifi.wifiConnected !== undefined || wifi.wifiSsid !== undefined) {
+          localMiniappRuntime.forwardEvent("glasses_wifi", {
+            connected: !!wifi.wifiConnected,
+            ssid: wifi.wifiSsid || undefined,
+          })
+        }
         // TODO: this should be moved to the bluetooth sdk:
         if (changed.connection?.state === "disconnected") {
           useGlassesStore.getState().setOtaUpdateAvailable(null)

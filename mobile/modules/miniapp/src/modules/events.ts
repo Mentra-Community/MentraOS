@@ -103,6 +103,13 @@ export interface ConnectionData {
   modelName?: string
 }
 
+/** Glasses Wi-Fi state. `connected` is false on glasses without Wi-Fi or when offline. */
+export interface WifiData {
+  connected: boolean
+  ssid?: string
+  localIp?: string
+}
+
 export interface PhoneNotificationData {
   /** Stable id from the phone's notification listener. */
   notificationId: string
