@@ -178,6 +178,7 @@ export class MentraJSRouter {
   stop(): void {
     this.subscription?.remove()
     this.subscription = null
+    this.runtime.onLivenessTimeout = null
   }
 
   /**

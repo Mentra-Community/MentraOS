@@ -16,7 +16,7 @@ import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
-import {ensureMiniappEngine} from "./services/MiniappEngine"
+import {ensureMiniappEngine, stopMiniappEngine} from "./services/MiniappEngine"
 import localMiniappRuntime from "./services/LocalMiniappRuntime"
 import displayProcessor from "./services/DisplayProcessor"
 import {gallerySyncService} from "./services/asg/gallerySyncService"
@@ -92,6 +92,10 @@ export const toolkit = {
     stopOtaService()
     stopAudioCloudUplink()
     stopPhoneNotificationsSync()
+    await stopMiniappEngine()
+    localMiniappRuntime.cleanup()
+    displayProcessor.detachFromRuntime()
+    gallerySyncService.cleanup()
     cloudClientService.stop()
     await bootstrapStop()
   },

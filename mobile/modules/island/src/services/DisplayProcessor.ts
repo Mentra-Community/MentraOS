@@ -332,6 +332,13 @@ export class DisplayProcessor {
     this.runtimeAttached = true
   }
 
+  /** Detach runtime subscriptions installed by attachToRuntime(). */
+  public detachFromRuntime(): void {
+    this.unsubscribeGlassesStatus?.()
+    this.unsubscribeGlassesStatus = null
+    this.runtimeAttached = false
+  }
+
   /**
    * Get the singleton instance
    */
@@ -346,9 +353,7 @@ export class DisplayProcessor {
    * Reset the singleton (useful for testing)
    */
   public static resetInstance(): void {
-    if (DisplayProcessor.instance?.unsubscribeGlassesStatus) {
-      DisplayProcessor.instance.unsubscribeGlassesStatus()
-    }
+    DisplayProcessor.instance?.detachFromRuntime()
     DisplayProcessor.instance = null
   }
 

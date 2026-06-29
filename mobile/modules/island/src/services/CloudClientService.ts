@@ -68,6 +68,7 @@ let endpointsOverride: {core: string; runtime: string} | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
+let lc3FrameSizeUnsubscribe: (() => void) | null = null
 
 const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
@@ -233,6 +234,28 @@ function clearRuntimeEventSubscriptions(): void {
   translationUnsubscribe = null
 }
 
+function startLc3FrameSizeWatcher(): void {
+  if (lc3FrameSizeUnsubscribe) return
+
+  let last = frameSizeBytes()
+  lc3FrameSizeUnsubscribe = useSettingsStore.subscribe(
+    (state) => state.getSetting(SETTINGS.lc3_frame_size.key),
+    () => {
+      const next = frameSizeBytes()
+      if (next === last) return
+      last = next
+      if (!client) return
+      console.log(`${LOG_TAG}: LC3 frame size changed to ${next}; reconnecting runtime`)
+      cloudClientService.reconnect()
+    },
+  )
+}
+
+function stopLc3FrameSizeWatcher(): void {
+  lc3FrameSizeUnsubscribe?.()
+  lc3FrameSizeUnsubscribe = null
+}
+
 function construct(): void {
   ensureTransports()
 
@@ -315,6 +338,8 @@ function construct(): void {
     .connect()
     .then(() => console.log(`${LOG_TAG}: connect() resolved`))
     .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+
+  startLc3FrameSizeWatcher()
 }
 
 /**
@@ -364,6 +389,7 @@ export const cloudClientService = {
     } catch (err) {
       console.warn(`${LOG_TAG}: stop close() failed: ${(err as Error)?.message ?? err}`)
     }
+    stopLc3FrameSizeWatcher()
     clearRuntimeEventSubscriptions()
     clearPersistentFailureAlarm()
     const wasConnected = connected
