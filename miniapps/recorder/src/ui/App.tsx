@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from "react"
-import {AudioWaveform, Mic, Search} from "lucide-react"
+import {AudioWaveform, Mic, Search, Trash2} from "lucide-react"
 import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import type {RecordingItem} from "../shared/types"
@@ -19,6 +19,9 @@ export function App() {
   const {insets} = useSafeArea()
   const rec = useRecorder()
   const [query, setQuery] = useState("")
+  // Deletion is permanent, so a tap on a row's trash opens an explicit confirm
+  // dialog rather than deleting in place.
+  const [pendingDelete, setPendingDelete] = useState<RecordingItem | null>(null)
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", scheme === "dark")
@@ -70,7 +73,7 @@ export function App() {
 
   return (
     <div className="w-screen h-screen flex flex-col overflow-hidden" style={frame}>
-      <Header usage={rec.usage} onClearAll={rec.clearAll} />
+      <Header />
 
       {/* Search */}
       <div className="px-4 pt-4 pb-3">
@@ -114,7 +117,7 @@ export function App() {
                     onStopPlay={rec.stopPlay}
                     onExport={() => rec.exportRecording(item.id)}
                     onExportTranscript={() => rec.exportTranscript(item.id)}
-                    onDelete={() => rec.remove(item.id)}
+                    onDelete={() => setPendingDelete(item)}
                   />
                 ))}
               </div>
@@ -146,6 +149,75 @@ export function App() {
           }}>
           <Mic className="w-7 h-7" strokeWidth={2.3} />
         </button>
+      </div>
+
+      {pendingDelete ? (
+        <ConfirmDeleteModal
+          item={pendingDelete}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            rec.remove(pendingDelete.id)
+            setPendingDelete(null)
+          }}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** Centered confirm dialog for the permanent delete of a recording. */
+function ConfirmDeleteModal({
+  item,
+  onCancel,
+  onConfirm,
+}: {
+  item: RecordingItem
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center p-6"
+      style={{background: "color-mix(in srgb, #000 55%, transparent)"}}
+      onClick={onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[20rem] rounded-3xl p-5 elev"
+        style={{background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-card)"}}>
+        <div className="flex flex-col items-center text-center gap-3">
+          <span
+            className="grid place-items-center rounded-2xl"
+            style={{width: 48, height: 48, background: "color-mix(in srgb, var(--rec) 16%, transparent)"}}>
+            <Trash2 className="w-6 h-6" style={{color: "var(--rec)"}} />
+          </span>
+          <h2 className="text-[17px] font-bold" style={{color: "var(--text)"}}>
+            Delete recording?
+          </h2>
+          <p className="text-[13px] leading-snug" style={{color: "var(--text-muted)"}}>
+            <span className="font-semibold" style={{color: "var(--text)"}}>
+              {item.title ?? item.name}
+            </span>{" "}
+            will be permanently deleted. This can’t be undone.
+          </p>
+        </div>
+        <div className="flex gap-2.5 mt-5">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 h-11 rounded-full text-[15px] font-semibold press active:opacity-80"
+            style={{background: "var(--surface-2)", color: "var(--text)"}}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 h-11 rounded-full text-[15px] font-semibold text-white press active:opacity-90"
+            style={{background: "var(--rec-grad)"}}>
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   )
