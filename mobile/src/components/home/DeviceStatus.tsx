@@ -176,7 +176,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const features = getModelCapabilities(defaultWearable)
-  const onPress = () => push("/miniapps/settings/glasses", {transition: "simple_push"})
+  const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (

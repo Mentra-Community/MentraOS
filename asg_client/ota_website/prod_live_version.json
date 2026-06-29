@@ -1,5 +1,11 @@
 {
   "apps": {
+    "com.mentra.recovery": {
+      "versionCode": 0,
+      "versionName": "0.0",
+      "apkUrl": "",
+      "sha256": ""
+    },
     "com.mentra.asg_client": {
       "versionCode": 38,
       "versionName": "38.0",
@@ -49,5 +55,14 @@
     "version": "17.26.05.22",
     "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.05.22.bin",
     "sha256": "9499b1d132b934d3564c9dadf166595b4e9729cdf865b4be4e55b1d77cc5fa3c"
+  },
+  "remediation": {
+    "enabled": false,
+    "packageName": "com.mentra.asg_client",
+    "maxVersionCode": 38,
+    "versionCode": 39,
+    "versionName": "39.0",
+    "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-39.apk",
+    "sha256": ""
   }
 }

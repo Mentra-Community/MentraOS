@@ -1,0 +1,80 @@
+---
+title: "Videos"
+description: "Record video on camera glasses."
+icon: "video"
+---
+
+`session.camera` records video on glasses that have a camera, like Mentra Live.
+`startVideoRecording` returns a `recordingId`; pass it to `stopVideoRecording` to
+end the clip.
+
+```typescript src/background/index.ts
+const { recordingId } = await session.camera.startVideoRecording({ fps: 5, save: true });
+// … later …
+await session.camera.stopVideoRecording(recordingId);
+```
+
+Camera needs the `CAMERA` permission and glasses with a camera. Declare a
+`CAMERA` permission and a `CAMERA` hardware requirement in your
+[manifest](/app-devs/core-concepts/miniapp-manifest), and check
+`session.capabilities.hasCamera` before calling.
+
+## Record
+
+`startVideoRecording` resolves once the glasses report that recording started.
+Resolution and frame rate are optional. Omit them to use the device's saved
+button-video settings. A lower `fps` (for example `5`) keeps the glasses cooler
+and the file smaller on long recordings.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `width` | `number` | device default | Video width in pixels. |
+| `height` | `number` | device default | Video height in pixels. |
+| `fps` | `number` | device default | Frames per second. |
+| `sound` | `boolean` | `true` | Play start/stop capture sounds. |
+| `save` | `boolean` | `false` | Keep the recording on the glasses after it finishes. |
+
+It resolves with a `VideoRecordingStarted`:
+
+| Field | Type | Description |
+|---|---|---|
+| `recordingId` | `string` | Identifier for this recording. Pass it to `stopVideoRecording`. |
+
+## Upload the recording
+
+`stopVideoRecording(recordingId)` resolves to `void`. By default the clip stays on
+the glasses. To send it somewhere, pass an `uploadUrl` and the glasses upload the
+finished recording there with a multipart POST (the file is the `video` part):
+
+```typescript
+await session.camera.stopVideoRecording(recordingId, {
+  uploadUrl: "https://your-server.example/clips",
+  uploadAuthToken: "optional-bearer-token", // sent as the Authorization header if set
+});
+```
+
+| Option | Type | What it does |
+|---|---|---|
+| `uploadUrl` | `string` | Endpoint the finished recording is POSTed to. Omit to keep it on the glasses. |
+| `uploadAuthToken` | `string` | Bearer token for the upload's `Authorization` header, if your endpoint needs one. |
+
+Unlike a photo, the recording bytes don't come back over the bridge: with an
+`uploadUrl` they go straight from the glasses to your endpoint, otherwise they
+stay on the device.
+
+## Errors
+
+Every method returns a promise that rejects with `{ code, message }` on failure.
+Wrap calls in `try`/`catch` and read `code`.
+
+| Code | When |
+|---|---|
+| `PERMISSION_NOT_DECLARED` | The miniapp didn't declare the `CAMERA` permission. |
+| `REQUEST_ABORTED` | The request timed out, or the session was torn down before it completed. |
+| `INTERNAL` | The phone-side handler threw. The glasses have no camera, or another device error occurred. Read `message`. |
+
+<Note>
+For stills, see [Photos](/app-devs/core-concepts/camera/photos), which also covers
+[field of view](/app-devs/core-concepts/camera/photos#field-of-view). For live
+video streaming, see [Streaming](/app-devs/core-concepts/stream).
+</Note>

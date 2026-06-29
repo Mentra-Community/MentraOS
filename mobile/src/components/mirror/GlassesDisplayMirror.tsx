@@ -8,6 +8,11 @@ import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
 
+// Native glasses display resolution. Canvas (positioned_text / bitmap) layouts
+// give coordinates in this space; the mirror scales them to its rendered size.
+const GLASSES_WIDTH = 560
+const GLASSES_HEIGHT = 240
+
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string
   style?: ViewStyle
@@ -198,6 +203,53 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
           </View>
         )
       }
+      case "positioned_text": {
+        // Canvas showText: text placed at an absolute (x, y) in the glasses'
+        // native coordinate space (GLASSES_WIDTH x GLASSES_HEIGHT). The mirror
+        // renders the full screen scaled to fit its container, so we lay the box
+        // out absolutely and scale every coordinate by the same factor.
+        let {text, x, y, width, height, borderWidth, borderRadius} = layout
+        text = parseText(typeof text === "string" ? text : "")
+
+        // Scale from native px -> rendered px. We only know the width until the
+        // container measures, so default to 1 (unscaled) before first layout.
+        const scale = containerWidth ? containerWidth / GLASSES_WIDTH : 1
+
+        const boxStyle: ViewStyle = {
+          position: "absolute",
+          left: (Number(x) || 0) * scale,
+          top: (Number(y) || 0) * scale,
+        }
+        if (typeof width === "number") boxStyle.width = width * scale
+        if (typeof height === "number") boxStyle.height = height * scale
+        if (typeof borderWidth === "number" && borderWidth > 0) {
+          boxStyle.borderWidth = Math.max(1, borderWidth * scale)
+          boxStyle.borderColor = (textStyle?.color as string) ?? "#00ff88aa"
+        }
+        if (typeof borderRadius === "number") {
+          boxStyle.borderRadius = borderRadius * scale
+        }
+
+        return (
+          <View
+            ref={containerRef}
+            style={{width: "100%", height: "100%"}}
+            onLayout={(event) => {
+              const {width: w} = event.nativeEvent.layout
+              if (setContainerWidth) {
+                setContainerWidth(w)
+              }
+            }}>
+            <View style={boxStyle}>
+              {text.split("\n").map((line: string, index: number) => (
+                <Text key={index} style={[textStyle, styles.cardContent]}>
+                  {line || " "}
+                </Text>
+              ))}
+            </View>
+          </View>
+        )
+      }
       case "clear_view":
         return null
       default:
@@ -229,11 +281,27 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   const textStyle = fullscreen ? themed($glassesTextFullscreen) : themed($glassesText)
   const content = <>{renderLayout(layout, textStyle, canvasRef, containerRef, setContainerWidth)}</>
 
+  // positioned_text places content at absolute native coords from the top-left,
+  // so the screen must match the glasses aspect ratio and drop its inner padding
+  // for the scaled coordinates to land where they should.
+  const isPositioned = layout.layoutType === "positioned_text"
+  const positionedOverride: ViewStyle = isPositioned
+    ? {
+        aspectRatio: GLASSES_WIDTH / GLASSES_HEIGHT,
+        minHeight: undefined,
+        maxHeight: undefined,
+        padding: 0,
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+        overflow: "hidden",
+      }
+    : {}
+
   if (fullscreen) {
-    return <View style={themed($glassesScreenFullscreen)}>{content}</View>
+    return <View style={[themed($glassesScreenFullscreen), positionedOverride]}>{content}</View>
   }
 
-  return <View style={[themed($glassesScreen), style]}>{content}</View>
+  return <View style={[themed($glassesScreen), style, positionedOverride]}>{content}</View>
 }
 
 const $glassesScreen: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({

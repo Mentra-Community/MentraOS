@@ -1,4 +1,3 @@
-import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -18,7 +17,6 @@ import {
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {DevToolsIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -27,12 +25,14 @@ import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappSta
 import restComms from "@/services/RestComms"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
   captionsPackageName,
+  CHINA_HIDDEN_APPS,
   feedbackPackageName,
-  lmaInstallerPackageName,
+  isChinaBuild,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
@@ -266,6 +266,11 @@ class MiniappCatalog {
 
   private async postProcessApps(apps: ClientApp[]): Promise<ClientApp[]> {
     let out = apps
+    // China build: hide Mentra Map, Offline Captions, Notify, and Feedback
+    // regardless of source (offline catalog, bundled local, or cloud).
+    if (isChinaBuild()) {
+      out = out.filter((a) => !CHINA_HIDDEN_APPS.includes(a.packageName))
+    }
     // Notify is not supported on iOS yet — drop entirely.
     if (Platform.OS === "ios") {
       out = out.filter((a) => a.packageName !== notifyPackageName)
@@ -359,6 +364,10 @@ class MiniappCatalog {
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
+          // Re-launching a dev tile from the home screen / app switcher is also a
+          // "developer" signal — latch the per-account flag (idempotent), same as
+          // the QR-scan and URL-load paths. Only on a reachable "live" launch.
+          markMiniappDevMode()
           useAppStatusStore.getState().setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
@@ -412,44 +421,44 @@ class MiniappCatalog {
           {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
         ],
       },
-      {
-        packageName: captionsPackageName,
-        name: translate("miniApps:offlineCaptions"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/captions.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
-      {
-        packageName: notifyPackageName,
-        name: translate("miniApps:notify"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/notification.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
+      // {
+      //   packageName: captionsPackageName,
+      //   name: translate("miniApps:offlineCaptions"),
+      //   type: "standard",
+      //   offline: true,
+      //   logoUrl: require("@assets/applet-icons/captions.png"),
+      //   webviewUrl: "",
+      //   healthy: true,
+      //   hidden: false,
+      //   permissions: [],
+      //   offlineRoute: "",
+      //   running: false,
+      //   loading: false,
+      //   local: false,
+      //   hardwareRequirements: [
+      //     {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+      //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      //   ],
+      // },
+      // {
+      //   packageName: notifyPackageName,
+      //   name: translate("miniApps:notify"),
+      //   type: "standard",
+      //   offline: true,
+      //   logoUrl: require("@assets/applet-icons/notification.png"),
+      //   webviewUrl: "",
+      //   healthy: true,
+      //   hidden: false,
+      //   permissions: [],
+      //   offlineRoute: "",
+      //   running: false,
+      //   loading: false,
+      //   local: false,
+      //   hardwareRequirements: [
+      //     {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+      //     {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+      //   ],
+      // },
       {
         packageName: settingsPackageName,
         name: translate("miniApps:settings"),
@@ -519,24 +528,9 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) || useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)) {
-      apps.push({
-        packageName: lmaInstallerPackageName,
-        name: translate("miniApps:lmaInstaller"),
-        type: "standard",
-        offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
-        local: false,
-        webviewUrl: "",
-        permissions: [],
-        running: false,
-        loading: false,
-        healthy: true,
-        hidden: false,
-        hardwareRequirements: [],
-        logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevToolsIcon),
-      })
+    // China build: don't register Offline Captions, Notify, or Feedback.
+    if (isChinaBuild()) {
+      return apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName))
     }
 
     return apps

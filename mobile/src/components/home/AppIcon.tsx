@@ -5,7 +5,7 @@ import {ActivityIndicator, StyleProp, StyleSheet, TouchableOpacity, View, ViewSt
 import {withUniwind} from "uniwind"
 
 import {Icon} from "@/components/ignite"
-import {DevIcon} from "@/components/miniapps/DevIcons"
+import {DevIcon, DevMiniappBadge} from "@/components/miniapps/DevIcons"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCachedRemoteImageSource} from "@/hooks/useCachedRemoteImageSource"
 import type {ClientApp} from "@mentra/island"
@@ -26,9 +26,15 @@ interface AppIconProps {
   onClick?: () => void
   style?: StyleProp<ViewStyle>
   disableLoader?: boolean
+  /**
+   * Skip the fade-in transition. Use when the caller has already prefetched the
+   * image and wants it to appear instantly (e.g. the all-apps grid reveals every
+   * icon at once after gating on prefetch completion).
+   */
+  instant?: boolean
 }
 
-const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
+const AppIcon = ({app, onClick, style, disableLoader, instant}: AppIconProps) => {
   const {theme} = useAppTheme()
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
@@ -41,7 +47,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
+    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-15"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -63,13 +69,13 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}
-          {app.isMiniappDev && <DevIcon size={iconSize.width as number} />}
-          {!app.isMiniappDev && !app.iconComponent && (
+          {!app.iconComponent && app.isMiniappDev && !app.logoUrl && <DevIcon size={iconSize.width as number} />}
+          {!app.iconComponent && (app.logoUrl || !app.isMiniappDev) && (
             <Image
               source={imageSource}
               style={{width: "100%", height: "100%", resizeMode: "cover"}}
               contentFit="cover"
-              transition={200}
+              transition={instant ? 0 : 200}
               cachePolicy="memory-disk"
             />
           )}
@@ -93,7 +99,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
           <Icon name="alert" size={theme.spacing.s4} color={theme.colors.error} />
         </View>
       )}
-      {/* {app.isMiniappDev && <DevMiniappBadge size={iconSize.width as number}/>} */}
+      {app.isMiniappDev && <DevMiniappBadge />}
       {/* Show wifi-off badge for offline apps (excluding camera app) */}
       {/* disabled for now */}
       {/* {app.offline && app.packageName !== getMoreAppsApplet().packageName && app.packageName !== cameraPackageName && (

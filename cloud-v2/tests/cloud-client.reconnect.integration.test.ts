@@ -106,11 +106,18 @@ beforeAll(async () => {
   testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
   await Promise.all([
-    OemModel.syncIndexes(),
-    UserModel.syncIndexes(),
-    RefreshTokenModel.syncIndexes(),
-    SeenJtiModel.syncIndexes(),
-    RevokedJtiModel.syncIndexes(),
+    OemModel.createCollection(),
+    UserModel.createCollection(),
+    RefreshTokenModel.createCollection(),
+    SeenJtiModel.createCollection(),
+    RevokedJtiModel.createCollection(),
+  ]);
+  await Promise.all([
+    syncIndexesIfCollectionExists(OemModel),
+    syncIndexesIfCollectionExists(UserModel),
+    syncIndexesIfCollectionExists(RefreshTokenModel),
+    syncIndexesIfCollectionExists(SeenJtiModel),
+    syncIndexesIfCollectionExists(RevokedJtiModel),
   ]);
   audioHandle = await startAudio({
     httpPort: AUDIO_HTTP_PORT,
@@ -203,6 +210,17 @@ describe("cloud.runtime reconnect (real core + audio, relayed socket)", () => {
 });
 
 // === Helpers ===
+
+async function syncIndexesIfCollectionExists(model: { syncIndexes(): Promise<unknown> }) {
+  try {
+    await model.syncIndexes();
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === 26) {
+      return;
+    }
+    throw err;
+  }
+}
 
 async function newCloud(tenantUserId: string): Promise<CloudClient> {
   const mintRes = await fetch(`${testOemHandle.url}/test-oem/mint-jwt`, {

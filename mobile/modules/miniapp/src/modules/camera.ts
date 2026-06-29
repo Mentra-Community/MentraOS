@@ -72,6 +72,17 @@ export interface VideoRecordingStarted {
   recordingId: string
 }
 
+export interface StopVideoRecordingOptions {
+  /**
+   * Upload the finished recording to this URL with a multipart POST (the file is
+   * the `video` part). The glasses upload it directly. Omit to keep the recording
+   * on the glasses instead.
+   */
+  uploadUrl?: string
+  /** Bearer token sent as the `Authorization` header on the upload, if your endpoint needs one. */
+  uploadAuthToken?: string
+}
+
 export class CameraModule {
   constructor(private readonly session: MiniappSession) {}
 
@@ -137,12 +148,18 @@ export class CameraModule {
   /**
    * Stop an in-progress video recording started with {@link startVideoRecording}.
    *
+   * By default the recording stays on the glasses. Pass `uploadUrl` to have the
+   * glasses upload the finished clip to your own endpoint.
+   *
    * @param recordingId The id returned from `startVideoRecording`.
+   * @param options     Optional upload destination for the finished recording.
    */
-  async stopVideoRecording(recordingId: string): Promise<void> {
+  async stopVideoRecording(recordingId: string, options: StopVideoRecordingOptions = {}): Promise<void> {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.VIDEO_RECORDING_STOP,
       recordingId,
+      uploadUrl: options.uploadUrl,
+      uploadAuthToken: options.uploadAuthToken,
     })
   }
 }

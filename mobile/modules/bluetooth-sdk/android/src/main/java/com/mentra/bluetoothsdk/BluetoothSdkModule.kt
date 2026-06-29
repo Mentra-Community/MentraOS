@@ -136,10 +136,6 @@ class BluetoothSdkModule : Module() {
                     sendEvent("keep_alive_ack", event.values)
                 }
 
-                override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
-                    sendEvent("ota_update_available", event.values)
-                }
-
                 override fun onOtaStartAck(event: OtaStartAckEvent) {
                     sendEvent("ota_start_ack", event.values)
                 }
@@ -183,7 +179,7 @@ class BluetoothSdkModule : Module() {
 
     private fun requireSdk(): MentraBluetoothSdk =
             sdk
-                    ?: throw BluetoothException(
+                    ?: throw BluetoothSdkException(
                             "sdk_not_initialized",
                             "Bluetooth SDK is not initialized.",
                     )
@@ -244,7 +240,6 @@ class BluetoothSdkModule : Module() {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
-            "ota_update_available",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
@@ -462,6 +457,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
         }
 
+        AsyncFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
+            requireSdk().setCameraTuningConfig(anrOn, gainOn).values
+        }
+
         AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->
@@ -501,8 +500,6 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
-
-        AsyncFunction("retryOtaVersionCheck") { requireSdk().retryOtaVersionCheck().values }
 
         // MARK: - Version Info Commands
 

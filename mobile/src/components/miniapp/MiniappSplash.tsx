@@ -17,7 +17,7 @@ import Animated, {runOnJS, useAnimatedStyle, useSharedValue, withTiming} from "r
 
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {Text} from "@/components/ignite"
-import {DevIcon} from "@/components/miniapps/DevIcons"
+import {DevIcon, DevMiniappBadge} from "@/components/miniapps/DevIcons"
 
 interface MiniappSplashProps {
   iconUrl?: string
@@ -82,31 +82,33 @@ export default function MiniappSplash({
         {backgroundColor: bgColor, borderRadius: theme.spacing.s12, justifyContent: "center", alignItems: "center"},
         animatedStyle,
       ]}>
-      {iconUrl && (
-        <SquircleView
-          cornerSmoothing={100}
-          preserveSmoothing={true}
-          style={{
-            width: size,
-            height: size,
-            borderRadius,
-            overflow: "hidden",
-            alignItems: "center",
-            justifyContent: "center",
-          }}>
-          {devApp && <DevIcon size={size} />}
-          {!devApp && iconUrl ? (
-            <Image
-              source={iconUrl}
-              style={{width: "100%", height: "100%"}}
-              contentFit="cover"
-              transition={200}
-              cachePolicy="memory-disk"
-            />
-          ) : (
-            <View className="w-full h-full bg-primary-foreground" />
-          )}
-        </SquircleView>
+      {(iconUrl || devApp) && (
+        <View style={{position: "relative"}}>
+          <SquircleView
+            cornerSmoothing={100}
+            preserveSmoothing={true}
+            style={{
+              width: size,
+              height: size,
+              borderRadius,
+              overflow: "hidden",
+              alignItems: "center",
+              justifyContent: "center",
+            }}>
+            {iconUrl ? (
+              <Image
+                source={iconUrl}
+                style={{width: "100%", height: "100%"}}
+                contentFit="cover"
+                transition={200}
+                cachePolicy="memory-disk"
+              />
+            ) : (
+              <DevIcon size={size} />
+            )}
+          </SquircleView>
+          {devApp && <DevMiniappBadge size={18} />}
+        </View>
       )}
 
       <View className="h-16 items-center justify-center w-full mt-4">

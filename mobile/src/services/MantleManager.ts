@@ -16,6 +16,7 @@ import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinato
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
+import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
@@ -60,6 +61,32 @@ import mentraAuth from "@/utils/auth/authClient"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+// ===========================================================================
+// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove with the
+// matching block in LocalMiniappRuntime.ts after the "captions fall behind then
+// flood in waves" fix lands). Tracks the glasses-mic → cloud AUDIO UPLINK rate.
+// The mic_lc3 handler runs on the RN JS thread; if that thread is starved in
+// the background, audio stops flowing UP to the cloud and transcripts dry up at
+// the source. A drop/gap here means the stall is on the uplink side; steady
+// here while captions still fall behind points downstream (render side).
+// All lines prefixed "BGCAP:" for grep + easy removal.
+// ===========================================================================
+const BGCAP_TELEMETRY = true
+let bgcapMicFrames = 0
+let bgcapMicLastLogAt = 0
+let bgcapMicLastVia = ""
+function bgcapNoteMicFrame(via: string): void {
+  if (!BGCAP_TELEMETRY) return
+  bgcapMicFrames++
+  bgcapMicLastVia = via
+  const now = Date.now()
+  if (now - bgcapMicLastLogAt >= 1000) {
+    console.log(`BGCAP: mic_lc3 uplink=${bgcapMicFrames} frames in ${now - bgcapMicLastLogAt}ms via=${bgcapMicLastVia}`)
+    bgcapMicFrames = 0
+    bgcapMicLastLogAt = now
+  }
+}
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -190,8 +217,8 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
-      miniappAuth: {
-        getToken: (packageName, opts) => {
+        miniappAuth: {
+          getToken: (packageName, opts) => {
           const isDevApp = packageName === DEV_APP_PACKAGE_NAME
           const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
           if (!authPackageName) {
@@ -276,8 +303,8 @@ class MantleManager {
         setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
-        computeRoute: (payload) => navigationService.computeRoute(payload),
-        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
+        // Route compute + reverse geocoding now run in the v2 cloud maps service
+        // (cloud.runtime.maps); the device no longer calls Mapbox REST directly.
       },
       heading: {
         addListener: (l) => headingService.addListener(l),
@@ -309,9 +336,15 @@ class MantleManager {
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       let loadedSettings = res.value
-      // exclude default_wearable and pending_wearable from the settings when pulling from the server:
+      // Device/pairing identity is per-phone state and is now saveOnServer: false, so it
+      // should never come back from the server. These deletes are a migration guard: users
+      // paired before that flag flipped still have stale values persisted server-side, and
+      // restoring them would clobber the locally paired device and point reconnect-on-launch
+      // at the wrong BLE address.
       delete loadedSettings["default_wearable"]
       delete loadedSettings["pending_wearable"]
+      delete loadedSettings["device_name"]
+      delete loadedSettings["device_address"]
       delete loadedSettings["default_controller"]
       delete loadedSettings["pending_controller"]
       delete loadedSettings["controller_device_name"]
@@ -434,6 +467,11 @@ class MantleManager {
           continue
         }
         const {packageName, version} = parsed
+
+        // China build: don't install hidden bundled miniapps (e.g. Mentra Map).
+        if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) {
+          continue
+        }
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
           continue
@@ -870,6 +908,10 @@ class MantleManager {
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
           const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
+          const dashboardUrl = typeof event.dashboard_url === "string" ? event.dashboard_url : undefined
+          const expectedBehavior = dashboardUrl
+            ? `Captions tester runs should complete without a captions incident. Check live dashboard: ${dashboardUrl}.`
+            : "Captions tester runs should complete without a captions incident."
 
           const actualBehavior = JSON.stringify(
             {
@@ -894,7 +936,7 @@ class MantleManager {
                 triggerArea: "captions_tester",
                 triggerReason: "captions_incident_detected",
               },
-              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              expectedBehavior,
               actualBehavior,
               severityRating: 4,
               dedupeKey,
@@ -1053,8 +1095,10 @@ class MantleManager {
           if (udp.enabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
             udp.sendAudio(event.lc3)
+            bgcapNoteMicFrame("udp") // BGCAP diagnostic
           } else {
             socketComms.sendBinary(event.lc3)
+            bgcapNoteMicFrame("ws") // BGCAP diagnostic
           }
 
           // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
@@ -1118,30 +1162,6 @@ class MantleManager {
           }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("ota_update_available", (event) => {
-          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
-            console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
-            return
-          }
-          console.log("📱 MANTLE: OTA update available from glasses:", event)
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            available: true,
-            versionCode: event.version_code ?? 0,
-            versionName: event.version_name ?? "",
-            updates: event.updates ?? [],
-            totalSize: event.total_size ?? 0,
-            cacheReady: event.cache_ready === true,
-          })
-          GlobalEventEmitter.emit("ota_update_available", {
-            versionCode: event.version_code,
-            versionName: event.version_name,
-            updates: event.updates,
-            totalSize: event.total_size,
-          })
         }),
       )
 

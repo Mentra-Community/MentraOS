@@ -58,7 +58,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
-            "ota_update_available",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
@@ -154,7 +153,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
             try await MainActor.run {
                 guard let target = Device(dictionary: device) else {
-                    throw BluetoothError(
+                    throw BluetoothSdkError(
                         code: "invalid_device",
                         message: "connect requires a Device with model and name."
                     )
@@ -303,7 +302,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                   timestampMs >= Double(Int64.min),
                   timestampMs <= maxTimestamp
             else {
-                throw BluetoothError(
+                throw BluetoothSdkError(
                     code: "invalid_timestamp",
                     message: "setSystemTime timestampMs must be a finite Int64 millisecond timestamp."
                 )
@@ -348,6 +347,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             )
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
+        }
+
+        AsyncFunction("setCameraTuningConfig") { (anrOn: Bool, gainOn: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraTuningConfig(anrOn: anrOn, gainOn: gainOn).values
         }
 
         AsyncFunction("queryGalleryStatus") {
@@ -397,11 +401,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("sendOtaQueryStatus") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.sendOtaQueryStatus().values
-        }
-
-        AsyncFunction("retryOtaVersionCheck") {
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.retryOtaVersionCheck().values
         }
 
         // MARK: - Version Info Commands
@@ -699,8 +698,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):
             sendEvent("keep_alive_ack", ack.values)
-        case let .otaUpdateAvailable(event):
-            sendEvent("ota_update_available", event.values)
         case let .otaStartAck(event):
             sendEvent("ota_start_ack", event.values)
         case let .otaStatus(event):
@@ -743,7 +740,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothError) {
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
         sendEvent("pair_failure", ["error": error.message])
     }
 }

@@ -2283,32 +2283,6 @@ class MentraLive: NSObject, SGCManager {
             // Send to React Native via Bridge
             Bridge.sendMtkUpdateComplete(message: updateMessage, timestamp: timestamp)
 
-        case "ota_update_available":
-            // Process OTA update available notification from glasses (background mode)
-            Bridge.log("📱 Received ota_update_available from glasses")
-
-            let versionCode = json["version_code"] as? Int64 ?? 0
-            let versionName = json["version_name"] as? String ?? ""
-            let totalSize = json["total_size"] as? Int64 ?? 0
-
-            // Parse updates array
-            var updates: [String] = []
-            if let updatesArray = json["updates"] as? [String] {
-                updates = updatesArray
-            }
-
-            Bridge.log(
-                "📱 OTA available - version: \(versionName) (\(versionCode)), updates: \(updates), size: \(totalSize) bytes"
-            )
-
-            // Send to React Native
-            Bridge.sendOtaUpdateAvailable(
-                versionCode: versionCode,
-                versionName: versionName,
-                updates: updates,
-                totalSize: totalSize
-            )
-
         case "ota_start_ack":
             // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
@@ -2898,17 +2872,6 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "ota_query_status",
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-        ]
-
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendOtaRetryVersionCheck() {
-        Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
-
-        let json: [String: Any] = [
-            "type": "ota_retry_version_check",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
 
@@ -5334,6 +5297,25 @@ extension MentraLive {
                 "fov": fov,
                 "roi_position": roiPosition,
             ],
+        ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {
+        Bridge.log("Sending camera tuning config: anr=\(anrOn), gain=\(gainOn)")
+
+        guard connectionState == ConnTypes.CONNECTED else {
+            Bridge.log("Cannot send camera tuning config - not connected")
+            return
+        }
+
+        var json: [String: Any] = [
+            "type": "camera_tuning_config",
+            "anr": anrOn,
+            "gain": gainOn,
         ]
         if let requestId, !requestId.isEmpty {
             json["request_id"] = requestId

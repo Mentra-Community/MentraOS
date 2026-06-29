@@ -2,10 +2,11 @@ import {useState} from "react"
 import {useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav} from "./components/BottomNav"
-import {Header} from "./components/Header"
+import {APP_BAR_BACKGROUND, Header} from "./components/Header"
 import {Settings} from "./components/Settings"
 import {TargetLanguageSelector} from "./components/TargetLanguageSelector"
 import {TranslationList} from "./components/TranslationList"
+import {useDeveloperMode} from "./hooks/useDeveloperMode"
 import {useSettings} from "./hooks/useSettings"
 import {useTranslations} from "./hooks/useTranslations"
 
@@ -22,6 +23,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<"translation" | "settings">("translation")
   const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false)
   const {insets} = useSafeArea()
+  const {developerMode, holdHandlers} = useDeveloperMode()
   const {
     settings,
     updateTargetLanguage,
@@ -54,7 +56,9 @@ export function App() {
     <div
       className="w-screen h-screen flex overflow-hidden font-sans"
       style={{
-        background: presentation.accentSurface ?? presentation.accentColor,
+        // Paint the safe-area insets with the app-bar surface so the status-bar
+        // area blends into the header instead of showing the cloud-status color.
+        background: APP_BAR_BACKGROUND,
         paddingTop: insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
@@ -65,9 +69,6 @@ export function App() {
           connected={connected}
           accentColor={presentation.accentColor}
           accentForeground={presentation.accentForeground}
-          // Transparent over a gradient surface so the root's single ramp runs
-          // continuously through the header instead of restarting inside it.
-          surfaceBackground={presentation.accentSurface ? "transparent" : undefined}
           error={error}
           settings={settings}
           onToggleTargetLanguageSelector={() => setShowTargetLanguageSelector(true)}
@@ -112,18 +113,21 @@ export function App() {
         {/* Bottom Navigation */}
         {!showTargetLanguageSelector && (
           <div className="w-full flex flex-col">
-            <CloudStatusFooter
-              label={presentation.label}
-              detail={presentation.detail}
-              accentColor={presentation.accentColor}
-              accentForeground={presentation.accentForeground}
-              dark={presentation.dark}
-            />
+            {developerMode && (
+              <CloudStatusFooter
+                label={presentation.label}
+                detail={presentation.detail}
+                accentColor={presentation.accentColor}
+                accentForeground={presentation.accentForeground}
+                dark={presentation.dark}
+              />
+            )}
             <BottomNav
               activeTab={activeTab}
               onTabChange={setActiveTab}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
+              settingsHoldHandlers={holdHandlers}
             />
           </div>
         )}

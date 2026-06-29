@@ -185,7 +185,7 @@ abstract class SGCManager {
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
 
-    // Start/stop LC3 audio playback from glasses based on the nex_audio_playback flag.
+    // Start/stop LC3 audio playback from glasses based on the nex_lc3_audio_playback flag.
     open fun applyNexAudioPlaybackSetting() {}
 
     // Version info

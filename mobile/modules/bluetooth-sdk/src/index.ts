@@ -105,9 +105,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
     }
     return PrivateBluetoothSdkModule.setVideoRecordingDefaults(width, height, fps)
   },
-  setCaptureLedEnabled: bindPublicMethod("setCaptureLedEnabled"),
   setMaxVideoRecordingDuration: bindPublicMethod("setMaxVideoRecordingDuration"),
   setCameraFov: bindPublicMethod("setCameraFov"),
+  setCameraTuningConfig: bindPublicMethod("setCameraTuningConfig"),
   queryGalleryStatus: bindPublicMethod("queryGalleryStatus"),
   requestPhoto: bindPublicMethod("requestPhoto"),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
@@ -196,8 +196,6 @@ export type {
   OtaStatus,
   OtaStatusEvent,
   OtaQueryResult,
-  OtaUpdateAvailableEvent,
-  OtaUpdateInfo,
   PairFailureEvent,
   PhotoCaptureMetadata,
   PhotoResolvedConfig,

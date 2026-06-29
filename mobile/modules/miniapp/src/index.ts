@@ -67,6 +67,14 @@ export type {
   TextWall,
   ViewType,
 } from "./modules/display"
+export {CanvasOperation} from "./modules/canvas"
+export type {
+  BaseOptions as CanvasBaseOptions,
+  Box as CanvasBox,
+  BitmapOptions as CanvasBitmapOptions,
+  ClearOptions as CanvasClearOptions,
+  TextOptions as CanvasTextOptions,
+} from "./modules/canvas"
 export type {
   AccelData,
   AudioChunkData,
@@ -94,6 +102,7 @@ export type {
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
+  StopVideoRecordingOptions,
   TakePhotoOptions,
   VideoRecordingStarted,
 } from "./modules/camera"
@@ -101,12 +110,11 @@ export type {DashboardMode} from "./modules/dashboard"
 export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {
-  ManagedStreamResult,
-  StartManagedOptions,
-  StartUnmanagedOptions,
+  RestreamDestination,
+  StartStreamOptions,
   StreamAudioConfig,
-  StreamPublisherStartResult,
   StreamResolvedConfig,
+  StreamResult,
   StreamStatus,
   StreamVideoConfig,
 } from "./modules/stream"
@@ -117,6 +125,7 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
+export type {CanvasManager} from "./modules/canvas"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"
@@ -137,6 +146,8 @@ export type {
   NavManeuver,
   NavOffRoute,
   NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
   NavRerouting,
   NavRoute,
   NavState,

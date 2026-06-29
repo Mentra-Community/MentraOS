@@ -1,29 +1,46 @@
 /**
  * Pure decoders used by `NavigationService.computeRoute` when talking to
- * Google's Routes API directly (no native dependency).
+ * Mapbox's Directions API directly (no native dependency).
  *
  * Kept in their own module so unit tests don't have to bring up the
  * `crust` native module to exercise them. The algorithms are unit
  * testable; the surrounding service is not.
+ *
+ * Migrated from Google Routes API: Mapbox returns numeric `distance`
+ * (meters) / `duration` (seconds) rather than Google's `"123s"` protobuf
+ * strings, and `polyline6` (precision-6) geometry rather than Google's
+ * precision-5 encoded polyline. `parseDurationSeconds` is retained for
+ * back-compat but Mapbox callers pass the numeric value through directly.
  */
 
 export type LatLng = {lat: number; lng: number}
 
-/** Routes API encodes durations as protobuf strings ("123s"). */
-export function parseDurationSeconds(s: string): number {
+/**
+ * Back-compat: Google Routes API encoded durations as protobuf strings
+ * ("123s"). Mapbox returns a number, so new callers should not need this.
+ * Accepts a number (passed through) or a "123s" string.
+ */
+export function parseDurationSeconds(s: string | number): number {
+  if (typeof s === "number") return Number.isFinite(s) ? Math.round(s) : 0
   const match = s.match(/^(\d+)/)
   return match ? Number(match[1]) : 0
 }
 
 /**
- * Decode a Google encoded polyline. Identical algorithm to
- * google.maps.geometry.encoding.decodePath but available here in the
- * non-WebView phone process where window.google is undefined.
+ * Decode an encoded polyline. The standard Google/Mapbox polyline
+ * algorithm, parameterized by coordinate precision:
+ *   - precision 5 (Google Routes, Mapbox `polyline`): factor 1e5
+ *   - precision 6 (Mapbox `polyline6`): factor 1e6
  *
- * Reference: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+ * We request `geometries=polyline6` from Mapbox Directions for the extra
+ * precision (tighter road-centerline tracing keeps the turn-pivot dots on
+ * the visible road), so the default precision here is 6.
+ *
+ * Reference: https://docs.mapbox.com/api/navigation/directions/#route-object
  */
-export function decodePolyline(encoded: string): LatLng[] {
+export function decodePolyline(encoded: string, precision: number = 6): LatLng[] {
   if (!encoded) return []
+  const factor = Math.pow(10, precision)
   const points: LatLng[] = []
   let index = 0
   let lat = 0
@@ -46,7 +63,7 @@ export function decodePolyline(encoded: string): LatLng[] {
       shift += 5
     } while (b >= 0x20)
     lng += result & 1 ? ~(result >> 1) : result >> 1
-    points.push({lat: lat / 1e5, lng: lng / 1e5})
+    points.push({lat: lat / factor, lng: lng / factor})
   }
   return points
 }

@@ -623,6 +623,8 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
+        } else if wearable.contains(DeviceTypes.NIMO) {
+            sgc = Nimo()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
@@ -1220,7 +1222,7 @@ struct ViewState {
 
     private func liveSgc() throws -> MentraLive {
         guard let live = sgc as? MentraLive else {
-            throw BluetoothError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
         }
         return live
     }
@@ -1252,9 +1254,8 @@ struct ViewState {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
-    func retryOtaVersionCheck() {
-        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
-        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
+    func sendCameraTuningConfig(requestId: String, anrOn: Bool, gainOn: Bool) throws {
+        try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
 
     /// Request version info from glasses.

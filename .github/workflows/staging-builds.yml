@@ -27,10 +27,6 @@ on:
   push:
     branches:
       - staging
-    paths:
-      - "mobile/**"
-      - "asg_client/**"
-      - ".github/workflows/staging-builds.yml"
   workflow_dispatch:
     inputs:
       skip_cleanup:
@@ -101,6 +97,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -150,7 +152,21 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
-        run: cp .env.example .env
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…) from the secret. set-build-env.mjs forces
+        # .env values into process.env, so the file — not a shell env var — is the
+        # source of truth for EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN. app.config.ts bakes
+        # it into the Android manifest (com.mapbox.token) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            # Replace the whole line so the ci-dummy value can't leak through.
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
 
       - name: Fix React Native symlinks
         working-directory: ./mobile
@@ -160,6 +176,17 @@ jobs:
             ./fix-react-native-symlinks.sh
           fi
 
+      - name: Inject release signing + Play credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          play: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
         working-directory: ./mobile
         env:
@@ -168,6 +195,15 @@ jobs:
           # gh CLI inside release-android.mjs uploads the APK to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo for the Nav SDK (com.mapbox.navigationcore). Build-time
+          # only — never in the APK. Passed under BOTH env names: our repo block
+          # reads MAPBOX_DOWNLOADS_TOKEN; the @rnmapbox/maps-generated allprojects
+          # repo block (applies to :mentra-crust too) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN — without it that repo is added
+          # unauthenticated → "Could not find navigationcore".
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         # release-android.mjs handles: prebuild → gradle assemble/bundle →
         # GH release upload (v{X.Y}/_Beta_N.apk) → Play internal track upload
         # (if google-play-key.json is at ~/.mentra/credentials/).
@@ -236,11 +272,34 @@ jobs:
       testflight_detail: ${{ steps.release-status.outputs.testflight_detail }}
 
     steps:
-      - name: Kill stale build processes
+      - name: Kill stale build processes (this runner's prior job only)
         run: |
-          killall xcodebuild 2>/dev/null || true
-          killall Simulator 2>/dev/null || true
-          xcrun simctl shutdown all 2>/dev/null || true
+          # This is a SHARED self-hosted macOS runner. A blanket `killall xcodebuild`
+          # would kill iOS builds for OTHER branches running concurrently here — that was
+          # the cause of the recurring fast, diagnostic-free build failures (xcodebuild
+          # SIGTERM'd mid-compile → exit 65 / no error, build halts then ~30min silent
+          # gap until cleanup). The self-hosted runner only ever executes ONE job at a
+          # time per runner process, but multiple runner processes share this Mac
+          # (e.g. bigbob runs big-bob/-2/-3), so we must not touch other runners'
+          # xcodebuild. (The PR iOS workflow was already fixed this way; this staging
+          # job still had the unscoped killall — that's what killed run #3166's iOS build.)
+          #
+          # Scope the cleanup to xcodebuild processes whose RUNNER_WORKSPACE matches ours.
+          WS="${RUNNER_WORKSPACE:-$GITHUB_WORKSPACE}"
+          echo "Cleaning stale xcodebuild under: $WS"
+          pids="$(pgrep -f "xcodebuild.*${WS}" 2>/dev/null || true)"
+          if [ -n "$pids" ]; then
+            echo "Terminating stale xcodebuild pids: $pids"
+            # shellcheck disable=SC2086
+            kill -TERM $pids 2>/dev/null || true
+            sleep 2
+            # shellcheck disable=SC2086
+            kill -KILL $pids 2>/dev/null || true
+          else
+            echo "No stale xcodebuild for this workspace."
+          fi
+          # Do NOT machine-wide `killall Simulator` / `simctl shutdown all` — it would
+          # disrupt other runners. Device builds don't use a simulator anyway.
 
       - name: Clean previous build outputs only
         run: |
@@ -250,6 +309,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
 
       # Bun + rbenv are pre-installed on the self-hosted runners by
       # setup-runner.sh. The runner's launchd service inherits PATH from
@@ -306,7 +371,39 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
-        run: cp .env.example .env
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into Info.plist
+        # (MBXAccessToken) for the Nav SDK. See the Android job for why the .env
+        # file (not a shell env var) is the source of truth.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            sed -i '' "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
+          fi
+
+      - name: Configure Mapbox SPM credentials (~/.netrc)
+        # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
+        # api.mapbox.com at pod install / SPM resolve time. SPM authenticates via
+        # ~/.netrc with the Downloads:Read secret token (sk.…). Build-time only —
+        # never written into the IPA.
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "::error::MAPBOX_DOWNLOADS_TOKEN secret not set — SPM cannot fetch the Mapbox Nav SDK; iOS build will fail."
+            exit 1
+          fi
+          # Remove any prior api.mapbox.com entry so re-runs on the persistent
+          # self-hosted runner don't stack duplicate machine lines.
+          if [ -f "$HOME/.netrc" ]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+          printf 'machine api.mapbox.com\n  login mapbox\n  password %s\n' "$MAPBOX_DOWNLOADS_TOKEN" >> "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
 
       - name: Ensure iOS platform is installed
         run: xcodebuild -downloadPlatform iOS || true
@@ -383,6 +480,14 @@ jobs:
           echo "---all signing identities visible to xcodebuild---"
           security find-identity -v -p codesigning
 
+      - name: Inject App Store Connect API key
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
         working-directory: ./mobile
         env:
@@ -454,9 +559,10 @@ jobs:
 
   build-asg:
     name: Build ASG Client
-    # Pinned to the mac runners: they have the ASG signing keystore provisioned
-    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
-    runs-on: [self-hosted, macOS, ARM64]
+    # GitHub-hosted Ubuntu. Signing creds come from secrets via inject-signing;
+    # it's a clean gradle build (no fastlane/upload), so it doesn't need the mac
+    # runners. The GH-release upload happens later in the ubuntu upload-releases job.
+    runs-on: ubuntu-latest
 
     outputs:
       version_code: ${{ steps.asg-build-info.outputs.version_code }}
@@ -477,6 +583,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Free up disk space
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       - name: Compute ASG build info
         id: asg-build-info
@@ -517,10 +632,24 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          key: asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            asg-gradle-${{ runner.os }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-
+
+      # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
+      # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-
+      # local fallback this action writes) and signs with the ASG_* gradle props,
+      # so it must run after injection or it falls back to ~/.mentra (the disk
+      # dependency this PR removes) and fails on a clean runner.
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build recovery worker asset
         working-directory: ./asg_client/recovery_worker
@@ -741,7 +870,8 @@ jobs:
               },
               mtk_patches: .mtk_patches,
               bes_firmware: .bes_firmware
-            }' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+            }
+            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
 
       - name: Build ASG OTA staging Pages site
         if: needs.build-asg.result == 'success'

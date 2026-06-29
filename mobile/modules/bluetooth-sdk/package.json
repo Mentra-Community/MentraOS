@@ -12,6 +12,11 @@
       "react-native": "./src/index.ts",
       "default": "./build/index.js"
     },
+    "./internal": {
+      "types": "./build/_internal.d.ts",
+      "react-native": "./src/_internal.ts",
+      "default": "./build/_internal.js"
+    },
     "./react": {
       "types": "./build/react/index.d.ts",
       "react-native": "./src/react/index.ts",

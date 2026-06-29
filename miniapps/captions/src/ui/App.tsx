@@ -6,6 +6,7 @@ import {Header} from "./components/Header"
 import {LanguageSelector} from "./components/LanguageSelector"
 import {Settings} from "./components/Settings"
 import {TranscriptList} from "./components/TranscriptList"
+import {useDeveloperMode} from "./hooks/useDeveloperMode"
 import {useSettings} from "./hooks/useSettings"
 import {useTranscripts} from "./hooks/useTranscripts"
 
@@ -22,6 +23,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<"captions" | "settings">("captions")
   const [showLanguageSelector, setShowLanguageSelector] = useState(false)
   const {insets} = useSafeArea()
+  const {developerMode, holdHandlers} = useDeveloperMode()
   const {settings, updateLanguage, updateHints, updateDisplayLines, updateDisplayWidth, updateWordBreaking} =
     useSettings()
   const {
@@ -42,7 +44,14 @@ export function App() {
     setShowLanguageSelector(false)
   }
 
-  const presentation = getCloudPresentation(cloudStatus)
+  // Connection-status theming (baby blue when WS-connected, slate gray when
+  // offline/unavailable, etc.) is a debug affordance — gate it behind
+  // developer mode alongside the CloudStatusFooter below. Everyone else gets
+  // the stable brand accent so the app bar/background don't flicker color with
+  // cloud connectivity.
+  const presentation = developerMode
+    ? getCloudPresentation(cloudStatus)
+    : {label: "", detail: "", accentColor: "#6DAEA6", accentForeground: "#FFFFFF", dark: false}
 
   return (
     <div
@@ -103,18 +112,21 @@ export function App() {
         {/* Bottom Navigation */}
         {!showLanguageSelector && (
           <div className="w-full flex flex-col">
-            <CloudStatusFooter
-              label={presentation.label}
-              detail={presentation.detail}
-              accentColor={presentation.accentColor}
-              accentForeground={presentation.accentForeground}
-              dark={presentation.dark}
-            />
+            {developerMode && (
+              <CloudStatusFooter
+                label={presentation.label}
+                detail={presentation.detail}
+                accentColor={presentation.accentColor}
+                accentForeground={presentation.accentForeground}
+                dark={presentation.dark}
+              />
+            )}
             <BottomNav
               activeTab={activeTab}
               onTabChange={setActiveTab}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
+              settingsHoldHandlers={holdHandlers}
             />
           </div>
         )}

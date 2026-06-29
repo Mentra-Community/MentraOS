@@ -681,6 +681,21 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 
 Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
 
+#### `camera_tuning_config` (Mentra Live / K900-class hardware)
+
+```json
+{"type": "camera_tuning_config", "anr": false, "gain": false}
+```
+
+Configures camera HAL tuning (ANR / pixsmart gain) without a reboot. ASG persists the flags (`camera_anr_enabled` / `camera_gain_enabled`, both default `true`) and relays them as a `camconfig` broadcast to SystemUI's `CTReceiver`. Both fields are optional; an omitted field keeps the stored value.
+
+- `anr`: `true` = ANR (Adaptive Noise Reduction) on; `false` = ANR off.
+- `gain`: `true` = stock gain params; `false` = pixsmart gain-off params.
+
+**Scan-mode convention**: send `{"anr": false, "gain": false}` to disable ANR and gain for sharper barcode/QR/text captures, and `{"anr": true, "gain": true}` to restore defaults.
+
+ASG replies with `settings_ack` (`setting: "camera_tuning"`, `status: "applied"`) echoing the effective `anr`/`gain` values. The persisted flags are re-applied at boot and after any `camera_fov_setting` HAL restart so the tuning survives reboots and FOV changes.
+
 ---
 
 ### BLE configuration
@@ -891,14 +906,6 @@ Idle response:
   "step_percent": 0,
   "overall_percent": 0
 }
-```
-
-#### `ota_retry_version_check`
-
-Asks ASG to retry the last phone-started OTA after the phone completes recovery work (for example syncing the glasses clock). The retry re-uses the manifest URL from the last `ota_start`. ASG ignores the command — replying only with its current `ota_status` — unless a phone-started OTA previously failed with `clock_skew` or `ssl_error`.
-
-```json
-{"type": "ota_retry_version_check"}
 ```
 
 #### `ota_update_response` (deprecated)

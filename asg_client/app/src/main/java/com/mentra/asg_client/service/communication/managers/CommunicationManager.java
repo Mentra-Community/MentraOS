@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
@@ -34,15 +35,36 @@ public class CommunicationManager
 
         this.reliableManager =
                 new ReliableMessageManager(
-                        data -> {
+                        (data, callback, gate) -> {
                             if (this.transport != null) {
-                                return this.transport.sendMessage(data);
+                                return this.transport.sendMessage(
+                                        data,
+                                        callback != null ? callback::onComplete : null,
+                                        adaptSendGate(gate));
                             }
                             return false;
                         });
 
         // Enable by default - worst case with old phones is just some extra retries
         this.reliableManager.setEnabled(true, 1);
+    }
+
+    private static IBluetoothManager.SendMessageGate adaptSendGate(
+            ReliableMessageManager.SendGate gate) {
+        if (gate == null) {
+            return null;
+        }
+        return new IBluetoothManager.SendMessageGate() {
+            @Override
+            public boolean shouldSend() {
+                return gate.shouldSend();
+            }
+
+            @Override
+            public Object lock() {
+                return gate.lock();
+            }
+        };
     }
 
     /**
@@ -574,36 +596,6 @@ public class CommunicationManager
     @Override
     public boolean isPhoneConnected() {
         return transport != null && transport.isConnected();
-    }
-
-    /**
-     * Send OTA update available notification to phone (background mode). Part of
-     * OtaHelper.PhoneConnectionProvider interface.
-     *
-     * @param updateInfo JSON with version_code, version_name, updates[], total_size
-     */
-    @Override
-    public void sendOtaUpdateAvailable(JSONObject updateInfo) {
-        Log.d(TAG, "📱 =========================================");
-        Log.d(TAG, "📱 SEND OTA UPDATE AVAILABLE");
-        Log.d(TAG, "📱 =========================================");
-
-        if (isPhoneConnected()) {
-            try {
-                // Use reliable sending for important update notification
-                boolean sent = reliableManager.sendMessage(updateInfo);
-                Log.d(
-                        TAG,
-                        "📱 "
-                                + (sent
-                                        ? "✅ OTA update available sent successfully"
-                                        : "❌ Failed to send OTA update available"));
-            } catch (Exception e) {
-                Log.e(TAG, "📱 💥 Error sending OTA update available", e);
-            }
-        } else {
-            Log.w(TAG, "📱 ❌ Cannot send OTA update available - phone not connected");
-        }
     }
 
     /** Send a non-session OTA control message (e.g. {@code ota_start_ack}) over BLE. */

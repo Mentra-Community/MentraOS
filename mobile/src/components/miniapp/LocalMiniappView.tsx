@@ -81,7 +81,7 @@ function LocalMiniappView({
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [loadGatePassed, setLoadGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // ----- Load-state tracking -------------------------------------------------
@@ -166,11 +166,10 @@ function LocalMiniappView({
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (Platform.OS !== "android") return
-    // android is slow to start (and doesn't handle opacity properly) so we need to wait for the animation to complete
-    // before attempting to load the webview or we'll get visual jank
+    // if (Platform.OS !== "android") return
+    // delay loading the webview until the animation is complete
     BgTimer.setTimeout(() => {
-      setAndroidGatePassed(true)
+      setLoadGatePassed(true)
     }, 1000)
   }, [])
 
@@ -440,18 +439,15 @@ function LocalMiniappView({
     return <Text text="Missing required parameters" />
   }
 
-  // if (Platform.OS === "android" && !androidGatePassed) {
-  //   return (
-  //     <View className="flex-1">
-  //       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-  //     </View>
-  //   )
-  // }
-
-  let isDevApp = packageName == DEV_APP_PACKAGE_NAME
-  if (isDevApp) {
-    appName = undefined
+  if (!loadGatePassed) {
+    return (
+      <View className="flex-1">
+        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
+      </View>
+    )
   }
+
+  const isDevApp = packageName == DEV_APP_PACKAGE_NAME
 
   if (!uiUri) {
     return (
@@ -485,65 +481,6 @@ function LocalMiniappView({
   })
   const uiShim = buildMentraUiShim({packageName})
   const injectedJS = `${globalsScript}\n${uiShim}`
-
-  // Loading affordance: the WebView only mounts once entry resolution +
-  // JSContext spawn complete. The splash covers the early frames where the
-  // WebView is mounted but hasn't painted yet.
-  let androidGateNotPassed = Platform.OS === "android" && !androidGatePassed
-
-  if (androidGateNotPassed) {
-    return (
-      <View className="flex-1 bg-transparent" style={{borderRadius: theme.spacing.s12}}>
-        <View className="w-1 h-1">
-          <WebView
-            ref={handleRef}
-            source={{uri: uiUri}}
-            originWhitelist={["*"]}
-            allowFileAccess={true}
-            allowFileAccessFromFileURLs={true}
-            allowingReadAccessToURL={uiBaseDir ?? undefined}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            injectedJavaScriptBeforeContentLoaded={injectedJS}
-            onMessage={handleMessage}
-            onLoadEnd={handleLoadEnd}
-            onContentProcessDidTerminate={handleTerminate}
-            onError={handleError}
-            onNavigationStateChange={handleNavStateChange}
-            allowsBackForwardNavigationGestures={true}
-            bounces={false}
-            overScrollMode="never"
-            automaticallyAdjustContentInsets={false}
-            contentInsetAdjustmentBehavior="never"
-            scalesPageToFit={false}
-            setBuiltInZoomControls={false}
-            setDisplayZoomControls={false}
-            // Android-only: forces the WebView to call
-            // `requestDisallowInterceptTouchEvent(true)` on every touch,
-            // so the React Native parent ViewGroup can't steal multi-touch
-            // events mid-pinch. Without this, fast pinches on JS-driven
-            // maps (Google Maps) lose their second-finger touchend events
-            // and the recognizer stays stuck in zoom mode — surviving
-            // finger keeps zooming. Independently reported as Android
-            // System WebView behavior in flutter#182828,
-            // react-native-webview#1649, manuelstofer/pinchzoom#115.
-            nestedScrollEnabled={true}
-            webviewDebuggingEnabled={__DEV__}
-            style={{flex: 1, borderRadius: theme.spacing.s12}}
-          />
-        </View>
-        <MiniappSplash
-          name={appName}
-          iconUrl={iconUrl}
-          bgColor={theme.colors.background}
-          isLoaded={false}
-          devApp={isDevApp}
-          disableFadeIn={true}
-        />
-        {showCapsule && <CapsuleMenu forceShow={true} />}
-      </View>
-    )
-  }
 
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, the splash hides;
