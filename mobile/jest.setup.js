@@ -477,9 +477,7 @@ jest.mock("@mentra/island", () => {
         getMemoryMB: jest.fn(() => 0),
       },
       reports: {
-        submit: jest.fn(() =>
-          Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready", created: true}),
-        ),
+        submit: jest.fn(() => Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready"})),
       },
       ota: {
         updateAvailable: jest.fn(() => null),

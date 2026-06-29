@@ -1,6 +1,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
+import {reportInvalidGalleryMedia} from "../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
@@ -27,6 +28,10 @@ jest.mock("../../../modules/island/src/services/asg/localStorageService", () => 
     convertToDownloadedFile: jest.fn((info: any) => info),
     saveDownloadedFile: jest.fn(),
   },
+}))
+
+jest.mock("../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService", () => ({
+  reportInvalidGalleryMedia: jest.fn(),
 }))
 
 jest.mock("../../../modules/island/src/utils/permissions/MediaLibraryPermissions", () => ({
@@ -61,6 +66,14 @@ describe("mediaProcessingQueue", () => {
     await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
 
     expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
+    expect(reportInvalidGalleryMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "VID_zero",
+        mediaKind: "video",
+        stage: "processing_validation",
+        reason: expect.stringContaining("zero-byte file VID_zero"),
+      }),
+    )
     expect(useGallerySyncStore.getState().failedFiles).toContain("VID_zero")
   })
 
