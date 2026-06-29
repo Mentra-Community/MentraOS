@@ -14,7 +14,12 @@
  * host-store-agnostic — callers inject a snapshot getter + a subscribe fn — so
  * it is unit-testable without a live device.
  */
-import type {GlassesConnectionStatus} from "@mentra/bluetooth-sdk"
+import {
+  isBusyGlassesConnectionStatus,
+  isConnectedGlassesConnectionStatus,
+  isReadyGlassesConnectionStatus,
+  type GlassesConnectionStatus,
+} from "@mentra/bluetooth-sdk/types"
 
 import {BgTimer} from "../utils/timers"
 
@@ -22,17 +27,17 @@ export type {GlassesConnectionStatus}
 
 /** True when the BLE link is established (regardless of boot state). */
 export function isGlassesConnected(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "connected"
+  return isConnectedGlassesConnectionStatus(connection)
 }
 
 /** True when connected AND the glasses OS has finished booting. */
 export function isGlassesReady(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "connected" && connection.fullyBooted
+  return isReadyGlassesConnectionStatus(connection)
 }
 
 /** True while the native link layer is mid scan / connect / bond. */
 export function isGlassesLinkLayerBusy(connection: GlassesConnectionStatus): boolean {
-  return connection.state === "scanning" || connection.state === "connecting" || connection.state === "bonding"
+  return isBusyGlassesConnectionStatus(connection)
 }
 
 export interface WaitForGlassesReadyOptions {
