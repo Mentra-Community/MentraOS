@@ -1659,6 +1659,43 @@ class G2: NSObject, SGCManager {
     private var leftWriteQueue: [Data] = []
     private var rightWriteQueue: [Data] = []
 
+    // === BGCAP: diagnostic — native BLE write-queue backpressure ============
+    // Host-side BGCAP telemetry proved the JS pipeline (audio uplink, transcript
+    // forward, miniapp render, sendText() entry) stays healthy while
+    // backgrounded — so the captions "freeze in bg, flood on resume" stall is
+    // BELOW sendText(): here, in the EvenHub→BLE drain gated on
+    // `canSendWriteWithoutResponse`. If iOS throttles background writes the queue
+    // backs up (BLOCKED, depth climbs) and flushes on resume (RESUMED) — that's
+    // the flood. If NO BLOCKED lines appear in the background window, bytes left
+    // the phone and the stall is downstream (glasses firmware). Lines prefixed
+    // "BGCAP:"; remove with the host-side block once the fix lands.
+    private let bgcapTelemetry = true
+    private var bgcapDrainBlockedLogAt: Double = 0
+    private var bgcapQueueHighWater: Int = 0
+    private var bgcapWritesSinceLog: Int = 0
+    private var bgcapWasBlocked = false
+
+    private func bgcapNoteDrainBlocked(_ side: String, _ depth: Int) {
+        guard bgcapTelemetry else { return }
+        bgcapWasBlocked = true
+        if depth > bgcapQueueHighWater { bgcapQueueHighWater = depth }
+        let now = Date().timeIntervalSince1970
+        if now - bgcapDrainBlockedLogAt >= 1.0 {
+            Bridge.log(
+                "BGCAP: g2 BLE drain BLOCKED side=\(side) queueDepth=\(depth) highWater=\(bgcapQueueHighWater) writesSinceLast=\(bgcapWritesSinceLog) (canSendWriteWithoutResponse=false — bytes NOT reaching glasses)"
+            )
+            bgcapDrainBlockedLogAt = now
+            bgcapWritesSinceLog = 0
+        }
+    }
+    private func bgcapNoteDrainedEmpty(_ side: String) {
+        guard bgcapTelemetry, bgcapWasBlocked else { return }
+        bgcapWasBlocked = false
+        Bridge.log("BGCAP: g2 BLE drain RESUMED side=\(side) — queue emptied, flushed highWater=\(bgcapQueueHighWater)")
+        bgcapQueueHighWater = 0
+    }
+    // =======================================================================
+
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
         // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         if right {
@@ -1682,10 +1719,15 @@ class G2: NSObject, SGCManager {
             return
         }
         while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
-            guard peripheral.canSendWriteWithoutResponse else { return }
+            guard peripheral.canSendWriteWithoutResponse else {
+                bgcapNoteDrainBlocked(right ? "R" : "L", (right ? rightWriteQueue : leftWriteQueue).count) // BGCAP
+                return
+            }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            if bgcapTelemetry { bgcapWritesSinceLog += 1 } // BGCAP
         }
+        bgcapNoteDrainedEmpty(right ? "R" : "L") // BGCAP: loop exited with empty queue
     }
 
     private func sendEvenHubCommand(_ payload: Data, left: Bool = false, right: Bool = true) {
