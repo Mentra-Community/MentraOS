@@ -1,6 +1,5 @@
 # Temporary allowlist for production host files that still touch raw island
 # glasses/gallery stores during the glasses-status boundary migration.
 # Remove entries as files move onto toolkit facades.
-mobile/src/app/ota/progress-legacy.tsx
 mobile/src/stores/gallerySync.ts
 mobile/src/stores/glasses.ts

@@ -66,6 +66,28 @@ export const ota = {
     store.setOtaProgress(null)
     store.setOtaStatus(null)
   },
+  /**
+   * Replace the pending update sequence after an in-flow firmware revalidation.
+   * Kept as a named OTA policy operation so host screens do not mutate the raw
+   * glasses store.
+   */
+  replacePendingUpdateSequence: (updates: OtaUpdateInfo["updates"]): OtaUpdateInfo | null => {
+    const store = useGlassesStore.getState()
+    const current = store.otaUpdateAvailable
+    if (!current) return null
+    const next = {...current, updates}
+    store.setOtaUpdateAvailable(next)
+    return next
+  },
+  /**
+   * Clear stale build metadata before returning to the update-check screen.
+   * This forces the next version_info event through both the native observable
+   * store and the island projection after an APK reboot.
+   */
+  clearBuildNumberForNextCheck: () => {
+    BluetoothSdk.updateGlasses({buildNumber: ""})
+    useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
+  },
   /** Mark MTK as already applied during this app session until the glasses reboot/disconnect. */
   markMtkUpdatedThisSession: (updated: boolean) => useGlassesStore.getState().setMtkUpdatedThisSession(updated),
 

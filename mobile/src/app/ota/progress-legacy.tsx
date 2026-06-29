@@ -1,4 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {toolkit, checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo} from "@mentra/island"
 import {useEffect, useState, useRef, useCallback} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -8,9 +9,7 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {LoadingCoverVideo} from "@/components/ota/LoadingCoverVideo"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo} from "@/effects/OtaUpdateChecker"
-import {getAsgOtaVersionUrl} from "@/services/asg/asgOtaVersionUrl"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -65,14 +64,15 @@ export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const otaProgress = useGlassesStore((state) => state.otaProgress)
-  const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const wifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
-  const wifiStatusKnown = useGlassesStore((state) => state.wifiStatusKnown)
-  const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
-  const mtkFirmwareVersion = useGlassesStore((state) => state.mtkFirmwareVersion)
+  const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
+  const otaProgress = otaSnapshot.legacyProgress
+  const otaUpdateAvailable = otaSnapshot.updateAvailable
+  const glassesConnected = otaSnapshot.connected
+  const wifiConnected = otaSnapshot.wifiConnected
+  const wifiStatusKnown = otaSnapshot.wifiStatusKnown
+  const buildNumber = otaSnapshot.buildNumber ?? ""
+  const besFirmwareVersion = otaSnapshot.besFirmwareVersion ?? ""
+  const mtkFirmwareVersion = otaSnapshot.mtkFirmwareVersion ?? ""
 
   const [progressState, setProgressState] = useState<ProgressState>("starting")
   const [retryCount, setRetryCount] = useState(0)
@@ -348,7 +348,7 @@ export default function OtaProgressScreen() {
       }),
     )
     if (!inFlight) {
-      useGlassesStore.getState().setOtaProgress(null)
+      toolkit.ota.clearProgress()
     }
     downloadedUpdatesRef.current = new Set()
 
@@ -378,7 +378,7 @@ export default function OtaProgressScreen() {
       if (updateSequenceRef.current.length === 0) return
 
       // Fetch the latest version.json to check against
-      const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
+      const otaVersionUrl = toolkit.ota.snapshot().manifestUrl
       const versionJson = await fetchVersionInfo(otaVersionUrl)
       if (!versionJson) {
         console.log("OTA REVALIDATE: Could not fetch version.json")
@@ -415,13 +415,7 @@ export default function OtaProgressScreen() {
           `OTA REVALIDATE: Update sequence changed from [${originalSequence}] to [${updateSequenceRef.current}]`,
         )
 
-        // Update the store as well
-        if (otaUpdateAvailable) {
-          useGlassesStore.getState().setOtaUpdateAvailable({
-            ...otaUpdateAvailable,
-            updates: updateSequenceRef.current,
-          })
-        }
+        toolkit.ota.replacePendingUpdateSequence(updateSequenceRef.current)
 
         // If no updates left, mark as completed
         if (updateSequenceRef.current.length === 0) {
@@ -552,7 +546,7 @@ export default function OtaProgressScreen() {
       setSimulatedProgress(null)
       setRetryCount(0)
       setErrorMessage(null)
-      useGlassesStore.getState().setOtaProgress(null)
+      toolkit.ota.clearProgress()
 
       // After APK: do NOT clear buildNumber here. Completion is often detected via the same
       // version_info that set buildNumber (e.g. 32→34). Clearing it would make the reconnect
@@ -585,7 +579,7 @@ export default function OtaProgressScreen() {
         "OTA_TRACK: send_ota_start",
         JSON.stringify({attempt: retryCount + 1, maxRetries: MAX_RETRIES, sequence: [...updateSequenceRef.current]}),
       )
-      await BluetoothSdk.startOtaUpdate(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
+      await toolkit.ota.install(toolkit.ota.snapshot().manifestUrl)
       setOtaStartTime(Date.now())
 
       // Start global session timeout once (covers whole multi-step OTA)
@@ -924,7 +918,7 @@ export default function OtaProgressScreen() {
         }
 
         // Mark MTK as updated this session
-        useGlassesStore.getState().setMtkUpdatedThisSession(true)
+        toolkit.ota.markMtkUpdatedThisSession(true)
 
         handleUpdateCompleted("mtk")
       }
@@ -1314,7 +1308,7 @@ export default function OtaProgressScreen() {
           }
 
           // Mark MTK as updated this session
-          useGlassesStore.getState().setMtkUpdatedThisSession(true)
+          toolkit.ota.markMtkUpdatedThisSession(true)
 
           handleUpdateCompleted("mtk")
         }
@@ -1526,11 +1520,7 @@ export default function OtaProgressScreen() {
     // doesn't suppress the incoming version_info event (native skips emit when value unchanged).
     const completedUpdate = updateSequenceRef.current[currentUpdateIndex]
     if (completedUpdate === "apk") {
-      // Clear native store so future version_info events aren't deduped by ObservableStore
-      BluetoothSdk.updateGlasses({buildNumber: ""})
-      // Clear RN store synchronously so check-for-updates sees empty buildNumber on mount
-      // (the native bridge call is async and may not complete before navigation)
-      useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
+      toolkit.ota.clearBuildNumberForNextCheck()
     }
 
     replace("/ota/check-for-updates")
