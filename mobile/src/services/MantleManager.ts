@@ -31,10 +31,8 @@ import {
   useAppStatusStore,
 } from "@mentra/island"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
@@ -674,14 +672,8 @@ class MantleManager {
       // OtaService, started by toolkit.start(), behind the toolkit.ota read surface.
     }
 
-    // one time get all:
-    const bluetoothStatus = await BluetoothSdk.getBluetoothStatus()
-    // console.log("MANTLE: Bluetooth status:", bluetoothStatus)
-    useCoreStore.getState().setCoreInfo(bluetoothStatus)
-
-    const glassesStatus = await BluetoothSdk.getGlassesStatus()
-    // console.log("MANTLE: glasses status:", glassesStatus)
-    useGlassesStore.getState().setGlassesInfo(glassesStatus)
+    // One-time core/glasses status hydration moved into island's
+    // GlassesStatusProjection, started by toolkit.start().
   }
 
   private async sendCalendarEvents() {

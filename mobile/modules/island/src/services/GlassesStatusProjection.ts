@@ -21,6 +21,22 @@ let unsubs: Array<() => void> = []
 export function startGlassesStatusProjection(): void {
   if (unsubs.length) return
 
+  void BluetoothSdk.getBluetoothStatus()
+    .then((status) => {
+      useCoreStore.getState().setCoreInfo(status)
+    })
+    .catch((error) => {
+      console.warn("GlassesStatusProjection: getBluetoothStatus failed", error)
+    })
+
+  void BluetoothSdk.getGlassesStatus()
+    .then((status) => {
+      useGlassesStore.getState().setGlassesInfo(status)
+    })
+    .catch((error) => {
+      console.warn("GlassesStatusProjection: getGlassesStatus failed", error)
+    })
+
   // Bluetooth-adapter status -> core store.
   unsubs.push(
     BluetoothSdk.onBluetoothStatus((changed) => {
