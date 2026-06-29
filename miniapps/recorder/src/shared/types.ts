@@ -10,8 +10,10 @@
 /** One saved recording, as the UI needs it (a projection of the SDK's BlobMeta). */
 export interface RecordingItem {
   id: string
-  /** Display name (defaults to the generated file name). */
+  /** Filesystem-friendly name; also the shared file's name. */
   name: string
+  /** Human-friendly display title (falls back to `name` when absent). */
+  title?: string
   /** Epoch ms the recording was created. */
   createdAt: number
   /** Size on disk in bytes (WAV incl. header). */

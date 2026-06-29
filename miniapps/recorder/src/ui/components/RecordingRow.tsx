@@ -77,7 +77,7 @@ export function RecordingRow({
         <button type="button" onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left active:opacity-80">
           <div className="flex items-center gap-2">
             <span className="text-[15px] font-semibold truncate" style={{color: "var(--text)"}}>
-              {item.name}
+              {item.title ?? item.name}
             </span>
             {item.truncated ? (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" style={{background: "var(--rec)", color: "#fff"}}>

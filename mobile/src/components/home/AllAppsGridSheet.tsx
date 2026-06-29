@@ -1,8 +1,13 @@
-import {useCallback, useEffect, useMemo, useState} from "react"
-import {BackHandler, Platform, TextInput, TouchableOpacity, View} from "react-native"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {BackHandler, Keyboard, Platform, TextInput, TouchableOpacity, View} from "react-native"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import BottomSheet, {BottomSheetBackdrop, BottomSheetScrollView} from "@gorhom/bottom-sheet"
+import BottomSheet, {
+  BottomSheetBackdrop,
+  BottomSheetScrollView,
+  useBottomSheetTimingConfigs,
+} from "@gorhom/bottom-sheet"
+import {Easing} from "react-native-reanimated"
 import {AppsGrid} from "@/components/home/AppsGrid"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
@@ -14,8 +19,18 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
 
   const [searchQuery, setSearchQuery] = useState("")
   const [isOpen, setIsOpen] = useState(false)
+  const searchInputRef = useRef<TextInput>(null)
 
   const snapPoints = useMemo(() => ["90%"], [])
+
+  // Slow the sheet's open/close animation down (~2x the library default) so the
+  // Android back-gesture dismiss doesn't snap shut instantly — it reads as an
+  // abrupt pop without this. Applies to both the gesture-driven close and the
+  // programmatic close() we call from the BackHandler below.
+  const animationConfigs = useBottomSheetTimingConfigs({
+    duration: 500,
+    easing: Easing.out(Easing.cubic),
+  })
 
   const renderBackdrop = useCallback(
     (props: any) => <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />,
@@ -53,8 +68,21 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         index={-1}
         ref={bottomSheetRef}
         snapPoints={snapPoints}
+        animationConfigs={animationConfigs}
         animateOnMount={false}
-        onChange={(idx) => setIsOpen(idx >= 0)}
+        onChange={(idx) => {
+          const open = idx >= 0
+          setIsOpen(open)
+          // When the sheet closes, drop focus from the search field and hide the
+          // keyboard. The sheet stays mounted (index -1) on the home screen, so a
+          // search field left focused keeps holding the IME's served view — which
+          // Android then auto-restores on every app resume (singleTask +
+          // adjustResize), popping the keyboard up over whatever screen is on top.
+          if (!open) {
+            searchInputRef.current?.blur()
+            Keyboard.dismiss()
+          }
+        }}
         backdropComponent={renderBackdrop}
         backgroundComponent={(props: any) => {
           if (Platform.OS === "android") {
@@ -87,6 +115,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               <View className="flex-row items-center rounded-2xl px-4 h-12 bg-primary-foreground">
                 <Icon name="search" size={20} color={theme.colors.muted_foreground} />
                 <TextInput
+                  ref={searchInputRef}
                   placeholder={translate("home:search")}
                   placeholderTextColor={theme.colors.muted_foreground}
                   value={searchQuery}

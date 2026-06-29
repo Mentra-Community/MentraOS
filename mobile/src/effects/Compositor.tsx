@@ -96,7 +96,14 @@ export default function Compositor() {
   )
   useEffect(() => {
     if (foregroundApp) {
-      setRenderedApp(foregroundApp)
+      // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
+      // hands us a new foregroundApp object reference on every poll even when
+      // it's the same app; re-setting state with it would re-render the overlay
+      // (and its Animated.View) mid-slide and hitch the open animation. Freezing
+      // the reference for the lifetime of one open keeps the slide on the UI
+      // thread, uninterrupted. (Fields like name/url are read once at mount via
+      // the package-keyed child, so a stale reference here is fine.)
+      setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName ? prev : foregroundApp))
     }
     if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
       if (foregroundApp) {
@@ -316,7 +323,13 @@ export default function Compositor() {
       swipeTranslateX.value = screenWidth // start fully off-screen to the right
       swipeTranslateX.value = slideIn()
     }
-  }, [renderedApp, isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale, screenWidth])
+    // Depend on the package STRING, not the renderedApp object. refresh() is
+    // event-driven and re-creates app objects on every poll, so depending on the
+    // object re-ran this effect (and re-rendered the overlay) mid-slide — the
+    // source of the open-animation hitch. The package only changes when a truly
+    // different app is foregrounded, which is the only time we want to re-slide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderedApp?.packageName, isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale, screenWidth])
 
   // CLOSE: slide the overlay back out to the right, then unmount. The swipe-to-
   // back / swipe-up-to-switcher paths drive their own off-screen animation, so

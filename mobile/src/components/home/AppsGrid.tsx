@@ -24,7 +24,7 @@ import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
-import {askPermissionsUI} from "@/utils/PermissionsUtils"
+import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
@@ -639,30 +639,34 @@ export function AppsGrid({
   const handlePress = async (app: ClientApp) => {
     if (app.packageName.includes("@empty")) return // ignore dummy apps
 
-    // Paint the splash the instant the user taps. Foregrounding synchronously
-    // mounts the Compositor overlay (splash + open slide) BEFORE we do any async
-    // work, so a tap is acknowledged immediately — instead of the old order
-    // (await the permission check first), which left the user staring at the
-    // home screen for the duration of the native permission round-trips and
-    // made the splash feel like it "popped in" a second later.
-    //
-    // Only foreground-by-overlay app types benefit (local miniapps + offline-
-    // hosted built-ins); other types navigate via routes inside startApplet, so
-    // we leave their flow untouched and let startApplet drive it.
+    // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
+    // their splash painted by foregrounding the Compositor overlay. Other types
+    // navigate via routes inside startApplet, so we leave their flow untouched.
     const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
-    if (overlayForegrounded) {
-      useAppStatusStore.getState().setForeground(app.packageName)
+
+    // Check permissions FIRST so we never show the splash (or load the miniapp)
+    // underneath a permission prompt. When nothing needs granting — the common
+    // case — this resolves fast and we foreground immediately for an instant,
+    // responsive splash. Only when a permission is actually missing do we hold
+    // off: run the prompt with NO splash behind it, and foreground only after
+    // the user grants.
+    const neededPermissions = await checkPermissionsUI(app)
+
+    if (neededPermissions.length === 0) {
+      // Paint the splash the instant we know no prompt is needed.
+      if (overlayForegrounded) {
+        useAppStatusStore.getState().setForeground(app.packageName)
+      }
+    } else {
+      // Permissions missing — prompt FIRST, no overlay behind it.
+      const result = await askPermissionsUI(app, theme)
+      if (result !== 1) return // denied / cancelled — nothing launched, nothing to tear down
+      // Granted: now foreground (splash) and launch.
+      if (overlayForegrounded) {
+        useAppStatusStore.getState().setForeground(app.packageName)
+      }
     }
 
-    const result = await askPermissionsUI(app, theme)
-    if (result !== 1) {
-      // Permission denied / cancelled — tear the splash back down so we don't
-      // leave an overlay up for an app we never actually launched.
-      if (overlayForegrounded) {
-        useAppStatusStore.getState().clearForeground()
-      }
-      return
-    }
     startApplet(app)
     if (onOpenApp) {
       onOpenApp?.(app)
@@ -772,7 +776,7 @@ export function AppsGrid({
           <View className="w-full h-9 my-1 items-center justify-start">
             <Text
               className={`text-foreground text-center mt-1 text-[12px] shrink ${
-                item.compatibility?.isCompatible ? "" : "opacity-20"
+                item.compatibility?.isCompatible ? "" : "opacity-15"
               }`}
               style={{
                 textShadowColor: "rgba(0,0,0,0.08)",

@@ -1,6 +1,6 @@
 import {describe, expect, it} from "bun:test"
 
-import {buildWavHeader, pcmDurationMs, pcmPeakLevel, u16le, u32le, WAV_HEADER_BYTES} from "./wav"
+import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, u16le, u32le, WAV_HEADER_BYTES} from "./wav"
 
 const str = (h: Uint8Array, at: number, len: number) => String.fromCharCode(...Array.from(h.subarray(at, at + len)))
 const readU32 = (h: Uint8Array, at: number) => (h[at] | (h[at + 1] << 8) | (h[at + 2] << 16) | (h[at + 3] << 24)) >>> 0
@@ -38,6 +38,42 @@ describe("buildWavHeader", () => {
     expect(readU32(h, 4)).toBe(36)
     expect(readU32(h, 40)).toBe(0)
     expect(readU32(h, 28)).toBe(96000)
+  })
+  it("trailerBytes folds into RIFF size but not data size", () => {
+    const dataBytes = 32000
+    const trailer = 48
+    const h = buildWavHeader(16000, dataBytes, 1, 16, trailer)
+    expect(readU32(h, 4)).toBe(36 + dataBytes + trailer) // RIFF covers the trailer
+    expect(readU32(h, 40)).toBe(dataBytes) // data chunk unchanged
+  })
+})
+
+describe("buildInfoChunk", () => {
+  it("no tags → empty", () => {
+    expect(buildInfoChunk({}).length).toBe(0)
+    expect(buildInfoChunk({title: "  "}).length).toBe(0)
+  })
+  it("builds a well-formed LIST/INFO chunk with the right tags", () => {
+    const chunk = buildInfoChunk({title: "Hi", artist: "Mentra"})
+    // "LIST" <u32 listSize> "INFO" then sub-chunks.
+    expect(str(chunk, 0, 4)).toBe("LIST")
+    expect(str(chunk, 8, 4)).toBe("INFO")
+    const listSize = readU32(chunk, 4)
+    // Outer chunk total = 8 (LIST + size) + listSize, and the array is exactly that.
+    expect(chunk.length).toBe(8 + listSize)
+    expect(chunk.length % 2).toBe(0) // even-aligned
+
+    // First sub-chunk: INAM "Hi\0" — payload size includes the NUL (=3), padded to 4.
+    expect(str(chunk, 12, 4)).toBe("INAM")
+    expect(readU32(chunk, 16)).toBe(3) // "Hi" + NUL
+    expect(str(chunk, 20, 2)).toBe("Hi")
+    expect(chunk[22]).toBe(0) // NUL terminator
+    expect(chunk[23]).toBe(0) // pad to even
+
+    // Second sub-chunk starts at 24: IART "Mentra\0" — payload 7, padded to 8.
+    expect(str(chunk, 24, 4)).toBe("IART")
+    expect(readU32(chunk, 28)).toBe(7)
+    expect(str(chunk, 32, 6)).toBe("Mentra")
   })
 })
 
