@@ -47,6 +47,27 @@ describe("DeviceEventRouter", () => {
     expect(useGlassesStore.getState().wifi).toMatchObject({state: "connected", ssid: "Net"})
   })
 
+  it("projects battery_status into the store and local miniapp stream", () => {
+    const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 88,
+      charging: true,
+      timestamp: 123456,
+    })
+
+    expect(useGlassesStore.getState()).toEqual(
+      expect.objectContaining({
+        batteryLevel: 88,
+        charging: true,
+      }),
+    )
+    expect(fwdSpy).toHaveBeenCalledWith(
+      "glasses_battery_update",
+      expect.objectContaining({level: 88, charging: true, timestamp: 123456}),
+    )
+  })
+
   it("bridges gallery_status onto the event bus", () => {
     const emitSpy = jest.spyOn(GlobalEventEmitter, "emit")
     emitBluetoothSdkEvent("gallery_status", {

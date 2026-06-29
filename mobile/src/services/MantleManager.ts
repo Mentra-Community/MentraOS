@@ -517,12 +517,6 @@ class MantleManager {
       // live further down (head_up there is the superset — it also forwards to miniapps).
 
       this.subs.push(
-        BluetoothSdk.addListener("battery_status", (event) => {
-          socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
-        }),
-      )
-
-      this.subs.push(
         (CrustModule.addListener as any)("phone_notification", async (event: any) => {
           // Direct forward to local miniapps subscribed to phone_notification.
           // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
@@ -602,36 +596,6 @@ class MantleManager {
           // forwardEvent("head_up") -> local miniapps moved to island DeviceEventRouter
         }),
       )
-
-      // Phone battery — emit on level/state change so miniapps can subscribe
-      // to phone_battery the same way they subscribe to glasses_battery.
-      // Also mirror to glasses_battery when connected to Simulated Glasses
-      // (which have no real battery) so dev flows don't see "—".
-      // const emitPhoneBattery = async () => {
-      //   try {
-      //     const level = await Battery.getBatteryLevelAsync()
-      //     const state = await Battery.getBatteryStateAsync()
-      //     const charging = state === Battery.BatteryState.CHARGING || state === Battery.BatteryState.FULL
-      //     const payload = {
-      //       level: Math.round(level * 100),
-      //       charging,
-      //       timestamp: Date.now(),
-      //     }
-      //     localMiniappRuntime.forwardEvent("phone_battery", payload)
-
-      //     const deviceModel = useGlassesStore.getState().deviceModel || ""
-      //     if (deviceModel.toLowerCase().includes("simulated")) {
-      //       localMiniappRuntime.forwardEvent("glasses_battery_update", payload)
-      //     }
-      //   } catch (err) {
-      //     console.log("MANTLE: phone battery read failed", err)
-      //   }
-      // }
-      // emitPhoneBattery()
-      // const batteryLevelSub = Battery.addBatteryLevelListener(emitPhoneBattery)
-      // const batteryStateSub = Battery.addBatteryStateListener(emitPhoneBattery)
-      // this.subs.push({remove: () => batteryLevelSub.remove()})
-      // this.subs.push({remove: () => batteryStateSub.remove()})
 
       // this.subs.push(
       //   BluetoothSdk.addListener("vad", (event) => {

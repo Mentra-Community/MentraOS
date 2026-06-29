@@ -11,7 +11,6 @@ import {
 } from "@/services/SocketComms.normalizers"
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -136,18 +135,6 @@ class SocketComms {
     // Forward the ACK message directly since it's already in the correct format
     ws.sendText(JSON.stringify(ackMessage))
     console.log("SOCKET: Sent keep-alive ACK:", ackMessage)
-  }
-
-  public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
-    const batteryLevel = level ?? useGlassesStore.getState().batteryLevel
-    const isCharging = charging ?? useGlassesStore.getState().charging
-    const msg = {
-      type: "glasses_battery_update",
-      level: batteryLevel,
-      charging: isCharging,
-      timestamp,
-    }
-    ws.sendText(JSON.stringify(msg))
   }
 
   public sendText(text: string) {

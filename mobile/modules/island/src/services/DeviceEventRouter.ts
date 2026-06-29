@@ -67,6 +67,22 @@ export function startDeviceEventRouter(): void {
     ),
   })
 
+  // Incremental battery status → glasses store + local miniapps. The Cloud V1
+  // websocket `glasses_battery_update` mirror used to live in the host; local
+  // miniapps still get the stream here without leaking through the host.
+  subs.push(
+    BluetoothSdk.addListener("battery_status", (event) => {
+      const state = useGlassesStore.getState()
+      state.setBatteryInfo(event.level, event.charging, state.caseBatteryLevel, state.caseCharging)
+      localMiniappRuntime.forwardEvent("glasses_battery_update", {
+        type: "glasses_battery_update",
+        level: event.level,
+        charging: event.charging,
+        timestamp: event.timestamp ?? Date.now(),
+      })
+    }),
+  )
+
   // Hotspot status → glasses store + event bus. island's own gallerySyncService listens
   // on the bus for these, so without this bridge island's gallery sync is dead.
   subs.push(
