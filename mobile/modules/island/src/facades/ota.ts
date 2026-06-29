@@ -4,18 +4,30 @@
  * exposes the snapshot + change subscriptions the host renders its update prompt and
  * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
  *
- * The rich availability check/retry flow is still host-owned: the OTA check screen
- * fetches the manifest, compares APK/MTK/BES versions, writes otaUpdateAvailable,
- * and drives its local UI state from that result. Moving that full check behind
- * toolkit.ota is deferred until we can preserve that contract end-to-end.
+ * Availability checks live in toolkit. Install orchestration and UI retry
+ * decisions still stay in the host progress screen until that behavior can move
+ * without changing the OTA flow.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
-import {useGlassesStore} from "../stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import {getAsgOtaVersionUrl} from "../services/asgOtaVersionUrl"
+import {
+  checkCurrentGlassesForUpdate,
+  type OtaCheckCurrentGlassesOptions,
+  type OtaCheckCurrentGlassesResult,
+} from "../services/OtaUpdateCheckService"
 
 function projectSnapshot() {
   const s = useGlassesStore.getState()
   return {
+    connected: isGlassesConnected(s.connection),
+    buildNumber: s.buildNumber || null,
+    mtkFirmwareVersion: s.mtkFirmwareVersion || null,
+    besFirmwareVersion: s.besFirmwareVersion || null,
+    wifiConnected: s.wifi.state === "connected",
+    wifiStatusKnown: s.wifiStatusKnown,
+    manifestUrl: getAsgOtaVersionUrl(s.otaVersionUrl, s.buildNumber),
     updateAvailable: s.otaUpdateAvailable,
     status: s.otaStatus,
     legacyProgress: s.otaProgress,
@@ -25,7 +37,7 @@ function projectSnapshot() {
 }
 
 export type OtaSnapshot = ReturnType<typeof projectSnapshot>
-export type {OtaProgress, OtaStatus, OtaUpdateInfo}
+export type {OtaProgress, OtaStatus, OtaUpdateInfo, OtaCheckCurrentGlassesOptions, OtaCheckCurrentGlassesResult}
 
 export const ota = {
   // --- actions ---
@@ -44,7 +56,20 @@ export const ota = {
   // availability check moves into island.
   // retry: () => BluetoothSdk.checkForOtaUpdate(),
 
-  /** Current available-update info (versionName/updates/totalSize/cacheReady), or null. */
+  /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
+  checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
+  /** Clear the available-update prompt state. */
+  clearUpdateAvailable: () => useGlassesStore.getState().setOtaUpdateAvailable(null),
+  /** Clear active progress/status before entering a fresh install flow. */
+  clearProgress: () => {
+    const store = useGlassesStore.getState()
+    store.setOtaProgress(null)
+    store.setOtaStatus(null)
+  },
+  /** Mark MTK as already applied during this app session until the glasses reboot/disconnect. */
+  markMtkUpdatedThisSession: (updated: boolean) => useGlassesStore.getState().setMtkUpdatedThisSession(updated),
+
+  /** Current available-update info (versionName/updates/totalSize), or null. */
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,
   /** Current OTA install status (stepType/phase/percent/status/error), or null. */
   status: (): OtaStatus | null => useGlassesStore.getState().otaStatus,

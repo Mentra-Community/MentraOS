@@ -265,6 +265,8 @@ jest.mock("@mentra/island", () => {
   // from @mentra/island, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
   const realGallerySyncClock = jest.requireActual("./modules/island/src/services/gallerySyncClock")
+  const realAsgOtaVersionUrl = jest.requireActual("./modules/island/src/services/asgOtaVersionUrl")
+  const realOtaUpdateCheck = jest.requireActual("./modules/island/src/services/OtaUpdateCheckService")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
@@ -288,6 +290,23 @@ jest.mock("@mentra/island", () => {
   useAppStatusStore.getState = jest.fn(() => appStatusState)
   useAppStatusStore.setState = jest.fn((partial) => Object.assign(appStatusState, partial))
   useAppStatusStore.subscribe = jest.fn(() => () => {})
+  const otaSnapshot = () => {
+    const state = realGlasses.useGlassesStore.getState()
+    return {
+      connected: realGlasses.isGlassesConnected(state.connection),
+      buildNumber: state.buildNumber || null,
+      mtkFirmwareVersion: state.mtkFirmwareVersion || null,
+      besFirmwareVersion: state.besFirmwareVersion || null,
+      wifiConnected: state.wifi.state === "connected",
+      wifiStatusKnown: state.wifiStatusKnown,
+      manifestUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl(state.otaVersionUrl, state.buildNumber),
+      updateAvailable: state.otaUpdateAvailable,
+      status: state.otaStatus,
+      legacyProgress: state.otaProgress,
+      inProgress: state.otaInProgress,
+      mtkUpdatedThisSession: state.mtkUpdatedThisSession,
+    }
+  }
 
   return {
     __esModule: true,
@@ -309,6 +328,16 @@ jest.mock("@mentra/island", () => {
     // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
     fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
     maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
+    // OTA manifest-URL resolution (real, pure) — consumed by the host OTA screens via
+    // the @/services/asg/asgOtaVersionUrl shim.
+    getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
+    fetchVersionInfo: realOtaUpdateCheck.fetchVersionInfo,
+    checkVersionUpdateAvailable: realOtaUpdateCheck.checkVersionUpdateAvailable,
+    getLatestVersionInfo: realOtaUpdateCheck.getLatestVersionInfo,
+    findMatchingMtkPatch: realOtaUpdateCheck.findMatchingMtkPatch,
+    checkBesUpdate: realOtaUpdateCheck.checkBesUpdate,
+    checkForOtaUpdate: realOtaUpdateCheck.checkForOtaUpdate,
+    checkCurrentGlassesForUpdate: realOtaUpdateCheck.checkCurrentGlassesForUpdate,
     detectClockSkew: realGallerySyncClock.detectClockSkew,
     isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
     CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,
@@ -515,10 +544,22 @@ jest.mock("@mentra/island", () => {
         submit: jest.fn(() => Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready"})),
       },
       ota: {
-        updateAvailable: jest.fn(() => null),
-        status: jest.fn(() => null),
+        updateAvailable: jest.fn(() => realGlasses.useGlassesStore.getState().otaUpdateAvailable),
+        status: jest.fn(() => realGlasses.useGlassesStore.getState().otaStatus),
+        snapshot: jest.fn(() => otaSnapshot()),
         onUpdateAvailable: jest.fn(() => () => {}),
         onStatus: jest.fn(() => () => {}),
+        onSnapshot: jest.fn((cb) => realGlasses.useGlassesStore.subscribe(() => cb(otaSnapshot()))),
+        checkForUpdates: jest.fn((options) => realOtaUpdateCheck.checkCurrentGlassesForUpdate(options)),
+        clearUpdateAvailable: jest.fn(() => realGlasses.useGlassesStore.getState().setOtaUpdateAvailable(null)),
+        clearProgress: jest.fn(() => {
+          const store = realGlasses.useGlassesStore.getState()
+          store.setOtaProgress(null)
+          store.setOtaStatus(null)
+        }),
+        markMtkUpdatedThisSession: jest.fn((updated) =>
+          realGlasses.useGlassesStore.getState().setMtkUpdatedThisSession(updated),
+        ),
         // Thin passthroughs — delegate to the shared bluetoothSdkMock so btsdk-call
         // assertions (e.g. ota/progress.test) keep working.
         install: jest.fn((...a) => bluetoothSdkMock.startOtaUpdate(...a)),
