@@ -1659,6 +1659,61 @@ class G2: NSObject, SGCManager {
     private var leftWriteQueue: [Data] = []
     private var rightWriteQueue: [Data] = []
 
+    // === BGCAP: diagnostic — native BLE write-queue backpressure ============
+    // Host-side BGCAP telemetry proved the JS pipeline (audio uplink, transcript
+    // forward, miniapp render, sendText() entry) stays healthy while
+    // backgrounded — so the captions "freeze in bg, flood on resume" stall is
+    // BELOW sendText(): here, in the EvenHub→BLE drain gated on
+    // `canSendWriteWithoutResponse`. If iOS throttles background writes the queue
+    // backs up (BLOCKED, depth climbs) and flushes on resume (RESUMED) — that's
+    // the flood. If NO BLOCKED lines appear in the background window, bytes left
+    // the phone and the stall is downstream (glasses firmware). Lines prefixed
+    // "BGCAP:"; remove with the host-side block once the fix lands.
+    private let bgcapTelemetry = true
+    // Per-side state: left and right are separate CBPeripherals with independent
+    // `canSendWriteWithoutResponse`, so one arm blocking must not clear or log
+    // the other arm's BLOCKED/RESUMED.
+    private struct BgcapSide {
+        var blockedLogAt: Double = 0
+        var highWater: Int = 0
+        var writesSinceLog: Int = 0
+        var wasBlocked = false
+    }
+    private var bgcapRight = BgcapSide()
+    private var bgcapLeft = BgcapSide()
+
+    private func bgcapNoteWrite(right: Bool) {
+        guard bgcapTelemetry else { return }
+        if right { bgcapRight.writesSinceLog += 1 } else { bgcapLeft.writesSinceLog += 1 }
+    }
+    private func bgcapNoteDrainBlocked(right: Bool, depth: Int) {
+        guard bgcapTelemetry else { return }
+        if right { bgcapBlocked(&bgcapRight, "R", depth) } else { bgcapBlocked(&bgcapLeft, "L", depth) }
+    }
+    private func bgcapBlocked(_ st: inout BgcapSide, _ side: String, _ depth: Int) {
+        st.wasBlocked = true
+        if depth > st.highWater { st.highWater = depth }
+        let now = Date().timeIntervalSince1970
+        if now - st.blockedLogAt >= 1.0 {
+            Bridge.log(
+                "BGCAP: g2 BLE drain BLOCKED side=\(side) queueDepth=\(depth) highWater=\(st.highWater) writesSinceLast=\(st.writesSinceLog) (canSendWriteWithoutResponse=false — bytes NOT reaching glasses)"
+            )
+            st.blockedLogAt = now
+            st.writesSinceLog = 0
+        }
+    }
+    private func bgcapNoteDrainedEmpty(right: Bool) {
+        guard bgcapTelemetry else { return }
+        if right { bgcapDrained(&bgcapRight, "R") } else { bgcapDrained(&bgcapLeft, "L") }
+    }
+    private func bgcapDrained(_ st: inout BgcapSide, _ side: String) {
+        guard st.wasBlocked else { return }
+        st.wasBlocked = false
+        Bridge.log("BGCAP: g2 BLE drain RESUMED side=\(side) — queue emptied, flushed highWater=\(st.highWater)")
+        st.highWater = 0
+    }
+    // =======================================================================
+
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
         // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         if right {
@@ -1682,10 +1737,15 @@ class G2: NSObject, SGCManager {
             return
         }
         while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
-            guard peripheral.canSendWriteWithoutResponse else { return }
+            guard peripheral.canSendWriteWithoutResponse else {
+                bgcapNoteDrainBlocked(right: right, depth: (right ? rightWriteQueue : leftWriteQueue).count) // BGCAP
+                return
+            }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            bgcapNoteWrite(right: right) // BGCAP
         }
+        bgcapNoteDrainedEmpty(right: right) // BGCAP: loop exited with empty queue
     }
 
     private func sendEvenHubCommand(_ payload: Data, left: Bool = false, right: Bool = true) {
