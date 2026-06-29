@@ -1322,14 +1322,18 @@ class LocalMiniappRuntime {
         })
       } else if (stream === "glasses_wifi") {
         // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
-        const wifiConnected = (glassesState as {wifiConnected?: boolean}).wifiConnected
-        if (typeof wifiConnected === "boolean") {
+        // The host snapshot carries the canonical nested `wifi: {state, ssid}`
+        // (NOT the legacy flat wifiConnected) — read that.
+        const wifi = (glassesState as {wifi?: {state?: string; ssid?: string; localIp?: string}}).wifi
+        if (wifi?.state) {
+          const connected = wifi.state === "connected"
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,
             streamType: "glasses_wifi",
             data: {
-              connected: wifiConnected,
-              ssid: (glassesState as {wifiSsid?: string}).wifiSsid || undefined,
+              connected,
+              ssid: connected ? wifi.ssid : undefined,
+              localIp: connected ? wifi.localIp : undefined,
               timestamp: Date.now(),
             },
           })

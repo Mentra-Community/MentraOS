@@ -285,9 +285,13 @@ class MantleManager {
       },
       wifiSetup: {
         // session.glasses.requestWifiSetup → open the phone's glasses Wi-Fi
-        // setup flow (same screen pairing/deeplinks use for "wifi-setup").
-        requestSetup: () => {
-          router.push("/wifi/scan")
+        // setup flow (same screen pairing/deeplinks use for "wifi-setup"). The
+        // miniapp's `reason` is forwarded as a route param so the screen can show
+        // it as the prompt (mirrors the cloud SDK's requestWifiSetup(reason)).
+        // `as any` matches the repo idiom for dynamic params under typedRoutes
+        // (see stores/navigation.ts).
+        requestSetup: (reason?: string) => {
+          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
         },
       },
     })
@@ -583,15 +587,6 @@ class MantleManager {
         // console.log("MANTLE: Glasses status changed", changed)
         useGlassesStore.getState().setGlassesInfo(changed)
         localMiniappRuntime.forwardEvent("glasses_connection_state", changed)
-        // Forward glasses Wi-Fi state to miniapps (session.glasses.onWifi) when it
-        // changes — streaming miniapps gate "go live" on this.
-        const wifi = changed as {wifiConnected?: boolean; wifiSsid?: string}
-        if (wifi.wifiConnected !== undefined || wifi.wifiSsid !== undefined) {
-          localMiniappRuntime.forwardEvent("glasses_wifi", {
-            connected: !!wifi.wifiConnected,
-            ssid: wifi.wifiSsid || undefined,
-          })
-        }
         // TODO: this should be moved to the bluetooth sdk:
         if (changed.connection?.state === "disconnected") {
           useGlassesStore.getState().setOtaUpdateAvailable(null)
@@ -612,6 +607,14 @@ class MantleManager {
         BluetoothSdk.addListener("wifi_status_change", (event) => {
           const {type: _type, ...wifi} = event
           useGlassesStore.getState().setGlassesInfo({wifi})
+          // Forward to miniapps (session.glasses.onWifi). Wi-Fi is its own native
+          // event — distinct from glasses connection — so it's forwarded here, not
+          // from onGlassesStatus. Streaming miniapps gate "go live" on this.
+          localMiniappRuntime.forwardEvent("glasses_wifi", {
+            connected: wifi.state === "connected",
+            ssid: wifi.state === "connected" ? wifi.ssid : undefined,
+            localIp: wifi.state === "connected" ? wifi.localIp : undefined,
+          })
         }),
       )
 
