@@ -42,7 +42,6 @@ const ReportSchema = new Schema(
     report: { type: Schema.Types.Mixed, default: null },
     feedback: { type: Schema.Types.Mixed, default: null },
     context: { type: Schema.Types.Mixed, required: true },
-    dedupeKey: { type: String, default: null, index: true },
     artifacts: { type: [ReportArtifactSchema], default: [] },
     status: {
       type: String,
@@ -55,7 +54,6 @@ const ReportSchema = new Schema(
 );
 
 ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
-ReportSchema.index({ mentraUserId: 1, dedupeKey: 1, createdAt: -1 });
 
 export type Report = InferSchemaType<typeof ReportSchema>;
 export const ReportModel = model("Report", ReportSchema);

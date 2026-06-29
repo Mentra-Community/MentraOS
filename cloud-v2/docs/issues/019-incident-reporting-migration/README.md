@@ -30,7 +30,7 @@ Island/toolkit internals:
 - Island submits through `@mentra/cloud-client`.
 - Island notifies connected glasses with the report id so glasses can upload
   logs.
-- Island owns automatic report detection, classification, local dedupe, and
+- Island owns automatic report detection, classification, local throttling, and
   submission.
 
 Public `toolkit.reports` intentionally does **not** accept
@@ -72,7 +72,7 @@ Automatic report:
 1. Island observes an OS/runtime condition.
 2. The relevant island service calls the internal `submitAutomaticReport(...)`
    helper.
-3. Island applies local dedupe, collects context/logs, submits to Cloud V2,
+3. Island applies local throttling, collects context/logs, submits to Cloud V2,
    notifies glasses, and completes collection.
 
 ## Implemented Automatic Sources
@@ -132,7 +132,6 @@ Captions tester laptop report:
 - `report`
 - `feedback`
 - `context`
-- `dedupeKey`
 - `artifacts`
 - `status`: `collecting`, `ready`, or `closed`
 
@@ -145,7 +144,8 @@ Captions tester laptop report:
   evidence type.
 - `userSeverity` and `systemPriority` avoid mixing subjective user pain with
   runtime priority.
-- `created` makes server dedupe explicit.
+- Automatic trigger throttling stays local to island services. Cloud V2 creates
+  one report record for each submit request.
 - `kind` keeps bugs, feedback, and automatic diagnostics in one reporting
   product while preserving different payload shapes.
 

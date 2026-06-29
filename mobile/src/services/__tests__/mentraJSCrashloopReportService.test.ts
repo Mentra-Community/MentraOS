@@ -43,7 +43,6 @@ describe("MentraJSCrashloopReportService", () => {
       status: "submitted",
       reportId: "report-1",
       reportStatus: "ready",
-      created: true,
     })
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {})
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
@@ -75,7 +74,7 @@ describe("MentraJSCrashloopReportService", () => {
         actualBehavior: JSON.stringify({reason: "too_many_crashes", lastLogLines: ["line 1", "line 2"]}, null, 2),
         systemPriority: "critical",
       },
-      dedupeKey: "mentrajs_crashloop:com.example.app",
+      throttleKey: "mentrajs_crashloop:com.example.app",
     })
     expect(result).toEqual({status: "filed", reportId: "report-1"})
     expect(logSpy).toHaveBeenCalledWith("[MentraJSCrashloopReport] Report filed:", "report-1")
@@ -95,7 +94,7 @@ describe("MentraJSCrashloopReportService", () => {
     await waitFor(() => {
       expect(submitAutomaticReport).toHaveBeenCalledWith(
         expect.objectContaining({
-          dedupeKey: "mentrajs_crashloop:com.example.app",
+          throttleKey: "mentrajs_crashloop:com.example.app",
         }),
       )
     })

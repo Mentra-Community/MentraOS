@@ -22,7 +22,7 @@ export function automaticReportErrorStatus(error: unknown): Extract<AutomaticRep
 export function logAutomaticReportSubmissionStatus(
   logTag: string,
   result: AutomaticReportSubmissionStatus,
-  ...duplicateDetails: unknown[]
+  ...throttleDetails: unknown[]
 ): void {
   if (result.status === "filed") {
     console.log(`[${logTag}] Report filed:`, result.reportId)
@@ -30,8 +30,8 @@ export function logAutomaticReportSubmissionStatus(
   }
   if (result.status === "skipped") {
     console.log(
-      `[${logTag}] Skipping duplicate within window:`,
-      ...(duplicateDetails.length > 0 ? duplicateDetails : [result.reason]),
+      `[${logTag}] Skipping automatic report within throttle window:`,
+      ...(throttleDetails.length > 0 ? throttleDetails : [result.reason]),
     )
     return
   }

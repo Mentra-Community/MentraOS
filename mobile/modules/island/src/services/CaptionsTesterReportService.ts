@@ -67,7 +67,7 @@ export async function submitCaptionsTesterIncidentReport(rawEvent: unknown): Pro
     2,
   )
 
-  const dedupeKey = ["captions_tester", failureCode, scenarioName || "unknown", testRunId || "unknown"].join("|")
+  const throttleKey = ["captions_tester", failureCode, scenarioName || "unknown", testRunId || "unknown"].join("|")
 
   try {
     const submitResult = await submitAutomaticReport({
@@ -82,11 +82,11 @@ export async function submitCaptionsTesterIncidentReport(rawEvent: unknown): Pro
         actualBehavior,
         systemPriority: "medium",
       },
-      dedupeKey,
+      throttleKey,
     })
 
     const result = toAutomaticReportSubmissionStatus(submitResult)
-    logAutomaticReportSubmissionStatus(LOG_TAG, result, dedupeKey)
+    logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
     logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
   } catch (error) {
     const result = logUnexpectedAutomaticReportError(LOG_TAG, error)

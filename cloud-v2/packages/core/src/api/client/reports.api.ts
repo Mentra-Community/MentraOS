@@ -71,16 +71,12 @@ const submitReportSchema = z.discriminatedUnion("kind", [
     trigger: reportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
-    dedupeKey: optionalNonEmptyStringSchema,
-    dedupeWindowMs: z.number().int().positive().optional(),
   }),
   z.object({
     kind: z.literal("automatic"),
     trigger: automaticReportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
-    dedupeKey: optionalNonEmptyStringSchema,
-    dedupeWindowMs: z.number().int().positive().optional(),
   }),
   z.object({
     kind: z.literal("feedback"),

@@ -27,13 +27,13 @@ state out of toolkit, constructs an internal diagnostic payload, then pushes it
 back into toolkit/cloud, the boundary has failed. The clean API should let the
 host say "the user submitted this bug report" or "the user submitted this
 feedback"; toolkit should decide how to collect OS context, logs, glasses
-state, artifacts, dedupe keys, and Cloud V2 records.
+state, artifacts, local throttling keys, and Cloud V2 records.
 
 For automatic reports, the case is even clearer: there is no user-authored
 form. Automatic reports are created because the runtime observed an OS
-condition. That observation, classification, dedupe, and submission should live
-inside the toolkit/runtime layer, not in OEM UI code calling a generic public
-`kind: "automatic"` report API.
+condition. That observation, classification, throttling, and submission should
+live inside the toolkit/runtime layer, not in OEM UI code calling a generic
+public `kind: "automatic"` report API.
 
 This document records the automatic-report call-site review that drove the
 implemented host/toolkit boundary.
@@ -54,7 +54,7 @@ Proposed rule:
 - Public `toolkit.reports` should expose only user/OEM-authored submissions:
   manual bug reports and feedback.
 - Island/toolkit internals should own automatic report detection, diagnostic
-  context, local dedupe, log/screenshot/glasses-log collection, Cloud V2
+  context, local throttling, log/screenshot/glasses-log collection, Cloud V2
   submission, and completion.
 - Host/OEM code should own UI, copy, navigation, branded alerts, prompts, and
   host-specific telemetry sinks such as Sentry.
@@ -190,7 +190,7 @@ Original behavior:
 
 - The host gallery viewer's video component handles `onError`.
 - It updates UI error state, serializes the React Native video error, computes a
-  dedupe key, and files an automatic report.
+  repeat-suppression key, and files an automatic report.
 - The existing island gallery validators catch pre-playback integrity failures:
   missing files, zero-byte files, expected-size mismatches, and invalid first
   bytes/container signatures.
@@ -345,7 +345,7 @@ Not public:
 Internal island reporting service:
 
 - `submitAutomaticReport(...)`
-- local automatic dedupe
+- local automatic throttling
 - diagnostic context collection
 - recent phone logs
 - screenshot/artifact upload when relevant

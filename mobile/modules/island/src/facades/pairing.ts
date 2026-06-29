@@ -61,7 +61,7 @@ export async function submitPairingBootTimeoutReport(params: {
       ),
       systemPriority: "medium",
     },
-    dedupeKey: `pairing_timeout|${deviceModel || "unknown"}|${deviceName || "unknown"}`,
+    throttleKey: `pairing_timeout|${deviceModel || "unknown"}|${deviceName || "unknown"}`,
   })
 
   const status = toAutomaticReportSubmissionStatus(result)

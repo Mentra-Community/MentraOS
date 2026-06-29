@@ -27,7 +27,7 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
     post: async <T>(path: string, body?: unknown): Promise<T> => {
       calls.push({ method: "POST", path, body });
       if (path === "/api/client/reports") {
-        return { reportId: "rep_test", status: "collecting", created: true } as T;
+        return { reportId: "rep_test", status: "collecting" } as T;
       }
       if (path.endsWith("/complete")) {
         return { status: "ready" } as T;
@@ -51,7 +51,7 @@ describe("Core reports client", () => {
 
     const result = await reports.submit(bugReportInput);
 
-    expect(result).toEqual({ reportId: "rep_test", status: "collecting", created: true });
+    expect(result).toEqual({ reportId: "rep_test", status: "collecting" });
     expect(calls).toEqual([
       {
         method: "POST",

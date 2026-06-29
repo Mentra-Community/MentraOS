@@ -34,7 +34,7 @@ export async function submitMentraJSCrashloopReport(params: {
       actualBehavior: JSON.stringify({reason, lastLogLines}, null, 2),
       systemPriority: "critical",
     },
-    dedupeKey: `mentrajs_crashloop:${packageName}`,
+    throttleKey: `mentrajs_crashloop:${packageName}`,
   })
 
   const status = toAutomaticReportSubmissionStatus(result)

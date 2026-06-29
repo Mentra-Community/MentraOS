@@ -37,8 +37,6 @@ export type SubmitReportInput =
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-      dedupeKey?: string;
-      dedupeWindowMs?: number;
     }
   | {
       mentraUserId: string;
@@ -46,8 +44,6 @@ export type SubmitReportInput =
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-      dedupeKey?: string;
-      dedupeWindowMs?: number;
     }
   | {
       mentraUserId: string;
@@ -59,7 +55,6 @@ export type SubmitReportInput =
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
-  created: boolean;
 }
 
 export interface ReportLogEntry {
@@ -79,27 +74,7 @@ export interface AddReportArtifactsResult {
   stored: number;
 }
 
-const DEFAULT_DEDUPE_WINDOW_MS = 90_000;
-
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
-  const dedupeKey = "dedupeKey" in input ? input.dedupeKey?.trim() || undefined : undefined;
-  if (dedupeKey) {
-    const windowMs = "dedupeWindowMs" in input ? input.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS : DEFAULT_DEDUPE_WINDOW_MS;
-    const existing = await ReportModel.findOne({
-      mentraUserId: input.mentraUserId,
-      dedupeKey,
-      createdAt: { $gte: new Date(Date.now() - windowMs) },
-      status: { $ne: "closed" },
-    }).sort({ createdAt: -1 });
-    if (existing) {
-      return {
-        reportId: existing.reportId,
-        status: existing.status as ReportStatus,
-        created: false,
-      };
-    }
-  }
-
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   await ReportModel.create({
@@ -114,12 +89,11 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
         : input.feedback
       : null,
     context: input.context,
-    dedupeKey: dedupeKey ?? null,
     artifacts: [],
     status,
   });
 
-  return { reportId, status, created: true };
+  return { reportId, status };
 }
 
 export async function addLogArtifact(input: {

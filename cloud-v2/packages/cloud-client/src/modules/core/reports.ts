@@ -48,16 +48,12 @@ export type SubmitReportInput =
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-      dedupeKey?: string;
-      dedupeWindowMs?: number;
     }
   | {
       kind: "automatic";
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-      dedupeKey?: string;
-      dedupeWindowMs?: number;
     }
   | {
       kind: "feedback";
@@ -68,7 +64,6 @@ export type SubmitReportInput =
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
-  created: boolean;
 }
 
 export interface ReportLogEntry {

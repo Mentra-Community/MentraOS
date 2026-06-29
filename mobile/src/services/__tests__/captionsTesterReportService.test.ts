@@ -30,7 +30,6 @@ describe("CaptionsTesterReportService", () => {
       status: "submitted",
       reportId: "report-1",
       reportStatus: "ready",
-      created: true,
     })
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {})
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
@@ -61,7 +60,7 @@ describe("CaptionsTesterReportService", () => {
             source: "captions_tester",
             reason: "captions_incident_detected",
           },
-          dedupeKey: "captions_tester|stale_transcript|live_words|run-1",
+          throttleKey: "captions_tester|stale_transcript|live_words|run-1",
         }),
       )
     })

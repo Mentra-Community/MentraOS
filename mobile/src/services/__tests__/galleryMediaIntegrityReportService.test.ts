@@ -1,5 +1,5 @@
 import {
-  galleryMediaIntegrityDedupeKey,
+  galleryMediaIntegrityThrottleKey,
   submitInvalidGalleryMediaReport,
 } from "../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService"
 import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
@@ -18,7 +18,6 @@ describe("GalleryMediaIntegrityReportService", () => {
       status: "submitted",
       reportId: "report-1",
       reportStatus: "ready",
-      created: true,
     })
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {})
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
@@ -55,8 +54,8 @@ describe("GalleryMediaIntegrityReportService", () => {
         actualBehavior: JSON.stringify(input, null, 2),
         systemPriority: "high",
       },
-      dedupeKey: galleryMediaIntegrityDedupeKey(input),
-      dedupeWindowMs: 90_000,
+      throttleKey: galleryMediaIntegrityThrottleKey(input),
+      throttleWindowMs: 90_000,
     })
     expect(result).toEqual({status: "filed", reportId: "report-1"})
     expect(logSpy).toHaveBeenCalledWith("[GalleryMediaIntegrityReport] Report filed:", "report-1")

@@ -7,7 +7,7 @@ import {
 import type {MediaKind} from "./galleryMediaValidation"
 
 const LOG_TAG = "GalleryMediaIntegrityReport"
-const DEDUPE_WINDOW_MS = 90_000
+const THROTTLE_WINDOW_MS = 90_000
 
 export interface InvalidGalleryMediaReportInput {
   name: string
@@ -21,7 +21,7 @@ export interface InvalidGalleryMediaReportInput {
   glassesModel?: string
 }
 
-export function galleryMediaIntegrityDedupeKey(input: InvalidGalleryMediaReportInput): string {
+export function galleryMediaIntegrityThrottleKey(input: InvalidGalleryMediaReportInput): string {
   return ["gallery_media_integrity", input.mediaKind, input.stage, input.captureId || input.name, input.reason].join("|")
 }
 
@@ -54,8 +54,8 @@ export async function submitInvalidGalleryMediaReport(
       ),
       systemPriority: input.mediaKind === "video" ? "high" : "medium",
     },
-    dedupeKey: galleryMediaIntegrityDedupeKey(input),
-    dedupeWindowMs: DEDUPE_WINDOW_MS,
+    throttleKey: galleryMediaIntegrityThrottleKey(input),
+    throttleWindowMs: THROTTLE_WINDOW_MS,
   })
 
   const status = toAutomaticReportSubmissionStatus(result)

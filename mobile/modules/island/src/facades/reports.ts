@@ -3,7 +3,7 @@
  * Cloud V2 core client.
  *
  * Host/OEM code owns UI and wording. Island owns MentraOS mechanics: context
- * collection, recent phone logs, Cloud V2 calls, local automatic dedupe,
+ * collection, recent phone logs, Cloud V2 calls, local automatic throttling,
  * screenshots, and notifying connected glasses.
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
@@ -40,30 +40,32 @@ export type ToolkitSubmitReportInput =
 export type ToolkitSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
   context?: Partial<ReportContext>
   screenshots?: ReportAttachmentInput[]
+  throttleKey?: string
+  throttleWindowMs?: number
 }
 
 type InternalSubmitReportInput = ToolkitSubmitReportInput | ToolkitSubmitAutomaticReportInput
 
 export type ReportSubmitResult =
-  | {status: "submitted"; reportId: string; reportStatus: ReportStatus; created: boolean}
-  | {status: "skipped"; reason: "duplicate_within_window"}
+  | {status: "submitted"; reportId: string; reportStatus: ReportStatus}
+  | {status: "skipped"; reason: "throttled_within_window"}
   | {status: "failed"; error: string}
 
-const DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS = 90_000
-const automaticReportDedupeRegistry = new Map<string, number>()
+const DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS = 90_000
+const automaticReportThrottleRegistry = new Map<string, number>()
 
-function automaticDedupeShouldSkip(key: string, nowMs: number, windowMs: number): boolean {
-  const previous = automaticReportDedupeRegistry.get(key)
-  return previous !== undefined && nowMs - previous < windowMs
-}
-
-function rememberAutomaticDedupe(key: string, nowMs: number, windowMs: number): void {
-  automaticReportDedupeRegistry.set(key, nowMs)
-  for (const [entryKey, entryTime] of automaticReportDedupeRegistry) {
+function automaticThrottleShouldSkip(key: string, nowMs: number, windowMs: number): boolean {
+  const previous = automaticReportThrottleRegistry.get(key)
+  if (previous !== undefined && nowMs - previous < windowMs) {
+    return true
+  }
+  automaticReportThrottleRegistry.set(key, nowMs)
+  for (const [entryKey, entryTime] of automaticReportThrottleRegistry) {
     if (nowMs - entryTime > windowMs * 3) {
-      automaticReportDedupeRegistry.delete(entryKey)
+      automaticReportThrottleRegistry.delete(entryKey)
     }
   }
+  return false
 }
 
 function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
@@ -79,19 +81,18 @@ function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
 }
 
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
-  if (input.kind === "automatic" && input.dedupeKey) {
-    const shouldSkip = automaticDedupeShouldSkip(
-      input.dedupeKey,
+  if (input.kind === "automatic" && input.throttleKey) {
+    const shouldSkip = automaticThrottleShouldSkip(
+      input.throttleKey,
       Date.now(),
-      input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
+      input.throttleWindowMs ?? DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS,
     )
-    if (shouldSkip) return {status: "skipped", reason: "duplicate_within_window"}
+    if (shouldSkip) return {status: "skipped", reason: "throttled_within_window"}
   }
 
   const context = await collectDiagnosticContext(input.context)
   let reportId: string
   let reportStatus: ReportStatus
-  let created: boolean
   try {
     const res =
       input.kind === "feedback"
@@ -106,27 +107,15 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
               trigger: input.trigger,
               report: input.report,
               context,
-              dedupeKey: input.dedupeKey,
-              dedupeWindowMs: input.dedupeWindowMs,
             })
           : await cloudClientService.core.reports.submit({
               kind: "automatic",
               trigger: input.trigger,
               report: input.report,
               context,
-              dedupeKey: input.dedupeKey,
-              dedupeWindowMs: input.dedupeWindowMs,
             })
     reportId = res.reportId
     reportStatus = res.status
-    created = res.created
-    if (input.kind === "automatic" && input.dedupeKey) {
-      rememberAutomaticDedupe(
-        input.dedupeKey,
-        Date.now(),
-        input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
-      )
-    }
   } catch (error) {
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}
   }
@@ -159,7 +148,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
     }
   }
 
-  return {status: "submitted", reportId, reportStatus, created}
+  return {status: "submitted", reportId, reportStatus}
 }
 
 export const reports = {

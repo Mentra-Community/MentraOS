@@ -30,7 +30,6 @@ describe("pairing ready timeout reports", () => {
       status: "submitted",
       reportId: "report-1",
       reportStatus: "ready",
-      created: true,
     })
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {})
     errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
@@ -72,7 +71,7 @@ describe("pairing ready timeout reports", () => {
         ),
         systemPriority: "medium",
       },
-      dedupeKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
+      throttleKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
     })
     expect(result).toEqual({status: "filed", reportId: "report-1"})
     expect(logSpy).toHaveBeenCalledWith("[PairingTimeoutReport] Report filed:", "report-1")
@@ -96,7 +95,7 @@ describe("pairing ready timeout reports", () => {
     await waitFor(() => {
       expect(submitAutomaticReport).toHaveBeenCalledWith(
         expect.objectContaining({
-          dedupeKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
+          throttleKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
           report: expect.objectContaining({
             actualBehavior: expect.stringContaining('"showGlassesBooting": true'),
           }),
