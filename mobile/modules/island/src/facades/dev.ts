@@ -9,6 +9,11 @@
  * facade manages the explicit overrides + reconnect.
  */
 import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import {isGlassesReady} from "../services/GlassesReadiness"
+import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
+import {useConnectionStore} from "../stores/connection"
+import {useCoreStore} from "../stores/core"
+import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
@@ -55,6 +60,27 @@ function trimSetting(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
+function projectRuntimeStatus() {
+  const core = useCoreStore.getState()
+  const glasses = useGlassesStore.getState()
+  const connection = useConnectionStore.getState()
+  const cloudClient = useCloudClientStatusStore.getState()
+  return {
+    searching: core.searching,
+    micRanking: core.micRanking,
+    currentMic: core.currentMic,
+    systemMicUnavailable: core.systemMicUnavailable,
+    glassesConnected: glasses.connection.state === "connected",
+    glassesFullyBooted: isGlassesReady(glasses.connection),
+    bluetoothClassicConnected: glasses.bluetoothClassicConnected,
+    coreStatus: connection.status,
+    cloudClientStatus: cloudClient.status,
+    cloudClientAudioTransport: cloudClient.audioTransport,
+  }
+}
+
+export type DevRuntimeStatusSnapshot = ReturnType<typeof projectRuntimeStatus>
+
 export const dev = {
   /** The backend's required/recommended client version. */
   minimumClientVersion: () => restComms.getMinimumClientVersion(),
@@ -96,4 +122,28 @@ export const dev = {
 
   /** Current native (BLE-process) memory usage in MB — a dev/diagnostics gauge. */
   getMemoryMB: (): number => BluetoothSdk.getMemoryMB(),
+
+  /** Current island runtime status for toolkit-owned debug surfaces. */
+  runtimeStatus: (): DevRuntimeStatusSnapshot => projectRuntimeStatus(),
+
+  /** Subscribe to the projected island runtime status; returns an unsubscribe. */
+  onRuntimeStatus: (cb: (status: DevRuntimeStatusSnapshot) => void): (() => void) => {
+    let last = JSON.stringify(projectRuntimeStatus())
+    const notify = () => {
+      const snap = projectRuntimeStatus()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    }
+    const unsubscribers = [
+      useCoreStore.subscribe(notify),
+      useGlassesStore.subscribe(notify),
+      useConnectionStore.subscribe(notify),
+      useCloudClientStatusStore.subscribe(notify),
+    ]
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe())
+    }
+  },
 }

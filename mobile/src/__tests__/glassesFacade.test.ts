@@ -1,13 +1,20 @@
 // Imports the real glasses facade by path (not via "@mentra/island", which jest
 // mocks) so the actual projection + delegation run under the mobile jest runner.
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {dev} from "../../modules/island/src/facades/dev"
 import {glasses} from "../../modules/island/src/facades/glasses"
+import {useCloudClientStatusStore} from "../../modules/island/src/stores/cloudClientStatus"
+import {WebSocketStatus, useConnectionStore} from "../../modules/island/src/stores/connection"
+import {useCoreStore} from "../../modules/island/src/stores/core"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 
 describe("glasses facade", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     useGlassesStore.getState().reset()
+    useCoreStore.getState().reset()
+    useConnectionStore.getState().reset()
+    useCloudClientStatusStore.getState().reset()
   })
 
   it("status() projects the glasses store into the read-model", () => {
@@ -101,5 +108,33 @@ describe("glasses facade", () => {
       battery: 88,
       signal: -55,
     })
+  })
+
+  it("dev.runtimeStatus() projects island debug state", () => {
+    useCoreStore.getState().setCoreInfo({
+      searching: true,
+      currentMic: "glasses",
+      systemMicUnavailable: true,
+    })
+    useGlassesStore.setState({
+      connection: {state: "connected", fullyBooted: true} as never,
+      bluetoothClassicConnected: true,
+    })
+    useConnectionStore.getState().setStatus(WebSocketStatus.CONNECTED)
+    useCloudClientStatusStore.getState().setSnapshot({status: "connected", audioTransport: "udp"})
+
+    expect(dev.runtimeStatus()).toEqual(
+      expect.objectContaining({
+        searching: true,
+        currentMic: "glasses",
+        systemMicUnavailable: true,
+        glassesConnected: true,
+        glassesFullyBooted: true,
+        bluetoothClassicConnected: true,
+        coreStatus: "connected",
+        cloudClientStatus: "connected",
+        cloudClientAudioTransport: "udp",
+      }),
+    )
   })
 })

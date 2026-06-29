@@ -160,24 +160,10 @@ export default function DebugSettingsScreen() {
                 push("/onboarding/os")
               }}
             />
-
-            <RouteButton
-              label="Test switcher"
-              onPress={() => {
-                clearHistoryAndGoHome()
-                push("/test/switcher")
-              }}
-            />
           </Group>
 
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
-
-            <RouteButton
-              label="Buffer Recording Debug"
-              subtitle="Control 30-second video buffer on glasses"
-              onPress={() => push("/miniapps/settings/buffer-debug")}
-            />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}

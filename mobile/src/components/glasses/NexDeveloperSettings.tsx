@@ -9,7 +9,6 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -256,7 +255,7 @@ export default function NexDeveloperSettings() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const [glassesConnected, setGlassesConnected] = useState(() => toolkit.glasses.status().state === "connected")
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   // Mentra Display BLE test state variables
@@ -286,6 +285,13 @@ export default function NexDeveloperSettings() {
   // BLE Command display state variables
   const [showFullSenderCommand, setShowFullSenderCommand] = useState(false)
   const [showFullReceiverCommand, setShowFullReceiverCommand] = useState(false)
+
+  useEffect(() => {
+    setGlassesConnected(toolkit.glasses.status().state === "connected")
+    return toolkit.glasses.onStatus((status) => {
+      setGlassesConnected(status.state === "connected")
+    })
+  }, [])
 
   // Mentra Display BLE test event handlers
   useEffect(() => {
@@ -663,8 +669,8 @@ export default function NexDeveloperSettings() {
             <View style={themed($settingsGroup)}>
               <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
               <Text style={themed($description)}>
-                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
-                before being sent to the glasses.
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII before
+                being sent to the glasses.
               </Text>
 
               <ToggleSetting
