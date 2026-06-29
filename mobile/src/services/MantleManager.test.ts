@@ -47,10 +47,6 @@ jest.mock("@/services/RestComms", () => ({
       is_ok: () => true,
       is_error: () => false,
     })),
-    updateGlassesState: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
     sendPhotoResponse: jest.fn(async () => ({
       is_ok: () => true,
       is_error: () => false,

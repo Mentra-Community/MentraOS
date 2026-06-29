@@ -309,19 +309,6 @@ class RestComms {
     return res.map((response) => response.data)
   }
 
-  public updateGlassesState(state: Record<string, any>): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: "/api/client/device/state",
-      data: state,
-    }
-    interface Response {
-      success: boolean
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
-
   public exchangeToken(token: string): AsyncResult<string, Error> {
     const isChina: string = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
 

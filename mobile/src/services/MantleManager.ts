@@ -4,7 +4,6 @@ import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
 import {router} from "expo-router"
-import {shallow} from "zustand/shallow"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {phonePhotoCoordinator} from "@mentra/island"
@@ -32,7 +31,7 @@ import {
   useAppStatusStore,
 } from "@mentra/island"
 import {useDisplayStore} from "@/stores/display"
-import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useCoreStore} from "@/stores/core"
@@ -355,12 +354,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
@@ -394,22 +390,6 @@ class MantleManager {
   }
 
   private async setupSubscriptions() {
-    useGlassesStore.subscribe(
-      getGlasesInfoPartial,
-      (state: Record<string, any>, previousState: Record<string, any>) => {
-        const statusObj: Record<string, any> = {}
-
-        for (const key in state) {
-          const k = key as keyof typeof state
-          if (state[k] !== previousState[k]) {
-            statusObj[k] = state[k]
-          }
-        }
-        restComms.updateGlassesState(statusObj)
-      },
-      {equalityFn: shallow},
-    )
-
     // (Device-settings -> glasses BLE sync AND phone-notification config -> the
     // native listener now live in island's GlassesSettingsSync / PhoneNotificationsSync,
     // started by toolkit.start(), so toolkit.glasses.settings.set() /

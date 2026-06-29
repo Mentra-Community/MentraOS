@@ -1,9 +1,7 @@
 import {EventEmitter} from "events"
 
-import restComms from "@/services/RestComms"
 import {WebSocketStatus} from "@/services/ws-types"
 import {useConnectionStore} from "@/stores/connection"
-import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BgTimer} from "@mentra/island"
@@ -107,7 +105,9 @@ class WebSocketManager extends EventEmitter {
   private handleBackendUrlChanged(newBackendUrl: string, prevBackendUrl: string | undefined): void {
     const currentStoreUrl = useConnectionStore.getState().url
     console.log(
-      `WSM: backend_url changed ${prevBackendUrl ?? "(unset)"} → ${newBackendUrl} (WS currently pointed at ${currentStoreUrl ?? "(none)"})`,
+      `WSM: backend_url changed ${prevBackendUrl ?? "(unset)"} → ${newBackendUrl} (WS currently pointed at ${
+        currentStoreUrl ?? "(none)"
+      })`,
     )
 
     if (this.manuallyDisconnected) {
@@ -160,12 +160,6 @@ class WebSocketManager extends EventEmitter {
     }
   }
 
-  // things to run when the websocket status changes to connected:
-  private onConnect() {
-    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())
-    restComms.updateGlassesState(statusObj)
-  }
-
   // Only emit when status actually changes
   private updateStatus(newStatus: WebSocketStatus) {
     if (newStatus !== this.previousStatus) {
@@ -174,10 +168,6 @@ class WebSocketManager extends EventEmitter {
       // Update the connection store
       const store = useConnectionStore.getState()
       store.setStatus(newStatus)
-
-      if (newStatus === WebSocketStatus.CONNECTED) {
-        this.onConnect()
-      }
     }
   }
 

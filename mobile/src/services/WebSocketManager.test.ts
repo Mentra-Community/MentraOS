@@ -1,10 +1,3 @@
-jest.mock("@/services/RestComms", () => ({
-  __esModule: true,
-  default: {
-    updateGlassesState: jest.fn(),
-  },
-}))
-
 type MockSocketInstance = {
   url: string
   send: jest.Mock
@@ -18,7 +11,6 @@ type MockSocketInstance = {
 describe("WebSocketManager", () => {
   let instances: MockSocketInstance[]
   let manager: any
-  let restComms: any
   let useConnectionStore: any
   let useGlassesStore: any
 
@@ -45,7 +37,6 @@ describe("WebSocketManager", () => {
     }) as unknown as typeof WebSocket
     globalThis.WebSocket = global.WebSocket
 
-    restComms = require("@/services/RestComms").default
     useConnectionStore = require("@/stores/connection").useConnectionStore
     useGlassesStore = require("@/stores/glasses").useGlassesStore
     useConnectionStore.getState().reset()
@@ -86,7 +77,6 @@ describe("WebSocketManager", () => {
     expect(instances[0].close).toHaveBeenCalled()
     expect(instances[1].url).toContain("token=secret-token")
     expect(useConnectionStore.getState().status).toBe("connecting")
-    expect(restComms.updateGlassesState).toHaveBeenCalled()
   })
 
   it("reconnects after an error even if close never fires", async () => {

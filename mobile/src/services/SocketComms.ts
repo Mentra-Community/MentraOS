@@ -11,7 +11,7 @@ import {
 } from "@/services/SocketComms.normalizers"
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
-import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -136,31 +136,6 @@ class SocketComms {
     // Forward the ACK message directly since it's already in the correct format
     ws.sendText(JSON.stringify(ackMessage))
     console.log("SOCKET: Sent keep-alive ACK:", ackMessage)
-  }
-
-  public sendGlassesConnectionState(): void {
-    let deviceModel = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-    const glassesInfo = useGlassesStore.getState()
-
-    // Always include WiFi info - null means "unknown", false means "explicitly disconnected"
-    const wifi = glassesInfo.wifi
-    const wifiInfo = {
-      connected: glassesInfo.wifiStatusKnown ? wifi.state === "connected" : null,
-      ssid: wifi.state === "connected" ? wifi.ssid : null,
-    }
-
-    const connected = isGlassesConnected(glassesInfo.connection)
-
-    ws.sendText(
-      JSON.stringify({
-        type: "glasses_connection_state",
-        modelName: deviceModel, // TODO: remove this
-        deviceModel: deviceModel,
-        status: connected ? "CONNECTED" : "DISCONNECTED",
-        timestamp: new Date(),
-        wifi: wifiInfo,
-      }),
-    )
   }
 
   public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
@@ -375,11 +350,15 @@ class SocketComms {
     const rawExp = msg.exposureTimeNs
     const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${
+        exposureTimeNs ?? "none"
+      } authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
       console.log(
-        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${appId || "empty"})`,
+        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${
+          appId || "empty"
+        })`,
       )
       return
     }
@@ -482,7 +461,9 @@ class SocketComms {
     // Don't log the full payload: the auth token is a secret. Log presence, not the value
     // (mirrors the photo pipeline redaction above).
     console.log(
-      `SOCKET: Received STOP_VIDEO_RECORDING requestId=${stopRequestId} webhookUrl=${webhookUrl || "none"} authToken=${authToken ? "set" : "none"}`,
+      `SOCKET: Received STOP_VIDEO_RECORDING requestId=${stopRequestId} webhookUrl=${webhookUrl || "none"} authToken=${
+        authToken ? "set" : "none"
+      }`,
     )
     BluetoothSdk.stopVideoRecording(stopRequestId, webhookUrl, authToken).catch((error) => {
       console.warn("SOCKET: stopVideoRecording failed:", error)
