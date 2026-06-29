@@ -4,14 +4,8 @@
 mobile/src/app/ota/check-for-updates.tsx
 mobile/src/app/ota/progress-legacy.tsx
 mobile/src/app/ota/progress.tsx
-mobile/src/app/pairing/btclassic.tsx
-mobile/src/app/pairing/loading.tsx
-mobile/src/app/pairing/scan.tsx
-mobile/src/app/pairing/success.tsx
-mobile/src/effects/BtClassicPairing.tsx
 mobile/src/effects/NetworkMonitoring.tsx
 mobile/src/effects/OtaUpdateChecker.tsx
-mobile/src/effects/Reconnect.tsx
 mobile/src/services/MantleManager.ts
 mobile/src/services/SocketComms.ts
 mobile/src/services/WebSocketManager.ts

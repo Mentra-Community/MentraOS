@@ -270,10 +270,11 @@ jest.mock("@mentra/island", () => {
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
   // bluetoothSdkMock — emitBluetoothSdkEvent() + listener-leak counts keep working.
   const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
-  const subscribeVia = (eventName) => jest.fn((cb) => {
-    const sub = bluetoothSdkMock.addListener(eventName, cb)
-    return () => sub.remove()
-  })
+  const subscribeVia = (eventName) =>
+    jest.fn((cb) => {
+      const sub = bluetoothSdkMock.addListener(eventName, cb)
+      return () => sub.remove()
+    })
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -428,6 +429,33 @@ jest.mock("@mentra/island", () => {
         requestListenerPermission: jest.fn(() => Promise.resolve()),
       },
       pairing: {
+        readiness: jest.fn(() => {
+          const glassesState = realGlasses.useGlassesStore.getState()
+          return {
+            state: glassesState.connection.state,
+            connected: realGlasses.isGlassesConnected(glassesState.connection),
+            fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
+            bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+            nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
+          }
+        }),
+        onReadiness: jest.fn((cb) => {
+          let last = JSON.stringify(realGlasses.useGlassesStore.getState())
+          return realGlasses.useGlassesStore.subscribe(() => {
+            const glassesState = realGlasses.useGlassesStore.getState()
+            const readiness = {
+              state: glassesState.connection.state,
+              connected: realGlasses.isGlassesConnected(glassesState.connection),
+              fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
+              bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
+              nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
+            }
+            const next = JSON.stringify(readiness)
+            if (next === last) return
+            last = next
+            cb(readiness)
+          })
+        }),
         scan: jest.fn(),
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
@@ -437,6 +465,11 @@ jest.mock("@mentra/island", () => {
         onPairFailure: subscribeVia("pair_failure"),
         onGlassesNotReady: subscribeVia("glasses_not_ready"),
         waitForReady: jest.fn(() => Promise.resolve(false)),
+        waitForBluetoothClassic: jest.fn(({timeoutMs} = {}) => {
+          const connected = realGlasses.useGlassesStore.getState().bluetoothClassicConnected
+          if (connected) return Promise.resolve(true)
+          return new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs ?? 1000))
+        }),
       },
       miniapps: {
         list: jest.fn(() => []),
@@ -467,7 +500,9 @@ jest.mock("@mentra/island", () => {
         keys: jest.fn(() => []),
       },
       dev: {
-        minimumClientVersion: jest.fn(() => Promise.resolve({is_ok: () => true, value: {required: "0", recommended: "0"}})),
+        minimumClientVersion: jest.fn(() =>
+          Promise.resolve({is_ok: () => true, value: {required: "0", recommended: "0"}}),
+        ),
         backendUrl: jest.fn(() => undefined),
         setBackendUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
         cloudUrls: jest.fn(() => ({})),

@@ -1,17 +1,13 @@
 // Imports the real ConnectionCoordinator by path (not via "@mentra/island",
 // which jest mocks) so the actual decisions run under the mobile jest CI runner.
 import {decideConnectButtonAction, decideReconnect} from "../../modules/island/src/services/ConnectionCoordinator"
-import type {GlassesConnectionStatus} from "../../modules/island/src/services/GlassesReadiness"
-
-const connected: GlassesConnectionStatus = {state: "connected", fullyBooted: true}
-const disconnected: GlassesConnectionStatus = {state: "disconnected"}
 
 describe("decideReconnect", () => {
   const base = {
     reconnectOnForeground: true,
     defaultWearable: "Even Realities G1",
     isSimulated: false,
-    connection: disconnected,
+    connected: false,
     searching: false,
   }
 
@@ -28,7 +24,7 @@ describe("decideReconnect", () => {
   })
 
   it("skips when already connected", () => {
-    expect(decideReconnect({...base, connection: connected})).toEqual({kind: "skip", result: true})
+    expect(decideReconnect({...base, connected: true})).toEqual({kind: "skip", result: true})
   })
 
   it("skips when already searching", () => {

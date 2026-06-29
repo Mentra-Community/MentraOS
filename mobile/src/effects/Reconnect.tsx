@@ -2,9 +2,9 @@ import {useEffect} from "react"
 import {AppState} from "react-native"
 
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {decideReconnect, toolkit} from "@mentra/island"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
@@ -18,7 +18,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     reconnectOnForeground: !!reconnectOnAppForeground,
     defaultWearable,
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
-    connection: useGlassesStore.getState().connection,
+    connected: toolkit.pairing.readiness().connected,
     searching: useCoreStore.getState().searching,
   })
   if (decision.kind === "skip") {
@@ -42,9 +42,11 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
 }
 
 export function Reconnect() {
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  ).connected
   const isSearching = useCoreStore((state) => state.searching)
-  const defaultWearable = useSetting(SETTINGS.default_wearable.key)
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Add a listener for app state changes to detect when the app comes back from background
   useEffect(() => {

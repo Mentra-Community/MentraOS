@@ -8,11 +8,7 @@
  * one tested place instead of re-deriving them in home.tsx, DeviceStatus, the
  * reconnect effect, and the connect buttons.
  *
- * Moving the bluetooth calls themselves behind island is a separate step (the
- * native re-export sweep); this step only owns the decisions.
  */
-import {isGlassesConnected, type GlassesConnectionStatus} from "./GlassesReadiness"
-
 export interface ReconnectDecisionInput {
   /** The reconnect_on_app_foreground setting. */
   reconnectOnForeground: boolean
@@ -20,8 +16,8 @@ export interface ReconnectDecisionInput {
   defaultWearable: string | null | undefined
   /** True when defaultWearable is the simulated device. */
   isSimulated: boolean
-  /** Current glasses connection snapshot. */
-  connection: GlassesConnectionStatus
+  /** True when the glasses BLE link is already connected. */
+  connected: boolean
   /** True when a scan is already in progress. */
   searching: boolean
 }
@@ -39,7 +35,7 @@ export function decideReconnect(input: ReconnectDecisionInput): ReconnectDecisio
   // No real wearable paired (or the simulated device): nothing to reconnect to.
   if (!input.defaultWearable || input.isSimulated) return {kind: "skip", result: false}
   // Already connected, or a scan is already running: nothing to do.
-  if (isGlassesConnected(input.connection) || input.searching) return {kind: "skip", result: true}
+  if (input.connected || input.searching) return {kind: "skip", result: true}
   return {kind: "connect"}
 }
 

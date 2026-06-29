@@ -10,7 +10,7 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
-import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
 export default function GlassesPairingLoadingScreen() {
@@ -19,7 +19,9 @@ export default function GlassesPairingLoadingScreen() {
   const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const hasNavigatedRef = useRef(false)
-  const glassesFullyBooted = useGlassesStore(selectGlassesReady)
+  const glassesFullyBooted = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  ).fullyBooted
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   useEffect(() => {

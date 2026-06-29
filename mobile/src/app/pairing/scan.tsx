@@ -12,9 +12,9 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
@@ -28,7 +28,9 @@ export default function SelectGlassesBluetoothScreen() {
   const {goBack, replace, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const bluetoothClassicConnected = useGlassesStore((state) => state.bluetoothClassicConnected)
+  const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  ).bluetoothClassicConnected
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
@@ -100,7 +102,11 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || bluetoothClassicConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
+    if (
+      Platform.OS === "android" ||
+      bluetoothClassicConnected ||
+      !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
+    ) {
       setTimeout(() => {
         toolkit.pairing.pair(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
@@ -144,9 +150,7 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
-  const visibleResults = rememberedSearchResults.filter(
-    (r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel,
-  )
+  const visibleResults = rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel)
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -174,10 +178,10 @@ export default function SelectGlassesBluetoothScreen() {
                   let deviceName = filterDeviceName(res.name)
 
                   return (
-                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity
-                        className="flex-1"
-                        onPress={() => triggerGlassesPairingGuide(res)}>
+                    <View
+                      key={res.id}
+                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
+                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
