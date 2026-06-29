@@ -54,15 +54,16 @@ const automaticReportDedupeRegistry = new Map<string, number>()
 
 function automaticDedupeShouldSkip(key: string, nowMs: number, windowMs: number): boolean {
   const previous = automaticReportDedupeRegistry.get(key)
-  if (previous !== undefined && nowMs - previous < windowMs) return true
+  return previous !== undefined && nowMs - previous < windowMs
+}
 
+function rememberAutomaticDedupe(key: string, nowMs: number, windowMs: number): void {
   automaticReportDedupeRegistry.set(key, nowMs)
   for (const [entryKey, entryTime] of automaticReportDedupeRegistry) {
     if (nowMs - entryTime > windowMs * 3) {
       automaticReportDedupeRegistry.delete(entryKey)
     }
   }
-  return false
 }
 
 function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
@@ -112,6 +113,13 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
     reportId = res.reportId
     reportStatus = res.status
     created = res.created
+    if (input.kind === "automatic" && input.dedupeKey) {
+      rememberAutomaticDedupe(
+        input.dedupeKey,
+        Date.now(),
+        input.dedupeWindowMs ?? DEFAULT_AUTOMATIC_REPORT_DEDUPE_MS,
+      )
+    }
   } catch (error) {
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}
   }

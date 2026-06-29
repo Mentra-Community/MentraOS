@@ -27,9 +27,8 @@ import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
-import {INVALID_DOWNLOADED_MEDIA, validateCaptureMetadataForDownload} from "./galleryMediaValidation"
+import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {emitGalleryNotice} from "./galleryNotices"
-import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 
 // Timing constants
 const TIMING = {
@@ -1814,18 +1813,6 @@ class GallerySyncService {
           if (captureError?.message === "Sync cancelled") throw captureError
           const errMsg = captureError?.message || captureError?.toString?.() || JSON.stringify(captureError)
           console.error(`[GallerySyncService]   ❌ Failed to download capture ${capture.capture_id}: ${errMsg}`)
-          if (errMsg.includes(INVALID_DOWNLOADED_MEDIA)) {
-            reportInvalidGalleryMedia({
-              name: capture.capture_id,
-              captureId: capture.capture_id,
-              mediaKind: capture.type,
-              stage: "capture_metadata_validation",
-              reason: errMsg,
-              expectedSize: capture.total_size,
-              duration: capture.duration,
-              glassesModel: defaultWearable,
-            })
-          }
           failedCount++
           // Track oldest failed timestamp so we don't advance sync past it
           if (capture.timestamp < oldestFailedTimestamp) {

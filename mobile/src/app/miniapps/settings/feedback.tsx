@@ -148,10 +148,23 @@ export default function FeedbackPage() {
 
       console.log("Feedback submitted:", JSON.stringify(feedbackPayload, null, 2))
       try {
-        await toolkit.reports.submit({
+        const submitRes = await toolkit.reports.submit({
           kind: "feedback",
           feedback: feedbackPayload,
         })
+        if (submitRes.status !== "submitted") {
+          setIsSubmitting(false)
+          console.error("Error sending feedback:", submitRes)
+          showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
+            {
+              text: translate("common:ok"),
+              onPress: () => {
+                void goBack()
+              },
+            },
+          ])
+          return
+        }
       } catch (error) {
         setIsSubmitting(false)
         console.error("Error sending feedback:", error)
