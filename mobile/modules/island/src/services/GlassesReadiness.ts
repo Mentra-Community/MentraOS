@@ -6,8 +6,8 @@
  * for connection readiness: the app, the Connection coordinator, and the
  * Pairing coordinator all read them through island rather than re-deriving the
  * same checks in three places. They are defined here over the btsdk
- * `GlassesConnectionStatus` type (imported type-only so the island module never
- * pulls the native bluetooth bundle).
+ * `GlassesConnectionStatus` type through the public Bluetooth SDK package
+ * boundary.
  *
  * waitForGlassesReady is the new primitive those coordinators build on:
  * "resolve once the glasses report fully booted, or false on timeout". It is
@@ -19,7 +19,7 @@ import {
   isConnectedGlassesConnectionStatus,
   isReadyGlassesConnectionStatus,
   type GlassesConnectionStatus,
-} from "@mentra/bluetooth-sdk/types"
+} from "@mentra/bluetooth-sdk"
 
 import {BgTimer} from "../utils/timers"
 
