@@ -607,15 +607,27 @@ class MantleManager {
         BluetoothSdk.addListener("wifi_status_change", (event) => {
           const {type: _type, ...wifi} = event
           useGlassesStore.getState().setGlassesInfo({wifi})
-          // Forward to miniapps (session.glasses.onWifi). Wi-Fi is its own native
-          // event — distinct from glasses connection — so it's forwarded here, not
-          // from onGlassesStatus. Streaming miniapps gate "go live" on this.
-          localMiniappRuntime.forwardEvent("glasses_wifi", {
-            connected: wifi.state === "connected",
-            ssid: wifi.state === "connected" ? wifi.ssid : undefined,
-            localIp: wifi.state === "connected" ? wifi.localIp : undefined,
-          })
         }),
+      )
+
+      // Forward glasses Wi-Fi to miniapps (session.glasses.onWifi) from the
+      // STORE — the single source of truth — so every path converges here:
+      // wifi_status_change, onGlassesStatus, and BLE disconnect. Effective
+      // connectivity requires the glasses to be connected AND on Wi-Fi, so a
+      // disconnect correctly flips `connected` to false (no stale "connected").
+      this.subs.push(
+        useGlassesStore.subscribe(
+          (s) => {
+            const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
+            return {
+              connected,
+              ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+              localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+            }
+          },
+          (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
+          {equalityFn: shallow},
+        ),
       )
 
       // TODO: remove since we can sub to the zustand store for hotspot info:
