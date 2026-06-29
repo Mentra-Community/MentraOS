@@ -28,6 +28,7 @@ export type {
   VadData,
   BatteryData,
   ConnectionData,
+  WifiData,
   HeadPositionData,
   AccelData,
   LocationData,
