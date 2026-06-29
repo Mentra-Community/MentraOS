@@ -82,6 +82,8 @@ export class RecorderController {
   // Mirrored UI state
   private lastStatus: RecorderStatus | null = null
   private playingId: string | null = null
+  /** Monotonic playback token — only the latest play() owns the UI playing state. */
+  private playSeq = 0
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
 
@@ -101,15 +103,13 @@ export class RecorderController {
 
     this.registerUiHandlers()
 
-    try {
-      this.unsubs.push(
-        this.session.speaker.onStateChange((e) => {
-          if (e.state === "stopped" || e.state === "error") this.setPlaying(null)
-        }),
-      )
-    } catch {
-      /* speaker state not available — ignore */
-    }
+    // Playback UI state is driven entirely by play()'s own request lifecycle
+    // (see play()), NOT by speaker.onStateChange. The speaker state is global to
+    // the miniapp with no per-clip correlation, so a "stopped" from interrupting
+    // the previous clip (which is exactly what starting the next clip does, via
+    // stopOtherAudio) would clobber the new clip's "playing" state — the UI would
+    // flicker pause→play and the row would look stuck. play()'s promise resolves
+    // per-request, so it's the authoritative signal for which row is playing.
 
     try {
       this.unsubs.push(this.session.onBeforeDisconnect(() => this.onTeardown()))
@@ -586,13 +586,17 @@ export class RecorderController {
       this.ui.send("rec:audio-missing", {id})
       return
     }
+    const seq = ++this.playSeq
     this.setPlaying(id)
     try {
       await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true})
     } catch (err) {
       console.log("Recorder: playback failed", err)
     } finally {
-      if (this.playingId === id) this.setPlaying(null)
+      // Switching to another recording interrupts this one on the host, which
+      // resolves THIS promise — but the UI should now reflect the new playback,
+      // so only fall back to idle when no newer play() has superseded us.
+      if (this.playSeq === seq) this.setPlaying(null)
     }
   }
 
