@@ -26,6 +26,7 @@ import { InvalidRequest, OauthServerError } from "../../types/oauth.types";
 const app = new Hono<AppEnv>();
 const SESSION_COOKIE = "mentra_console_session";
 const STATE_COOKIE = "mentra_console_state";
+const PKCE_VERIFIER_COOKIE = "mentra_console_pkce_verifier";
 const RETURN_TO_COOKIE = "mentra_console_return_to";
 const developerOrgs = new DeveloperOrgService();
 const miniapps = new MiniAppService();
@@ -114,10 +115,25 @@ function getSocialLogin(c: AppContext) {
   return redirectToWorkos(c, provider);
 }
 
-function redirectToWorkos(c: AppContext, provider: string) {
-  const state = crypto.randomUUID();
+async function redirectToWorkos(c: AppContext, provider: string) {
   const returnTo = safeReturnTo(c.req.query("return_to"));
+  const config = workosConfig();
+  const authUrl = await workos().userManagement.getAuthorizationUrlWithPKCE({
+    provider,
+    clientId: config.clientId,
+    redirectUri: redirectUriForRequest(c),
+    loginHint: c.req.query("login_hint"),
+  });
+
+  const state = authUrl.state;
   setCookie(c, STATE_COOKIE, state, {
+    path: "/api/console/auth",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookies(),
+    maxAge: 10 * 60,
+  });
+  setCookie(c, PKCE_VERIFIER_COOKIE, authUrl.codeVerifier, {
     path: "/api/console/auth",
     httpOnly: true,
     sameSite: "Lax",
@@ -136,24 +152,17 @@ function redirectToWorkos(c: AppContext, provider: string) {
     deleteCookie(c, RETURN_TO_COOKIE, { path: "/api/console/auth" });
   }
 
-  const config = workosConfig();
-  const url = workos().userManagement.getAuthorizationUrl({
-    provider,
-    clientId: config.clientId,
-    redirectUri: redirectUriForRequest(c),
-    loginHint: c.req.query("login_hint"),
-    state,
-  });
-
-  return c.redirect(url);
+  return c.redirect(authUrl.url);
 }
 
 async function getCallback(c: AppContext) {
   const code = c.req.query("code");
   const state = c.req.query("state");
   const expectedState = getCookie(c, STATE_COOKIE);
+  const codeVerifier = getCookie(c, PKCE_VERIFIER_COOKIE);
   const returnTo = safeReturnTo(getCookie(c, RETURN_TO_COOKIE));
   deleteCookie(c, STATE_COOKIE, { path: "/api/console/auth" });
+  deleteCookie(c, PKCE_VERIFIER_COOKIE, { path: "/api/console/auth" });
   deleteCookie(c, RETURN_TO_COOKIE, { path: "/api/console/auth" });
 
   if (!code) {
@@ -170,12 +179,20 @@ async function getCallback(c: AppContext) {
       returnTo,
     );
   }
+  if (!codeVerifier) {
+    return redirectToConsoleLoginError(
+      c,
+      "Sign-in expired. Please try again.",
+      returnTo,
+    );
+  }
 
   const config = workosConfig();
   let response: Awaited<ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithCode"]>>;
   try {
     response = await workos().userManagement.authenticateWithCode({
       code,
+      codeVerifier,
       clientId: config.clientId,
       session: {
         sealSession: true,
@@ -184,6 +201,11 @@ async function getCallback(c: AppContext) {
     });
   } catch (error) {
     if (isWorkosRequestError(error)) {
+      const body = workosErrorBody(error);
+      c.var.logger.warn(
+        { status: workosErrorStatus(error), error: body.error, errorDescription: body.error_description },
+        "WorkOS console callback exchange failed",
+      );
       return redirectToConsoleLoginError(
         c,
         "Sign-in expired or could not be completed. Please try again.",
