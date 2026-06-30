@@ -786,10 +786,14 @@ struct ViewState {
     }
 
     private func checkAndReinitGlassesMic() {
-        // if the glasses mic is marked as enabled (and the glasses are connected), but our last known lc3 event is from > 5 seconds ago, reinitialize the mic:
-        let glassesMicEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        // Re-arm from app INTENT, not glasses STATE: a firmware page kill clears
+        // glasses/micEnabled to false while the app still wants the mic, which used to
+        // make this watchdog return early and strand the mic. micEnabled + currentMic
+        // are DeviceManager-owned intent and survive page kills. If the app wants the
+        // glasses mic on and we haven't seen an lc3 event in >5s, reinitialize it.
+        let wantsGlassesMic = micEnabled && currentMic == MicTypes.GLASSES_CUSTOM
         let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
-        if !glassesMicEnabled || !glassesConnected {
+        if !wantsGlassesMic || !glassesConnected {
             return
         }
 
