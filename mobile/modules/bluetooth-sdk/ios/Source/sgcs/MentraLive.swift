@@ -497,6 +497,7 @@ private enum K900ProtocolUtils {
     static let CMD_START_CODE: [UInt8] = [0x23, 0x23] // ##
     static let CMD_END_CODE: [UInt8] = [0x24, 0x24] // $$
     static let CMD_TYPE_STRING: UInt8 = 0x30 // String/JSON type
+    static let CMD_TYPE_BINARY_MSG: UInt8 = 0x40
 
     // JSON Field constants
     static let FIELD_C = "C" // Command/Content field
@@ -1214,6 +1215,9 @@ class MentraLive: NSObject, SGCManager {
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
             incomingChunkReassembler.clear()
+            peerWireProtocolVersion = 0
+            useBinaryWireProtocol = false
+            BleJsonCompact.resetSession()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1374,7 +1378,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
-    private let bes2700MtuLimit = 256
+    private let bes2700MtuLimit = 509
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -1383,6 +1387,8 @@ class MentraLive: NSObject, SGCManager {
     private var isKilled = false
     private var reconnectAttempts = 0
     private var isNewVersion = false
+    private var peerWireProtocolVersion = 0
+    private var useBinaryWireProtocol = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
 
@@ -2030,18 +2036,13 @@ class MentraLive: NSObject, SGCManager {
             return // Exit after processing file packet
         }
 
-        let payloadLength: Int
-
-        // Determine endianness based on device name
-        if let deviceName = connectedPeripheral?.name,
-           deviceName.hasPrefix("XyBLE_") || deviceName.lowercased().hasPrefix("mentra_live")
-        {
-            // K900 device - big-endian
-            payloadLength = (Int(bytes[3]) << 8) | Int(bytes[4])
-        } else {
-            // Standard device - little-endian
-            payloadLength = (Int(bytes[4]) << 8) | Int(bytes[3])
+        if commandType == K900ProtocolUtils.CMD_TYPE_BINARY_MSG {
+            processBinaryWireFrame(data)
+            return
         }
+
+        // Payload length is little-endian for all K900 string frames
+        let payloadLength = Int(bytes[3]) | (Int(bytes[4]) << 8)
 
         // Bridge.log(
         //     "K900 Protocol - Command: 0x\(String(format: "%02X", commandType)), Payload length: \(payloadLength)"
@@ -2074,7 +2075,8 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func processJsonObject(_ json: [String: Any]) {
+    private func processJsonObject(_ incoming: [String: Any]) {
+        let json = expandCompactWireJson(incoming)
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
 
@@ -2383,6 +2385,7 @@ class MentraLive: NSObject, SGCManager {
                 if let buildNumber = fields["build_number"] as? String {
                     isNewVersion = (Int(buildNumber) ?? 0) >= 5
                     DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
+                    maybeSendWireHandshake()
                 }
                 if let deviceModel = fields["device_model"] as? String {
                     DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
@@ -2977,6 +2980,7 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
         isNewVersion = (Int(buildNumber) ?? 0) >= 5
+        maybeSendWireHandshake()
         DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
         DeviceStore.shared.apply("glasses", "androidVersion", androidVersion)
 
@@ -3628,6 +3632,151 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
+    private func maybeSendWireHandshake() {
+        guard isNewVersion, peerWireProtocolVersion < BleWireProtocol.protocolV2 else { return }
+        sendWireHandshake()
+    }
+
+    private func sendWireHandshake() {
+        guard isNewVersion else { return }
+        var flags = BleWireProtocol.flagHandshake
+        flags |= BleWireProtocol.flagFirstFrag
+        flags |= BleWireProtocol.flagLastFrag
+        let payload = Data(BleWireProtocol.handshakePayloadV2.utf8)
+        guard let packed = BleWireProtocol.packBinaryFragment(
+            flags: flags,
+            msgId: 0,
+            fragIdx: 0,
+            fragCount: 1,
+            payload: payload
+        ) else {
+            return
+        }
+        Bridge.log("LIVE: Sending BLE wire v2 handshake")
+        queueSend(packed, id: "-1")
+    }
+
+    private func handlePeerWireHandshake() {
+        peerWireProtocolVersion = BleWireProtocol.protocolV2
+        useBinaryWireProtocol = true
+        BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
+        Bridge.log("LIVE: Peer confirmed BLE wire protocol v2")
+    }
+
+    private func processBinaryWireFrame(_ data: Data) {
+        guard let info = BleWireProtocol.extractBinaryFragmentInfo(data) else {
+            Bridge.log("LIVE: Failed to parse binary wire frame")
+            return
+        }
+
+        if BleWireProtocol.isHandshakeV2(info) {
+            handlePeerWireHandshake()
+            return
+        }
+
+        if !useBinaryWireProtocol, isNewVersion {
+            peerWireProtocolVersion = BleWireProtocol.protocolV2
+            useBinaryWireProtocol = true
+            Bridge.log("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+        }
+
+        guard let reassembled = incomingChunkReassembler.addBinaryFragment(
+            msgId: info.msgId,
+            fragIdx: Int(info.fragIdx),
+            fragCount: Int(info.fragCount),
+            data: info.payload
+        ) else {
+            return
+        }
+
+        guard let jsonString = String(data: reassembled, encoding: .utf8) else {
+            Bridge.log("LIVE: Failed to decode reassembled binary wire payload")
+            return
+        }
+
+        logWireMetrics(
+            payloadBytes: reassembled.count,
+            wireBytes: data.count,
+            packetCount: Int(info.fragCount),
+            protocolVersion: BleWireProtocol.protocolV2,
+            direction: "glasses_to_phone"
+        )
+        processJsonMessage(jsonString)
+    }
+
+    private func compactWireJson(_ json: [String: Any]) -> [String: Any] {
+        guard useBinaryWireProtocol, isNewVersion else { return json }
+        return BleJsonCompact.encode(json)
+    }
+
+    private func expandCompactWireJson(_ json: [String: Any]) -> [String: Any] {
+        guard useBinaryWireProtocol, isNewVersion else { return json }
+        return BleJsonCompact.decode(json)
+    }
+
+    private func logWireMetrics(
+        payloadBytes: Int,
+        wireBytes: Int,
+        packetCount: Int,
+        protocolVersion: Int,
+        direction: String
+    ) {
+        Bridge.log(
+            "BLE_TRACE direction=\(direction) proto=v\(protocolVersion) payload=\(payloadBytes) wire=\(wireBytes) packets=\(packetCount)"
+        )
+    }
+
+    private func sendJsonBinary(
+        jsonString: String,
+        messageId: Int64,
+        trackingId: String,
+        wakeUp: Bool,
+        requireAck: Bool
+    ) {
+        let payload = Data(jsonString.utf8)
+        let msgId = UInt16(truncatingIfNeeded: messageId)
+        let fragments = MessageChunker.createBinaryFragments(
+            payload: payload,
+            msgId: msgId,
+            wakeUp: wakeUp,
+            ackRequested: requireAck && messageId >= 0
+        )
+        guard !fragments.isEmpty else {
+            Bridge.log("LIVE: Failed to create binary wire fragments")
+            return
+        }
+
+        var totalWireBytes = 0
+        for (index, fragment) in fragments.enumerated() {
+            guard let packed = BleWireProtocol.packBinaryFragment(
+                flags: fragment.flags,
+                msgId: fragment.msgId,
+                fragIdx: fragment.fragIdx,
+                fragCount: fragment.fragCount,
+                payload: fragment.payload
+            ) else {
+                continue
+            }
+            totalWireBytes += packed.count
+            let isFinalChunk = index == fragments.count - 1
+            let chunkTrackingId = (requireAck && isFinalChunk) ? trackingId : "-1"
+            queueSend(packed, id: chunkTrackingId)
+
+            if index < fragments.count - 1 {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        logWireMetrics(
+            payloadBytes: payload.count,
+            wireBytes: totalWireBytes,
+            packetCount: fragments.count,
+            protocolVersion: BleWireProtocol.protocolV2,
+            direction: "phone_to_glasses"
+        )
+        Bridge.log("LIVE: Binary v2 queued \(fragments.count) fragments, wireBytes=\(totalWireBytes)")
+    }
+
     func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool = false, requireAck: Bool = true) {
         do {
             var json = jsonOriginal
@@ -3641,8 +3790,19 @@ class MentraLive: NSObject, SGCManager {
                 globalMessageId += 1
             }
 
-            let jsonData = try JSONSerialization.data(withJSONObject: json)
+            let jsonData = try JSONSerialization.data(withJSONObject: compactWireJson(json))
             if let jsonString = String(data: jsonData, encoding: .utf8) {
+                if useBinaryWireProtocol, isNewVersion {
+                    sendJsonBinary(
+                        jsonString: jsonString,
+                        messageId: messageId,
+                        trackingId: trackingId,
+                        wakeUp: wakeUp,
+                        requireAck: requireAck
+                    )
+                    return
+                }
+
                 // First check if the message needs chunking
                 // Create a test C-wrapped version to check size
                 var testWrapper: [String: Any] = [K900ProtocolUtils.FIELD_C: jsonString]
@@ -4365,6 +4525,9 @@ class MentraLive: NSObject, SGCManager {
         // Stop all timers
         stopAllTimers()
         incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        BleJsonCompact.resetSession()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
