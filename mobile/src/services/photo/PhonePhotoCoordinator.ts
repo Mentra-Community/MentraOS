@@ -70,6 +70,13 @@ interface ActiveRequest {
  *  fast with CAPTURE_TIMEOUT, instead of hanging on the cloud push timeout. */
 const CAPTURE_TIMEOUT_MS = 15_000
 
+let bleRequestCounter = 0
+
+function mintBleRequestId(): string {
+  bleRequestCounter = (bleRequestCounter + 1) & 0xffff
+  return bleRequestCounter.toString(16).padStart(4, "0")
+}
+
 function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium" | "heavy" {
   if (compress === "high") return "heavy"
   if (compress === "low" || compress === "medium") return "medium"
@@ -77,9 +84,11 @@ function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium"
 }
 
 export class PhonePhotoCoordinator {
-  // requestId → in-flight slot. Used by MantleManager's gated photo_response
-  // listener to find the slot a glasses-side error belongs to.
+  // Cloud requestId → in-flight slot. MantleManager resolves short BLE ids
+  // via bleIdToCloud before calling owns() / handlePhotoError().
   private readonly activeRequests = new Map<string, ActiveRequest>()
+  /** Short BLE correlation id (4-char hex) → full cloud requestId. */
+  private readonly bleIdToCloud = new Map<string, string>()
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
     // Pre-check: if glasses aren't even connected, the BLE photo command
@@ -128,6 +137,9 @@ export class PhonePhotoCoordinator {
     const isLoopbackUpload = /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)\b/.test(uploadUrl)
 
     const abort = new AbortController()
+    const bleRequestId = mintBleRequestId()
+    this.bleIdToCloud.set(bleRequestId, requestId)
+
     const outcome = new Promise<PhotoResult>((resolve, reject) => {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
@@ -158,7 +170,7 @@ export class PhonePhotoCoordinator {
     //    (WiFi direct with BLE fallback) — see MentraLive.swift.
     try {
       void BluetoothSdk.requestPhoto({
-        requestId,
+        requestId: bleRequestId,
         appId: packageName,
         size: normalizePhotoSize(opts.size ?? "medium"),
         webhookUrl: uploadUrl,
@@ -176,6 +188,7 @@ export class PhonePhotoCoordinator {
       })
     } catch (err) {
       this.activeRequests.delete(requestId)
+      this.bleIdToCloud.delete(bleRequestId)
       throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
     }
 
@@ -204,12 +217,19 @@ export class PhonePhotoCoordinator {
       }
     } finally {
       this.activeRequests.delete(requestId)
+      this.bleIdToCloud.delete(bleRequestId)
     }
+  }
+
+  /** Map a short BLE requestId from photo_response back to the cloud requestId. */
+  resolveCloudRequestId(bleOrCloudId: string): string {
+    return this.bleIdToCloud.get(bleOrCloudId) ?? bleOrCloudId
   }
 
   /** True iff this requestId is one we're currently waiting on. */
   owns(requestId: string): boolean {
-    return this.activeRequests.has(requestId)
+    const cloudId = this.resolveCloudRequestId(requestId)
+    return this.activeRequests.has(cloudId)
   }
 
   /**
@@ -218,8 +238,10 @@ export class PhonePhotoCoordinator {
    * requestId. Rejects the in-flight takePhoto Promise immediately.
    */
   handlePhotoError(requestId: string, errorCode: string, errorMessage: string): void {
-    const entry = this.activeRequests.get(requestId)
+    const cloudId = this.resolveCloudRequestId(requestId)
+    const entry = this.activeRequests.get(cloudId)
     if (!entry) return
+    this.bleIdToCloud.delete(requestId)
     // Abort the in-flight long-poll first so we don't double-resolve.
     entry.abort.abort()
     entry.reject(new PhotoError(errorCode || "GLASSES_ERROR", errorMessage || "Glasses error", "capture", "ble"))
