@@ -11,6 +11,7 @@ import { UserModel } from "../models/user.model";
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
 const USERS_COLLECTION = "users";
+const REFRESH_TOKENS_COLLECTION = "refreshTokens";
 const LEGACY_USER_IDENTITY_INDEX = "oemId_1_oemUserId_1";
 
 type DuplicateUserGroup = {
@@ -27,6 +28,7 @@ type DuplicateUserGroup = {
 
 export async function runStartupMigrations(): Promise<void> {
   await backfillLegacyUserIdentityFields();
+  await backfillLegacyRefreshTokenTenant();
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
@@ -55,6 +57,29 @@ async function backfillLegacyUserIdentityFields(): Promise<void> {
     logger.info(
       { collection: USERS_COLLECTION, modifiedCount: result.modifiedCount },
       "backfilled legacy user identity fields",
+    );
+  }
+}
+
+// Refresh tokens minted before the oemId -> tenantId rename still carry `oemId`
+// and no `tenantId`. refreshSession requires `tenantId` (and now resolves the
+// tenant against OEM/enterprise records), so without this backfill those
+// sessions fail to refresh with "incomplete identity" until the client
+// re-exchanges. Mirrors backfillLegacyUserIdentityFields and is idempotent.
+async function backfillLegacyRefreshTokenTenant(): Promise<void> {
+  const collection = mongoose.connection.collection(REFRESH_TOKENS_COLLECTION);
+  const result = await collection.updateMany(
+    {
+      tenantId: { $exists: false },
+      oemId: { $type: "string" },
+    },
+    [{ $set: { tenantId: "$oemId" } }],
+  );
+
+  if (result.modifiedCount > 0) {
+    logger.info(
+      { collection: REFRESH_TOKENS_COLLECTION, modifiedCount: result.modifiedCount },
+      "backfilled legacy refresh token tenant id",
     );
   }
 }
