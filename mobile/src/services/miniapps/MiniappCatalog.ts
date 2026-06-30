@@ -55,6 +55,8 @@ class MiniappCatalog {
 
   private refreshTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private refreshInterval: ReturnType<typeof BgTimer.setInterval> | null = null
+  private menuAppsSyncTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
+  private pendingMenuApps: GlassesMenuItem[] | null = null
 
   static getInstance(): MiniappCatalog {
     if (!MiniappCatalog._instance) {
@@ -300,7 +302,7 @@ class MiniappCatalog {
         return old.packageName !== item.packageName || (old.running ?? false) !== item.running
       })
     if (changed) {
-      useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, itemsForNative)
+      this.scheduleMenuAppsBleSync(itemsForNative)
     }
 
     return out
@@ -309,6 +311,20 @@ class MiniappCatalog {
   // ---------------------------------------------------------------------
   // Polling helpers
   // ---------------------------------------------------------------------
+
+  /** Batch menu_apps BLE writes during the 1 Hz post-start poll window. */
+  private scheduleMenuAppsBleSync(items: GlassesMenuItem[]): void {
+    this.pendingMenuApps = items
+    if (this.menuAppsSyncTimer) return
+    this.menuAppsSyncTimer = BgTimer.setTimeout(() => {
+      this.menuAppsSyncTimer = null
+      const next = this.pendingMenuApps
+      this.pendingMenuApps = null
+      if (next) {
+        void useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, next)
+      }
+    }, 500)
+  }
 
   private clearPolling(): void {
     if (this.refreshTimeout) {
