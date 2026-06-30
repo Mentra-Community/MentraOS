@@ -653,26 +653,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
-    } else if (applet.webviewUrl && applet.healthy) {
-      saveLastOpenTime(applet.packageName)
-      push("/applet/webview", {
-        webviewURL: applet.webviewUrl,
-        appName: applet.name,
-        packageName: applet.packageName,
-        transition: "fade",
-      })
     } else if (applet.local) {
       // Local miniapps are rendered by the Compositor overlay rather than a
       // pushed route — foreground the app and let <Compositor /> mount its
       // WebView (with the opening animation + back-swipe to background).
       setForeground(applet.packageName)
-    } else {
-      saveLastOpenTime(applet.packageName)
-      push("/applet/settings", {
-        packageName: applet.packageName,
-        appName: applet.name,
-        transition: "fade",
-      })
     }
 
     // do this after the app is started:

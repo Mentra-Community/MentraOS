@@ -580,13 +580,6 @@ export function AppsGrid({
         await setForeground(app.packageName)
       } else if (app.offlineRoute) {
         push(app.offlineRoute, {transition: "fade"})
-      } else if (app.webviewUrl && app.healthy) {
-        push("/applet/webview", {
-          webviewURL: app.webviewUrl,
-          appName: app.name,
-          packageName: app.packageName,
-          transition: "fade",
-        })
       }
 
       onOpenApp?.(app)
@@ -648,16 +641,6 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:settings"),
-          icon: "exclamation-circle",
-          onPress: () => {
-            push("/applet/settings", {
-              packageName: liveSelectedApp?.packageName,
-              appName: liveSelectedApp?.name,
-            })
-          },
-        },
         !showAllApps && {
           label: translate("appInfo:remove"),
           icon: "circle-minus",
@@ -688,7 +671,7 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
+    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome],
   )
 
   const handlePress = useCallback(

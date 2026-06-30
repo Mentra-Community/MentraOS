@@ -507,7 +507,7 @@ function LocalMiniappView({
         onContentProcessDidTerminate={handleTerminate}
         onError={handleError}
         onNavigationStateChange={handleNavStateChange}
-        // ALWAYS true — matches /applet/webview. WKWebView only arms its
+        // ALWAYS true. WKWebView only arms its
         // back-forward snapshot system when this is true at *mount* time.
         // The Compositor's back-swipe gesture pops in-WebView history first
         // (via the imperative goBack handle) and only backgrounds the app

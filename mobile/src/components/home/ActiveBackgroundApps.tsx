@@ -6,7 +6,7 @@ import {Badge} from "@/components/ui"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useBackgroundApps, useStop, type ClientApp} from "@mentra/island"
+import {useBackgroundApps, useSetForeground, useStop, type ClientApp} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 
@@ -14,6 +14,7 @@ export const ActiveBackgroundApps: React.FC = () => {
   const {themed, theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const {active} = useBackgroundApps()
+  const setForeground = useSetForeground()
   const stopApplet = useStop()
 
   const handlePress = (applet: ClientApp) => {
@@ -24,18 +25,8 @@ export const ActiveBackgroundApps: React.FC = () => {
         return
       }
 
-      // Check if app has webviewURL and navigate directly to it
-      if (applet.webviewUrl && applet.healthy) {
-        push("/applet/webview", {
-          webviewURL: applet.webviewUrl,
-          appName: applet.name,
-          packageName: applet.packageName,
-        })
-      } else {
-        push("/applet/settings", {
-          packageName: applet.packageName,
-          appName: applet.name,
-        })
+      if (applet.local) {
+        void setForeground(applet.packageName)
       }
     }
   }
