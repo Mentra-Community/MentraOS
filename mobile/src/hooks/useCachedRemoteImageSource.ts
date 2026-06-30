@@ -32,6 +32,28 @@ async function resolveCachedPath(url: string): Promise<string | null> {
   return promise
 }
 
+/**
+ * Warm the resolved-path cache for a set of remote URLs ahead of render. After
+ * this resolves, `useCachedRemoteImageSource` returns the local file:// path
+ * synchronously on first render (cache hit), so the image points straight at
+ * the decoded file with no post-mount async swap. Used to gate the all-apps
+ * grid reveal until every icon is ready, so they all appear at once.
+ *
+ * Returns once every URL has settled (resolved or failed). Non-remote / empty
+ * URLs are ignored.
+ */
+export async function warmCachedRemoteImageSources(urls: Array<string | null | undefined>): Promise<void> {
+  const remote = urls.filter(
+    (u): u is string => typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://")),
+  )
+  await Promise.allSettled(remote.map((u) => resolveCachedPath(u)))
+}
+
+/** True once this remote URL's local path is cached and will resolve synchronously. */
+export function isCachedRemoteImageResolved(url: string | null | undefined): boolean {
+  return typeof url === "string" && resolvedCache.has(url)
+}
+
 export function useCachedRemoteImageSource(source: string | number | undefined | null): ImageSourcePropType {
   const url = typeof source === "string" ? source : null
   const isRemote = url !== null && (url.startsWith("http://") || url.startsWith("https://"))

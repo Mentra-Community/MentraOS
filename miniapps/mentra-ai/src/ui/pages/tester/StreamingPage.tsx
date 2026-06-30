@@ -22,18 +22,17 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
-interface ManagedStartResult {
+// Mirrors the SDK's StreamResult. Both direct and managed resolve to an object:
+// direct gives {streamId, status}; managed additionally carries the Cloudflare
+// playback fields. `hlsUrl` (managed-only) is the discriminator below.
+interface StreamStartResult {
   streamId: string
-  liveInputId: string
-  hlsUrl: string
-  dashUrl: string
+  status?: string
+  liveInputId?: string
+  hlsUrl?: string
+  dashUrl?: string
   webrtcUrl?: string
 }
-
-// SDK returns a bare string (the streamId) from startUnmanaged(). Modeling it
-// explicitly so the type guard below — `typeof result === "string"` vs object
-// shape — is exhaustive.
-type StartResult = string | ManagedStartResult
 
 type StatusEvent = {
   streamId?: string
@@ -48,8 +47,8 @@ export default function StreamingPage() {
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
 
   const lastResultEvent = latestByKind("result")
-  const result: StartResult | undefined = lastResultEvent
-    ? ((lastResultEvent.payload as {result?: unknown}).result as StartResult | undefined)
+  const result: StreamStartResult | undefined = lastResultEvent
+    ? ((lastResultEvent.payload as {result?: unknown}).result as StreamStartResult | undefined)
     : undefined
 
   // Status events, newest first, capped for sanity.
@@ -63,11 +62,8 @@ export default function StreamingPage() {
     [log],
   )
 
-  // Distinguish the two shapes: unmanaged returns a bare streamId string,
-  // managed returns a {streamId, liveInputId, hlsUrl, ...} object.
-  const managed: ManagedStartResult | null =
-    result && typeof result === "object" && "hlsUrl" in result ? result : null
-  const unmanagedStreamId: string | null = typeof result === "string" ? result : null
+  // Managed start results carry Cloudflare playback URLs; direct ones don't.
+  const managed = result?.hlsUrl ? result : null
 
   // Cloudflare hosted-player iframe. The streamId we get back is phone-minted
   // (`phone-m-...`), so use the Cloudflare liveInputId surfaced explicitly on
@@ -82,11 +78,11 @@ export default function StreamingPage() {
       <MiniappHeader title="session.stream" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Glasses-side RTMP/SRT/WHIP publishing. Unmanaged uses your URL
-          directly; managed provisions a Cloudflare live input + playback URLs.
+          Glasses-side RTMP/SRT/WHIP publishing. A direct URL publishes straight
+          from the glasses; managed provisions a Cloudflare live input + playback URLs.
         </p>
 
-        <Label htmlFor="stream-url">unmanaged ingest URL</Label>
+        <Label htmlFor="stream-url">direct ingest URL</Label>
         <Input
           id="stream-url"
           value={unmanagedUrl}
@@ -94,10 +90,10 @@ export default function StreamingPage() {
           placeholder="rtmp://your.server/app/key"
         />
         <div className="mt-2 flex flex-col gap-2">
-          <Button onClick={() => fire("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
-            startUnmanaged(streamUrl)
+          <Button onClick={() => fire("startStream", [{direct: unmanagedUrl}])}>
+            startStream(direct)
           </Button>
-          <Button onClick={() => fire("startManaged", [{}])}>startManaged()</Button>
+          <Button onClick={() => fire("startStream", [{}])}>startStream() (managed)</Button>
           <Button variant="destructive" onClick={() => fire("stop", [])}>
             stop()
           </Button>
@@ -107,7 +103,7 @@ export default function StreamingPage() {
           <div className="mt-3 rounded-xl border border-border bg-muted/30 px-4 py-3 text-[12px]">
             <div className="font-semibold text-foreground">latest start result</div>
             <div className="mt-1 break-all font-mono text-muted-foreground">
-              streamId: {managed?.streamId ?? unmanagedStreamId}
+              streamId: {result.streamId}
             </div>
             {managed?.hlsUrl && (
               <div className="mt-1 break-all font-mono text-muted-foreground">

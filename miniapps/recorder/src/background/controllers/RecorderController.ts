@@ -23,18 +23,22 @@
  * actually get".
  */
 
-import {base64ToBytes} from "@mentra/miniapp/background"
+import {base64ToBytes, bytesToBase64} from "@mentra/miniapp/background"
 import type {AudioChunkData, BlobMeta, BlobWriter, MiniappSession, UnsubscribeFn} from "@mentra/miniapp/background"
 
 import type {Channels} from "../../shared/channels"
 import type {RecorderStatus, RecordingItem, Usage} from "../../shared/types"
-import {buildWavHeader, pcmDurationMs, pcmPeakLevel, WAV_HEADER_BYTES} from "../wav"
+import {buildInfoChunk, buildWavHeader, pcmDurationMs, pcmPeakLevel, WAV_HEADER_BYTES} from "../wav"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
 
 const EMPTY_USAGE: Usage = {bytes: 0, count: 0, quotaBytes: 0}
 const DEFAULT_SAMPLE_RATE = 16000
+/** WAV IART (artist) tag — the source, so players don't show "Unknown Artist". */
+const WAV_ARTIST = "Mentra"
+/** WAV ISFT (software) tag. */
+const WAV_SOFTWARE = "Mentra Recorder"
 /** Flush the PCM buffer to the blob once it reaches ~1.5s of 16kHz mono audio. */
 const FLUSH_BYTES = 48 * 1024
 /** Throttle UI status pushes to ~5/sec (keyed off captured audio ms, not a timer). */
@@ -60,6 +64,8 @@ export class RecorderController {
   private writeErrored = false
   /** Epoch ms the current capture began — stable across pause + WebView reopen. */
   private captureStartedAt = 0
+  /** Human-friendly display title for the current capture (also stored in meta.title). */
+  private captureTitle = ""
   /** True while the capture is paused (mic + transcription feed suspended). */
   private paused = false
   /** Committed transcript text (final results), accumulated across the capture. */
@@ -76,6 +82,8 @@ export class RecorderController {
   // Mirrored UI state
   private lastStatus: RecorderStatus | null = null
   private playingId: string | null = null
+  /** Monotonic playback token — only the latest play() owns the UI playing state. */
+  private playSeq = 0
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
 
@@ -95,15 +103,13 @@ export class RecorderController {
 
     this.registerUiHandlers()
 
-    try {
-      this.unsubs.push(
-        this.session.speaker.onStateChange((e) => {
-          if (e.state === "stopped" || e.state === "error") this.setPlaying(null)
-        }),
-      )
-    } catch {
-      /* speaker state not available — ignore */
-    }
+    // Playback UI state is driven entirely by play()'s own request lifecycle
+    // (see play()), NOT by speaker.onStateChange. The speaker state is global to
+    // the miniapp with no per-clip correlation, so a "stopped" from interrupting
+    // the previous clip (which is exactly what starting the next clip does, via
+    // stopOtherAudio) would clobber the new clip's "playing" state — the UI would
+    // flicker pause→play and the row would look stuck. play()'s promise resolves
+    // per-request, so it's the authoritative signal for which row is playing.
 
     try {
       this.unsubs.push(this.session.onBeforeDisconnect(() => this.onTeardown()))
@@ -182,7 +188,16 @@ export class RecorderController {
   private async startRecording(): Promise<void> {
     if (this.recordingId || this.finalizing) return
     try {
-      const writer = await this.session.blob.createWriteStream(makeKey(), {mimeType: "audio/wav", name: makeName()})
+      // One timestamp drives the filename, the display title, and the WAV's
+      // ICRD date tag so they all agree.
+      const startedAt = new Date()
+      const fileName = makeName(startedAt)
+      const title = makeTitle(startedAt)
+      const writer = await this.session.blob.createWriteStream(makeKey(), {
+        mimeType: "audio/wav",
+        name: fileName,
+        meta: {title},
+      })
       // Placeholder header — patched with real sizes on stop.
       await writer.write(new Uint8Array(WAV_HEADER_BYTES))
 
@@ -195,7 +210,8 @@ export class RecorderController {
       this.lastLevel = 0
       this.lastEmitMs = 0
       this.writeErrored = false
-      this.captureStartedAt = Date.now()
+      this.captureStartedAt = startedAt.getTime()
+      this.captureTitle = title
       this.paused = false
       this.finalTranscript = ""
       this.interimTranscript = ""
@@ -405,6 +421,9 @@ export class RecorderController {
       this.micUnsub = null
       this.unsubscribeTranscription()
       const transcript = `${this.finalTranscript} ${this.interimTranscript}`.trim()
+      // Snapshot title/date before resetCapture() clears them below.
+      const title = this.captureTitle
+      const startedAt = this.captureStartedAt
       this.recordingId = null
       this.lastStatus = null
       this.ui.send("rec:stopped", {})
@@ -412,14 +431,28 @@ export class RecorderController {
       try {
         await this.drainChain // queued writes
         await this.drainOnce() // anything still buffered
-        // Patch the real WAV header now that the size is known.
-        await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes))
+        // Tag the file so players show a real title/artist instead of
+        // "Unknown Artist". This LIST/INFO chunk goes AFTER the data chunk —
+        // a normal append (writeAt(0) can't grow the blob, only patch the
+        // header in place) — so we size the RIFF header to include it.
+        const info = buildInfoChunk({
+          title: title || undefined,
+          artist: WAV_ARTIST,
+          software: WAV_SOFTWARE,
+          date: startedAt ? new Date(startedAt).toISOString().slice(0, 10) : undefined,
+          comment: transcript ? transcript.slice(0, 256) : undefined,
+        })
+        if (info.length > 0) await writer.write(info)
+        // Patch the real WAV header now that the sizes are known (data size is
+        // pcmBytes; RIFF size also covers the appended INFO trailer).
+        await writer.writeAt(0, buildWavHeader(this.sampleRate, this.pcmBytes, 1, 16, info.length))
         const meta: Record<string, string | number | boolean> = {
           durationMs: pcmDurationMs(this.pcmBytes, this.sampleRate),
           sampleRate: this.sampleRate,
           channels: 1,
           bitsPerSample: 16,
         }
+        if (title) meta.title = title
         // A failed append means we ran into the storage quota — flag it so the
         // UI can show a "capped" badge.
         if (this.writeErrored) meta.truncated = true
@@ -495,6 +528,7 @@ export class RecorderController {
     this.pcmBytes = 0
     this.writeErrored = false
     this.captureStartedAt = 0
+    this.captureTitle = ""
     this.paused = false
     this.finalTranscript = ""
     this.interimTranscript = ""
@@ -552,13 +586,17 @@ export class RecorderController {
       this.ui.send("rec:audio-missing", {id})
       return
     }
+    const seq = ++this.playSeq
     this.setPlaying(id)
     try {
       await this.session.speaker.play({audioUrl: meta.uri, stopOtherAudio: true})
     } catch (err) {
       console.log("Recorder: playback failed", err)
     } finally {
-      if (this.playingId === id) this.setPlaying(null)
+      // Switching to another recording interrupts this one on the host, which
+      // resolves THIS promise — but the UI should now reflect the new playback,
+      // so only fall back to idle when no newer play() has superseded us.
+      if (this.playSeq === seq) this.setPlaying(null)
     }
   }
 
@@ -587,7 +625,16 @@ export class RecorderController {
     }
   }
 
-  /** Share a recording's transcript as text via the OS share sheet. */
+  /**
+   * Share a recording's transcript via the OS share sheet — as an explicit
+   * `.txt` FILE, not a bare message string.
+   *
+   * Sharing it as a base64 text/plain file (vs `system.share({text})`) makes the
+   * transcript the unambiguous share item. A plain-string share lets iOS surface
+   * "recent"/suggested items in the sheet — including a recently-shared .wav from
+   * this same recording — which reads as "Share transcript shared the audio".
+   * An explicit text file can never be confused with the audio.
+   */
   private async exportTranscript(id: string): Promise<void> {
     let meta: BlobMeta | null = null
     try {
@@ -597,12 +644,16 @@ export class RecorderController {
     }
     const transcript = typeof meta?.meta?.transcript === "string" ? meta.meta.transcript : ""
     if (!transcript.trim()) return
-    const name = meta?.name ?? id
+    const title = typeof meta?.meta?.title === "string" ? meta.meta.title : (meta?.name ?? id)
     const durationMs = Number(meta?.meta?.durationMs ?? 0)
     const createdAt = meta?.createdAt ?? Date.now()
+    const body = `${title}\n${fmtClock(durationMs)} · ${new Date(createdAt).toLocaleString()}\n\n${transcript}\n`
     try {
       await this.session.system.share({
-        text: `${name}\n${fmtClock(durationMs)} · ${new Date(createdAt).toLocaleString()}\n\n${transcript}`,
+        base64: bytesToBase64(utf8Bytes(body)),
+        mimeType: "text/plain",
+        filename: `${sanitizeFileName(title)}.txt`,
+        title,
       })
     } catch (err) {
       console.log("Recorder: export transcript failed", err)
@@ -629,6 +680,7 @@ function toItem(m: BlobMeta): RecordingItem {
   return {
     id: m.key,
     name: m.name ?? m.key,
+    title: typeof m.meta?.title === "string" ? m.meta.title : undefined,
     createdAt: m.createdAt,
     bytes: m.bytes,
     durationMs: Number(m.meta?.durationMs ?? 0),
@@ -643,13 +695,68 @@ function makeKey(): string {
   return `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** A filesystem-friendly default name, e.g. "recording-20260624-153012.wav". */
-function makeName(): string {
-  const d = new Date()
+/**
+ * A filesystem-friendly file name, e.g. "Mentra Recording 2026-06-24 153012.wav".
+ * Only spaces + hyphens (no colons/slashes), so it survives as the shared file's
+ * name verbatim. This is the blob's `name` (and thus the shared filename).
+ */
+function makeName(d: Date): string {
   const p = (n: number) => n.toString().padStart(2, "0")
-  return `recording-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(
-    d.getMinutes(),
-  )}${p(d.getSeconds())}.wav`
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  const time = `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  return `Mentra Recording ${date} ${time}.wav`
+}
+
+/**
+ * A human-friendly display title, e.g. "Recording — Jun 24, 3:30 PM". Shown in
+ * the UI and written as the WAV's INAM title tag. Kept separate from the
+ * filename so it can use nice punctuation a filename shouldn't.
+ */
+function makeTitle(d: Date): string {
+  const date = d.toLocaleDateString(undefined, {month: "short", day: "numeric"})
+  const time = d.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"})
+  return `Recording — ${date}, ${time}`
+}
+
+/**
+ * UTF-8 encode a string to bytes. The background JSContext (JSC/QuickJS) doesn't
+ * guarantee `TextEncoder`, so encode by hand (same reason base64.ts is hand-rolled).
+ */
+function utf8Bytes(s: string): Uint8Array {
+  const out: number[] = []
+  for (let i = 0; i < s.length; i++) {
+    let cp = s.charCodeAt(i)
+    // Combine surrogate pairs into a single code point.
+    if (cp >= 0xd800 && cp <= 0xdbff && i + 1 < s.length) {
+      const lo = s.charCodeAt(i + 1)
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00)
+        i++
+      }
+    }
+    if (cp < 0x80) {
+      out.push(cp)
+    } else if (cp < 0x800) {
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f))
+    } else if (cp < 0x10000) {
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f))
+    } else {
+      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f))
+    }
+  }
+  return new Uint8Array(out)
+}
+
+/** Reduce a display title to a safe filename basis across iOS/Android/desktop. */
+function sanitizeFileName(name: string): string {
+  // Whitelist: keep letters/digits/space/._()- ; turn everything else (colons,
+  // commas, em-dashes, slashes, etc.) into a space, then collapse runs.
+  return (
+    name
+      .replace(/[^\p{L}\p{N} ._()-]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "transcript"
+  )
 }
 
 /** ms → m:ss. */

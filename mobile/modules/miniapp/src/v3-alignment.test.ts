@@ -223,23 +223,23 @@ describe("v3 alignment — session.input.onTouch overloads", () => {
     expect(payload.subscriptions).toContain(MiniappStreamType.TOUCH_EVENT)
   })
 
-  test("onTouch('click', handler) subscribes to touch_event:click", async () => {
+  test("onTouch('single_tap', handler) subscribes to touch_event:single_tap", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
-    session.input.onTouch("click", () => {})
+    session.input.onTouch("single_tap", () => {})
     const env = parseEnvelope(transport.sent[0]!)
     const payload = env!.payload as {subscriptions: string[]}
-    expect(payload.subscriptions).toContain("touch_event:click")
+    expect(payload.subscriptions).toContain("touch_event:single_tap")
   })
 
   test("onTouch(['a','b'], handler) subscribes to both gestures", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
-    session.input.onTouch(["scroll_top", "scroll_bottom"], () => {})
+    session.input.onTouch(["swipe_up", "swipe_down"], () => {})
     const last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
     const payload = last!.payload as {subscriptions: string[]}
-    expect(payload.subscriptions).toContain("touch_event:scroll_top")
-    expect(payload.subscriptions).toContain("touch_event:scroll_bottom")
+    expect(payload.subscriptions).toContain("touch_event:swipe_up")
+    expect(payload.subscriptions).toContain("touch_event:swipe_down")
   })
 })
 

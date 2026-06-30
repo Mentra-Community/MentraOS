@@ -6,7 +6,10 @@
  * foregrounded at a time. When an app becomes foreground the Compositor:
  *   1. Mounts <LocalMiniappView /> — which spawns the JSContext (idempotent)
  *      and renders the UI WebView — inside an Animated.View overlay.
- *   2. Plays an opening animation (fade + subtle scale-in).
+ *   2. Plays an opening animation: a horizontal slide-in from the right edge,
+ *      mimicking the native OS stack push. The same slide is used for
+ *      offline-hosted apps (Settings, glasses mirror) so all local apps open
+ *      and close consistently.
  *   3. Registers the global capsule (house/X button) for the active miniapp.
  *   4. Owns the iOS-style left-edge swipe-to-back gesture; on commit it
  *      clears foreground. The overlay slides/fades off and the WebView
@@ -20,12 +23,12 @@ import {useCallback, useEffect, useRef, useState} from "react"
 import {Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
+  Easing,
   Extrapolation,
   interpolate,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withSequence,
   withSpring,
   withTiming,
@@ -61,16 +64,18 @@ const MAX_COMMIT_VELOCITY = 3000
 const SWITCHER_COMMIT_VELOCITY = -500
 // How far the overlay shrinks while the bottom swipe-up follows the finger.
 const SWIPE_UP_SCALE_TO = 0.5
-const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 250 : 300
-const FADE_IN_SCALE_FROM = 0.4
-const FADE_OUT_DURATION_MS = 300
+// Scale the overlay shrinks to when committing the bottom swipe-up to the app
+// switcher (a deliberate zoom-out, distinct from the open/close slide).
 const FADE_OUT_SCALE_TO = 0.4
+// Standard OS-style open/close: the overlay slides in horizontally from the
+// right edge (push) and slides back out to the right (pop), mimicking the
+// native stack transition rather than the old fade+zoom. The slide distance is
+// the full screen width (set per-render below).
+const SLIDE_DURATION_MS = Platform.OS === "ios" ? 450 : 400
 // iOS liquid-glass warm-up for offline-hosted apps: the overlay mounts fully
-// opaque (but shrunk to a dot) for this long so the glass views configure
-// under an opaque ancestor before the real open animation plays.
+// opaque (parked off-screen to the right) for this long so the glass views
+// configure under an opaque ancestor before the real slide-in plays.
 const GLASS_WARMUP_MS = 10
-const GLASS_WARMUP_SCALE = 0.15
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
@@ -91,7 +96,14 @@ export default function Compositor() {
   )
   useEffect(() => {
     if (foregroundApp) {
-      setRenderedApp(foregroundApp)
+      // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
+      // hands us a new foregroundApp object reference on every poll even when
+      // it's the same app; re-setting state with it would re-render the overlay
+      // (and its Animated.View) mid-slide and hitch the open animation. Freezing
+      // the reference for the lifetime of one open keeps the slide on the UI
+      // thread, uninterrupted. (Fields like name/url are read once at mount via
+      // the package-keyed child, so a stale reference here is fine.)
+      setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName ? prev : foregroundApp))
     }
     if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
       if (foregroundApp) {
@@ -265,73 +277,78 @@ export default function Compositor() {
       }
     })
 
-  // Drive fade-in(foreground) and fade-out + shrink (clear).
+  // OPEN: slide the overlay in from the right edge once the app is actually
+  // mounted. This is keyed on `renderedApp` (not `isForeground`) on purpose:
+  // on tap, `foregroundApp` flips to non-null but `renderedApp` is set one
+  // render later by the effect above, so the overlay doesn't exist yet on the
+  // first foreground render. Driving the slide off `renderedApp` guarantees the
+  // animation starts on the same render the <Animated.View> first mounts —
+  // otherwise the withTiming runs against an unmounted view and the app just
+  // pops in. We standardize this slide for BOTH local miniapps and
+  // offline-hosted apps (Settings, glasses mirror, …) so every local app opens
+  // like a native OS stack push.
+  const openedPackageRef = useRef<string | null>(null)
   useEffect(() => {
-    if (isForeground) {
-      didSwipeToExit.current = false // reset the flag so we can animate out again
-      setCapsuleVisible(false) // hide the capsule until the open animation finishes
-      swipeTranslateX.value = 0
-      swipeTranslateY.value = 0
-      // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
-      // configured while an ancestor animates opacity. Warm-up trick: mount
-      // fully OPAQUE but scaled to a dot for ~10ms so the glass initializes
-      // under an opaque ancestor, then snap to the normal animation's start
-      // state and play the usual fade+zoom.
-      if (Platform.OS === "ios" && foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
-        fadeOpacity.value = 1
-        fadeScale.value = GLASS_WARMUP_SCALE
-        // Park the overlay off-screen during the warm-up so the opaque
-        // surface never actually paints in view; snap back as the real
-        // animation starts.
-        // swipeTranslateY.value = screenHeight
-        // swipeTranslateY.value = withSequence(
-        //   withTiming(screenHeight, {duration: GLASS_WARMUP_MS}),
-        //   withTiming(0, {duration: 0}),
-        // )
-        fadeOpacity.value = withSequence(
-          withTiming(1, {duration: GLASS_WARMUP_MS}), // hold opaque while glass configures
-          withTiming(0, {duration: 0}), // snap invisible
-          withTiming(1, {duration: FADE_IN_DURATION_MS}), // normal fade-in
-        )
-        fadeScale.value = withSequence(
-          withTiming(GLASS_WARMUP_SCALE, {duration: GLASS_WARMUP_MS}),
-          withTiming(FADE_IN_SCALE_FROM, {duration: 0}),
-          withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
-            // Reveal the capsule only after the open animation completes.
-            if (finished) runOnJS(setCapsuleVisible)(true)
-          }), // normal zoom-in
-        )
-      } else {
-        // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
-        // opacity fade so the app surface grows into place.
-        fadeScale.value = 0
-        fadeOpacity.value = 1
-        // fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
-        // fadeScale.value = withDelay(
-        //   500,
-        //   withTiming(1, {duration: 100}, (finished) => {
-        //     // Reveal the capsule only after the open animation completes.
-        //     if (finished) runOnJS(setCapsuleVisible)(true)
-        //   }),
-        // )
+    if (!renderedApp || !isForeground) return
+    // Only play the open slide when a NEW app is foregrounded, not on unrelated
+    // re-renders (e.g. capsule/gesture state changes) while it's already open.
+    if (openedPackageRef.current === renderedApp.packageName) return
+    openedPackageRef.current = renderedApp.packageName
 
-        fadeOpacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
-        fadeScale.value = withTiming(1, {duration: FADE_IN_DURATION_MS}, (finished) => {
-          // Reveal the capsule only after the open animation completes.
-          if (finished) runOnJS(setCapsuleVisible)(true)
-        })
-      }
+    didSwipeToExit.current = false // reset so we can animate out again
+    setCapsuleVisible(false) // hide the capsule until the open slide finishes
+    // Opacity and scale stay at 1 for the whole slide — the OS push doesn't
+    // fade or zoom, it just translates the new surface in from the edge.
+    fadeScale.value = 1
+    swipeTranslateY.value = 0
+    fadeOpacity.value = 1
+
+    const slideIn = () =>
+      withTiming(0, {duration: SLIDE_DURATION_MS, easing: Easing.out(Easing.cubic)}, (finished) => {
+        // Reveal the capsule only after the open animation completes.
+        if (finished) runOnJS(setCapsuleVisible)(true)
+      })
+
+    // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
+    // configured while an ancestor is mid-transition. Warm-up trick: mount
+    // fully OPAQUE but parked off-screen to the right for ~10ms so the glass
+    // initializes under an opaque ancestor, then slide in normally.
+    if (Platform.OS === "ios" && isOfflineHosted(renderedApp.packageName)) {
+      swipeTranslateX.value = screenWidth // park off-screen right while glass configures
+      swipeTranslateX.value = withSequence(
+        withTiming(screenWidth, {duration: GLASS_WARMUP_MS}), // hold parked while glass configures
+        slideIn(),
+      )
     } else {
-      // only animate out if we didn't swipe to exit:
-      if (!didSwipeToExit.current) {
-        fadeOpacity.value = withTiming(0, {duration: FADE_OUT_DURATION_MS}, (finished) => {
-          // Unmount (tear down the WebView) only after the fade-out has played.
-          if (finished) runOnJS(setRenderedApp)(null)
-        })
-        fadeScale.value = withTiming(FADE_OUT_SCALE_TO, {duration: FADE_OUT_DURATION_MS})
-      }
+      swipeTranslateX.value = screenWidth // start fully off-screen to the right
+      swipeTranslateX.value = slideIn()
     }
-  }, [isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale])
+    // Depend on the package STRING, not the renderedApp object. refresh() is
+    // event-driven and re-creates app objects on every poll, so depending on the
+    // object re-ran this effect (and re-rendered the overlay) mid-slide — the
+    // source of the open-animation hitch. The package only changes when a truly
+    // different app is foregrounded, which is the only time we want to re-slide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderedApp?.packageName, isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale, screenWidth])
+
+  // CLOSE: slide the overlay back out to the right, then unmount. The swipe-to-
+  // back / swipe-up-to-switcher paths drive their own off-screen animation, so
+  // we only run this for the button/X (non-swipe) close.
+  useEffect(() => {
+    if (isForeground) return
+    openedPackageRef.current = null // allow the next open to re-trigger the slide
+    if (didSwipeToExit.current) return
+    fadeOpacity.value = 1
+    fadeScale.value = 1
+    swipeTranslateX.value = withTiming(
+      screenWidth,
+      {duration: SLIDE_DURATION_MS, easing: Easing.in(Easing.cubic)},
+      (finished) => {
+        // Unmount (tear down the WebView) only after the slide-out has played.
+        if (finished) runOnJS(setRenderedApp)(null)
+      },
+    )
+  }, [isForeground, swipeTranslateX, fadeOpacity, fadeScale, screenWidth])
 
   if (!renderedApp) return null
 

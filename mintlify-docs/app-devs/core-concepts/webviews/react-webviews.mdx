@@ -1,464 +1,146 @@
 ---
-title: React Webviews
-description: Build React-based webviews for MentraOS using @mentra/react. Learn setup, authentication, making authenticated API calls, and troubleshooting with a full example.
+title: "The UI layer"
+description: "Build the miniapp's WebView UI with React, talking to the background over the injected mentra global."
+icon: "browser"
 ---
 
-The [`@mentra/react`](https://www.npmjs.com/package/@mentra/react) library simplifies building React-based webviews that integrate seamlessly with MentraOS authentication. When users open your webview through the MentraOS Mobile App, they are automatically authenticated without requiring a separate login process.
+The UI layer is the on-demand half of a [two-layer miniapp](/app-devs/core-concepts/two-layer-architecture). It is a normal React app that mounts when the user opens your tile and is destroyed when they leave. It has zero direct hardware access. To reach the glasses it sends messages to its own [background layer](/app-devs/core-concepts/session), which holds the `session` and translates those messages into `session.*` calls. The bridge is a single injected global named `mentra`.
 
-## What Are React Webviews?
+The entry point is small: create a React root, wrap it in `<MentraProvider>`, and call `mentra.ready()`.
 
-React webviews are web applications built with React that run inside the MentraOS Mobile App. They provide rich user interfaces for:
+```tsx src/ui/main.tsx
+import { createRoot } from "react-dom/client";
+import { MentraProvider } from "@mentra/miniapp/ui";
+import "../shared/channels";
+import { App } from "./App";
 
-- **Settings and Configuration**: Let users customize your app's behavior
-- **Data Visualization**: Display charts, graphs, and analytics
-- **Content Management**: Create, edit, and organize user content
-- **Dashboard Interfaces**: Show personalized information and controls
+createRoot(document.getElementById("root")!).render(
+  <MentraProvider>
+    <App />
+  </MentraProvider>,
+);
 
-The `@mentra/react` library handles all the authentication complexity, automatically extracting and verifying user tokens from the MentraOS system.
-
-## Complete Example
-
-There's a complete example of a React webview in the [`MentraOS-React-Example-App`](https://github.com/Mentra-Community/MentraOS-React-Example-App) repository. Simply follow along with the README to get off the ground quickly.
-
-## Installation
-
-Install the React authentication library in your webview project:
-
-```bash
-bun add @mentra/react
+mentra.ready(); // flush any messages background buffered while the WebView mounted
 ```
 
-## Prerequisites
+UI imports come from two sub-paths. `@mentra/miniapp/ui` re-exports everything (the `mentra` global types, the React hooks, `<MentraProvider>`, `<MiniappHeader>`), and `@mentra/miniapp/react` exports the hooks and components directly. There is no `@mentra/sdk` here and no hosted server: the UI never authenticates, never opens a port, and never owns a session.
 
-- **React 16.8+**: The library uses React Hooks
-- **MentraOS App Server**: Your backend must be deployed.
-- **Developer Console Setup**: Set the webview url in the developer console to your frontend server
+<Note>
+The UI layer must not construct a `MiniappSession`. That class is the background (JSContext) API. Inside a WebView its `CONNECT` never gets acked by the host's UI router, so `session.connect()` times out with `CONNECT_ACK timeout`. UI code reaches the glasses only through `mentra`, and reads host state through the hooks below.
+</Note>
 
-## Basic Setup
+## The `mentra` global
 
-### 1. Wrap Your App with the Authentication Provider
-
-The `MentraAuthProvider` component manages authentication state for your entire React application:
+The host injects `mentra` into every UI WebView before your content loads. It carries the typed bus to background plus the two lifecycle signals.
 
 ```tsx
-// src/main.tsx
-import React from "react"
-import ReactDOM from "react-dom/client"
-import App from "./App"
-import {MentraAuthProvider} from "@mentra/react"
-
-/**
- * Application entry point that provides MentraOS authentication context
- * to the entire React component tree
- */
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <MentraAuthProvider>
-      <App />
-    </MentraAuthProvider>
-  </React.StrictMode>,
-)
+mentra.send("ping", { at: Date.now() });             // fire-and-forget, UI → background
+const off = mentra.on("pong", ({ roundtripMs }) => { /* … */ }); // subscribe, returns an unsubscribe fn
+const res = await mentra.request("getNotes", {});    // request/response (RPC)
+mentra.ready();                                       // call once on bootstrap
 ```
 
-### 2. Access Authentication State
+| Method | What it does |
+|---|---|
+| `mentra.send(channel, payload)` | Broadcast a message to background. Buffered until `ready()` is acked, then flushes; after that it fires immediately. Compile-error on an RPC channel. |
+| `mentra.on(channel, cb)` | Subscribe to broadcasts from background. Returns an unsubscribe function. Compile-error on an RPC channel. |
+| `mentra.request(channel, payload, options?)` | Call a background `session.ui.handle(channel, …)` handler and await its return. No default timeout; pass `options.timeout` and `options.signal` to bound it. |
+| `mentra.onOpen(cb)` | Fires when the bridge is open and `send` is flushable. Fires immediately if you subscribe after `ready()`. Returns an unsubscribe function. |
+| `mentra.onClose(cb)` | Fires when the host is about to destroy the WebView. Snapshot state into background via `send` here if you want it to survive. |
+| `mentra.ready()` | Call once on bootstrap. Tells the host the WebView is mounted; background's `session.ui.onOpen` handlers fire after this lands. Idempotent. |
 
-Use the `UseMentraAuth` hook to access user information and authentication status:
+The two sides are asymmetric on purpose. `mentra.send` from the UI buffers until `ready()`, while `session.ui.send` from the background drops silently when no WebView is open. See [Talking between layers](/app-devs/core-concepts/two-layer-architecture#talking-between-layers) for the background side (`session.ui.handle`, `on`, `send`).
+
+`mentra.request` rejects with an `Error` whose `name` is `MentraRpcError` (the handler threw), `MentraRpcTimeoutError` (the `timeout` elapsed), or `AbortError` (the `signal` aborted). Branch on `err.name`, not `instanceof`: these errors come from the WebView's bare runtime scope, so `instanceof` checks are unreliable across the bridge.
+
+## Typed channels
+
+Declare every channel once in `src/shared/channels.ts`. Both halves import this file, so channel names and payload shapes are checked at compile time on both sides of the bridge. `MentraTyped<Channels>` types the global; importing the file for its `declare global` side effect is what wires the types in.
+
+```typescript src/shared/channels.ts
+import type { MentraTyped } from "@mentra/miniapp/ui";
+
+export interface Channels {
+  ping: { at: number };                       // UI → background
+  pong: { at: number; roundtripMs: number };  // background → UI
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var mentra: MentraTyped<Channels>;
+}
+```
+
+For request/response channels, mark the entry as an RPC shape so `mentra.request` (and `useRpc`) infer the request and response types. `send`/`on` then reject that channel at compile time, and `request` rejects the broadcast channels.
+
+## React hooks
+
+Each hook is a thin read over host-injected state or the `mentra` bridge. The host injects safe-area and color-scheme values once before content loads, so those hooks read at mount and do not update at runtime (a theme or orientation change forces a reload).
+
+| Hook | Signature | Returns |
+|---|---|---|
+| `useConnected` | `useConnected(): boolean` | `true` while the `mentra` bridge is open (after `ready()`, before close). Tracks `onOpen`/`onClose`. |
+| `useColorScheme` | `useColorScheme(): MiniappColorScheme` | The host's color scheme, `"light"` or `"dark"`, read once at mount. |
+| `useSafeArea` | `useSafeArea(): UseSafeAreaResult` | `{ insets, capsuleMenu }`: pixel insets to pad your root with, plus the capsule menu rect (`null` when the host renders none). |
+| `useCapsuleHeaderStyle` | `useCapsuleHeaderStyle(options?): CSSProperties` | Ready-to-spread CSS that vertically aligns a header row with the floating capsule menu. |
+| `useCapabilities` | `useCapabilities(): GlassesCapabilities \| null` | Always `null` in the UI. The glasses profile is background-only; relay it over a channel instead (read `session.capabilities`, `session.ui.send` it, then `mentra.on` it). |
+| `useRpc` | `useRpc<Channels, C>(channel): RpcCallable` | A stable callable around `mentra.request(channel, …)` for one RPC channel, plus `.abort()`. |
+
+`useRpc` recreates its `AbortController` per call: calling it again aborts the previous in-flight request (good for per-keystroke autocomplete), and unmount aborts everything pending. A caller-provided `options.signal` is merged with the internal one.
 
 ```tsx
-// src/components/UserProfile.tsx
-import React from "react"
-import {UseMentraAuth} from "@mentra/react"
+import { useRpc } from "@mentra/miniapp/react";
 
-/**
- * Component that displays user authentication status and profile information.
- * Demonstrates basic usage of the MentraOS authentication hook.
- *
- * @returns {React.JSX.Element} User profile component with authentication state
- */
-const UserProfile: React.FC = (): React.JSX.Element => {
-  const {userId, isLoading, error, isAuthenticated, logout} = UseMentraAuth()
-
-  // Handle loading state during authentication
-  if (isLoading) {
-    return <div>Loading authentication...</div>
-  }
-
-  // Handle authentication errors
-  if (error) {
-    return (
-      <div style={{color: "red"}}>
-        <p>Authentication Error: {error}</p>
-        <p>Please ensure you are opening this page from the MentraOS app.</p>
-      </div>
-    )
-  }
-
-  // Handle unauthenticated state
-  if (!isAuthenticated || !userId) {
-    return <div>Not authenticated. Please open from the MentraOS Mobile App.</div>
-  }
-
-  // Display authenticated user information
-  return (
-    <div>
-      <h2>Welcome, MentraOS User!</h2>
-      <p>
-        User ID: <strong>{userId}</strong>
-      </p>
-      <button onClick={logout}>Logout</button>
-    </div>
-  )
-}
-
-export default UserProfile
+const autocomplete = useRpc<Channels, "places:autocomplete">("places:autocomplete");
+const results = await autocomplete({ query: "blue bot" });
+autocomplete.abort(); // cancel the latest in-flight call
 ```
 
-## Complete Example Application
+<Note>
+`useCapabilities` returns `null` by design. It does not construct a `MiniappSession` (which would time out in a WebView). When a UI page needs the glasses profile, read `session.capabilities` in a background `session.ui.onOpen` handler, `session.ui.send` it on a channel, and pick it up in the UI with `mentra.on`.
+</Note>
 
-Here's a comprehensive example that demonstrates authentication, API calls, and error handling:
+## Components
+
+### `<MentraProvider>`
+
+The optional root provider. Today it keeps `<html class="dark">` in sync with the host's color scheme so shared theme CSS switches automatically. The toggle runs synchronously during render, so children paint with the right class on first mount and there is no theme flash. Pass `syncColorScheme={false}` if your app owns the `dark` class itself (for example when integrating a theming library).
 
 ```tsx
-/**
- * Main application component that demonstrates MentraOS authentication integration.
- * This file serves as the root component for testing the mentraos-react package functionality.
- */
-
-import React, {useState} from "react"
-import {MentraAuthProvider, UseMentraAuth} from "@mentra/react"
-
-/**
- * Type definition for the API response from the notes endpoint
- */
-interface NotesApiResponse {
-  [key: string]: any // Allow flexible response structure
-}
-
-/**
- * Content component that displays authentication status and user information.
- * This component consumes the MentraAuth context to show loading states,
- * errors, and authenticated user data. It also provides functionality to make
- * authenticated API calls to the App backend.
- *
- * @returns {React.JSX.Element} The rendered content based on authentication state
- */
-function Content(): React.JSX.Element {
-  const {userId, isLoading, error, isAuthenticated, frontendToken} = UseMentraAuth()
-
-  // State for managing API call results and loading state
-  const [apiResult, setApiResult] = useState<NotesApiResponse | null>(null)
-  const [apiError, setApiError] = useState<string | null>(null)
-  const [isLoadingApi, setIsLoadingApi] = useState<boolean>(false)
-
-  /**
-   * Makes an authenticated API call to the app backend notes endpoint
-   * Uses the frontendToken for authorization
-   */
-  const fetchNotesFromBackend = async (): Promise<void> => {
-    if (!frontendToken) {
-      setApiError("No frontend token available for backend call.")
-      return
-    }
-
-    setIsLoadingApi(true)
-    setApiError(null)
-    setApiResult(null)
-
-    try {
-      const response = await fetch(`/api/notes`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${frontendToken}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`Backend request failed: ${response.status} ${response.statusText}`)
-      }
-
-      const data: NotesApiResponse = await response.json()
-      setApiResult(data)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred"
-      setApiError(errorMessage)
-    } finally {
-      setIsLoadingApi(false)
-    }
-  }
-
-  // Handle loading state
-  if (isLoading) {
-    return <p>Loading authentication...</p>
-  }
-
-  // Handle error state
-  if (error) {
-    return <p style={{color: "red"}}>Error: {error}</p>
-  }
-
-  // Handle unauthenticated state
-  if (!isAuthenticated) {
-    return <p>Not authenticated. Please log in.</p>
-  }
-
-  // Handle authenticated state
-  return (
-    <div>
-      <p style={{color: "green"}}>✓ Successfully authenticated!</p>
-      <p>
-        User ID: <strong>{userId}</strong>
-      </p>
-
-      {/* API Testing Section */}
-      <div style={{marginTop: "30px", padding: "20px", border: "1px solid #ccc", borderRadius: "8px"}}>
-        <h2>Backend API Test</h2>
-        <p>Test authenticated calls to your app backend:</p>
-
-        <button
-          onClick={fetchNotesFromBackend}
-          disabled={isLoadingApi}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: isLoadingApi ? "#ccc" : "#007bff",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: isLoadingApi ? "not-allowed" : "pointer",
-            fontSize: "16px",
-          }}>
-          {isLoadingApi ? "Loading..." : "Fetch Notes from Backend"}
-        </button>
-
-        {/* Display API loading state */}
-        {isLoadingApi && <p style={{color: "#666", marginTop: "10px"}}>Making authenticated request...</p>}
-
-        {/* Display API errors */}
-        {apiError && (
-          <div
-            style={{
-              marginTop: "15px",
-              padding: "10px",
-              backgroundColor: "#ffe6e6",
-              border: "1px solid #ff9999",
-              borderRadius: "4px",
-            }}>
-            <strong style={{color: "#cc0000"}}>API Error:</strong>
-            <p style={{color: "#cc0000", margin: "5px 0 0 0"}}>{apiError}</p>
-          </div>
-        )}
-
-        {/* Display API results */}
-        {apiResult && (
-          <div
-            style={{
-              marginTop: "15px",
-              padding: "10px",
-              backgroundColor: "#e6ffe6",
-              border: "1px solid #99ff99",
-              borderRadius: "4px",
-            }}>
-            <strong style={{color: "#006600"}}>API Response:</strong>
-            <pre
-              style={{
-                backgroundColor: "#f5f5f5",
-                padding: "10px",
-                borderRadius: "4px",
-                overflow: "auto",
-                maxHeight: "300px",
-                fontSize: "14px",
-                fontFamily: 'Monaco, Consolas, "Courier New", monospace',
-              }}>
-              {JSON.stringify(apiResult, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/**
- * Root App component that provides authentication context to the entire application.
- * This component wraps the Content component with the MentraAuthProvider
- * to enable authentication functionality throughout the app.
- *
- * @returns {React.JSX.Element} The main application component
- */
-function App(): React.JSX.Element {
-  return (
-    <MentraAuthProvider>
-      <div style={{padding: "20px", fontFamily: "Arial, sans-serif"}}>
-        <h1>MentraOS React Test App</h1>
-        <Content />
-      </div>
-    </MentraAuthProvider>
-  )
-}
-
-export default App
+<MentraProvider syncColorScheme>
+  <App />
+</MentraProvider>
 ```
 
-## Making Authenticated API Calls
+### `<MiniappHeader>`
 
-The `frontendToken` from `UseMentraAuth` is a JWT token that you should include in the `Authorization` header when making requests to your App backend:
+A drop-in header that aligns with the host's capsule menu, leaving the top-right clear. It has three slots: `left`, `title`, and `right`. A string `title` renders as a semantic `<h1>`; pass a node for custom markup. Set `onBack` to render a back chevron in the left slot (ignored if `left` is set). The component layers `useCapsuleHeaderStyle` underneath, so its `UseCapsuleHeaderStyleOptions` (`leftPadding`, `rightGap`, `fallbackHeight`, `fallbackMarginTop`) are accepted as props.
 
 ```tsx
-/**
- * Hook for making authenticated API calls to the app backend
- *
- * @returns {Object} Functions for making authenticated requests
- */
-const useAuthenticatedApi = () => {
-  const {frontendToken} = UseMentraAuth()
+import { MiniappHeader } from "@mentra/miniapp/react";
 
-  /**
-   * Makes an authenticated GET request to the specified endpoint
-   *
-   * @param {string} endpoint - The API endpoint to call
-   * @returns {Promise<any>} The response data
-   * @throws {Error} If the request fails or token is missing
-   */
-  const authenticatedGet = async (endpoint: string): Promise<any> => {
-    if (!frontendToken) {
-      throw new Error("No authentication token available")
-    }
-
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${frontendToken}`,
-      },
-    })
-
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * Makes an authenticated POST request with JSON data
-   *
-   * @param {string} endpoint - The API endpoint to call
-   * @param {any} data - The data to send in the request body
-   * @returns {Promise<any>} The response data
-   * @throws {Error} If the request fails or token is missing
-   */
-  const authenticatedPost = async (endpoint: string, data: any): Promise<any> => {
-    if (!frontendToken) {
-      throw new Error("No authentication token available")
-    }
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${frontendToken}`,
-      },
-      body: JSON.stringify(data),
-    })
-
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  return {authenticatedGet, authenticatedPost}
-}
+<MiniappHeader
+  title="My Miniapp"
+  onBack={() => history.back()}
+  right={<Badge>Connected</Badge>}
+/>
 ```
 
-## Authentication Hook API
+Use `useCapsuleHeaderStyle` directly when you want full control over header markup but want the alignment math done for you. For the capsule-menu rect, the safe-area insets, and where you may not place clickable content, see [Safe Areas & Layout](/app-devs/core-concepts/webviews/safe-areas).
 
-The `UseMentraAuth` hook returns an object with the following properties:
+## Next steps
 
-```typescript
-interface MentraAuthContextType {
-  /** Unique identifier for the authenticated user */
-  userId: string | null
-
-  /** JWT token for making authenticated requests to your app backend */
-  frontendToken: string | null
-
-  /** True while authentication is being processed */
-  isLoading: boolean
-
-  /** Error message if authentication fails */
-  error: string | null
-
-  /** True if the user is successfully authenticated */
-  isAuthenticated: boolean
-
-  /** Function to clear authentication state and log out */
-  logout: () => void
-}
-```
-
-## How Authentication Works
-
-1. **Token Extraction**: When the MentraOS Mobile App opens your webview, it appends an `aos_signed_user_token` parameter to the URL
-2. **Token Verification**: The library verifies the token's signature against the MentraOS Cloud public key
-3. **User Identification**: If valid, it extracts the `userId` and `frontendToken` from the token payload
-4. **Persistence**: The authentication data is stored in `localStorage` for the session
-5. **Context Sharing**: All authentication state is made available through React Context
-
-## Troubleshooting
-
-### Common Issues
-
-**"MentraOS signed user token not found"**
-
-- Ensure your webview is opened through the MentraOS Mobile App
-- Check that the manager app is correctly appending the token to your URL
-- Verify your webview URL is configured correctly in the Developer Console
-
-**"Token validation failed"**
-
-- Verify the device clock is synchronized (token expiration is time-sensitive)
-- Check that you're using the latest version of `@mentra/react`
-- Ensure the MentraOS Mobile App is up to date
-
-**Backend authentication fails**
-
-- Check that you're sending the `Authorization: Bearer ${frontendToken}` header
-- Verify your app server is configured to accept the frontend token
-
-**Changes not reflecting**
-
-- Clear browser cache and localStorage
-- Restart the MentraOS Mobile App
-- Check browser developer tools for JavaScript errors
-
-### Debugging Tips
-
-Enable debug logging to troubleshoot authentication issues:
-
-```tsx
-// Add this to see authentication state changes
-const Content = () => {
-  const auth = UseMentraAuth()
-
-  // Log authentication state for debugging
-  React.useEffect(() => {
-    console.log("Auth state:", {
-      userId: auth.userId,
-      isAuthenticated: auth.isAuthenticated,
-      isLoading: auth.isLoading,
-      error: auth.error,
-      hasToken: !!auth.frontendToken,
-    })
-  }, [auth])
-
-  // ... rest of component
-}
-```
-
-## Next Steps
-
-- **[Complete Example Application](https://github.com/Mentra-Community/MentraOS-React-Example-App)**: See a complete example of a React webview
-- **[Deploying a React App](https://github.com/Mentra-Community/MentraOS-React-Example-App/blob/main/DEPLOYMENT-single-server.md)**: This guide covers deploying the MentraOS React Example App to production
-- **[Webview Authentication Overview](/webview-auth-overview)**: Learn about the broader authentication system
-- **[Core Concepts](/core-concepts)**: Understand the full MentraOS ecosystem
+<CardGroup cols={2}>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    The bus model and how background and UI talk.
+  </Card>
+  <Card title="Safe areas & layout" icon="border-outer" href="/app-devs/core-concepts/webviews/safe-areas">
+    Keep content clear of the capsule menu.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    The background-side `session` your UI sends to.
+  </Card>
+  <Card title="Interop & Actions" icon="arrows-left-right" href="/app-devs/core-concepts/miniapp-interop">
+    Let other miniapps call yours.
+  </Card>
+</CardGroup>

@@ -29,11 +29,14 @@ const LOG_TAG = "cloudClient"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Team-friendly defaults for dev builds. Local Cloud V2 is still one tap away
-// via the METRO_AUTO dev-settings preset; it should not be the invisible
-// default because it depends on a local stack plus adb reverse/LAN reachability.
-const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
-const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
+// Team-friendly defaults for dev builds. Point every build at the Debug cloud
+// by default so a local build with no EXPO_PUBLIC_CLOUD_* env (see
+// .env.example) matches CI instead of silently diverging onto Cloud Dev. Local
+// Cloud V2 is still one tap away via the METRO_AUTO dev-settings preset; it
+// should not be the invisible default because it depends on a local stack plus
+// adb reverse/LAN reachability.
+const DEFAULT_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
@@ -51,7 +54,7 @@ function metroUrl(port: number): string | undefined {
  *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
  *      changing networks;
  *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
- *   3. Cloud Dev — the default shared backend for team testing.
+ *   3. Cloud Debug — the default shared backend for team testing.
  * Read via the settings store's `getState()` accessor (not a hook) so this
  * service stays React-free.
  */
@@ -159,6 +162,15 @@ let transportsReady = false
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
+// Subscribed once to the auth provider's state changes so the cloud client can
+// self-heal when a Supabase session becomes available AFTER the first connect
+// attempt. At app boot (esp. in release builds, where the JS bundle loads fast)
+// init() can fire its connect before the persisted session has been restored;
+// that first connect fails token fetch and the runtime never comes up. When the
+// session then lands we force a reconnect — the same thing the dev "Cloud V2 →
+// Save & Test" button does — so live features (maps/polyline, captions) work
+// without a manual tap. Set up in init(), torn down nowhere (process-lifetime).
+let authStateUnsubscribe: (() => void) | null = null
 
 const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
@@ -234,6 +246,89 @@ function ensureTransports(): void {
   transportsReady = true
   setNativeUdp(() => createCloudUdpSocket())
   setSecureStorage(cloudSecureStore)
+}
+
+/**
+ * Watch the auth provider and force a reconnect when a session becomes available
+ * while the runtime is NOT connected. Idempotent: only subscribes once.
+ *
+ * Why this exists: init()'s first connect is fire-and-forget and needs a
+ * Supabase subject token. At boot the persisted session may not be restored yet
+ * (most reliably reproduced in release builds, which load JS fast), so that
+ * first connect fails token fetch and live features stay dead until the dev
+ * manually re-saves the Cloud URL. This reconnects automatically the moment the
+ * session lands — the programmatic equivalent of that manual tap.
+ *
+ * Guards:
+ *  - Only reconnects on an event that carries a session (token present); a
+ *    SIGNED_OUT (null session) is ignored so we never thrash on logout.
+ *  - Only reconnects when `connected` is false, so a TOKEN_REFRESHED on an
+ *    already-live session does not needlessly tear down the connection (the
+ *    SDK refreshes the token in place on its own).
+ */
+function ensureAuthWatch(): void {
+  if (authStateUnsubscribe) return
+  // Latch the guard FIRST, before anything that can throw or re-enter. The
+  // callback below calls reconnect() -> init() -> ensureAuthWatch(); without an
+  // up-front latch a throw here (or that re-entry) would re-subscribe on every
+  // reconnect and, since Supabase replays INITIAL_SESSION to each new listener,
+  // spin an infinite reconnect loop. A no-op placeholder is replaced with the
+  // real unsubscribe once we have it.
+  authStateUnsubscribe = () => {}
+
+  // Only one reconnect in flight at a time. Supabase fires INITIAL_SESSION to
+  // every listener and `connected` only flips true after an async handshake, so
+  // without this a burst of session events would queue several reconnects.
+  let reconnectPending = false
+
+  try {
+    const sub: unknown = mentraAuth.onAuthStateChange((event, session) => {
+      if (!session?.token) return // no token (e.g. SIGNED_OUT) — nothing to do
+      if (connected || reconnectPending) return // already live or mid-reconnect
+      reconnectPending = true
+      console.log(`${LOG_TAG}: auth session available (${event}) while disconnected — reconnecting`)
+      try {
+        cloudClient.reconnect()
+      } finally {
+        // Clear on the next tick: by then reconnect()'s synchronous init() has
+        // run and a new connect is in flight, so we won't immediately re-fire on
+        // a duplicate event, but a LATER session change can still trigger one.
+        setTimeout(() => {
+          reconnectPending = false
+        }, 0)
+      }
+    })
+
+    // The auth wrapper's return shape is not guaranteed to be a typesafe-ts
+    // Result at runtime (the lazy client can hand back the raw Supabase
+    // `{ data: { subscription } }`). Probe defensively for an unsubscribe fn
+    // wherever it lives, rather than trusting a Result API that may be absent.
+    const unsub = extractUnsubscribe(sub)
+    if (unsub) authStateUnsubscribe = unsub
+  } catch (err) {
+    console.warn(`${LOG_TAG}: auth watch subscribe failed: ${(err as Error)?.message ?? err}`)
+    // Leave the no-op latch in place: we do NOT want to retry-subscribe (that is
+    // what caused the loop). The SDK's own connect retry still covers recovery.
+  }
+}
+
+/** Best-effort dig for an `unsubscribe` fn across the shapes the auth wrapper
+ *  might return (a typesafe-ts Result `.value`, a bare Supabase `{ data }`, or
+ *  the subscription object directly). Returns null if none is found. */
+function extractUnsubscribe(sub: unknown): (() => void) | null {
+  const candidates: unknown[] = []
+  const s = sub as Record<string, unknown> | null | undefined
+  if (s && typeof s === "object") {
+    candidates.push(s)
+    candidates.push((s.value as Record<string, unknown>)?.subscription)
+    candidates.push((s.data as Record<string, unknown>)?.subscription)
+    candidates.push(s.subscription)
+  }
+  for (const c of candidates) {
+    const unsub = (c as {unsubscribe?: unknown})?.unsubscribe
+    if (typeof unsub === "function") return unsub as () => void
+  }
+  return null
 }
 
 function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
@@ -403,6 +498,9 @@ export const cloudClient = {
     if (adapter && client) return adapter
 
     ensureTransports()
+    // Self-heal: if this first connect loses the boot race with auth, reconnect
+    // automatically once the Supabase session lands (see ensureAuthWatch).
+    ensureAuthWatch()
     if (!adapter) {
       adapter = buildAdapter()
     }

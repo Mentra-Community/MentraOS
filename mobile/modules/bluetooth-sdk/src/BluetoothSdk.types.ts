@@ -310,9 +310,7 @@ export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "
   status: "recording_stopped"
 }
 
-export type VideoRecordingSuccessStatusEvent =
-  | VideoRecordingStartedStatusEvent
-  | VideoRecordingStoppedStatusEvent
+export type VideoRecordingSuccessStatusEvent = VideoRecordingStartedStatusEvent | VideoRecordingStoppedStatusEvent
 
 export type MediaUploadSuccessEvent = {
   type: "media_success"
@@ -483,6 +481,7 @@ export const DeviceModels = {
   Mach1: "Mentra Mach1",
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
+  Nimo: "NIMO",
   R1: "Even Realities R1",
 } as const
 

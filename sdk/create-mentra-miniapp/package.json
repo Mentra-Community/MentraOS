@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Scaffold a new MentraOS miniapp project",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "create-mentra-miniapp": "./bin/index.ts"
   },

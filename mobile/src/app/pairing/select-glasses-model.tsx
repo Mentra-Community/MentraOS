@@ -7,6 +7,7 @@ import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
@@ -44,13 +45,15 @@ export default function SelectGlassesModelScreen() {
         return <MentraLogo color={theme.colors.text} />
       case DeviceTypes.Z100:
         return <VuzixLogo color={theme.colors.text} />
+      case DeviceTypes.NIMO:
+        return <NimoLogo />
       default:
         return null
     }
   }
 
   // Glasses models that should only be visible in super mode.
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
 
   // Platform-specific glasses options
   const glassesOptions =
@@ -63,6 +66,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           //{deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
@@ -74,6 +78,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           // {deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
 

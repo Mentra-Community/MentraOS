@@ -470,26 +470,37 @@ export class MiniappSession {
   /**
    * Send a request and get a Promise that resolves with the REQUEST_RESULT payload.
    * Rejects with a MiniappRequestError if the phone returns an error result.
+   *
+   * `opts.timeoutMs` overrides the default request timeout. Pass `0` to disable
+   * it entirely for inherently long-running requests whose duration is unbounded
+   * (e.g. audio playback that resolves only when the clip finishes) — those still
+   * settle via REQUEST_RESULT or `failAllPending` on disconnect, so they can't
+   * leak. Most requests should keep the default ceiling.
    */
-  sendRequest<TResult = unknown>(payload: object): Promise<TResult> {
+  sendRequest<TResult = unknown>(payload: object, opts?: {timeoutMs?: number}): Promise<TResult> {
     if (this.disposed) {
       return Promise.reject(new NotConnectedError())
     }
     const requestId = makeRequestId()
     const envelope: MiniappEnvelope = {payload, requestId}
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     return new Promise<TResult>((resolve, reject) => {
       // Reject (and drop) the request if the host never sends a REQUEST_RESULT,
       // so the promise can't hang forever. The REQUEST_RESULT / failAllPending
-      // paths clear this timer before settling.
-      const timer = setTimeout(() => {
-        const pending = this.pendingRequests.get(requestId)
-        if (!pending) return
-        this.pendingRequests.delete(requestId)
-        pending.reject({
-          code: MiniappErrorCode.ACTION_TIMEOUT,
-          message: "Request timed out waiting for a response from the host",
-        })
-      }, DEFAULT_REQUEST_TIMEOUT_MS)
+      // paths clear this timer before settling. A non-positive timeout opts out
+      // (long-running requests rely on the host result / disconnect to settle).
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              const pending = this.pendingRequests.get(requestId)
+              if (!pending) return
+              this.pendingRequests.delete(requestId)
+              pending.reject({
+                code: MiniappErrorCode.ACTION_TIMEOUT,
+                message: "Request timed out waiting for a response from the host",
+              })
+            }, timeoutMs)
+          : undefined
       this.pendingRequests.set(requestId, {
         requestId,
         resolve: resolve as (v: unknown) => void,
