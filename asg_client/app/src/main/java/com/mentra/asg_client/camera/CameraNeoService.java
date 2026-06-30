@@ -84,6 +84,9 @@ public class CameraNeoService extends LifecycleService {
     private static final long CAMERA_KEEP_ALIVE_MS =
             3000; // Keep camera open for 3 seconds after photo
 
+    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros durationMs. */
+    private static final long DEFAULT_WARM_UP_MS = 15000;
+
     private IHardwareManager hardwareManager;
 
     // MediaTek vendor-specific camera settings (ZSL, MFNR)
@@ -138,6 +141,12 @@ public class CameraNeoService extends LifecycleService {
             "com.augmentos.camera.ACTION_START_VIDEO_RECORDING";
     public static final String ACTION_STOP_VIDEO_RECORDING =
             "com.augmentos.camera.ACTION_STOP_VIDEO_RECORDING";
+    public static final String ACTION_WARM_UP_CAMERA = "com.augmentos.camera.ACTION_WARM_UP_CAMERA";
+    private static final String EXTRA_WARM_UP_SIZE = "com.augmentos.camera.EXTRA_WARM_UP_SIZE";
+    private static final String EXTRA_WARM_UP_DURATION_MS =
+            "com.augmentos.camera.EXTRA_WARM_UP_DURATION_MS";
+    private static final String EXTRA_WARM_UP_EXPOSURE_NS =
+            "com.augmentos.camera.EXTRA_WARM_UP_EXPOSURE_NS";
     public static final String EXTRA_VIDEO_FILE_PATH = "com.augmentos.camera.EXTRA_VIDEO_FILE_PATH";
     public static final String EXTRA_VIDEO_ID = "com.augmentos.camera.EXTRA_VIDEO_ID";
     public static final String EXTRA_VIDEO_SETTINGS = "com.augmentos.camera.EXTRA_VIDEO_SETTINGS";
@@ -162,6 +171,24 @@ public class CameraNeoService extends LifecycleService {
         void onPhotoError(String errorMessage);
     }
 
+    /** Callback for {@code camera_warm_up} lifecycle (no capture). */
+    public interface CameraWarmUpCallback {
+        /** Session configured and preview/AE running — next take_photo will be warm. */
+        void onCameraReady();
+
+        /** Keep-alive expired / camera closed without capturing. */
+        void onCameraStopped();
+
+        /** Warm-up failed (open/configure failure). */
+        void onCameraError(String errorMessage);
+    }
+
+    // Warm-up callback, set by the static entry and bound to the instance in performWarmUp.
+    private static CameraWarmUpCallback sPendingWarmCallback;
+
+    /** Callback bound to the live warm-up so keep-alive expiry can emit {@code stopped}. */
+    private CameraWarmUpCallback warmCallback;
+
     // Video recording — owned by VideoRecordingSession (Phase 2.1).
     private VideoRecordingSession videoSession;
 
@@ -185,6 +212,11 @@ public class CameraNeoService extends LifecycleService {
                 @Override
                 public void startKeepAliveTimer() {
                     CameraNeoService.this.startKeepAliveTimer();
+                }
+
+                @Override
+                public void startWarmKeepAliveTimer(long durationMs) {
+                    CameraNeoService.this.startWarmKeepAliveTimer(durationMs);
                 }
 
                 @Override
@@ -606,6 +638,65 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /**
+     * Warm up the camera without taking a photo: open (if needed) + configure the capture session +
+     * start the preview (powering the ISP/sensor and running AE), then hold it warm for {@code
+     * durationMs} under the keep-alive timer. A subsequent {@link #enqueuePhotoRequest} of the same
+     * {@code size}/{@code exposureTimeNs} reuses the configured session and captures near-instantly.
+     *
+     * <p>Re-invoking while already warm simply restarts the keep-alive (that IS "keep alive"). No
+     * capture, shutter sound, or file is produced.
+     *
+     * @param size requested resolution tier ("low"/"medium"/"high"/"max")
+     * @param exposureTimeNs optional manual shutter in nanoseconds; {@code null} = auto
+     * @param durationMs keep-alive TTL in ms; {@code <= 0} uses {@link #DEFAULT_WARM_UP_MS}
+     * @param callback warm-up lifecycle callback (ready / stopped / error)
+     */
+    public static void warmUpCamera(
+            Context context,
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            CameraWarmUpCallback callback) {
+        synchronized (SERVICE_LOCK) {
+            long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
+            boolean cameraReady =
+                    sInstance != null && sInstance.cameraCoordinator.hasConfiguredCamera();
+            boolean idle =
+                    sInstance != null
+                            && sInstance.photoSession.shotState()
+                                    == AeStateMachine.ShotState.IDLE;
+            boolean warmReusable =
+                    cameraReady
+                            && idle
+                            && sInstance.photoSession.willReuseConfiguredCamera(
+                                    size, true, exposureTimeNs);
+
+            if (warmReusable) {
+                // Already configured + idle for these params — just re-arm the keep-alive.
+                Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
+                sInstance.warmCallback = callback;
+                sInstance.cancelKeepAliveTimer();
+                sInstance.startWarmKeepAliveTimer(ttl);
+                if (callback != null) {
+                    sInstance.executor.execute(callback::onCameraReady);
+                }
+                return;
+            }
+
+            sPendingWarmCallback = callback;
+
+            Intent intent = new Intent(context, CameraNeoService.class);
+            intent.setAction(ACTION_WARM_UP_CAMERA);
+            intent.putExtra(EXTRA_WARM_UP_SIZE, size);
+            intent.putExtra(EXTRA_WARM_UP_DURATION_MS, ttl);
+            if (exposureTimeNs != null) {
+                intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+            }
+            context.startForegroundService(intent);
+        }
+    }
+
+    /**
      * Legacy method - redirects to enqueuePhotoRequest for backward compatibility Defaults to SDK
      * photo (isFromSdk=true) for optimized transfer sizes
      *
@@ -722,6 +813,18 @@ public class CameraNeoService extends LifecycleService {
                     videoSession.stopRecording(videoIdToStop);
                     SystemControllerFactory.get(this).setEisEnabled(false);
                     break;
+                case ACTION_WARM_UP_CAMERA:
+                    {
+                        String warmSize = intent.getStringExtra(EXTRA_WARM_UP_SIZE);
+                        long warmDuration =
+                                intent.getLongExtra(EXTRA_WARM_UP_DURATION_MS, DEFAULT_WARM_UP_MS);
+                        Long warmExposureNs =
+                                intent.hasExtra(EXTRA_WARM_UP_EXPOSURE_NS)
+                                        ? intent.getLongExtra(EXTRA_WARM_UP_EXPOSURE_NS, 0L)
+                                        : null;
+                        performWarmUp(warmSize, warmExposureNs, warmDuration);
+                        break;
+                    }
             }
         }
         return START_STICKY;
@@ -729,6 +832,45 @@ public class CameraNeoService extends LifecycleService {
 
     private void dispatchNextPhotoRequest() {
         photoSession.dispatchNextPhotoRequest();
+    }
+
+    /**
+     * Open (if needed) + configure + preview the camera and hold it warm for {@code durationMs}
+     * without capturing. Bridges the warm-up callback into {@link PhotoSession} so {@code ready} is
+     * emitted once preview is running and {@code error} on any open/configure failure. Keep-alive
+     * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
+     */
+    private void performWarmUp(String size, Long exposureTimeNs, long durationMs) {
+        // Bind the pending callback (set by the static warmUpCamera entry) to this instance.
+        synchronized (SERVICE_LOCK) {
+            warmCallback = sPendingWarmCallback;
+            sPendingWarmCallback = null;
+        }
+        final CameraWarmUpCallback callback = warmCallback;
+        photoSession.setupWarmUp(
+                size,
+                exposureTimeNs,
+                PhotoCaptureSettings.EMPTY,
+                durationMs,
+                () -> {
+                    if (callback != null) {
+                        callback.onCameraReady();
+                    }
+                },
+                errorMessage -> {
+                    if (callback != null) {
+                        callback.onCameraError(errorMessage);
+                    }
+                });
+    }
+
+    /** Notify the bound warm-up callback that the camera was closed without capturing. */
+    private void notifyWarmStopped() {
+        CameraWarmUpCallback callback = warmCallback;
+        warmCallback = null;
+        if (callback != null) {
+            callback.onCameraStopped();
+        }
     }
 
     private void setupCameraForQueuedRequest(QueuedPhotoRequest request) {
@@ -1275,6 +1417,27 @@ public class CameraNeoService extends LifecycleService {
                     // internally), matching every other path, so this cannot deadlock.
                     synchronized (SERVICE_LOCK) {
                         closeCamera();
+                        stopSelf();
+                    }
+                });
+    }
+
+    /**
+     * Keep-alive used by {@code camera_warm_up}: holds the open/configured camera (preview running,
+     * parked at IDLE) for {@code durationMs} so a subsequent take_photo reuses the warm session.
+     * When the timer expires the camera is closed and the service stops, emitting {@code stopped}.
+     * The {@code shouldExtend} predicate is identical to the photo keep-alive — it never tears down
+     * the camera out from under an in-flight capture.
+     */
+    private void startWarmKeepAliveTimer(long durationMs) {
+        long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
+        cameraCoordinator.startKeepAlive(
+                ttl,
+                () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
+                () -> {
+                    synchronized (SERVICE_LOCK) {
+                        closeCamera();
+                        notifyWarmStopped();
                         stopSelf();
                     }
                 });

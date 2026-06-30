@@ -84,6 +84,14 @@ public final class PhotoSession {
     private volatile AeStateMachine.ShotState shotState = AeStateMachine.ShotState.IDLE;
     private final AeStateMachine aeStateMachine = new AeStateMachine();
 
+    /**
+     * When non-null, the open session is being held "warm" (ISP/sensor powered, preview running)
+     * for a {@code camera_warm_up} request rather than captured. The session is configured exactly
+     * as a same-size SDK photo would be (so {@link #willReuseConfiguredCamera} returns true) but the
+     * precapture/still path is never run — the camera parks at IDLE under the keep-alive timer.
+     */
+    @Nullable private volatile WarmUpRequest warmUpRequest;
+
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
@@ -523,6 +531,116 @@ public final class PhotoSession {
             Log.d(TAG, "Opening camera for photo capture");
             hooks.wakeUpScreen();
             hooks.openCameraInternal(request.filePath, false);
+        }
+    }
+
+    // ----- Warm-up (open + configure + preview, no capture) -----
+
+    /**
+     * Whether the open HAL session is currently being held warm for a {@code camera_warm_up}
+     * request (preview running, parked at IDLE, no capture in flight).
+     */
+    public boolean isWarmingUp() {
+        return warmUpRequest != null;
+    }
+
+    /**
+     * Prepare and hold the camera "warm" for {@code durationMs} without capturing a photo. The
+     * session is opened/reused and configured with the SAME parameters a same-size SDK photo would
+     * use ({@code isFromSdk=true}, the requested {@code size}, optional {@code exposureTimeNs}), so a
+     * later {@code take_photo} of that size reuses the configured session — see {@link
+     * #willReuseConfiguredCamera}. No precapture, still capture, shutter sound, or file is produced.
+     *
+     * <p>If the camera is already configured and idle for the same params, only the keep-alive timer
+     * is restarted (re-warming) and {@code onReady} fires immediately.
+     *
+     * @param size requested resolution tier (already normalized)
+     * @param exposureTimeNs optional manual shutter (nanoseconds); {@code null} = auto
+     * @param captureSettings per-request tuning (may be {@link PhotoCaptureSettings#EMPTY})
+     * @param durationMs keep-alive TTL in milliseconds
+     * @param onReady invoked once preview is running and AE has begun settling
+     * @param onError invoked if the camera could not be warmed
+     */
+    public void setupWarmUp(
+            @Nullable String size,
+            @Nullable Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings,
+            long durationMs,
+            Runnable onReady,
+            java.util.function.Consumer<String> onError) {
+        synchronized (hooks.serviceLock()) {
+            // Warm-up must never disrupt an in-flight capture.
+            if (shotState != AeStateMachine.ShotState.IDLE) {
+                Log.d(TAG, "camera_warm_up ignored — capture in progress (state " + shotState + ")");
+                if (onReady != null) onReady.run();
+                return;
+            }
+
+            WarmUpRequest req =
+                    new WarmUpRequest(size, exposureTimeNs, captureSettings, durationMs, onReady, onError);
+
+            // Build a synthetic queued request so the open/configure path and the
+            // configured-camera baseline match a same-size SDK photo exactly.
+            QueuedPhotoRequest synthetic =
+                    new QueuedPhotoRequest(
+                            req.warmFilePath(),
+                            size,
+                            false, // enableLed: warm-up never pulses the privacy LED
+                            true, // isFromSdk: matches the SDK take_photo sizing/quality path
+                            exposureTimeNs,
+                            null, // iso: only meaningful for manual still capture
+                            captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY,
+                            null);
+
+            boolean needsReopen = needsReconfigurationForQueued(synthetic);
+
+            warmUpRequest = req;
+            activateQueuedRequest(synthetic);
+
+            if (hooks.coordinator().isCameraKeptAlive() && hooks.coordinator().device() != null) {
+                if (needsReopen) {
+                    Log.d(TAG, "camera_warm_up: config changed, reopening camera");
+                    hooks.cancelKeepAliveTimer();
+                    hooks.closeCamera();
+                    hooks.openCameraInternal(synthetic.filePath, false);
+                } else {
+                    // Already configured + idle for these params: just re-arm keep-alive.
+                    Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
+                    hooks.cancelKeepAliveTimer();
+                    finishWarmUpReady();
+                }
+            } else {
+                Log.d(TAG, "camera_warm_up: opening camera to warm");
+                hooks.wakeUpScreen();
+                hooks.openCameraInternal(synthetic.filePath, false);
+            }
+        }
+    }
+
+    /**
+     * Called from {@link #startPreviewWithAeMonitoring()} (warm branch) once the repeating preview
+     * is running. Parks the session at IDLE under the warm keep-alive timer and reports {@code
+     * ready}; no precapture/capture is started.
+     */
+    private void finishWarmUpReady() {
+        WarmUpRequest req = warmUpRequest;
+        // Preview is running and AE is settling, but no capture is in flight.
+        shotState = AeStateMachine.ShotState.IDLE;
+        hooks.startWarmKeepAliveTimer(req != null ? req.durationMs : 0L);
+        // The warm request is consumed once the camera is parked; the configured-camera baseline
+        // (set by activateQueuedRequest) persists so a later take_photo reuses the session.
+        clearActiveCapture();
+        warmUpRequest = null;
+        if (req != null && req.onReady != null) {
+            hooks.executor().execute(req.onReady);
+        }
+    }
+
+    private void failWarmUp(String errorMessage) {
+        WarmUpRequest req = warmUpRequest;
+        warmUpRequest = null;
+        if (req != null && req.onError != null) {
+            hooks.executor().execute(() -> req.onError.accept(errorMessage));
         }
     }
 
@@ -1009,11 +1127,23 @@ public final class PhotoSession {
 
             activeSession.setRepeatingRequest(previewRequest, aeCallback, backgroundHandler);
 
+            if (warmUpRequest != null) {
+                // Warm-up: the repeating preview now powers the ISP/sensor and AE is settling.
+                // Park at IDLE under the warm keep-alive timer — do NOT enter precapture/capture.
+                Log.d(TAG, "camera_warm_up: preview running, parking camera warm (no capture)");
+                finishWarmUpReady();
+                return;
+            }
+
             startPrecaptureSequence();
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error starting preview with AE monitoring", e);
-            notifyPhotoError("Error starting preview: " + e.getMessage());
+            if (warmUpRequest != null) {
+                failWarmUp("Error starting preview: " + e.getMessage());
+            } else {
+                notifyPhotoError("Error starting preview: " + e.getMessage());
+            }
             hooks.cancelKeepAliveTimer();
             hooks.closeCamera();
             hooks.stopService();
@@ -1578,11 +1708,45 @@ public final class PhotoSession {
 
     /** Called from {@link CameraNeoService} when setup/open/session errors occur before capture. */
     public void notifyHostPhotoError(String errorMessage) {
+        if (warmUpRequest != null) {
+            failWarmUp(errorMessage);
+            return;
+        }
         notifyPhotoError(errorMessage);
     }
 
     public int previewJpegQuality() {
         return getJpegQualityForSize();
+    }
+
+    /** In-flight {@code camera_warm_up} request held while the session opens/configures. */
+    private static final class WarmUpRequest {
+        @Nullable final String size;
+        @Nullable final Long exposureTimeNs;
+        @Nullable final PhotoCaptureSettings captureSettings;
+        final long durationMs;
+        @Nullable final Runnable onReady;
+        @Nullable final java.util.function.Consumer<String> onError;
+
+        WarmUpRequest(
+                @Nullable String size,
+                @Nullable Long exposureTimeNs,
+                @Nullable PhotoCaptureSettings captureSettings,
+                long durationMs,
+                @Nullable Runnable onReady,
+                @Nullable java.util.function.Consumer<String> onError) {
+            this.size = size;
+            this.exposureTimeNs = exposureTimeNs;
+            this.captureSettings = captureSettings;
+            this.durationMs = durationMs;
+            this.onReady = onReady;
+            this.onError = onError;
+        }
+
+        /** Transient placeholder path; warm-up never writes a file, but the open path expects one. */
+        String warmFilePath() {
+            return "warmup_" + System.currentTimeMillis() + ".jpg";
+        }
     }
 
     /** Immutable snapshot of camera pipeline parameters for burst reuse decisions. */
@@ -1635,6 +1799,9 @@ public final class PhotoSession {
         void closeCamera();
 
         void startKeepAliveTimer();
+
+        /** Keep-alive with a caller-supplied TTL used by {@code camera_warm_up}. */
+        void startWarmKeepAliveTimer(long durationMs);
 
         void cancelKeepAliveTimer();
 

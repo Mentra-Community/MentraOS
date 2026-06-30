@@ -1076,6 +1076,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
         break
+      case MiniappRequestType.CAMERA_WARM_UP:
+        void this.handleCameraWarmUp(packageName, payload, requestId)
+        break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
         break
@@ -2412,6 +2415,51 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
+      })
+    }
+  }
+
+  private async handleCameraWarmUp(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    // Manifest CAMERA permission gate (same as photo).
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to warm up the camera", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.CAMERA_WARM_UP,
+      })
+      return
+    }
+
+    const photo = getRuntimeHooks().photo
+    if (!photo) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Camera warm-up is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      await photo.warmUp(packageName, {
+        size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        durationMs: payload.durationMs as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Camera warm-up failed",
         stage: (err as {stage?: string}).stage,
         transport: (err as {transport?: string}).transport,
       })

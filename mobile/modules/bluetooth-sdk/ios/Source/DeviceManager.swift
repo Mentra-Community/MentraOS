@@ -1258,6 +1258,28 @@ struct ViewState {
         try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
 
+    func warmUpCamera(
+        requestId: String,
+        appId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) {
+        guard let live = sgc as? MentraLive else {
+            Bridge.log(
+                "MAN: CAMERA WARM UP — sgc is not Mentra Live (camera warm-up unsupported); dropping requestId=\(requestId)"
+            )
+            return
+        }
+        live.warmUpCamera(
+            requestId: requestId,
+            appId: appId,
+            size: size,
+            exposureTimeNs: exposureTimeNs,
+            durationMs: durationMs
+        )
+    }
+
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
     func requestVersionInfo() {

@@ -1675,6 +1675,34 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func warmUpCamera(
+        requestId: String,
+        appId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) {
+        Bridge.log(
+            "LIVE: warmUpCamera() entry requestId=\(requestId) appId=\(appId) size=\(size.rawValue) durationMs=\(durationMs)"
+        )
+
+        let allowedSizes = ["low", "medium", "high", "max"]
+        let sizeRaw = size.rawValue
+        var json: [String: Any] = [
+            "type": "camera_warm_up",
+            "requestId": requestId,
+            "appId": appId,
+            "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
+            "durationMs": durationMs > 0 ? durationMs : 15000,
+        ]
+
+        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            json["exposureTimeNs"] = Int64(e)
+        }
+
+        sendJson(json, wakeUp: true)
+    }
+
     func startStream(_ message: [String: Any]) {
         Bridge.log("Starting stream")
         var json = message
@@ -2171,6 +2199,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "photo_status":
             emitPhotoStatus(json)
+
+        case "camera_status":
+            emitCameraStatus(json)
 
         case "photo_response":
             emitPhotoResponse(json)
@@ -4307,6 +4338,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitPhotoStatus(_ json: [String: Any]) {
         Bridge.sendPhotoStatus(json)
+    }
+
+    private func emitCameraStatus(_ json: [String: Any]) {
+        Bridge.sendCameraStatus(json)
     }
 
     private func emitPhotoResponse(_ json: [String: Any]) {

@@ -1542,6 +1542,23 @@ class DeviceManager {
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
     }
 
+    fun warmUpCamera(
+        requestId: String,
+        appId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        val live = sgc as? MentraLive
+        if (live == null) {
+            Bridge.log(
+                "MAN: CAMERA WARM UP — sgc is not Mentra Live (camera warm-up unsupported); dropping requestId=$requestId"
+            )
+            return
+        }
+        live.warmUpCamera(requestId, appId, size, exposureTimeNs, durationMs)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).

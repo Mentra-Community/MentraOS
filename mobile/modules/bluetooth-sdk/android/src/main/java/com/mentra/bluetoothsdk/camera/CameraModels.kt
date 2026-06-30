@@ -439,3 +439,13 @@ data class PhotoStatusEvent(
     val errorCode: String? get() = stringValue(values, "errorCode")
     val errorMessage: String? get() = stringValue(values, "errorMessage")
 }
+
+data class CameraStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val state: String get() = stringValue(values, "state").orEmpty()
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+}

@@ -589,6 +589,10 @@ export interface PhotoAdapter {
     size: number
     requestId: string
   }>
+  warmUp: (
+    packageName: string,
+    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+  ) => Promise<void>
 }
 
 let hooks: RuntimeHooks = {}

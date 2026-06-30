@@ -207,6 +207,40 @@ export class PhonePhotoCoordinator {
     }
   }
 
+  /**
+   * Pre-warm the glasses camera so the next takePhoto() is near-instant.
+   *
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. We mint a local
+   * requestId, send the warm-up command, and resolve when the camera reports
+   * ready (the native promise resolves on the ready status event).
+   */
+  async warmUpCamera(
+    packageName: string,
+    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+  ): Promise<void> {
+    // Pre-check: if glasses aren't connected, the BLE warm-up command would be
+    // sent into the void. Fail fast with a typed error.
+    const glasses = getRuntimeHooks().glassesStatus?.get()
+    if (!glasses?.connected) {
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+    }
+
+    // No cloud presign on the warm-up path — mint a local requestId.
+    const requestId = `warm_${Date.now()}_${Math.round(Math.random() * 1e6)}`
+
+    try {
+      await BluetoothSdk.warmUpCamera({
+        requestId,
+        appId: packageName,
+        size: normalizePhotoSize(opts.size ?? "medium"),
+        exposureTimeNs: opts.exposureTimeNs ?? null,
+        durationMs: opts.durationMs ?? 15000,
+      })
+    } catch (err) {
+      throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
+    }
+  }
+
   /** True iff this requestId is one we're currently waiting on. */
   owns(requestId: string): boolean {
     return this.activeRequests.has(requestId)

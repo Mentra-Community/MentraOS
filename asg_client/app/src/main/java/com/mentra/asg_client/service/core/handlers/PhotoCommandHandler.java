@@ -20,6 +20,9 @@ import org.json.JSONObject;
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
 
+    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros {@code durationMs}. */
+    private static final long DEFAULT_WARM_UP_DURATION_MS = 15000;
+
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
 
@@ -35,7 +38,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("take_photo");
+        return Set.of("take_photo", "camera_warm_up");
     }
 
     @Override
@@ -44,12 +47,67 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             switch (commandType) {
                 case "take_photo":
                     return handleTakePhoto(data);
+                case "camera_warm_up":
+                    return handleCameraWarmUp(data);
                 default:
                     Log.e(TAG, "Unsupported photo command: " + commandType);
                     return false;
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling photo command: " + commandType, e);
+            return false;
+        }
+    }
+
+    /**
+     * Handle {@code camera_warm_up}: open + configure + preview the camera and hold it warm for a TTL
+     * (default 15000ms) without capturing, so a subsequent {@code take_photo} of the same {@code
+     * size}/{@code exposureTimeNs} reuses the warm session. Routes to {@link
+     * MediaCaptureService#warmUpCamera} which emits {@code camera_status} (warming → ready →
+     * stopped/error).
+     */
+    private boolean handleCameraWarmUp(JSONObject data) {
+        try {
+            String packageName = resolvePackageName(data);
+            logCommandStart("camera_warm_up", packageName);
+
+            // requestId is required — reject if missing.
+            if (!validateRequestId(data)) {
+                return false;
+            }
+
+            String requestId = data.optString("requestId", "");
+            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            long durationMs = data.optLong("durationMs", 0L);
+            if (durationMs <= 0) {
+                durationMs = DEFAULT_WARM_UP_DURATION_MS;
+            }
+
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService == null) {
+                logCommandResult("camera_warm_up", false, "Media capture service not available");
+                return false;
+            }
+
+            Log.i(
+                    TAG,
+                    "📷 camera_warm_up requestId="
+                            + requestId
+                            + " size="
+                            + size
+                            + " exposureTimeNs="
+                            + exposureTimeNs
+                            + " durationMs="
+                            + durationMs);
+
+            boolean accepted =
+                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs);
+            logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
+            return accepted;
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera warm-up command", e);
+            logCommandResult("camera_warm_up", false, "Exception: " + e.getMessage());
             return false;
         }
     }

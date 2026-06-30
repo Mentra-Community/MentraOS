@@ -14,6 +14,7 @@ import {
   CameraFovResult,
   CameraFovSetting,
   CameraRoiPosition,
+  CameraStatusEvent,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -43,6 +44,7 @@ import {
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
   VersionInfoResult,
+  WarmUpCameraParams,
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
@@ -136,6 +138,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
 
   // OTA Commands
   setOtaVersionUrl(otaVersionUrl: string): void

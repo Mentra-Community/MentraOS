@@ -722,6 +722,44 @@ public struct PhotoStatusEvent: CustomStringConvertible {
     }
 }
 
+public struct CameraStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "camera_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var state: String {
+        stringValue(values, "state") ?? ""
+    }
+
+    public var timestamp: Int64 {
+        if let value = values["timestamp"] as? Int64 { return value }
+        if let value = values["timestamp"] as? Int { return Int64(value) }
+        if let value = values["timestamp"] as? Double { return Int64(value) }
+        if let value = values["timestamp"] as? NSNumber { return value.int64Value }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "CameraStatusEvent(requestId: \(requestId), state: \(state))"
+    }
+}
+
 public struct GalleryStatusEvent: CustomStringConvertible {
     public let values: [String: Any]
 

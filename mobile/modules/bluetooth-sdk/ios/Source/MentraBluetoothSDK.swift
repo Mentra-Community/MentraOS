@@ -170,6 +170,7 @@ public final class MentraBluetoothSDK {
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
     private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
+    private var pendingCameraStatusRequests: [String: PendingResponse<CameraStatusEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
@@ -787,6 +788,32 @@ public final class MentraBluetoothSDK {
             return event
         } catch {
             pendingPhotoRequests.removeValue(forKey: request.requestId)
+            throw error
+        }
+    }
+
+    public func warmUpCamera(
+        requestId: String,
+        appId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) async throws -> CameraStatusEvent {
+        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(requestId)")
+        pendingCameraStatusRequests[requestId] = pending
+        DeviceManager.shared.warmUpCamera(
+            requestId: requestId,
+            appId: appId,
+            size: size,
+            exposureTimeNs: exposureTimeNs,
+            durationMs: durationMs
+        )
+        do {
+            let event = try await pending.wait()
+            pendingCameraStatusRequests.removeValue(forKey: requestId)
+            return event
+        } catch {
+            pendingCameraStatusRequests.removeValue(forKey: requestId)
             throw error
         }
     }
@@ -1463,6 +1490,24 @@ public final class MentraBluetoothSDK {
         }
     }
 
+    private func handleCameraStatusForRequests(_ event: CameraStatusEvent) {
+        guard let pending = pendingCameraStatusRequests[event.requestId] else { return }
+        switch event.state.lowercased() {
+        case "ready":
+            pending.resolve(event)
+        case "error":
+            pending.reject(
+                BluetoothSdkError(
+                    code: event.errorCode ?? "camera_warm_up_failed",
+                    message: event.errorMessage ?? "Camera warm-up failed."
+                )
+            )
+        default:
+            // "warming"/"stopped" are progress updates; leave the pending promise alone.
+            break
+        }
+    }
+
     private func handleVideoRecordingStatusForRequests(_ event: VideoRecordingStatusEvent) {
         guard let request = pendingVideoRecordingRequests[event.requestId] else { return }
         if event.success {
@@ -1759,6 +1804,10 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(event))
         case "photo_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
+        case "camera_status":
+            let event = CameraStatusEvent(values: data)
+            handleCameraStatusForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .cameraStatus(event))
         case "video_recording_status":
             let event = VideoRecordingStatusEvent(values: data)
             handleVideoRecordingStatusForRequests(event)

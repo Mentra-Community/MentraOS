@@ -32,6 +32,7 @@ import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
@@ -2958,6 +2959,12 @@ class MentraLive : SGCManager() {
                     } catch (e: JSONException) {
                         Log.e(TAG, "Error converting photo status to Map", e)
                     }
+            "camera_status" ->
+                    try {
+                        Bridge.sendCameraStatus(jsonObjectToMap(json))
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error converting camera status to Map", e)
+                    }
             "stream_status" -> {
                 // Process streaming status update from ASG client
                 Bridge.log("LIVE: Received stream status update from glasses: " + json.toString())
@@ -5377,6 +5384,41 @@ class MentraLive : SGCManager() {
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating photo request JSON", e)
+        }
+    }
+
+    fun warmUpCamera(
+        requestId: String,
+        appId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        Bridge.log(
+                "LIVE: warmUpCamera() entry — requestId=" +
+                        requestId +
+                        ", appId=" +
+                        appId +
+                        ", size=" +
+                        size.value +
+                        ", durationMs=" +
+                        durationMs
+        )
+
+        try {
+            val json = JSONObject()
+            json.put("type", "camera_warm_up")
+            json.put("requestId", requestId)
+            json.put("appId", appId)
+            val sizeValue = size.value
+            json.put("size", if (sizeValue.isNotEmpty()) sizeValue else "medium")
+            if (exposureTimeNs != null && exposureTimeNs > 0L) {
+                json.put("exposureTimeNs", exposureTimeNs)
+            }
+            json.put("durationMs", if (durationMs > 0) durationMs else 15000)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating camera warm up JSON", e)
         }
     }
 
