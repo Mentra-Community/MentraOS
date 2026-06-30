@@ -22,10 +22,25 @@ if (requestedSite && requestedSite !== "all" && !(requestedSite in sites)) {
 }
 
 const selectedSites = requestedSite && requestedSite !== "all" ? [requestedSite] : Object.keys(sites) as Site[];
+const coreUrls: Record<Environment, string> = {
+  dev: "https://core.dev.us-west-2.mentraglass.com",
+  staging: "https://core.staging.us-west-2.mentraglass.com",
+  prod: "https://core.mentraglass.com",
+};
 
 for (const site of selectedSites) {
   const project = `${sites[site]}-${env}`;
   run(["bun", "--cwd", `websites/${site}`, "build"]);
+  run([
+    "bunx",
+    "wrangler",
+    "pages",
+    "secret",
+    "put",
+    "CORE_URL",
+    "--project-name",
+    project,
+  ], { cwd: `websites/${site}`, input: coreUrls[env] });
   run([
     "bunx",
     "wrangler",
@@ -40,12 +55,13 @@ for (const site of selectedSites) {
   ], { cwd: `websites/${site}` });
 }
 
-function run(command: string[], options: { cwd?: string } = {}) {
+function run(command: string[], options: { cwd?: string; input?: string } = {}) {
   console.log(`$ ${command.join(" ")}`);
   const result = spawnSync(command[0], command.slice(1), {
     cwd: options.cwd,
-    stdio: "inherit",
+    stdio: options.input === undefined ? "inherit" : ["pipe", "inherit", "inherit"],
     env: process.env,
+    input: options.input === undefined ? undefined : `${options.input}\n`,
   });
 
   if (result.status !== 0) {

@@ -20,6 +20,18 @@ Use one Pages project per surface per environment. That keeps each website's
 `CORE_URL` plain and prevents dev, staging, and production domains from
 depending on branch-preview behavior.
 
+## Branch to environment mapping
+
+| Branch | Workflow target | Pages projects |
+| --- | --- | --- |
+| `dev` | dev | `mentra-console2-dev`, `mentra-admin-dev`, `mentra-enterprise-portal-dev` |
+| `staging` | staging | `mentra-console2-staging`, `mentra-admin-staging`, `mentra-enterprise-portal-staging` |
+| `main` | prod | `mentra-console2-prod`, `mentra-admin-prod`, `mentra-enterprise-portal-prod` |
+
+The workflow can also be run manually from a PR branch with an explicit
+environment and site selection. The environment comes from the website URL and
+workflow target, not from UI controls inside the admin or portal.
+
 Each website is a static React bundle plus a Pages Function at `/api/*`. The
 function proxies API requests to `CORE_URL` so browser auth stays same-origin:
 
@@ -32,6 +44,9 @@ Required Pages environment variable:
 | Name | Example |
 | --- | --- |
 | `CORE_URL` | `https://core.dev.us-west-2.mentraglass.com` |
+
+`bun run deploy:pages` refreshes `CORE_URL` for the selected Pages project
+before uploading the static bundle.
 
 Deploy manually:
 

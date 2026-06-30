@@ -1,16 +1,16 @@
-name: Deploy cloud-v2 dev
+name: Deploy cloud-v2 staging
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - dev
+      - staging
     paths:
       - "cloud-v2/**"
-      - ".github/workflows/cloud-v2-dev.yml"
+      - ".github/workflows/cloud-v2-staging.yml"
 
 concurrency:
-  group: cloud-v2-dev
+  group: cloud-v2-staging
   cancel-in-progress: true
 
 permissions:
@@ -18,18 +18,18 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy cloud-dev to AWS us-west-2
+    name: Deploy cloud-staging to AWS us-west-2
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       PORTER_CLUSTER: "5692"
       PORTER_PROJECT: "15081"
       PORTER_DEPLOYMENT_TARGET_ID: 87f939d6-b019-4955-9f4b-1050e8ff57bd
       PORTER_HOST: https://dashboard.porter.run
-      PORTER_APP_NAME: cloud-dev
+      PORTER_APP_NAME: cloud-staging
       PORTER_REPO_NAME: ${{ github.event.repository.name }}
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
-      CORE_HOSTNAME: core.dev.us-west-2.mentraglass.com
-      RUNTIME_HOSTNAME: runtime.dev.us-west-2.mentraglass.com
+      CORE_HOSTNAME: core.staging.us-west-2.mentraglass.com
+      RUNTIME_HOSTNAME: runtime.staging.us-west-2.mentraglass.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -46,18 +46,18 @@ jobs:
       - name: Setup Porter CLI
         uses: porter-dev/setup-porter@v0.1.0
 
-      - name: Deploy cloud-dev app
+      - name: Deploy cloud-staging app
         timeout-minutes: 45
         working-directory: cloud-v2
         env:
           PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
-        run: porter apply -w -f porter.dev.yaml -x aws-us-west-2-default --cluster "${PORTER_CLUSTER}" --project "${PORTER_PROJECT}"
+        run: porter apply -w -f porter.staging.yaml -x aws-us-west-2-default --cluster "${PORTER_CLUSTER}" --project "${PORTER_PROJECT}"
 
-      - name: Verify dev health
+      - name: Verify staging health
         run: |
           set -euo pipefail
           if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
-            echo "::warning::Dev DNS is not configured yet; skipping public health checks."
+            echo "::warning::Staging DNS is not configured yet; skipping public health checks."
             exit 0
           fi
           curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${CORE_HOSTNAME}/healthz"
