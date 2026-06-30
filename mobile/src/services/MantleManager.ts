@@ -14,6 +14,7 @@ import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
+import {slimStreamStatusEvent} from "@/services/streaming/slimStreamStatus"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
@@ -56,10 +57,21 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
+import {createDebouncedPatchFlusher} from "@/utils/debouncedPatch"
 import mentraAuth from "@/utils/auth/authClient"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>(
+  (patch) => BluetoothSdk.updateBluetoothSettings(patch),
+  300,
+)
+
+const flushMicRequirementsPatch = createDebouncedPatchFlusher<Record<string, unknown>>(
+  (patch) => BluetoothSdk.updateBluetoothSettings(patch),
+  300,
+)
 
 // ===========================================================================
 // BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove with the
@@ -263,7 +275,7 @@ class MantleManager {
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
       setMicRequirements: (requirements) =>
-        BluetoothSdk.updateBluetoothSettings({
+        flushMicRequirementsPatch({
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
@@ -384,7 +396,7 @@ class MantleManager {
 
   private async syncTimezone() {
     const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone, timezone: timezone})
+    const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
     } else {
@@ -581,7 +593,7 @@ class MantleManager {
           }
         }
         // console.log("MANTLE: Bluetooth settings changed", bluetoothSettingsObj)
-        BluetoothSdk.updateBluetoothSettings(bluetoothSettingsObj)
+        flushBluetoothSettingsPatch(bluetoothSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -705,10 +717,13 @@ class MantleManager {
           //
           // Error responses are the only photo_response events that settle
           // the coordinator directly.
-          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+          const cloudRequestId = event.requestId
+            ? phonePhotoCoordinator.resolveCloudRequestId(event.requestId)
+            : ""
+          if (cloudRequestId && phonePhotoCoordinator.owns(cloudRequestId)) {
             if (event.state === "error") {
               phonePhotoCoordinator.handlePhotoError(
-                event.requestId,
+                event.requestId ?? cloudRequestId,
                 event.errorCode ?? "GLASSES_ERROR",
                 event.errorMessage ?? "Glasses reported an error",
               )
@@ -1167,7 +1182,9 @@ class MantleManager {
             return
           }
           console.log("MANTLE: Forwarding stream status to server:", event)
-          socketComms.sendStreamStatus(event)
+          socketComms.sendStreamStatus(
+            slimStreamStatusEvent(event, {includeResolvedConfig: !!event.resolvedConfig}),
+          )
         }),
       )
 
