@@ -27,6 +27,7 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_MUSIC = 0x33; // Music file type
     public static final byte CMD_TYPE_AUDIO = 0x34; // Audio file type
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
+    public static final byte CMD_TYPE_BINARY_MSG = BleWireProtocol.CMD_TYPE_BINARY_MSG;
 
     // File transfer constants
     public static final int FILE_PACK_SIZE = 400; // Max data size per packet
@@ -101,13 +102,9 @@ public class K900ProtocolUtils {
         // Command type
         result[2] = cmdType;
 
-        // Length (2 bytes, big-endian)
-        result[3] = (byte)((dataLength >> 8) & 0xFF); // MSB first
-        result[4] = (byte)(dataLength & 0xFF);        // LSB second
-
-        // Original little-endian implementation (commented out)
-        // result[3] = (byte)(dataLength & 0xFF);        // LSB first
-        // result[4] = (byte)((dataLength >> 8) & 0xFF); // MSB second
+        // Length (2 bytes, little-endian)
+        result[3] = (byte) (dataLength & 0xFF);
+        result[4] = (byte) ((dataLength >> 8) & 0xFF);
 
         // Copy the data
         System.arraycopy(data, 0, result, 5, dataLength);
@@ -308,11 +305,8 @@ public class K900ProtocolUtils {
             return null;
         }
 
-        // Extract length (big-endian)
-        int length = ((protocolData[3] & 0xFF) << 8) | (protocolData[4] & 0xFF);
-
-        // Original little-endian implementation (commented out)
-        // int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
+        // Extract length (little-endian)
+        int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
 
         if (length + 7 > protocolData.length) {
             return null; // Invalid length
@@ -379,8 +373,8 @@ public class K900ProtocolUtils {
         // Extract the command type
         byte commandType = data[2];
 
-        // Extract the length using big-endian format (MSB first)
-        int payloadLength = ((data[3] & 0xFF) << 8) | (data[4] & 0xFF);
+        // Extract the length using little-endian format
+        int payloadLength = (data[3] & 0xFF) | ((data[4] & 0xFF) << 8);
 
         android.util.Log.d("K900ProtocolUtils", "Command type: 0x" + String.format("%02X", commandType) +
                          ", Payload length: " + payloadLength);
@@ -563,6 +557,23 @@ public class K900ProtocolUtils {
         }
 
         return false;
+    }
+
+    public static boolean isBinaryFrame(byte[] data) {
+        return BleWireProtocol.isBinaryFrame(data);
+    }
+
+    public static byte[] packBinaryFragment(
+            byte flags, int msgId, int fragIdx, int fragCount, byte[] payload) {
+        return BleWireProtocol.packBinaryFragment(flags, msgId, fragIdx, fragCount, payload);
+    }
+
+    public static BleWireProtocol.BinaryFragmentInfo extractBinaryFragmentInfo(byte[] frame) {
+        return BleWireProtocol.extractBinaryFragmentInfo(frame);
+    }
+
+    public static byte[] extractBinaryPayload(byte[] frame) {
+        return BleWireProtocol.extractBinaryPayload(frame);
     }
 
     /**
