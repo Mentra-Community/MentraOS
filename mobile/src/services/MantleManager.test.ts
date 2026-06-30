@@ -78,6 +78,7 @@ jest.mock("@/services/SocketComms", () => ({
     cleanup: jest.fn(),
     sendTouchEvent: jest.fn(),
     sendButtonPress: jest.fn(),
+    sendBatteryStatus: jest.fn(),
     sendHeadPosition: jest.fn(),
     sendLocalTranscription: jest.fn(),
     sendSwipeVolumeStatus: jest.fn(),
@@ -240,6 +241,14 @@ describe("MantleManager", () => {
       gestureName: "tap",
       timestamp: 999,
     })
+
+    emitBluetoothSdkEvent("battery_status", {
+      type: "battery_status",
+      level: 88,
+      charging: true,
+      timestamp: 123456,
+    })
+    expect(socketComms.sendBatteryStatus).toHaveBeenCalledWith(88, true, 123456)
 
     // Local transcripts no longer roundtrip through the cloud. With no
     // local-miniapp subscription and the offline-captions flag off, the

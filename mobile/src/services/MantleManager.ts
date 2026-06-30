@@ -476,6 +476,14 @@ class MantleManager {
         }),
       )
 
+      this.subs.push(
+        BluetoothSdk.addListener("battery_status", (event) => {
+          // Legacy Cloud V1 websocket mirror. Store projection + local miniapp
+          // forwarding live in island DeviceEventRouter.
+          socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
+        }),
+      )
+
       // accel_event: moved to island DeviceEventRouter (started by toolkit.start())
 
       this.subs.push(
