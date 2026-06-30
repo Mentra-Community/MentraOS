@@ -1549,13 +1549,9 @@ class DeviceManager {
         exposureTimeNs: Long?,
         durationMs: Int,
     ) {
-        val live = sgc as? MentraLive
-        if (live == null) {
-            Bridge.log(
-                "MAN: CAMERA WARM UP — sgc is not Mentra Live (camera warm-up unsupported); dropping requestId=$requestId"
-            )
-            return
-        }
+        // Fail fast like other camera commands so the SDK promise rejects immediately instead of
+        // hanging until the request timeout with no camera_status.
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.warmUpCamera(requestId, appId, size, exposureTimeNs, durationMs)
     }
 

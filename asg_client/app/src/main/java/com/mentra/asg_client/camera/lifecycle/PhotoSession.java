@@ -444,14 +444,20 @@ public final class PhotoSession {
             if (queue.isEmpty()) {
                 WarmUpRequest deferred = deferredWarmRequest;
                 if (deferred != null) {
-                    // A camera_warm_up arrived mid-capture; now that the capture settled, start its
-                    // warm lease and report ready instead of the photo's short keep-alive.
-                    Log.d(TAG, "Queue empty — starting deferred camera_warm_up lease");
+                    // A camera_warm_up arrived mid-capture. Now that the capture settled, re-run the
+                    // full warm-up so it opens/configures for the warm params (isFromSdk=true, the
+                    // requested size/exposure) and reports ready ONLY once genuinely warm — not on
+                    // the just-captured config, and not after a failed capture. setupWarmUp re-defers
+                    // if a capture is somehow still in flight.
+                    Log.d(TAG, "Queue empty — re-running deferred camera_warm_up");
                     deferredWarmRequest = null;
-                    hooks.startWarmKeepAliveTimer(deferred.durationMs);
-                    if (deferred.onReady != null) {
-                        hooks.executor().execute(deferred.onReady);
-                    }
+                    setupWarmUp(
+                            deferred.size,
+                            deferred.exposureTimeNs,
+                            deferred.captureSettings,
+                            deferred.durationMs,
+                            deferred.onReady,
+                            deferred.onError);
                     return;
                 }
                 Log.d(TAG, "No photo requests in queue");

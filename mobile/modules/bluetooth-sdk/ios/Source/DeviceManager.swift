@@ -1264,12 +1264,12 @@ struct ViewState {
         size: PhotoSize,
         exposureTimeNs: Double?,
         durationMs: Int
-    ) {
+    ) throws {
         guard let live = sgc as? MentraLive else {
-            Bridge.log(
-                "MAN: CAMERA WARM UP — sgc is not Mentra Live (camera warm-up unsupported); dropping requestId=\(requestId)"
-            )
-            return
+            // Fail fast like other camera commands so the SDK promise rejects immediately instead
+            // of hanging until the request timeout with no camera_status.
+            throw BluetoothSdkError(
+                code: "unsupported_device", message: "This command requires Mentra Live glasses.")
         }
         live.warmUpCamera(
             requestId: requestId,

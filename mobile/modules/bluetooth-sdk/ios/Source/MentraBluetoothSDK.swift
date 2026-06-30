@@ -801,14 +801,15 @@ public final class MentraBluetoothSDK {
     ) async throws -> CameraStatusEvent {
         let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(requestId)")
         pendingCameraStatusRequests[requestId] = pending
-        DeviceManager.shared.warmUpCamera(
-            requestId: requestId,
-            appId: appId,
-            size: size,
-            exposureTimeNs: exposureTimeNs,
-            durationMs: durationMs
-        )
         do {
+            // Inside the catch so an unsupported-device throw also clears the pending entry.
+            try DeviceManager.shared.warmUpCamera(
+                requestId: requestId,
+                appId: appId,
+                size: size,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: durationMs
+            )
             let event = try await pending.wait()
             pendingCameraStatusRequests.removeValue(forKey: requestId)
             return event
