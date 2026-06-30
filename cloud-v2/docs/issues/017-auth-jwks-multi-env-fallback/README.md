@@ -1,6 +1,6 @@
 # 017 - @mentra/auth multi-environment JWKS fallback
 
-**Status:** Implemented and verified. Ordered multi-environment fallback lives in `packages/auth/src/index.ts`; 6 new tests cover the collision, first-env hit, claim-failure-not-retried, no-key, and override cases (15/15 pass). Auth build and root `tsc -b` are clean. All four live endpoints (prod, staging, dev, debug) currently serve JWKS (HTTP 200). Remaining: review and the eventual npm publish of `@mentra/auth`.
+**Status:** Implemented, verified, and shipped to production Merge. Ordered multi-environment fallback lives in `packages/auth/src/index.ts`; 6 new tests cover the collision, first-env hit, claim-failure-not-retried, no-key, and override cases (15/15 pass). Auth build and root `tsc -b` are clean. All four live endpoints (prod, staging, dev, debug) serve JWKS (HTTP 200). Proven against a real production miniapp (Local Merge) on a real device, see "Production verification" below. Remaining: review and the eventual npm publish of `@mentra/auth`.
 
 ## Problem
 
@@ -101,4 +101,40 @@ Demonstrated so far:
 - Live: against the four real endpoints, a token not signed by any Mentra
   environment is rejected by all four (each reachable, each a signature
   mismatch). A genuine dev-minted token will flip the `dev` line to `PASS`.
+
+## Production verification (Local Merge, real device)
+
+This bug was hit in the wild and fixed end to end on 2026-06-30.
+
+Symptom: the Local Merge miniapp (`com.mentra.local-merge`) showed "AI offline
+backend" on a Pixel 8. Captions worked, but Merge's insight calls to its backend
+(`merge3.mentraglass.com`) returned 401. Device logcat, repeatedly:
+
+```
+[com.mentra.local-merge] console.log: 'LocalMerge: insight backend failed: backend 401'
+```
+
+Root cause (textbook case of this issue):
+- The phone's cloud-v2 Core (`cloud_core_url`) was **staging**, so `cloud-client`
+  minted a **staging**-signed `local-merge` token.
+- The Merge backend verifies with `@mentra/auth`, and its prod Doppler config had
+  `MENTRA_AUTH_JWKS_URL` pinned to a single environment. A single-URL env value
+  overrides the fallback, so Merge only accepted one environment's key. Same
+  `kid`, different key -> `ERR_JWS_SIGNATURE_VERIFICATION_FAILED` -> 401.
+
+Fix (two parts, both required):
+1. Deployed the new `@mentra/auth` to `merge3` via the `merge-prod` Porter
+   workflow (commit `4263725e5`). The Merge Dockerfile builds `@mentra/auth` from
+   source (`COPY cloud-v2/packages/auth` then `bun run build`), so no npm publish
+   was needed. Merge's backend code already calls `createMentraAuth({ packageName })`
+   with no `jwksUrl`, so the new default fallback list took effect automatically.
+2. Removed `MENTRA_AUTH_JWKS_URL` from the `local-merge` `prd` and `dev` Doppler
+   configs so the single-URL override no longer suppresses the fallback.
+   (`MENTRA_AUTH_ISSUERS=cloud-core,mentra` was left as is.)
+
+Verified: `merge3.mentraglass.com/healthz` -> 200 on the new build; a tokenless
+`POST /api/insights` -> 401 (auth still enforced); and on the device Merge began
+returning insights again with no further `backend 401` log lines. Note this is
+strictly safer for prod users too: prod is tried first in the fallback, so
+prod-minted tokens are unaffected.
 
