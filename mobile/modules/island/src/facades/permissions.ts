@@ -25,6 +25,36 @@ export const PermissionFeatures = {
 
 const ANDROID = PermissionsAndroid.PERMISSIONS
 const apiLevel = typeof Platform.Version === "number" ? Platform.Version : parseInt(String(Platform.Version), 10)
+const requiresSeparateAndroidBackgroundLocation = apiLevel >= 29
+
+async function areAndroidPermissionsGranted(perms: AndroidPermission[]): Promise<boolean> {
+  for (const p of perms) {
+    if (!(await PermissionsAndroid.check(p))) return false
+  }
+  return true
+}
+
+async function requestAndroidPermissions(perms: AndroidPermission[]): Promise<boolean> {
+  const results = await PermissionsAndroid.requestMultiple(perms)
+  return perms.every((p) => results[p] === PermissionsAndroid.RESULTS.GRANTED)
+}
+
+async function checkAndroidBackgroundLocation(): Promise<boolean> {
+  const hasForegroundLocation = await areAndroidPermissionsGranted([ANDROID.ACCESS_FINE_LOCATION])
+  if (!hasForegroundLocation || !requiresSeparateAndroidBackgroundLocation) return hasForegroundLocation
+
+  return PermissionsAndroid.check(ANDROID.ACCESS_BACKGROUND_LOCATION)
+}
+
+async function requestAndroidBackgroundLocation(): Promise<boolean> {
+  const hasForegroundLocation = await requestAndroidPermissions([ANDROID.ACCESS_FINE_LOCATION])
+  if (!hasForegroundLocation || !requiresSeparateAndroidBackgroundLocation) return hasForegroundLocation
+
+  if (await PermissionsAndroid.check(ANDROID.ACCESS_BACKGROUND_LOCATION)) return true
+
+  const result = await PermissionsAndroid.request(ANDROID.ACCESS_BACKGROUND_LOCATION)
+  return result === PermissionsAndroid.RESULTS.GRANTED
+}
 
 function iosPerms(feature: string): Permission[] {
   switch (feature) {
@@ -73,14 +103,13 @@ export const permissions = {
   /** Is the given feature's OS permission currently granted? */
   async check(feature: string): Promise<boolean> {
     if (Platform.OS === "android") {
+      if (feature === PermissionFeatures.BACKGROUND_LOCATION) return checkAndroidBackgroundLocation()
+
       const perms = androidPerms(feature)
       if (perms.length === 0) return true // nothing to ask on this OS/version
       // Every permission in the group must be granted (e.g. bluetooth =
       // scan+connect+advertise, calendar = read+write) — matches the iOS branch.
-      for (const p of perms) {
-        if (!(await PermissionsAndroid.check(p))) return false
-      }
-      return true
+      return areAndroidPermissionsGranted(perms)
     }
     const perms = iosPerms(feature)
     if (perms.length === 0) return true
@@ -94,11 +123,12 @@ export const permissions = {
   /** Request the given feature's OS permission. Resolves to whether it's granted. */
   async request(feature: string): Promise<boolean> {
     if (Platform.OS === "android") {
+      if (feature === PermissionFeatures.BACKGROUND_LOCATION) return requestAndroidBackgroundLocation()
+
       const perms = androidPerms(feature)
       if (perms.length === 0) return true
-      const results = await PermissionsAndroid.requestMultiple(perms)
       // Granted only when EVERY permission in the group was granted.
-      return perms.every((p) => results[p] === PermissionsAndroid.RESULTS.GRANTED)
+      return requestAndroidPermissions(perms)
     }
     const perms = iosPerms(feature)
     if (perms.length === 0) return true
