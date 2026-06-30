@@ -363,7 +363,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
             let req = PhotoRequest.from(params: params)
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) appId=\(req.appId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
@@ -372,7 +372,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("warmUpCamera") { (params: [String: Any]) in
             let requestId = params["requestId"] as? String ?? ""
-            let appId = params["appId"] as? String ?? ""
             let sizeRaw = params["size"] as? String ?? "medium"
             let size = PhotoSize(normalizedRawValue: sizeRaw)
             let exposureTimeNs: Double?
@@ -393,7 +392,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.warmUpCamera(
                 requestId: requestId,
-                appId: appId,
                 size: size,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs

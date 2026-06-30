@@ -119,14 +119,12 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative).toHaveBeenCalledTimes(1)
       const arg = requestPhotoNative.mock.calls[0]![0] as {
         requestId: string
-        appId: string
         size: string
         webhookUrl: string
         authToken: string
         save: boolean
       }
       expect(arg.requestId).toBe("rq-test-1")
-      expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
       expect(arg.webhookUrl).toBe(
         "https://cloud.test/api/v2/client/photo/upload/rq-test-1",

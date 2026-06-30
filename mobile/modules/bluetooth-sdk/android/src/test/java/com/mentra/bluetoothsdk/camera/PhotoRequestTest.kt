@@ -10,7 +10,6 @@ class PhotoRequestTest {
             PhotoRequest.fromMap(
                 mapOf(
                     "requestId" to "photo-1",
-                    "appId" to "com.test.app",
                     "size" to "medium",
                     "webhookUrl" to "https://example.com/upload",
                     "compress" to "none",

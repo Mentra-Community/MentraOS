@@ -6,7 +6,7 @@
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
  *            ├── cloudClient.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
- *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, compress, sound)
+ *            ├── BluetoothSdk.requestPhoto(requestId, size, uploadUrl, compress, sound)
  *            └── race:
  *                  - cloudClient.awaitManagedPhotoReady(requestId) resolves on photo.ready push
  *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
@@ -159,7 +159,6 @@ export class PhonePhotoCoordinator {
     try {
       void BluetoothSdk.requestPhoto({
         requestId,
-        appId: packageName,
         size: normalizePhotoSize(opts.size ?? "medium"),
         webhookUrl: uploadUrl,
         authToken: null,
@@ -231,7 +230,6 @@ export class PhonePhotoCoordinator {
     try {
       await BluetoothSdk.warmUpCamera({
         requestId,
-        appId: packageName,
         size: normalizePhotoSize(opts.size ?? "medium"),
         exposureTimeNs: opts.exposureTimeNs ?? null,
         durationMs: opts.durationMs ?? 15000,

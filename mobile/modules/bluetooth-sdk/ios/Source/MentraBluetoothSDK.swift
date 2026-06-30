@@ -777,7 +777,7 @@ public final class MentraBluetoothSDK {
 
     public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId) appId=\(request.appId)"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId)"
         )
         let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(request.requestId)")
         pendingPhotoRequests[request.requestId] = pending
@@ -794,7 +794,6 @@ public final class MentraBluetoothSDK {
 
     public func warmUpCamera(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         exposureTimeNs: Double?,
         durationMs: Int
@@ -805,7 +804,6 @@ public final class MentraBluetoothSDK {
             // Inside the catch so an unsupported-device throw also clears the pending entry.
             try DeviceManager.shared.warmUpCamera(
                 requestId: requestId,
-                appId: appId,
                 size: size,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs

@@ -542,7 +542,6 @@ export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
 export type PhotoRequestParams = {
   requestId: string
-  appId: string
   size: PhotoSize
   webhookUrl: string | null
   authToken: string | null
@@ -567,7 +566,6 @@ export type PhotoRequestParams = {
 
 export type WarmUpCameraParams = {
   requestId: string
-  appId: string
   size: PhotoSize
   exposureTimeNs?: number | null
   durationMs?: number

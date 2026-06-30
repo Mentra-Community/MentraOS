@@ -162,7 +162,6 @@ data class CameraFovResult(
 
 data class PhotoRequest @JvmOverloads constructor(
     val requestId: String,
-    val appId: String,
     val size: PhotoSize,
     val webhookUrl: String,
     val authToken: String? = null,
@@ -212,7 +211,6 @@ data class PhotoRequest @JvmOverloads constructor(
 
             return PhotoRequest(
                 requestId = stringValue(values, "requestId", "request_id").orEmpty(),
-                appId = stringValue(values, "appId", "app_id").orEmpty(),
                 size = PhotoSize.fromValue(stringValue(values, "size") ?: "medium"),
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },

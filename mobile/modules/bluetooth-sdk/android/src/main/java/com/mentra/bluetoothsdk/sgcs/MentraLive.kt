@@ -5278,7 +5278,6 @@ class MentraLive : SGCManager() {
 
     override fun requestPhoto(request: PhotoRequest) {
         val requestId = request.requestId
-        val appId = request.appId
         val size = request.size.value
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
@@ -5291,8 +5290,6 @@ class MentraLive : SGCManager() {
         Bridge.log(
                 "LIVE: Requesting photo: " +
                         requestId +
-                        " for app: " +
-                        appId +
                         " with size: " +
                         size +
                         ", webhookUrl: " +
@@ -5316,16 +5313,13 @@ class MentraLive : SGCManager() {
         )
         Bridge.log(
                 "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" +
-                        requestId +
-                        ", appId=" +
-                        appId
+                        requestId
         )
 
         try {
             val json = JSONObject()
             json.put("type", "take_photo")
             json.put("requestId", requestId)
-            json.put("appId", appId)
             if (webhookUrl != null && !webhookUrl.isEmpty()) {
                 json.put("webhookUrl", webhookUrl)
             }
@@ -5389,7 +5383,6 @@ class MentraLive : SGCManager() {
 
     fun warmUpCamera(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         exposureTimeNs: Long?,
         durationMs: Int,
@@ -5397,8 +5390,6 @@ class MentraLive : SGCManager() {
         Bridge.log(
                 "LIVE: warmUpCamera() entry — requestId=" +
                         requestId +
-                        ", appId=" +
-                        appId +
                         ", size=" +
                         size.value +
                         ", durationMs=" +
@@ -5409,7 +5400,6 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "camera_warm_up")
             json.put("requestId", requestId)
-            json.put("appId", appId)
             val sizeValue = size.value
             json.put("size", if (sizeValue.isNotEmpty()) sizeValue else "medium")
             if (exposureTimeNs != null && exposureTimeNs > 0L) {

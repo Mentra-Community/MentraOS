@@ -1544,7 +1544,6 @@ class DeviceManager {
 
     fun warmUpCamera(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         exposureTimeNs: Long?,
         durationMs: Int,
@@ -1552,7 +1551,7 @@ class DeviceManager {
         // Fail fast like other camera commands so the SDK promise rejects immediately instead of
         // hanging until the request timeout with no camera_status.
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.warmUpCamera(requestId, appId, size, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
     }
 
     /**
@@ -1684,7 +1683,7 @@ class DeviceManager {
                 iso = manualIso,
             )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

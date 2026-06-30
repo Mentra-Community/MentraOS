@@ -370,7 +370,6 @@ OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
   requestId: `photo-${Date.now()}`,
-  appId: 'com.example.app',
   size: 'medium',
   webhookUrl: 'https://api.example.com/mentra/photo',
   authToken: 'optional-token',

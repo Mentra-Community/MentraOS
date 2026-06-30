@@ -747,7 +747,7 @@ class MentraBluetoothSdk private constructor(
 
     fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId}"
         )
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
         pendingPhotoRequests[request.requestId] = pending
@@ -761,7 +761,6 @@ class MentraBluetoothSdk private constructor(
 
     fun warmUpCamera(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         exposureTimeNs: Long?,
         durationMs: Int,
@@ -769,7 +768,7 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<CameraStatusEvent>("camera warm up $requestId")
         pendingCameraStatusRequests[requestId] = pending
         try {
-            deviceManager.warmUpCamera(requestId, appId, size, exposureTimeNs, durationMs)
+            deviceManager.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
             return pending.await()
         } finally {
             pendingCameraStatusRequests.remove(requestId, pending)

@@ -223,7 +223,6 @@ public struct CameraFovResult: CustomStringConvertible {
 
 public struct PhotoRequest {
     public let requestId: String
-    public let appId: String
     public let size: PhotoSize
     public let webhookUrl: String?
     public let authToken: String?
@@ -245,7 +244,6 @@ public struct PhotoRequest {
 
     public init(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         webhookUrl: String? = nil,
         authToken: String? = nil,
@@ -264,7 +262,6 @@ public struct PhotoRequest {
         ispAnalogGain: String? = nil
     ) {
         self.requestId = requestId
-        self.appId = appId
         self.size = size
         self.webhookUrl = webhookUrl
         self.authToken = authToken
@@ -332,7 +329,6 @@ public struct PhotoRequest {
 
         return PhotoRequest(
             requestId: params["requestId"] as? String ?? "",
-            appId: params["appId"] as? String ?? "",
             size: PhotoSize(normalizedRawValue: sizeRaw),
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,

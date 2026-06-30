@@ -1616,13 +1616,12 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
             "type": "take_photo",
             "requestId": request.requestId,
-            "appId": request.appId,
         ]
 
         // Always generate BLE ID for potential fallback
@@ -1677,13 +1676,12 @@ class MentraLive: NSObject, SGCManager {
 
     func warmUpCamera(
         requestId: String,
-        appId: String,
         size: PhotoSize,
         exposureTimeNs: Double?,
         durationMs: Int
     ) {
         Bridge.log(
-            "LIVE: warmUpCamera() entry requestId=\(requestId) appId=\(appId) size=\(size.rawValue) durationMs=\(durationMs)"
+            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) durationMs=\(durationMs)"
         )
 
         let allowedSizes = ["low", "medium", "high", "max"]
@@ -1691,7 +1689,6 @@ class MentraLive: NSObject, SGCManager {
         var json: [String: Any] = [
             "type": "camera_warm_up",
             "requestId": requestId,
-            "appId": appId,
             "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
             "durationMs": durationMs > 0 ? durationMs : 15000,
         ]
