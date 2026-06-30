@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -68,6 +69,11 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             // Reset file pack size to default on new connection.
             // Phone will send set_ble_mtu command after glasses_ready to set the correct size.
             BesWireFormat.resetFilePackSize();
+            if (serviceManager != null
+                    && serviceManager.getBluetoothManager() instanceof K900BluetoothManager) {
+                ((K900BluetoothManager) serviceManager.getBluetoothManager())
+                        .resetWireProtocolState();
+            }
 
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
 
@@ -85,6 +91,15 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
 
             if (sent && serviceManager != null) {
                 serviceManager.onPhoneReadyHandshakeComplete();
+            }
+
+            if (sent
+                    && serviceManager != null
+                    && serviceManager.getBluetoothManager() instanceof K900BluetoothManager) {
+                K900BluetoothManager k900Manager =
+                        (K900BluetoothManager) serviceManager.getBluetoothManager();
+                Log.d(TAG, "📱 🤝 Sending BLE wire v2 handshake after glasses_ready");
+                k900Manager.sendWireV2Handshake();
             }
 
             // Auto-send WiFi status after glasses_ready
