@@ -59,6 +59,9 @@ export class DeveloperOrgService {
         packagePrefix,
         packagePrefixStatus: packagePrefix === "com.mentra" ? "verified" : "unverified",
       });
+      // Seed the creator as the org's first owner. From here, ownership is a
+      // membership role (owner|admin|member), not the ownerUserId scalar.
+      await this.ensureOwner(created.orgId, user.id);
       return serializeDeveloperOrg(created.toObject());
     }
 
@@ -111,110 +114,50 @@ export class DeveloperOrgService {
   }
 
   /**
-   * Resolve the admin/member overlay role for a member. `owner` is handled by
-   * the caller via `DeveloperOrg.ownerUserId` and never lives here. Matches by
-   * userId first, then by email; when matched by email it backfills userId so
-   * later lookups are by id. Returns null when the user has no row (→ member).
+   * The role a user holds in an org (owner | admin | member), or null when they
+   * have no row (which resolves to `member`). Keyed by WorkOS userId.
    */
-  async getMemberRole(
-    orgId: string,
-    identity: { userId?: string | null; email?: string | null },
-  ): Promise<DeveloperOrgRole | null> {
-    if (identity.userId) {
-      const byId = await DeveloperOrgMembershipModel.findOne({ orgId, userId: identity.userId }).lean();
-      if (byId) return byId.role as DeveloperOrgRole;
-    }
-    const email = identity.email?.trim().toLowerCase();
-    if (email) {
-      const byEmail = await DeveloperOrgMembershipModel.findOne({ orgId, email });
-      if (byEmail) {
-        if (identity.userId && !byEmail.userId) {
-          byEmail.userId = identity.userId;
-          await byEmail.save();
-        }
-        return byEmail.role as DeveloperOrgRole;
-      }
-    }
-    return null;
+  async getMemberRole(orgId: string, userId: string | null | undefined): Promise<DeveloperOrgRole | null> {
+    if (!userId) return null;
+    const row = await DeveloperOrgMembershipModel.findOne({ orgId, userId }).lean();
+    return row ? (row.role as DeveloperOrgRole) : null;
   }
 
-  /**
-   * Set/overwrite a member's role (used when an owner/admin changes a role).
-   * Keyed by lowercased email. When userId is known, first drops any stale rows
-   * for that same user under a different email, so the userId-first lookup in
-   * getMemberRole can never read an outdated role after an email change.
-   */
-  async setMemberRole(
-    orgId: string,
-    email: string,
-    role: DeveloperOrgRole,
-    userId?: string | null,
-  ): Promise<void> {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) return;
-    if (userId) {
-      await DeveloperOrgMembershipModel.deleteMany({
-        orgId,
-        userId,
-        email: { $ne: normalizedEmail },
-      });
-    }
+  /** Set/overwrite a user's role in an org. */
+  async setMemberRole(orgId: string, userId: string, role: DeveloperOrgRole): Promise<void> {
+    if (!userId) return;
     await DeveloperOrgMembershipModel.updateOne(
-      { orgId, email: normalizedEmail },
-      {
-        $set: { role, ...(userId ? { userId } : {}) },
-        $setOnInsert: { orgId, email: normalizedEmail },
-      },
+      { orgId, userId },
+      { $set: { role }, $setOnInsert: { orgId, userId } },
       { upsert: true },
     );
   }
 
-  /**
-   * Record the role an invitee should receive when they join, WITHOUT
-   * overwriting an existing active member's role. An active member's row has a
-   * backfilled `userId`; those are left untouched so an invitation can't be a
-   * backdoor that re-roles a current member (that must go through the
-   * role-change endpoint / setMemberRole). A still-pending row (no userId) is
-   * updated, so a re-invite with a different role takes effect.
-   */
-  async recordInvitedRole(orgId: string, email: string, role: DeveloperOrgRole): Promise<void> {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) return;
-    const existing = await DeveloperOrgMembershipModel.findOne({ orgId, email: normalizedEmail }).lean();
-    if (existing?.userId) return; // active member — never clobber via invite
+  /** Idempotently make a user an owner (used to seed the org creator). */
+  async ensureOwner(orgId: string, userId: string): Promise<void> {
+    if (!userId) return;
     await DeveloperOrgMembershipModel.updateOne(
-      { orgId, email: normalizedEmail },
-      { $set: { role }, $setOnInsert: { orgId, email: normalizedEmail } },
+      { orgId, userId },
+      { $setOnInsert: { orgId, userId, role: "owner" } },
       { upsert: true },
     );
   }
 
-  /** Drop a member's role row(s) on removal / invite revocation. Best-effort. */
-  async removeMemberRole(
-    orgId: string,
-    identity: { userId?: string | null; email?: string | null },
-  ): Promise<void> {
-    const or: Record<string, string>[] = [];
-    if (identity.userId) or.push({ userId: identity.userId });
-    const email = identity.email?.trim().toLowerCase();
-    if (email) or.push({ email });
-    if (!or.length) return;
-    await DeveloperOrgMembershipModel.deleteMany({ orgId, $or: or });
+  /** Remove a user's role row (on removal from the org). */
+  async removeMemberRole(orgId: string, userId: string): Promise<void> {
+    if (!userId) return;
+    await DeveloperOrgMembershipModel.deleteOne({ orgId, userId });
   }
 
-  /**
-   * Roles for every member of an org, keyed by lowercased email AND by
-   * `uid:<userId>` so the member-list join can match on whichever it has.
-   */
+  /** Number of owners in an org. Used to enforce "at least one owner remains". */
+  async countOwners(orgId: string): Promise<number> {
+    return DeveloperOrgMembershipModel.countDocuments({ orgId, role: "owner" });
+  }
+
+  /** Roles for every member of an org, keyed by WorkOS userId. */
   async listMemberRoles(orgId: string): Promise<Map<string, DeveloperOrgRole>> {
     const rows = await DeveloperOrgMembershipModel.find({ orgId }).lean();
-    const byKey = new Map<string, DeveloperOrgRole>();
-    for (const row of rows) {
-      const role = row.role as DeveloperOrgRole;
-      if (row.email) byKey.set(row.email.toLowerCase(), role);
-      if (row.userId) byKey.set(`uid:${row.userId}`, role);
-    }
-    return byKey;
+    return new Map(rows.map(row => [row.userId, row.role as DeveloperOrgRole]));
   }
 }
 

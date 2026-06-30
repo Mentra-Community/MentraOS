@@ -74,10 +74,7 @@ export function getOrgAccess(): Promise<{
   );
 }
 
-export function inviteOrgMember(input: {
-  email: string;
-  role?: "admin" | "member";
-}): Promise<{ invitation: OrgInvitation }> {
+export function inviteOrgMember(input: { email: string }): Promise<{ invitation: OrgInvitation }> {
   return apiRequest("/console/org/invitations", z.object({ invitation: orgInvitationSchema }), {
     method: "POST",
     headers: { "content-type": "application/json" },

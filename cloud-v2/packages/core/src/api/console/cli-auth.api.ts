@@ -40,7 +40,6 @@ const upsertDeveloperOrgSchema = z.object({
 
 const inviteOrgMemberSchema = z.object({
   email: z.string().email(),
-  role: z.enum(["admin", "member"]).optional(),
 });
 
 const updateOrgMemberRoleSchema = z.object({
@@ -470,7 +469,6 @@ async function postOrgInvitation(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid invitation payload");
 
   const email = parsed.data.email.trim().toLowerCase();
-  const invitedRole = parsed.data.role ?? "member";
   try {
     const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
     const invitation = await workos().userManagement.sendInvitation({
@@ -478,11 +476,8 @@ async function postOrgInvitation(c: AppContext) {
       organizationId: requireWorkosOrgId(org),
       inviterUserId: developer.auth.user.id,
     });
-    // Record the intended role in our DB; it materializes onto the membership
-    // when the invitee first authenticates. WorkOS stores no role. This never
-    // overwrites an existing active member's role (see recordInvitedRole).
-    await developerOrgs.recordInvitedRole(org.id, email, invitedRole);
-    return c.json({ invitation: serializeInvitation(invitation, invitedRole) }, 201);
+    // Invitees join as `member`; an owner/admin assigns a higher role afterwards.
+    return c.json({ invitation: serializeInvitation(invitation) }, 201);
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
@@ -532,17 +527,18 @@ async function deleteOrgMember(c: AppContext) {
     if (membership.organizationId !== org.workosOrgId) {
       return c.json({ error: "not_found", error_description: "member was not found" }, 404);
     }
-    // The primary owner (creator) is the org's permanent last owner.
-    if (membership.userId === org.ownerUserId) {
-      return c.json({ error: "owner_required", error_description: "the org owner cannot be removed" }, 409);
-    }
-    // Only an owner may remove a co-owner.
-    const targetRole = await developerOrgs.getMemberRole(org.id, { userId: membership.userId });
-    if (targetRole === "owner" && actorRole !== "owner") {
-      return c.json({ error: "forbidden", error_description: "only an owner can remove another owner" }, 403);
+    // Removing an owner requires being an owner, and never the last one.
+    const targetRole = await developerOrgs.getMemberRole(org.id, membership.userId);
+    if (targetRole === "owner") {
+      if (actorRole !== "owner") {
+        return c.json({ error: "forbidden", error_description: "only an owner can remove another owner" }, 403);
+      }
+      if ((await developerOrgs.countOwners(org.id)) <= 1) {
+        return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
+      }
     }
     await workos().userManagement.deleteOrganizationMembership(membershipId);
-    await developerOrgs.removeMemberRole(org.id, { userId: membership.userId });
+    await developerOrgs.removeMemberRole(org.id, membership.userId);
     return c.json({ ok: true });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
@@ -569,27 +565,19 @@ async function patchOrgMember(c: AppContext) {
     if (membership.organizationId !== org.workosOrgId) {
       return c.json({ error: "not_found", error_description: "member was not found" }, 404);
     }
-    if (membership.userId === org.ownerUserId) {
-      return c.json({ error: "owner_required", error_description: "the org owner's role cannot be changed" }, 409);
-    }
-    let email = "";
-    try {
-      const user = await workos().userManagement.getUser(membership.userId);
-      email = user.email ?? "";
-    } catch {
-      // We need an email to key the role row; fall through to the guard below.
-    }
-    if (!email) {
-      return c.json({ error: "member_unresolved", error_description: "could not resolve member email" }, 409);
-    }
+    const newRole = parsed.data.role;
+    const targetRole = await developerOrgs.getMemberRole(org.id, membership.userId);
     // Granting or changing the owner role is owner-only (no admin can mint an
     // owner or demote one); admins may only move members between admin/member.
-    const targetRole = await developerOrgs.getMemberRole(org.id, { userId: membership.userId, email });
-    if ((parsed.data.role === "owner" || targetRole === "owner") && actorRole !== "owner") {
+    if ((newRole === "owner" || targetRole === "owner") && actorRole !== "owner") {
       return c.json({ error: "forbidden", error_description: "only an owner can grant or change the owner role" }, 403);
     }
-    await developerOrgs.setMemberRole(org.id, email, parsed.data.role, membership.userId);
-    return c.json({ ok: true, role: parsed.data.role });
+    // Never demote the last owner.
+    if (targetRole === "owner" && newRole !== "owner" && (await developerOrgs.countOwners(org.id)) <= 1) {
+      return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
+    }
+    await developerOrgs.setMemberRole(org.id, membership.userId, newRole);
+    return c.json({ ok: true, role: newRole });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
@@ -927,12 +915,7 @@ async function listWorkosOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrg
       email: user.email,
       name: user.name,
       avatarUrl: user.avatarUrl,
-      role:
-        membership.userId === org.ownerUserId
-          ? "owner"
-          : (user.email ? roleOverlay.get(user.email.toLowerCase()) : undefined) ??
-            roleOverlay.get(`uid:${membership.userId}`) ??
-            "member",
+      role: roleOverlay.get(membership.userId) ?? "member",
       status: membership.status,
       createdAt: membership.createdAt ?? null,
       updatedAt: membership.updatedAt ?? null,
@@ -945,21 +928,15 @@ async function listWorkosOrgInvitations(org: DeveloperOrgRecord): Promise<Consol
     organizationId: requireWorkosOrgId(org),
     limit: 100,
   });
-  const roleOverlay = await developerOrgs.listMemberRoles(org.id);
-  return invitations.data.map(invitation =>
-    serializeInvitation(invitation, roleOverlay.get(invitation.email.toLowerCase())),
-  );
+  return invitations.data.map(serializeInvitation);
 }
 
-function serializeInvitation(
-  invitation: WorkosInvitationLike,
-  roleOverride?: string,
-): ConsoleOrgInvitation {
+function serializeInvitation(invitation: WorkosInvitationLike): ConsoleOrgInvitation {
   return {
     id: invitation.id,
     email: invitation.email,
     state: invitation.state,
-    role: roleOverride ?? invitation.roleSlug ?? "member",
+    role: invitation.roleSlug ?? "member",
     expiresAt: invitation.expiresAt ?? null,
     createdAt: invitation.createdAt ?? null,
     updatedAt: invitation.updatedAt ?? null,
@@ -1014,13 +991,9 @@ async function resolveOrgRole(
   authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
   org: DeveloperOrgRecord,
 ): Promise<OrgRole> {
-  if (authenticatedSession.user.id === org.ownerUserId) return "owner"; // primary owner
-  const role = await developerOrgs.getMemberRole(org.id, {
-    userId: authenticatedSession.user.id,
-    email: authenticatedSession.user.email,
-  });
-  if (role === "owner") return "owner"; // co-owner
-  return role === "admin" ? "admin" : "member";
+  // Ownership is purely a membership role now; ownerUserId is just created-by.
+  const role = await developerOrgs.getMemberRole(org.id, authenticatedSession.user.id);
+  return role ?? "member";
 }
 
 function roleAtLeast(role: OrgRole, min: OrgRole): boolean {

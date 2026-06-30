@@ -1,14 +1,13 @@
 import { Schema, model, type InferSchemaType } from "mongoose";
 
 /**
- * Roles a developer-org member can hold, stored and owned entirely in our DB.
+ * Per-(org, user) role, stored and owned entirely in our DB. Roles are uniform:
+ * owner | admin | member — there is no special "creator". `DeveloperOrg.ownerUserId`
+ * is only a created-by pointer and does NOT grant the owner role. An org may have
+ * many owners; the console enforces that at least one owner always remains (you
+ * cannot demote or remove the last owner).
  *
- * `DeveloperOrg.ownerUserId` is the org's PRIMARY owner (the creator): always an
- * owner, can never be demoted or removed — that is what guarantees an org always
- * has at least one owner ("can't remove the last owner"). Additional co-owners
- * are stored here as `owner` rows, so an org can have multiple owners. A user
- * with no row resolves to `member` by default.
- *
+ * Keyed by WorkOS userId. A user with no row resolves to `member` by default.
  * WorkOS is not consulted for roles — it remains identity/login + the member
  * roster only. The permission tier is a Mentra console concept.
  */
@@ -17,19 +16,14 @@ export type DeveloperOrgRole = (typeof DEVELOPER_ORG_ROLES)[number];
 
 const DeveloperOrgMembershipSchema = new Schema(
   {
-    // DeveloperOrg.orgId (e.g. `dorg_...`), not the WorkOS org id.
     orgId: { type: String, required: true, index: true },
-    // Lowercased email is the canonical key: it is known at invite time
-    // (before the user exists) and again at login, so it bridges both.
-    email: { type: String, required: true },
-    // WorkOS user id, backfilled the first time the member is resolved by email.
-    userId: { type: String, default: null, index: true },
+    userId: { type: String, required: true },
     role: { type: String, enum: DEVELOPER_ORG_ROLES, required: true, default: "member" },
   },
   { timestamps: true, collection: "developer_org_memberships" },
 );
 
-DeveloperOrgMembershipSchema.index({ orgId: 1, email: 1 }, { unique: true });
+DeveloperOrgMembershipSchema.index({ orgId: 1, userId: 1 }, { unique: true });
 
 export type DeveloperOrgMembership = InferSchemaType<typeof DeveloperOrgMembershipSchema>;
 export const DeveloperOrgMembershipModel = model(

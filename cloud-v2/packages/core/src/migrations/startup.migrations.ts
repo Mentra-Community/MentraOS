@@ -5,6 +5,8 @@
 
 import mongoose from "mongoose";
 import { createLogger } from "@mentra/cloud-shared";
+import { DeveloperOrgModel } from "../models/developer-org.model";
+import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 
@@ -13,6 +15,8 @@ const logger = createLogger("core").child({ component: "startup-migrations" });
 const USERS_COLLECTION = "users";
 const REFRESH_TOKENS_COLLECTION = "refreshTokens";
 const LEGACY_USER_IDENTITY_INDEX = "oemId_1_oemUserId_1";
+const DEVELOPER_ORG_MEMBERSHIPS_COLLECTION = "developer_org_memberships";
+const LEGACY_MEMBERSHIP_EMAIL_INDEX = "orgId_1_email_1";
 
 type DuplicateUserGroup = {
   _id: {
@@ -32,6 +36,9 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
+  await dropLegacyMembershipEmailIndex();
+  await backfillDeveloperOrgOwners();
+  await DeveloperOrgMembershipModel.createIndexes();
 }
 
 async function backfillLegacyUserIdentityFields(): Promise<void> {
@@ -98,6 +105,48 @@ async function dropLegacyUserIdentityIndex(): Promise<void> {
     { collection: USERS_COLLECTION, index: LEGACY_USER_IDENTITY_INDEX },
     "dropped legacy user identity index",
   );
+}
+
+// Developer-org memberships were briefly keyed by (orgId, email) in early Cloud
+// V2 dev; they are now keyed by (orgId, userId). Drop the stale unique index so
+// the new one can take its place.
+async function dropLegacyMembershipEmailIndex(): Promise<void> {
+  const collection = mongoose.connection.collection(DEVELOPER_ORG_MEMBERSHIPS_COLLECTION);
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch {
+    return; // collection does not exist yet
+  }
+  if (!indexes.some((index) => index.name === LEGACY_MEMBERSHIP_EMAIL_INDEX)) return;
+  await collection.dropIndex(LEGACY_MEMBERSHIP_EMAIL_INDEX);
+  logger.info(
+    { collection: DEVELOPER_ORG_MEMBERSHIPS_COLLECTION, index: LEGACY_MEMBERSHIP_EMAIL_INDEX },
+    "dropped legacy membership email index",
+  );
+}
+
+// Ownership is a membership role now, not the DeveloperOrg.ownerUserId scalar.
+// Seed each org's creator as an owner so existing orgs keep at least one owner
+// once the scalar stops granting the role. Idempotent; skips orgs that already
+// have an owner.
+async function backfillDeveloperOrgOwners(): Promise<void> {
+  const orgs = await DeveloperOrgModel.find({}, { orgId: 1, ownerUserId: 1 }).lean();
+  let seeded = 0;
+  for (const org of orgs) {
+    if (!org.orgId || !org.ownerUserId) continue;
+    const ownerCount = await DeveloperOrgMembershipModel.countDocuments({ orgId: org.orgId, role: "owner" });
+    if (ownerCount > 0) continue;
+    await DeveloperOrgMembershipModel.updateOne(
+      { orgId: org.orgId, userId: org.ownerUserId },
+      { $setOnInsert: { orgId: org.orgId, userId: org.ownerUserId, role: "owner" } },
+      { upsert: true },
+    );
+    seeded += 1;
+  }
+  if (seeded > 0) {
+    logger.info({ seeded }, "seeded developer-org creators as owners");
+  }
 }
 
 async function dedupeUserIdentityRows(): Promise<void> {

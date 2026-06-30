@@ -41,7 +41,6 @@ export function OrganizationPage() {
   const [displayName, setDisplayName] = useState(suggested.displayName);
   const [packagePrefix, setPackagePrefix] = useState(suggested.packagePrefix);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const accessQuery = useQuery({
     queryKey: ["developer-org-access"],
     queryFn: getOrgAccess,
@@ -210,8 +209,6 @@ export function OrganizationPage() {
             viewerRole={viewerRole}
             inviteEmail={inviteEmail}
             setInviteEmail={setInviteEmail}
-            inviteRole={inviteRole}
-            setInviteRole={setInviteRole}
             inviteMember={inviteMember}
             revokeInvite={revokeInvite}
             removeMember={removeMember}
@@ -247,14 +244,7 @@ type TeamAccessSectionProps = {
   viewerRole: OrgRole;
   inviteEmail: string;
   setInviteEmail: (value: string) => void;
-  inviteRole: "admin" | "member";
-  setInviteRole: (value: "admin" | "member") => void;
-  inviteMember: UseMutationResult<
-    { invitation: OrgInvitation },
-    Error,
-    { email: string; role?: "admin" | "member" },
-    unknown
-  >;
+  inviteMember: UseMutationResult<{ invitation: OrgInvitation }, Error, { email: string }, unknown>;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   updateMemberRole: UseMutationResult<
@@ -273,8 +263,6 @@ function TeamAccessSection({
   viewerRole,
   inviteEmail,
   setInviteEmail,
-  inviteRole,
-  setInviteRole,
   inviteMember,
   revokeInvite,
   removeMember,
@@ -314,7 +302,7 @@ function TeamAccessSection({
             onSubmit={(event) => {
               event.preventDefault();
               if (!canInvite) return;
-              inviteMember.mutate({ email: inviteEmail.trim().toLowerCase(), role: inviteRole });
+              inviteMember.mutate({ email: inviteEmail.trim().toLowerCase() });
             }}
           >
             <div>
@@ -330,24 +318,9 @@ function TeamAccessSection({
                 onChange={event => setInviteEmail(event.target.value)}
                 disabled={!canManage}
               />
-              {canManage ? (
-                <div className="mt-2 flex items-center gap-2">
-                  <Label htmlFor="inviteRole" className="text-xs font-medium text-[#8a8d95]">
-                    Role
-                  </Label>
-                  <select
-                    id="inviteRole"
-                    value={inviteRole}
-                    onChange={event => setInviteRole(event.target.value === "admin" ? "admin" : "member")}
-                    className="h-9 rounded-[10px] border border-[#dfe3dc] bg-white px-2 text-sm text-[#1c1d22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9dddc7]/35"
-                  >
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-              ) : (
+              {!canManage ? (
                 <p className="mt-2 text-xs leading-5 text-[#8a8d95]">Only owners and admins can invite or remove members.</p>
-              )}
+              ) : null}
             </div>
             <Button
               className="h-11 rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c] sm:self-end"
@@ -385,7 +358,6 @@ function TeamAccessSection({
                     row={row}
                     canManage={canManage}
                     viewerRole={viewerRole}
-                    ownerUserId={org.ownerUserId}
                     removeMember={removeMember}
                     revokeInvite={revokeInvite}
                     updateMemberRole={updateMemberRole}
@@ -410,7 +382,6 @@ function AccessRow({
   row,
   canManage,
   viewerRole,
-  ownerUserId,
   removeMember,
   revokeInvite,
   updateMemberRole,
@@ -418,7 +389,6 @@ function AccessRow({
   row: AccessRow;
   canManage: boolean;
   viewerRole: OrgRole;
-  ownerUserId: string;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   updateMemberRole: UseMutationResult<
@@ -437,12 +407,10 @@ function AccessRow({
   const subtitle = [member.email && member.name ? member.email : null, titleCase(member.status)]
     .filter(Boolean)
     .join(" · ");
-  const isPrimaryOwner = member.userId === ownerUserId; // the creator — never editable
   const targetIsOwner = member.role === "owner";
   const viewerIsOwner = viewerRole === "owner";
-  // Admins manage members/admins; only an owner can edit or remove a co-owner;
-  // the primary owner is fixed.
-  const canEditRole = canManage && !isPrimaryOwner && (!targetIsOwner || viewerIsOwner);
+  // Admins manage members/admins; only an owner can edit or remove another owner.
+  const canEditRole = canManage && (!targetIsOwner || viewerIsOwner);
 
   return (
     <div className="flex min-h-16 items-center gap-3 border-b border-[#eceeeb] px-3 py-3 last:border-b-0 sm:px-4">
