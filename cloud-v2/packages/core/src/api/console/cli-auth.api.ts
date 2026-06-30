@@ -846,7 +846,7 @@ async function ensureWorkosOrgLinked(
     externalId: org.id,
     metadata: workosOrgMetadata(org),
   });
-  const linkedOrg = await developerOrgs.setWorkosOrgId(authenticatedSession.user, org.id, createdOrg.id);
+  const linkedOrg = await developerOrgs.setWorkosOrgId(org.id, createdOrg.id);
   await ensureOwnerWorkosMembership(linkedOrg);
   return linkedOrg;
 }

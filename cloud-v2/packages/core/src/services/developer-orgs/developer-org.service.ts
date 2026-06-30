@@ -113,7 +113,7 @@ export class DeveloperOrgService {
     return serializeDeveloperOrg(existing.toObject());
   }
 
-  async setWorkosOrgId(user: ConsoleUserIdentity, orgId: string, workosOrgId: string): Promise<DeveloperOrgRecord> {
+  async setWorkosOrgId(orgId: string, workosOrgId: string): Promise<DeveloperOrgRecord> {
     const existingWithWorkosId = await DeveloperOrgModel.findOne({ workosOrgId }).lean();
     if (existingWithWorkosId && existingWithWorkosId.orgId !== orgId) {
       throw new DeveloperOrgServiceError(
@@ -123,7 +123,9 @@ export class DeveloperOrgService {
       );
     }
 
-    const org = await DeveloperOrgModel.findOne({ orgId, ownerUserId: user.id });
+    // Caller authorization (owner role) is enforced by ensureWorkosOrgLinked;
+    // key on orgId only so any owner can link, not just the ownerUserId creator.
+    const org = await DeveloperOrgModel.findOne({ orgId });
     if (!org) {
       throw new DeveloperOrgServiceError("org_not_found", "developer org was not found", 404);
     }
