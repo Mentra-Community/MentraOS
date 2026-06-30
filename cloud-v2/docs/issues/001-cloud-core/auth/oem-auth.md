@@ -7,8 +7,8 @@ verified with `test-oem`; this doc is under review).
 user's identity to miniapp backends. An OEM's backend mints a short-lived signed
 JWT per user; the client exchanges it (RFC 8693) for Core-backed credentials, and
 hosted deployments can derive a normalized `cloud-runtime` token from the same
-trust decision. Mentra maps `(oemId, oemUserId)` to a `mentraUserId`. The handoff
-to miniapp backends carries `oemId` so developers can set their own trust policy.
+trust decision. Mentra maps `(tenantId, tenantUserId)` to a `mentraUserId`. The handoff
+to miniapp backends carries `tenantId` so developers can set their own trust policy.
 This doc carries both the decision (which integration shape and why) and the
 implementation (endpoints, data model, token formats, lifecycles, security).
 
@@ -56,7 +56,7 @@ note and the git history of this doc):
 Why token exchange: Mentra controls Core session lifetime (kill the refresh token in
 our DB and the session ends), the SDK refreshes against Mentra so OEM downtime
 affects only new logins, and hosted services see normalized `mentraUserId` /
-`oemId` claims with no per-request resolution.
+`tenantId` claims with no per-request resolution.
 
 ## Q2: Mentra to miniapp identity
 
@@ -69,15 +69,15 @@ There is no cryptographic move that lets a miniapp distinguish a real user from 
 OEM impersonating its own user, because the OEM is the source of truth for who its
 users are.
 
-**Decision: put `oemId` in the handoff and let developers set a trust policy
+**Decision: put `tenantId` in the handoff and let developers set a trust policy
 (Option B), with per-miniapp opt-in as the configuration surface.** The auto-auth
-payload carries `oemId` alongside `mentraUserId`. Miniapps that ignore it work
+payload carries `tenantId` alongside `mentraUserId`. Miniapps that ignore it work
 exactly as today; miniapps that care apply a policy:
 
 - `trust-all` (default): accept any verified payload. Keeps today's behavior, where
   miniapps just work.
-- `mentra-direct-only`: accept only `oemId == "mentra"`.
-- `whitelist`: accept only a configured set of `oemId`s.
+- `mentra-direct-only`: accept only `tenantId == "mentra"`.
+- `whitelist`: accept only a configured set of `tenantId`s.
 
 A per-miniapp pseudonymous `sub = H(mentraUserId, packageName)` (so no two miniapps
 see the same id for the same user) is available as a future opt-in for
@@ -91,7 +91,7 @@ corresponding public key for verification.
 
 1. **OEM signs up via the portal** (flow in
    [`../../005-websites/oem-portal/`](../../005-websites/oem-portal/)). Output is a
-   record in the `oems` collection with a stable `oemId`.
+   record in the `oems` collection with a stable `tenantId`.
 2. **OEM generates a keypair locally:**
    ```
    openssl genpkey -algorithm ED25519 -out private.pem
@@ -140,8 +140,8 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 | Claim | Meaning |
 | --- | --- |
-| `iss` | OEM identifier (`oemId`). Mentra looks up the OEM's public key by this value. |
-| `sub` | The OEM's own user identifier (`oemUserId`). Stable for the user's lifetime within that OEM. |
+| `iss` | OEM identifier (`tenantId`). Mentra looks up the OEM's public key by this value. |
+| `sub` | The OEM's own user identifier (`tenantUserId`). Stable for the user's lifetime within that OEM. |
 | `aud` | Must be `"mentra"`. Audience pinning prevents a JWT meant for another service from being replayed against us. |
 | `exp` | Expiry, Unix seconds, in the future. Recommended TTL 5 minutes. |
 | `iat` | Issued-at, Unix seconds. |
@@ -188,11 +188,11 @@ token), `unauthorized_client` (the issuing OEM is now disabled).
 
 ### `GET /api/oem/me`
 
-OEM admin tooling reads its own registered info (display name, `oemId`, public key
+OEM admin tooling reads its own registered info (display name, `tenantId`, public key
 or JWKS URL, active-session count). Requires an OEM admin session from the portal.
 
 ```json
-{ "oemId": "acme-oem", "displayName": "Acme Glasses",
+{ "tenantId": "acme-oem", "displayName": "Acme Glasses",
   "publicKeyMode": "static", "publicKey": "<PEM>", "jwksUrl": null,
   "activeSessionCount": 1234, "createdAt": "2026-05-01T12:34:56Z" }
 ```
@@ -238,7 +238,7 @@ MongoDB.
 ```js
 {
   _id: ObjectId,
-  oemId: "acme-oem",                  // stable, exposed externally
+  tenantId: "acme-oem",                  // stable, exposed externally
   displayName: "Acme Glasses",
   publicKeyMode: "static" | "jwks-url",
   publicKey: "<PEM>" | null,          // present when mode === "static"
@@ -251,7 +251,7 @@ MongoDB.
 }
 ```
 
-Index: `{ oemId: 1 }` unique (lookup during token verification).
+Index: `{ tenantId: 1 }` unique (lookup during token verification).
 
 ### Collection: `users`
 
@@ -261,14 +261,14 @@ the Mongo-generated `_id` rather than minting a separate opaque id.
 ```js
 {
   _id: ObjectId,            // == mentraUserId (hex string externally)
-  oemId: "acme-oem",
-  oemUserId: "user-42",     // for Mentra-direct users this is the Supabase `sub`
+  tenantId: "acme-oem",
+  tenantUserId: "user-42",     // for Mentra-direct users this is the Supabase `sub`
   createdAt: ISODate
 }
 ```
 
 Indexes: the default `{ _id: 1 }` primary key (no separate `mentraUserId` field or
-index), and `{ oemId: 1, oemUserId: 1 }` unique (lookup during exchange; create on
+index), and `{ tenantId: 1, tenantUserId: 1 }` unique (lookup during exchange; create on
 first sight).
 
 (Implementation note: the current code mints `mu_${ulid()}` in `user.service.ts`;
@@ -282,7 +282,7 @@ migrate.)
   _id: ObjectId,
   refreshTokenHash: "<bcrypt or argon2 hash>",  // never store plaintext
   mentraUserId: "507f1f77bcf86cd799439011",
-  oemId: "acme-oem",
+  tenantId: "acme-oem",
   issuedAt: ISODate,
   expiresAt: ISODate                            // TTL index on this field
 }
@@ -290,7 +290,7 @@ migrate.)
 
 Indexes: `{ expiresAt: 1 }` with `expireAfterSeconds: 0` (Mongo TTL index, auto
 deletes past-expiry docs, no background job), `{ refreshTokenHash: 1 }` unique
-(lookup on refresh), `{ mentraUserId: 1, oemId: 1 }` (revocation queries).
+(lookup on refresh), `{ mentraUserId: 1, tenantId: 1 }` (revocation queries).
 
 ### Collection: `revokedJtis`
 
@@ -310,10 +310,10 @@ Replay-protection cache for OEM-issued JWT jtis, TTL'd to expire shortly after t
 OEM JWT's own expiry.
 
 ```js
-{ _id: ObjectId, jti: "<unique-id>", oemId: "acme-oem", expiresAt: ISODate }
+{ _id: ObjectId, jti: "<unique-id>", tenantId: "acme-oem", expiresAt: ISODate }
 ```
 
-Indexes: `{ expiresAt: 1 }` with `expireAfterSeconds: 0`, `{ jti: 1, oemId: 1 }`
+Indexes: `{ expiresAt: 1 }` with `expireAfterSeconds: 0`, `{ jti: 1, tenantId: 1 }`
 unique (lookup on every exchange). Kept separate from `revokedJtis` because the
 lifetimes differ: `seenJtis` populates on every successful exchange and expires
 quickly; `revokedJtis` populates only on explicit revoke.
@@ -330,7 +330,7 @@ Core-owned APIs:
 ```json
 { "iss": "cloud-core", "sub": "507f1f77bcf86cd799439011",
   "aud": "cloud-core", "exp": 1736815945, "iat": 1736812345,
-  "jti": "01HGZ...", "oem_id": "acme-oem",
+  "jti": "01HGZ...", "tenant_id": "acme-oem",
   "scope": "audio transcription translation" }
 ```
 
@@ -356,7 +356,7 @@ with an OEM-signed JWT:
    clock skew. On failure, `invalid_grant`.
 5. Check `jti` against `seenJtis`; if seen, `invalid_grant`. Otherwise insert with
    `expiresAt = exp + 60s`.
-6. Look up the user by `(oemId, oemUserId) = (iss, sub)`. If found, use that user's
+6. Look up the user by `(tenantId, tenantUserId) = (iss, sub)`. If found, use that user's
    `_id` as the `mentraUserId`; if not, insert a new user (its `_id` is the new
    `mentraUserId`).
 7. Issue the access token (1h) and refresh token (30d); store the hashed refresh
@@ -384,20 +384,20 @@ then old-key JWTs fail after the OEM removes the old key.
 ## Miniapp identity handoff
 
 Per the Q2 decision, the auto-auth payload Mentra sends to miniapp backends carries
-`oemId` alongside `mentraUserId`:
+`tenantId` alongside `mentraUserId`:
 
 ```json
-{ "mentraUserId": "507f1f77bcf86cd799439011", "oemId": "acme-oem", ... }
+{ "mentraUserId": "507f1f77bcf86cd799439011", "tenantId": "acme-oem", ... }
 ```
 
 | Policy | Behavior |
 | --- | --- |
-| `trust-all` | Accept any verified payload regardless of `oemId`. Default. |
-| `mentra-direct-only` | Reject if `oemId !== "mentra"`. |
-| `whitelist` | Accept only if `oemId` is in a configured allow-list. |
+| `trust-all` | Accept any verified payload regardless of `tenantId`. Default. |
+| `mentra-direct-only` | Reject if `tenantId !== "mentra"`. |
+| `whitelist` | Accept only if `tenantId` is in a configured allow-list. |
 
 How the developer sets this policy lives in the miniapp spec. From this doc's
-perspective, Mentra emits the payload with `oemId` populated; downstream policy
+perspective, Mentra emits the payload with `tenantId` populated; downstream policy
 enforcement is the miniapp's concern. The end-to-end delivery of this identity into
 a local miniapp (the miniapp-scoped token and on-device injection) is in
 [`design.md`](./design.md#miniapp-auto-auth).
@@ -415,7 +415,7 @@ a local miniapp (the miniapp-scoped token and on-device injection) is in
 - **TLS required** on all endpoints; no HTTP fallback.
 - **Rate limiting.** Per-OEM limits on the exchange endpoint (concrete limits TBD).
 - **Audit logging.** Every exchange, refresh, and revocation emits a structured log
-  with `oemId`, `mentraUserId` (or `oemUserId` pre-mapping), endpoint, and outcome
+  with `tenantId`, `mentraUserId` (or `tenantUserId` pre-mapping), endpoint, and outcome
   (retention policy open).
 - **Refresh token rotation** surfaces a leak: an attacker's use rotates the token,
   so the legitimate client's next refresh fails.
@@ -433,15 +433,15 @@ real OEM backend: tests spin it up alongside the cloud under test, register it
 
 - Generates an Ed25519 keypair on first run, stores the private key locally.
 - Registers with Mentra at startup via `POST /api/oem/jwks`.
-- `oemId` is env-configured (default `"test-oem"`); spinning up two instances with
+- `tenantId` is env-configured (default `"test-oem"`); spinning up two instances with
   different ids exercises multi-OEM scenarios (trust policies, OEM isolation).
 
 Endpoints:
 
 ```
-POST   /test-oem/mint-jwt           { oemUserId, extraClaims? } -> { jwt }
-POST   /test-oem/configure-user     { oemUserId, displayName?, ... } -> { ok }
-DELETE /test-oem/users/:oemUserId   -> { ok }   (simulates deauthorizing a user)
+POST   /test-oem/mint-jwt           { tenantUserId, extraClaims? } -> { jwt }
+POST   /test-oem/configure-user     { tenantUserId, displayName?, ... } -> { ok }
+DELETE /test-oem/users/:tenantUserId   -> { ok }   (simulates deauthorizing a user)
 GET    /test-oem/.well-known/jwks.json   -> JWKS document (JWK-URL mode)
 ```
 
@@ -450,7 +450,7 @@ Usage:
 ```ts
 // 1. Get a JWT for a synthetic user
 const { jwt } = await fetch(`${TEST_OEM_URL}/test-oem/mint-jwt`, {
-  method: "POST", body: JSON.stringify({ oemUserId: "test-user-1" }),
+  method: "POST", body: JSON.stringify({ tenantUserId: "test-user-1" }),
 }).then(r => r.json());
 
 // 2. Exchange it with Mentra
@@ -480,7 +480,7 @@ environments.
   Lean: separate field.
 - **Audit log retention.** Concrete policy needed.
 - **Rate limits.** Specific per-OEM limits for the token endpoint.
-- **`oem_id` in the access token.** Proposed to include it (resource servers see the
+- **`tenant_id` in the access token.** Proposed to include it (resource servers see the
   attesting OEM without a DB lookup), at the cost of carrying OEM identity through
   the system. Lean: include it.
 - **OEM JWT max clock skew.** Proposed 5 minutes.
@@ -506,7 +506,7 @@ cloud-v2/packages/core/   (auth routes + services)
   routes:    /api/client/auth/exchange, /refresh; /api/oem/me, /jwks, sessions
   services:  JWT verify (OEM-signed), JWT issue (Mentra), key resolve
              (static + JWKS URL), refresh-token store, jti tracker,
-             (oemId, oemUserId) -> mentraUserId mapper
+             (tenantId, tenantUserId) -> mentraUserId mapper
   schemas:   oems, users, refreshTokens, revokedJtis, seenJtis
 cloud-v2/test/test-oem/    (TEST OEM service + keypair/JWT signing)
 ```

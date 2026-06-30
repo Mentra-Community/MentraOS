@@ -38,6 +38,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
+import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
@@ -153,7 +154,8 @@ const PING_TIMEOUT_THRESHOLD = 6 // ~30s
 // so they're trivial to grep in incident logs and to delete. Cross-platform —
 // host-side only, no native changes.
 // ===========================================================================
-const BGCAP_TELEMETRY = true
+const BGCAP_TELEMETRY = false
+const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 let bgcapHbTimer: ReturnType<typeof setInterval> | null = null
 let bgcapHbLast = 0
 let bgcapTxCount = 0
@@ -359,6 +361,7 @@ class LocalMiniappRuntime {
   /** Guards one-time wiring of the cloud transcript/translation fan-out. */
   private cloudResultsWired = false
   private cloudStatusWired = false
+  private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -2750,13 +2753,21 @@ class LocalMiniappRuntime {
     if (cloud) {
       this.ensureCloudResultsWired(cloud)
       const subs = this.buildCloudAudioSubscriptions(cloudStreams)
-      console.log(
-        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
-      )
-      cloud.setSubscriptions(subs).catch((err) => {
-        // Best-effort: the cloud may not be connected yet. Logging is enough.
-        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
-      })
+      const nextKey = this.audioSubscriptionKey(subs)
+      if (!this.cloudAudioSubscriptionSync.begin(nextKey)) return
+      console.log(`${LOG_TAG}: updateCloudSubscriptions cloudSubs=${subs.length}`)
+      cloud
+        .setSubscriptions(subs)
+        .then(() => {
+          this.cloudAudioSubscriptionSync.succeeded(nextKey)
+        })
+        .catch((err) => {
+          // Best-effort: the cloud may not be connected yet. Keep failed writes
+          // retryable; otherwise a reconnect that recomputes the same desired
+          // transcription set gets deduped and local captions never recover.
+          this.cloudAudioSubscriptionSync.failed(nextKey)
+          console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+        })
     }
   }
 
@@ -2793,6 +2804,26 @@ class LocalMiniappRuntime {
     return subs
   }
 
+  private audioSubscriptionKey(subs: AudioSubscription[]): string {
+    return JSON.stringify(
+      subs
+        .map((sub) => {
+          if (sub.kind === "transcription") {
+            return {
+              kind: sub.kind,
+              language: sub.language,
+            }
+          }
+          return {
+            kind: sub.kind,
+            source: sub.source,
+            target: sub.target,
+          }
+        })
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    )
+  }
+
   /**
    * Wire the cloud's transcription/translation results into the existing
    * miniapp fan-out exactly once. Maps each cloud result back to the
@@ -2805,6 +2836,12 @@ class LocalMiniappRuntime {
     this.cloudResultsWired = true
 
     cloud.onTranscript((d: TranscriptionData) => {
+      const receivedAt = Date.now()
+      if (TRANSCRIPT_TIMING_TELEMETRY) {
+        console.log(
+          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${d.resolvedLanguage} text="${d.text.slice(0, 48)}"`,
+        )
+      }
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
         type: "transcription",
         text: d.text,
@@ -2818,6 +2855,7 @@ class LocalMiniappRuntime {
         duration: d.durationMs,
         provider: d.provider,
         confidence: d.confidence,
+        __hostReceivedAt: receivedAt,
       })
     })
 
@@ -2981,6 +3019,15 @@ class LocalMiniappRuntime {
     }
 
     for (const packageName of matchedSubs) {
+      if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
+        const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
+        const now = Date.now()
+        console.log(
+          `${LOG_TAG}: transcript fanout t=${now} app=${packageName} final=${!!transcript?.isFinal} hostDelta=${
+            transcript?.__hostReceivedAt ? now - transcript.__hostReceivedAt : -1
+          }ms text="${(transcript?.text ?? "").slice(0, 48)}"`,
+        )
+      }
       // While a nav trip is active the Nav SDK's road-snapped fixes are
       // already being forwarded via addLocationListener (see NAV_START handler).
       // Suppress the raw background-GPS forward for that miniapp so the two

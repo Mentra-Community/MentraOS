@@ -2,6 +2,12 @@ name: Deploy cloud-v2 prod
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "cloud-v2/**"
+      - ".github/workflows/cloud-v2-prod.yml"
 
 concurrency:
   group: cloud-v2-prod

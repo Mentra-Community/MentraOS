@@ -64,14 +64,14 @@ export interface CloudRuntimeMapsAdapter {
 
 export interface MiniappAuthToken {
   mentraUserId: string
-  oemId?: string
+  tenantId?: string
   token: string
   expiresAt: number
 }
 
 export interface MiniappAuthAdapter {
   /** Mint or return a cached token scoped to one miniapp packageName. */
-  getToken: (packageName: string, opts?: {minTtlMs?: number}) => Promise<MiniappAuthToken>
+  getToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) => Promise<MiniappAuthToken>
 }
 
 import type {ClientApp} from "../types/applet"
