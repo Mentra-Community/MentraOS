@@ -8,6 +8,7 @@ import {
   DeveloperOrgServiceError,
   type DeveloperOrgRecord,
 } from "../../services/developer-orgs/developer-org.service";
+import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
 import {
   MiniAppService,
   MiniAppServiceError,
@@ -30,6 +31,7 @@ const PKCE_VERIFIER_COOKIE = "mentra_console_pkce_verifier";
 const RETURN_TO_COOKIE = "mentra_console_return_to";
 const ORG_SELECTION_COOKIE = "mentra_console_org_selection";
 const developerOrgs = new DeveloperOrgService();
+const apiKeys = new DeveloperApiKeyService();
 const miniapps = new MiniAppService();
 const signing = new DeveloperSigningService();
 
@@ -762,14 +764,8 @@ async function getTokens(c: AppContext) {
   if (!developer.ok) return developer.response;
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const tokens = await workos().apiKeys.listOrganizationApiKeys({
-      organizationId: requireWorkosOrgId(org),
-      limit: 100,
-    });
-    return c.json({ tokens: tokens.data.map(serializeApiToken) });
+    return c.json({ tokens: await apiKeys.list(developer.org.id, consoleEnvironmentLabel()) });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -785,12 +781,16 @@ async function postToken(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid API key payload");
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const token = await workos().apiKeys.createOrganizationApiKey({
-      organizationId: requireWorkosOrgId(org),
-      name: parsed.data.name.trim(),
-    });
-    return c.json({ token: serializeApiToken(token) }, 201);
+    // Ensure the org is WorkOS-linked so the key authenticates back to it (the
+    // runtime auth path still resolves orgs by workosOrgId for now).
+    await ensureWorkosOrgLinked(developer.auth, developer.org);
+    const token = await apiKeys.create(
+      developer.org.id,
+      parsed.data.name.trim(),
+      developer.auth.user.id,
+      consoleEnvironmentLabel(),
+    );
+    return c.json({ token }, 201);
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
@@ -808,18 +808,11 @@ async function deleteToken(c: AppContext) {
   if (!tokenId) throw new InvalidRequest("tokenId is required");
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const tokens = await workos().apiKeys.listOrganizationApiKeys({
-      organizationId: requireWorkosOrgId(org),
-      limit: 100,
-    });
-    if (!tokens.data.some(token => token.id === tokenId)) {
+    if (!(await apiKeys.revoke(developer.org.id, tokenId))) {
       return c.json({ error: "not_found", error_description: "API key was not found" }, 404);
     }
-    await workos().apiKeys.deleteApiKey(tokenId);
     return c.json({ ok: true });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -972,27 +965,6 @@ function serializeInvitation(invitation: WorkosInvitationLike): ConsoleOrgInvita
   };
 }
 
-function serializeApiToken(apiKey: WorkosApiKeyLike): ConsoleApiToken {
-  return {
-    id: apiKey.id,
-    name: apiKey.name,
-    obfuscatedValue: apiKey.obfuscatedValue ?? null,
-    value: apiKey.value ?? null,
-    permissions: apiKey.permissions ?? [],
-    createdAt: apiKey.createdAt ?? null,
-    updatedAt: apiKey.updatedAt ?? null,
-    lastUsedAt: apiKey.lastUsedAt ?? null,
-  };
-}
-
-function workosApiKeyOrganizationId(apiKey: WorkosApiKeyLike): string | null {
-  const owner = apiKey.owner;
-  if (owner?.type === "organization" && typeof owner.id === "string") return owner.id;
-  if (owner?.type === "user" && typeof owner.organizationId === "string") return owner.organizationId;
-  if (owner?.type === "user" && typeof owner.organization_id === "string") return owner.organization_id;
-  return null;
-}
-
 function requireWorkosOrgId(org: DeveloperOrgRecord): string {
   if (!org.workosOrgId) {
     throw new DeveloperOrgServiceError("team_access_not_ready", "team access is not ready for this org yet", 409);
@@ -1051,17 +1023,6 @@ type ConsoleOrgInvitation = {
   updatedAt: string | null;
 };
 
-type ConsoleApiToken = {
-  id: string;
-  name: string;
-  obfuscatedValue: string | null;
-  value: string | null;
-  permissions: string[];
-  createdAt: string | null;
-  updatedAt: string | null;
-  lastUsedAt: string | null;
-};
-
 type WorkosInvitationLike = {
   id: string;
   email: string;
@@ -1070,23 +1031,6 @@ type WorkosInvitationLike = {
   expiresAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
-};
-
-type WorkosApiKeyLike = {
-  id: string;
-  owner?: {
-    type?: string;
-    id?: string;
-    organizationId?: string;
-    organization_id?: string;
-  };
-  name: string;
-  obfuscatedValue?: string | null;
-  value?: string | null;
-  permissions?: string[];
-  createdAt?: string | null;
-  updatedAt?: string | null;
-  lastUsedAt?: string | null;
 };
 
 export type ConsoleAuthResult =
@@ -1256,22 +1200,23 @@ async function authenticateBearerToken(token: string): Promise<ConsoleAuthResult
 
 async function authenticateApiKeyToken(token: string): Promise<ConsoleAuthResult> {
   try {
-    const validation = await workos().apiKeys.createValidation({ value: token });
-    const apiKey = validation.apiKey;
-    if (!apiKey) return { authenticated: false, reason: "invalid_bearer_token" };
+    const validated = await apiKeys.validate(token, consoleEnvironmentLabel());
+    if (!validated) return { authenticated: false, reason: "invalid_bearer_token" };
 
-    const organizationId = workosApiKeyOrganizationId(apiKey);
-    if (!organizationId) return { authenticated: false, reason: "api_key_missing_org" };
+    // The runtime auth result still keys orgs by workosOrgId, so map our orgId
+    // to it. (Resolution moves fully to our orgId when membership lands.)
+    const org = await developerOrgs.getOrgById(validated.orgId);
+    if (!org?.workosOrgId) return { authenticated: false, reason: "api_key_missing_org" };
 
     return {
       authenticated: true,
       user: {
-        id: `api_key:${apiKey.id}`,
-        email: `${apiKey.name || "api-token"}@api-token.local`,
-        firstName: apiKey.name || "API key",
+        id: `api_key:${validated.keyId}`,
+        email: `api-key@${validated.keyId}.local`,
+        firstName: "API key",
         lastName: null,
       },
-      organizationId,
+      organizationId: org.workosOrgId,
     };
   } catch {
     return { authenticated: false, reason: "invalid_bearer_token" };

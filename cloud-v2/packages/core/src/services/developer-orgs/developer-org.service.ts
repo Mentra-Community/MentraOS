@@ -43,6 +43,11 @@ export class DeveloperOrgService {
     return org ? serializeDeveloperOrg(org) : null;
   }
 
+  async getOrgById(orgId: string): Promise<DeveloperOrgRecord | null> {
+    const org = await DeveloperOrgModel.findOne({ orgId }).lean();
+    return org ? serializeDeveloperOrg(org) : null;
+  }
+
   /** Create the caller's first org (onboarding) and seed them as its owner. */
   async createPrimaryOrg(user: ConsoleUserIdentity, input: UpsertDeveloperOrgInput): Promise<DeveloperOrgRecord> {
     const displayName = normalizeDisplayName(input.displayName);
