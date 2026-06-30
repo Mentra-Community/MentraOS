@@ -14,32 +14,41 @@ import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
 import {getConfigValues} from "../runtime/bootstrap"
 
+type CloudUrlOverrides = {core?: string; runtime?: string}
+
 /**
  * Reconnect the cloud client onto the current cloud-URL overrides. Explicit
  * partial overrides merge over the boot-resolved config (which carries the
  * host's Metro/env URL resolution); both empty clears the live override.
  */
-function applyCloudUrlReconnect(): void {
-  const s = useSettingsStore.getState()
-  const core = trimSetting(s.getSetting(SETTINGS.cloud_core_url.key))
-  const runtime = trimSetting(s.getSetting(SETTINGS.cloud_runtime_url.key))
-
-  if (!core && !runtime) {
+function applyCloudUrlReconnect(urls: CloudUrlOverrides = currentCloudUrlOverrides()): void {
+  const resolved = resolveCloudUrlReconnectTarget(urls)
+  if (resolved === undefined) {
     cloudClientService.reconnect(null)
-    return
+  } else if (resolved) {
+    cloudClientService.reconnect(resolved)
+  } else {
+    console.warn("toolkit.dev.setCloudUrls: partial cloud override missing boot-resolved sibling endpoint")
   }
+}
+
+function currentCloudUrlOverrides(): CloudUrlOverrides {
+  const s = useSettingsStore.getState()
+  return {
+    core: trimSetting(s.getSetting(SETTINGS.cloud_core_url.key)),
+    runtime: trimSetting(s.getSetting(SETTINGS.cloud_runtime_url.key)),
+  }
+}
+
+function resolveCloudUrlReconnectTarget(urls: CloudUrlOverrides): {core: string; runtime: string} | null | undefined {
+  const core = trimSetting(urls.core)
+  const runtime = trimSetting(urls.runtime)
+  if (!core && !runtime) return undefined
 
   const config = getConfigValues()
   const resolvedCore = core || config.coreUrl?.trim()
   const resolvedRuntime = runtime || config.runtimeUrl?.trim()
-  if (resolvedCore && resolvedRuntime) {
-    cloudClientService.reconnect({core: resolvedCore, runtime: resolvedRuntime})
-  } else {
-    // Keep the previous client if the host did not provide enough boot config to
-    // complete a partial override; reconnecting with null would silently discard
-    // the explicit side the user just set.
-    console.warn("toolkit.dev.setCloudUrls: partial cloud override missing boot-resolved sibling endpoint")
-  }
+  return resolvedCore && resolvedRuntime ? {core: resolvedCore, runtime: resolvedRuntime} : null
 }
 
 function trimSetting(value: unknown): string | undefined {
@@ -62,10 +71,21 @@ export const dev = {
   },
   /** Override the cloud-v2 URLs and reconnect the live client onto them. */
   setCloudUrls: (urls: {core?: string; runtime?: string}) => {
+    const next = {...currentCloudUrlOverrides(), ...urls}
+    const resolved = resolveCloudUrlReconnectTarget(next)
+    if (resolved === null) {
+      console.warn("toolkit.dev.setCloudUrls: ignoring partial cloud override without a resolvable sibling endpoint")
+      return
+    }
+
     const s = useSettingsStore.getState()
     if (urls.core !== undefined) s.setSetting(SETTINGS.cloud_core_url.key, urls.core)
     if (urls.runtime !== undefined) s.setSetting(SETTINGS.cloud_runtime_url.key, urls.runtime)
-    applyCloudUrlReconnect()
+    if (resolved === undefined) {
+      cloudClientService.reconnect(null)
+    } else {
+      cloudClientService.reconnect(resolved)
+    }
   },
 
   /** The saved backend URLs (the dev URL-switcher list). */
