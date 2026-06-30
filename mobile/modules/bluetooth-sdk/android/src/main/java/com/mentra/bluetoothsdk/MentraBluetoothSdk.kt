@@ -746,16 +746,20 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
+        val routedRequest =
+            nonBlankRequestId(request.requestId)
+                ?.let { if (it == request.requestId) request else request.copy(requestId = it) }
+                ?: request.copy(requestId = generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId}"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${routedRequest.requestId}"
         )
-        val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
-        pendingPhotoRequests[request.requestId] = pending
+        val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}")
+        pendingPhotoRequests[routedRequest.requestId] = pending
         try {
-            deviceManager.requestPhoto(request)
+            deviceManager.requestPhoto(routedRequest)
             return pending.await()
         } finally {
-            pendingPhotoRequests.remove(request.requestId, pending)
+            pendingPhotoRequests.remove(routedRequest.requestId, pending)
         }
     }
 
@@ -765,13 +769,14 @@ class MentraBluetoothSdk private constructor(
         exposureTimeNs: Long?,
         durationMs: Int,
     ): CameraStatusEvent {
-        val pending = PendingResponse<CameraStatusEvent>("camera warm up $requestId")
-        pendingCameraStatusRequests[requestId] = pending
+        val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
+        val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
+        pendingCameraStatusRequests[effectiveRequestId] = pending
         try {
-            deviceManager.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+            deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
             return pending.await()
         } finally {
-            pendingCameraStatusRequests.remove(requestId, pending)
+            pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
     }
 

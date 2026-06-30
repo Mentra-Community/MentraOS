@@ -1,4 +1,5 @@
 import type {PhotoRequestParams, PhotoSize} from "../BluetoothSdk.types"
+import {generatedCameraRequestId, nonBlankRequestId} from "./requestIds"
 
 /** Maps unknown/legacy size strings to the current wire format. */
 export function normalizePhotoSizeTier(size: string | undefined): PhotoSize {
@@ -24,7 +25,7 @@ export function photoRequestParamsForNative(
   params: PhotoRequestParams,
 ): Record<string, string | number | boolean> {
   const payload: Record<string, string | number | boolean> = {
-    requestId: params.requestId,
+    requestId: nonBlankRequestId(params.requestId) ?? generatedCameraRequestId("photo"),
     size: normalizePhotoSizeTier(params.size),
     webhookUrl: params.webhookUrl ?? "",
     compress: params.compress,

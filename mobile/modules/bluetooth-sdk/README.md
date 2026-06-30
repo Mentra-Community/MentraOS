@@ -369,7 +369,6 @@ OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and
 
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
-  requestId: `photo-${Date.now()}`,
   size: 'medium',
   webhookUrl: 'https://api.example.com/mentra/photo',
   authToken: 'optional-token',
@@ -381,7 +380,7 @@ const photo = await BluetoothSdk.requestPhoto({
 console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
 ```
 
-`requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives before the command timeout. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives before the command timeout. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 

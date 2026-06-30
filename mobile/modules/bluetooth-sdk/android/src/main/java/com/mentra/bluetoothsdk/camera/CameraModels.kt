@@ -1,6 +1,13 @@
 package com.mentra.bluetoothsdk
 
 import org.json.JSONObject
+import java.util.UUID
+
+internal fun generatedCameraRequestId(prefix: String): String =
+    "$prefix-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
+
+internal fun nonBlankRequestId(requestId: String?): String? =
+    requestId?.trim()?.takeIf { it.isNotEmpty() }
 
 enum class PhotoSize(val value: String) {
     LOW("low"),
@@ -210,7 +217,8 @@ data class PhotoRequest @JvmOverloads constructor(
             val ispAnalogGain = stringValue(values, "ispAnalogGain")
 
             return PhotoRequest(
-                requestId = stringValue(values, "requestId", "request_id").orEmpty(),
+                requestId = nonBlankRequestId(stringValue(values, "requestId", "request_id"))
+                    ?: generatedCameraRequestId("photo"),
                 size = PhotoSize.fromValue(stringValue(values, "size") ?: "medium"),
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },

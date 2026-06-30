@@ -371,7 +371,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("warmUpCamera") { (params: [String: Any]) in
-            let requestId = params["requestId"] as? String ?? ""
+            let requestId = nonBlankRequestId(params["requestId"] as? String) ?? generatedCameraRequestId("warm")
             let sizeRaw = params["size"] as? String ?? "medium"
             let size = PhotoSize(normalizedRawValue: sizeRaw)
             let exposureTimeNs: Double?

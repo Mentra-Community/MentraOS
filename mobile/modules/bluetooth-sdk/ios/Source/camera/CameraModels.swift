@@ -1,5 +1,15 @@
 import Foundation
 
+func generatedCameraRequestId(_ prefix: String) -> String {
+    "\(prefix)-\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(8))"
+}
+
+func nonBlankRequestId(_ requestId: String?) -> String? {
+    guard let requestId else { return nil }
+    let trimmed = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 public enum PhotoSize: String {
     case low
     case medium
@@ -328,7 +338,7 @@ public struct PhotoRequest {
         }
 
         return PhotoRequest(
-            requestId: params["requestId"] as? String ?? "",
+            requestId: nonBlankRequestId(params["requestId"] as? String) ?? generatedCameraRequestId("photo"),
             size: PhotoSize(normalizedRawValue: sizeRaw),
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
@@ -373,6 +383,28 @@ public struct PhotoRequest {
         if let ispAnalogGain {
             json["ispAnalogGain"] = ispAnalogGain
         }
+    }
+
+    func withRequestId(_ requestId: String) -> PhotoRequest {
+        PhotoRequest(
+            requestId: requestId,
+            size: size,
+            webhookUrl: webhookUrl,
+            authToken: authToken,
+            compress: compress,
+            save: save,
+            sound: sound,
+            exposureTimeNs: exposureTimeNs,
+            iso: iso,
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            noiseReduction: noiseReduction,
+            edgeEnhancement: edgeEnhancement,
+            mfnr: mfnr,
+            zsl: zsl,
+            ispDigitalGain: ispDigitalGain,
+            ispAnalogGain: ispAnalogGain
+        )
     }
 }
 

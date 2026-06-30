@@ -209,8 +209,8 @@ export class PhonePhotoCoordinator {
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
    *
-   * Pure BLE — NO cloud presign, NO upload, NO long-poll. We mint a local
-   * requestId, send the warm-up command, and resolve when the camera reports
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The SDK mints the
+   * requestId, sends the warm-up command, and resolves when the camera reports
    * ready (the native promise resolves on the ready status event).
    */
   async warmUpCamera(
@@ -224,12 +224,8 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
-    // No cloud presign on the warm-up path — mint a local requestId.
-    const requestId = `warm_${Date.now()}_${Math.round(Math.random() * 1e6)}`
-
     try {
       await BluetoothSdk.warmUpCamera({
-        requestId,
         size: normalizePhotoSize(opts.size ?? "medium"),
         exposureTimeNs: opts.exposureTimeNs ?? null,
         durationMs: opts.durationMs ?? 15000,

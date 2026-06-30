@@ -776,18 +776,20 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
+        let routedRequest = nonBlankRequestId(request.requestId).map { request.withRequestId($0) }
+            ?? request.withRequestId(generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId)"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
         )
-        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(request.requestId)")
-        pendingPhotoRequests[request.requestId] = pending
-        DeviceManager.shared.requestPhoto(request)
+        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)")
+        pendingPhotoRequests[routedRequest.requestId] = pending
+        DeviceManager.shared.requestPhoto(routedRequest)
         do {
             let event = try await pending.wait()
-            pendingPhotoRequests.removeValue(forKey: request.requestId)
+            pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {
-            pendingPhotoRequests.removeValue(forKey: request.requestId)
+            pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             throw error
         }
     }
@@ -798,21 +800,22 @@ public final class MentraBluetoothSDK {
         exposureTimeNs: Double?,
         durationMs: Int
     ) async throws -> CameraStatusEvent {
-        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(requestId)")
-        pendingCameraStatusRequests[requestId] = pending
+        let effectiveRequestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("warm")
+        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)")
+        pendingCameraStatusRequests[effectiveRequestId] = pending
         do {
             // Inside the catch so an unsupported-device throw also clears the pending entry.
             try DeviceManager.shared.warmUpCamera(
-                requestId: requestId,
+                requestId: effectiveRequestId,
                 size: size,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             )
             let event = try await pending.wait()
-            pendingCameraStatusRequests.removeValue(forKey: requestId)
+            pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
             return event
         } catch {
-            pendingCameraStatusRequests.removeValue(forKey: requestId)
+            pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
             throw error
         }
     }

@@ -1,3 +1,4 @@
+const {warmUpCameraParamsForNative} = require("../_private/cameraRequestPayload")
 const {photoRequestParamsForNative} = require("../_private/photoRequestPayload")
 
 const baseParams = {
@@ -15,6 +16,18 @@ describe("photoRequestParamsForNative", () => {
     expect(Object.keys(payload).sort()).toEqual(
       ["compress", "requestId", "size", "sound", "webhookUrl"].sort(),
     )
+  })
+
+  it("generates requestId when omitted or blank", () => {
+    const {requestId: _requestId, ...withoutRequestId} = baseParams
+
+    expect(photoRequestParamsForNative(withoutRequestId).requestId).toMatch(/^photo-/)
+    expect(photoRequestParamsForNative({...baseParams, requestId: ""}).requestId).toMatch(/^photo-/)
+    expect(photoRequestParamsForNative({...baseParams, requestId: "  "}).requestId).toMatch(/^photo-/)
+  })
+
+  it("preserves explicit requestId", () => {
+    expect(photoRequestParamsForNative(baseParams).requestId).toBe("photo-1")
   })
 
   it("includes ISO only with manual exposure", () => {
@@ -49,5 +62,24 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.zsl).toBe(false)
     expect(payload.aeExposureDivisor).toBe(3)
     expect(payload.isoCap).toBe(800)
+  })
+})
+
+describe("warmUpCameraParamsForNative", () => {
+  it("generates requestId and normalizes warm-up fields", () => {
+    const payload = warmUpCameraParamsForNative({
+      size: "large",
+      exposureTimeNs: 8_333_333,
+      durationMs: 12_345.6,
+    })
+
+    expect(payload.requestId).toMatch(/^warm-/)
+    expect(payload.size).toBe("high")
+    expect(payload.exposureTimeNs).toBe(8_333_333)
+    expect(payload.durationMs).toBe(12_346)
+  })
+
+  it("preserves explicit warm-up requestId", () => {
+    expect(warmUpCameraParamsForNative({requestId: "warm-1", size: "medium"}).requestId).toBe("warm-1")
   })
 })

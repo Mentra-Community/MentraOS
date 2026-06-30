@@ -48,6 +48,7 @@ import {
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
+import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
 
 /**
@@ -574,6 +575,11 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
+}
+
+const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
+  return nativeWarmUpCamera(warmUpCameraParamsForNative(params) as unknown as WarmUpCameraParams)
 }
 
 export default NativeBluetoothSdkModule
