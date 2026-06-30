@@ -2099,22 +2099,36 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('LIVE', `ignoring stale photo ${response.requestId}`);
       return;
     }
+    const previewUrl = response.photoUrl;
+    if (previewUrl) {
+      setPhotoPreviewUrl(previewUrl);
+      setPhotoStatus(null);
+      activePhotoRequestIdRef.current = null;
+    }
     setCameraStatus(
-      photoCloudServerEnabledRef.current
-        ? 'Camera: photo delivered to cloud webhook'
-        : 'Camera: photo delivered to phone receiver',
+      previewUrl
+        ? 'Camera: loaded photo preview'
+        : photoCloudServerEnabledRef.current
+          ? 'Camera: photo delivered to cloud webhook'
+          : 'Camera: photo delivered to phone receiver',
     );
     setPhotoPreviewDetails((current) => ({
       ...current,
       byteCount: typeof response.fileSizeBytes === 'number' ? response.fileSizeBytes : current?.byteCount,
       contentType: response.contentType ?? current?.contentType,
-      previewUrl: response.photoUrl ?? current?.previewUrl,
+      previewUrl: previewUrl ?? current?.previewUrl,
       requestId: response.requestId,
       source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
-      state: current?.state === 'preview' || response.photoUrl ? 'preview' : 'acknowledged',
+      state: current?.state === 'preview' || previewUrl ? 'preview' : 'acknowledged',
       timestamp: response.timestamp,
       uploadUrl: response.uploadUrl,
     }));
+    if (previewUrl) {
+      void updatePhotoPreviewMetadata(previewUrl);
+      if (scanModeRef.current) {
+        void scanPreviewBarcode(previewUrl);
+      }
+    }
     addEvent('LIVE', `photo response ${response.requestId}`);
   }
 
