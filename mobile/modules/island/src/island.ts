@@ -43,6 +43,7 @@ import {useConnectionStore} from "./stores/connection"
 import {useGallerySyncStore} from "./stores/gallerySync"
 import {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 import {useSettingsStore} from "./stores/settings"
+import {logBuffer} from "./utils/devLogging"
 
 export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
@@ -50,6 +51,9 @@ export const toolkit = {
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {
+    // Reports attach recent phone logs, so island owns console interception for
+    // OEM hosts too. Idempotent; the Mentra host may start it earlier.
+    logBuffer.startConsoleInterception()
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
     // lifecycle yields a live toolkit.session for OEMs. Idempotent for repeated

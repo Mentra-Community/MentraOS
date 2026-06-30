@@ -59,13 +59,21 @@ function automaticThrottleShouldSkip(key: string, nowMs: number, windowMs: numbe
   if (previous !== undefined && nowMs - previous < windowMs) {
     return true
   }
+  pruneAutomaticThrottleRegistry(nowMs, windowMs)
+  return false
+}
+
+function markAutomaticThrottleSuccess(key: string, nowMs: number, windowMs: number): void {
   automaticReportThrottleRegistry.set(key, nowMs)
+  pruneAutomaticThrottleRegistry(nowMs, windowMs)
+}
+
+function pruneAutomaticThrottleRegistry(nowMs: number, windowMs: number): void {
   for (const [entryKey, entryTime] of automaticReportThrottleRegistry) {
     if (nowMs - entryTime > windowMs * 3) {
       automaticReportThrottleRegistry.delete(entryKey)
     }
   }
-  return false
 }
 
 function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
@@ -81,11 +89,19 @@ function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
 }
 
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
+  const throttle =
+    input.kind === "automatic" && input.throttleKey
+      ? {
+          key: input.throttleKey,
+          windowMs: input.throttleWindowMs ?? DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS,
+        }
+      : null
+
   if (input.kind === "automatic" && input.throttleKey) {
     const shouldSkip = automaticThrottleShouldSkip(
       input.throttleKey,
       Date.now(),
-      input.throttleWindowMs ?? DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS,
+      throttle?.windowMs ?? DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS,
     )
     if (shouldSkip) return {status: "skipped", reason: "throttled_within_window"}
   }
@@ -116,6 +132,9 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
             })
     reportId = res.reportId
     reportStatus = res.status
+    if (throttle) {
+      markAutomaticThrottleSuccess(throttle.key, Date.now(), throttle.windowMs)
+    }
   } catch (error) {
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}
   }
