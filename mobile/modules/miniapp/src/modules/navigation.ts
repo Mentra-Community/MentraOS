@@ -2,8 +2,8 @@
  * NavigationModule — turn-by-turn navigation for miniapps. A thin pass-through over the bridge;
  * the phone-side daemon owns the trip lifecycle.
  *
- * Android is fully supported; on iOS the trip methods return `{ok: false, error}`. Every Promise
- * resolves with an `{ok, error?}` shape — nothing throws, so check `result.ok`.
+ * Works on iOS and Android (both back it with the Mapbox Navigation SDK). Every Promise
+ * resolves with an `{ok, error?}` shape; nothing throws, so check `result.ok`.
  */
 
 import {MiniappRequestType, MiniappStreamType} from "../protocol"
@@ -193,7 +193,7 @@ export type NavState = {
 }
 
 export type NavPermissionResult = {
-  /** True if the request reached the host. False on platforms with no nav backend (e.g. iOS). */
+  /** True if the request reached the host. False e.g. when LOCATION isn't declared in the manifest. */
   ok: boolean
   /** True if the user accepted the Nav SDK T&Cs (always true on platforms without a T&C gate). */
   accepted: boolean
@@ -368,7 +368,8 @@ export class NavigationModule {
     this.session.sendOneShot({type: MiniappRequestType.NAVIGATION_STOP})
   }
 
-  /** Dev-only simulator helpers. Android only; iOS returns `{ok: false}` at the bridge. */
+  /** Dev-only simulator helpers for testing trips. `deviate` works on both platforms;
+   *  a few helpers are Android-only and return `{ok: false}` on iOS. */
   get dev(): NavigationDev {
     return {
       /** Nudge the simulator off-route to trigger a reroute. Default 20m. */

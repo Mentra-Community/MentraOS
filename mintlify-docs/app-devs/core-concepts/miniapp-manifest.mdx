@@ -1,0 +1,106 @@
+---
+title: "The manifest (miniapp.json)"
+description: "Declare your miniapp's identity, entry points, permissions, and hardware requirements."
+icon: "file-code"
+---
+
+Every miniapp has a `miniapp.json` at its root. It declares who the miniapp is,
+where its two layers are built to, what permissions it needs, and what hardware
+it requires. The CLI validates it on every `dev`, `pack`, and `release`: bad
+values fail on your laptop, not on the phone.
+
+```json miniapp.json
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.example.notes",
+  "version": "1.0.0",
+  "name": "Notes",
+  "description": "Hands-free note taking",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    { "type": "MICROPHONE", "description": "Capture notes you dictate." }
+  ],
+  "hardwareRequirements": [
+    { "type": "DISPLAY", "level": "REQUIRED", "description": "Shows your notes." },
+    { "type": "MICROPHONE", "level": "REQUIRED" }
+  ]
+}
+```
+
+## Fields
+
+**Required:** `packageName`, `version`, `name`, `hardwareRequirements`. Everything
+else is optional.
+
+| Field | Type | Notes |
+|---|---|---|
+| `packageName` | string | Reverse-DNS, e.g. `com.example.notes`. Must match `^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$`. Your miniapp's unique identity. |
+| `version` | string | Semver, e.g. `1.0.0`. |
+| `name` | string | Display name in the launcher and store. |
+| `hardwareRequirements` | array | What the glasses must (or may) have. See below. **Required.** |
+| `description` | string | Short summary. |
+| `icon` | string | Path to the icon, relative to the project root (e.g. `icon.png`). Packed into the bundle. |
+| `type` | string | `"standard"`. |
+| `sdkVersion` | string | The `@mentra/miniapp` version you built against. |
+| `minHostVersion` | string | Minimum Mentra App version required to run this miniapp. |
+| `entry` | object | `{ "background": "background/index.js", "ui": "ui/index.html" }`: built output paths for the two layers. Declaring `entry.background` is what makes a miniapp two-layer (and gives you `session.ui`). |
+| `port` | number | Dev-server starting port (default `3000`). Used only by `dev`; `release` picks its own port. |
+| `permissions` | array | Runtime permissions you request. See below. |
+| `actions` | array | Capabilities other miniapps / Mentra AI can invoke. See [Interop & Actions](/app-devs/core-concepts/miniapp-interop). |
+
+The `$schema` line points editors at the JSON Schema shipped with the CLI, so you
+get autocomplete and validation as you type. `create-mentra-miniapp` adds it for
+you; you can also print the schema with `mentra-miniapp schema print`.
+
+## Permissions
+
+Each entry is `{ "type": "...", "description": "..." }`. The optional description
+is shown to the user in the OS permission prompt.
+
+| `type` | Grants |
+|---|---|
+| `MICROPHONE` | Audio input, transcription, translation |
+| `CAMERA` | Photos and video on camera glasses |
+| `CALENDAR` | Calendar events via `session.phone.calendar` |
+| `LOCATION` | GPS via `session.location` (and `session.navigation` / `session.heading`) |
+| `BACKGROUND_LOCATION` | Location while the user isn't in your miniapp |
+| `READ_NOTIFICATIONS` | Phone notifications via `session.phone.notifications` |
+| `POST_NOTIFICATIONS` | Posting notifications |
+
+<Note>
+Declaring a permission is not the same as the user granting it.
+`session.permissions.has(type)` reports what you **declared** in the manifest, not
+the live OS grant. If the user denied the OS prompt, your subscriptions simply
+receive nothing. See [Permissions](/app-devs/core-concepts/permissions).
+</Note>
+
+## Hardware requirements
+
+Each entry is `{ "type": "...", "level": "...", "description"?: "..." }`.
+
+| `type` | `LEVEL` |
+|---|---|
+| `CAMERA`, `DISPLAY`, `MICROPHONE`, `SPEAKER`, `IMU`, `BUTTON`, `LIGHT`, `WIFI` | `REQUIRED` or `OPTIONAL` |
+
+- **`REQUIRED`**: glasses without this hardware can't install the miniapp (it's
+  hidden in the Mentra Miniapp Store and launcher on incompatible devices).
+- **`OPTIONAL`**: incompatible glasses still run the miniapp, in a degraded state.
+
+## Editing the manifest
+
+You can edit `miniapp.json` by hand, or use the CLI's guided commands:
+
+```bash
+mentra-miniapp manifest                  # interactive wizard
+mentra-miniapp permission add MICROPHONE
+mentra-miniapp hardware add DISPLAY REQUIRED
+```
+
+See the [CLI reference](/app-devs/reference/cli) for all of them.

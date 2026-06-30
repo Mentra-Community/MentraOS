@@ -27,10 +27,6 @@ on:
   push:
     branches:
       - staging
-    paths:
-      - "mobile/**"
-      - "asg_client/**"
-      - ".github/workflows/staging-builds.yml"
   workflow_dispatch:
     inputs:
       skip_cleanup:
@@ -100,6 +96,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -173,6 +175,17 @@ jobs:
             chmod +x ./fix-react-native-symlinks.sh
             ./fix-react-native-symlinks.sh
           fi
+
+      - name: Inject release signing + Play credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          play: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
 
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
         working-directory: ./mobile
@@ -259,11 +272,34 @@ jobs:
       testflight_detail: ${{ steps.release-status.outputs.testflight_detail }}
 
     steps:
-      - name: Kill stale build processes
+      - name: Kill stale build processes (this runner's prior job only)
         run: |
-          killall xcodebuild 2>/dev/null || true
-          killall Simulator 2>/dev/null || true
-          xcrun simctl shutdown all 2>/dev/null || true
+          # This is a SHARED self-hosted macOS runner. A blanket `killall xcodebuild`
+          # would kill iOS builds for OTHER branches running concurrently here — that was
+          # the cause of the recurring fast, diagnostic-free build failures (xcodebuild
+          # SIGTERM'd mid-compile → exit 65 / no error, build halts then ~30min silent
+          # gap until cleanup). The self-hosted runner only ever executes ONE job at a
+          # time per runner process, but multiple runner processes share this Mac
+          # (e.g. bigbob runs big-bob/-2/-3), so we must not touch other runners'
+          # xcodebuild. (The PR iOS workflow was already fixed this way; this staging
+          # job still had the unscoped killall — that's what killed run #3166's iOS build.)
+          #
+          # Scope the cleanup to xcodebuild processes whose RUNNER_WORKSPACE matches ours.
+          WS="${RUNNER_WORKSPACE:-$GITHUB_WORKSPACE}"
+          echo "Cleaning stale xcodebuild under: $WS"
+          pids="$(pgrep -f "xcodebuild.*${WS}" 2>/dev/null || true)"
+          if [ -n "$pids" ]; then
+            echo "Terminating stale xcodebuild pids: $pids"
+            # shellcheck disable=SC2086
+            kill -TERM $pids 2>/dev/null || true
+            sleep 2
+            # shellcheck disable=SC2086
+            kill -KILL $pids 2>/dev/null || true
+          else
+            echo "No stale xcodebuild for this workspace."
+          fi
+          # Do NOT machine-wide `killall Simulator` / `simctl shutdown all` — it would
+          # disrupt other runners. Device builds don't use a simulator anyway.
 
       - name: Clean previous build outputs only
         run: |
@@ -273,6 +309,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Reset watchman
+        uses: ./.github/actions/reset-watchman
+
+      - name: Free disk space if low
+        uses: ./.github/actions/disk-guard
 
       # Bun + rbenv are pre-installed on the self-hosted runners by
       # setup-runner.sh. The runner's launchd service inherits PATH from
@@ -438,6 +480,14 @@ jobs:
           echo "---all signing identities visible to xcodebuild---"
           security find-identity -v -p codesigning
 
+      - name: Inject App Store Connect API key
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
         working-directory: ./mobile
         env:
@@ -509,9 +559,10 @@ jobs:
 
   build-asg:
     name: Build ASG Client
-    # Pinned to the mac runners: they have the ASG signing keystore provisioned
-    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
-    runs-on: [self-hosted, macOS, ARM64]
+    # GitHub-hosted Ubuntu. Signing creds come from secrets via inject-signing;
+    # it's a clean gradle build (no fastlane/upload), so it doesn't need the mac
+    # runners. The GH-release upload happens later in the ubuntu upload-releases job.
+    runs-on: ubuntu-latest
 
     outputs:
       version_code: ${{ steps.asg-build-info.outputs.version_code }}
@@ -532,6 +583,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Free up disk space
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       - name: Compute ASG build info
         id: asg-build-info
@@ -572,10 +632,24 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          key: asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            asg-gradle-${{ runner.os }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-
+
+      # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
+      # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-
+      # local fallback this action writes) and signs with the ASG_* gradle props,
+      # so it must run after injection or it falls back to ~/.mentra (the disk
+      # dependency this PR removes) and fails on a clean runner.
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build recovery worker asset
         working-directory: ./asg_client/recovery_worker

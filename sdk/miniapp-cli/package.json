@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "mentra-miniapp": "./src/index.ts"
   },
@@ -17,10 +20,10 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "jszip": "^3.10.1",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@types/qrcode-terminal": "^0.12.0",
+    "@types/qrcode": "^1.5.5",
     "bun-types": "^1.3.14",
     "typescript": "^5.0.0"
   },

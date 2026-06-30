@@ -199,14 +199,16 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
     })
   }
 
-  let paddingTop: number = Platform.OS === "android" ? theme.spacing.s14 : theme.spacing.s16
-  if (Platform.OS === "android" && !androidBlur) {
-    paddingTop = theme.spacing.s10
-  }
+  let paddingTop: number = Platform.OS === "android" ? 0 : theme.spacing.s16
+
+  // Make the home action buttons (the running-apps pill + the grid button) read
+  // as ~20pp less transparent than the default glass — Android only. iOS keeps
+  // its native liquid glass untouched. Alpha F2 ≈ 95% opaque (default is C9 ≈ 79%).
+  const buttonTint = Platform.OS === "android" ? theme.colors.primary_foreground + "F2" : undefined
 
   const renderGridButton = () => {
     return (
-      <GlassView className={`h-16 rounded-2xl`} style={{marginBottom: bottomPadding}}>
+      <GlassView className={`h-16 rounded-2xl`} tintColor={buttonTint} style={{marginBottom: bottomPadding}}>
         <TouchableOpacity onPress={onGridButtonPress} className="items-center justify-center w-16 h-16">
           <Icon name="grid" color={theme.colors.foreground} size={26} />
         </TouchableOpacity>
@@ -222,7 +224,9 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         {renderBackground()}
         <TouchableOpacity onPress={handleNoAppsPress} className="flex-1">
           <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-            <GlassView className={`flex-1 py-1.5 pl-3 h-16 rounded-2xl flex-row justify-between items-center`}>
+            <GlassView
+              tintColor={buttonTint}
+              className={`flex-1 py-1.5 pl-3 h-16 rounded-2xl flex-row justify-between items-center`}>
               <View className="flex-row items-center justify-center flex-1">
                 <Text className="text-muted-foreground text-md" tx="home:appletPlaceholder2" />
               </View>
@@ -242,7 +246,9 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         {renderBackground()}
         <GestureDetector gesture={composedGesture}>
           <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-            <GlassView className={`flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
+            <GlassView
+              tintColor={buttonTint}
+              className={`flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
               <View className="flex-row items-center justify-center flex-1">
                 <Text className="text-muted-foreground text-md" tx="home:appletPlaceholder2" />
               </View>
@@ -262,7 +268,9 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       {renderBackground()}
       <GestureDetector gesture={composedGesture}>
         <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-          <GlassView className={`flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
+          <GlassView
+            tintColor={buttonTint}
+            className={`flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
             <Pressable style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
               <View className="flex-row flex-1">
                 <View className="flex-col gap-1 flex-1 justify-center">

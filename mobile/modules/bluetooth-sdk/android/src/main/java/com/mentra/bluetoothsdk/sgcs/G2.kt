@@ -1526,13 +1526,36 @@ class G2 : SGCManager() {
         }
 
     @Suppress("deprecation")
+    // BGCAP diagnostic: Android G2's text path is already direct (single packet -> writeOnePacket),
+    // so the iOS root cause (the canSend gate) does NOT exist here. This measures whether
+    // writeCharacteristic is being REJECTED (returns false = Android GATT stack busy/throttled, the
+    // packet is dropped) in the background — the suspected Android accumulation/loss point. The
+    // current code discards the return value. Rate-limited; "BGCAP:" prefix; remove after the
+    // Android repro pins the mechanism.
+    private var bgcapWriteOk = 0
+    private var bgcapWriteFail = 0
+    private var bgcapWriteLogAt = 0L
+
+    private fun bgcapNoteWriteResult(ok: Boolean) {
+        if (ok) bgcapWriteOk++ else bgcapWriteFail++
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - bgcapWriteLogAt >= 1000) {
+            if (bgcapWriteOk > 0 || bgcapWriteFail > 0) {
+                Bridge.log("BGCAP: g2 writeCharacteristic ok=$bgcapWriteOk fail=$bgcapWriteFail in ${now - bgcapWriteLogAt}ms (fail = stack busy/dropped)")
+            }
+            bgcapWriteOk = 0
+            bgcapWriteFail = 0
+            bgcapWriteLogAt = now
+        }
+    }
+
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
         if (right) {
             rightWriteChar?.let { char ->
                 rightGatt?.let { gatt ->
                     char.value = packet
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    gatt.writeCharacteristic(char)
+                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
                 }
             }
         }
@@ -1541,7 +1564,7 @@ class G2 : SGCManager() {
                 leftGatt?.let { gatt ->
                     char.value = packet
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    gatt.writeCharacteristic(char)
+                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
                 }
             }
         }

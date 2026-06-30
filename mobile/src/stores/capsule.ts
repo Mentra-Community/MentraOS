@@ -106,7 +106,7 @@ export function useRegisterCapsule({
   // only, app stays running:true). The explicit "X" (right) button is the only
   // thing that fully stops the app via handleRightPress. Screens that pass an
   // onBackPress (webview/local) own their own exit and never stop on back;
-  // hardcoded miniapp screens (settings, lmaInstaller, …) rely on this default,
+  // hardcoded miniapp screens (settings, store, …) rely on this default,
   // so it must minimize — not stop — to match.
   focusEffectPreventBack(
     onBackPress

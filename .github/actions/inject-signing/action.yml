@@ -1,0 +1,179 @@
+name: "Inject signing credentials"
+description: >
+  Materialize release signing / upload credentials from GitHub secrets into the
+  ephemeral CI checkout, so builds release-sign on any runner without the
+  ~/.mentra/credentials folder being pre-provisioned. Writes keystores to the
+  gitignored repo-local credentials/ fallback dirs (so build.gradle finds them
+  with NO code change) and exports Gradle password properties + upload key paths
+  as env vars. Each credential group is opt-in; a requested-but-empty secret is a
+  hard error (so we never silently fall back to debug signing).
+inputs:
+  asg:
+    description: "Materialize ASG release keystore (true/false)."
+    default: "false"
+  mobile:
+    description: "Materialize mobile (upload) release keystore (true/false)."
+    default: "false"
+  ota:
+    description: "Materialize OTA keystore (true/false)."
+    default: "false"
+  play:
+    description: "Materialize Google Play service-account JSON + export GOOGLE_PLAY_JSON_KEY (true/false)."
+    default: "false"
+  ios:
+    description: "Materialize App Store Connect p8 + env, export MENTRA_ASC_CONFIG_PATH (true/false)."
+    default: "false"
+  # Secrets (composite actions can't read secrets.* directly — caller passes them).
+  asg-keystore-b64: { default: "" }
+  asg-store-password: { default: "" }
+  asg-key-password: { default: "" }
+  asg-key-alias: { default: "asg" }
+  upload-keystore-b64: { default: "" }
+  upload-store-password: { default: "" }
+  upload-key-password: { default: "" }
+  upload-key-alias: { default: "upload" }
+  ota-keystore-b64: { default: "" }
+  ota-store-password: { default: "" }
+  ota-key-password: { default: "" }
+  ota-key-alias: { default: "ota" }
+  google-play-key-json: { default: "" }
+  asc-api-key-p8-b64: { default: "" }
+  asc-api-key-id: { default: "" }
+  asc-api-issuer-id: { default: "" }
+runs:
+  using: "composite"
+  steps:
+    - name: Inject signing credentials
+      shell: bash
+      env:
+        ASG: ${{ inputs.asg }}
+        MOBILE: ${{ inputs.mobile }}
+        OTA: ${{ inputs.ota }}
+        PLAY: ${{ inputs.play }}
+        IOS: ${{ inputs.ios }}
+        ASG_KEYSTORE_B64: ${{ inputs.asg-keystore-b64 }}
+        ASG_STORE_PASSWORD: ${{ inputs.asg-store-password }}
+        ASG_KEY_PASSWORD: ${{ inputs.asg-key-password }}
+        ASG_KEY_ALIAS: ${{ inputs.asg-key-alias }}
+        UPLOAD_KEYSTORE_B64: ${{ inputs.upload-keystore-b64 }}
+        UPLOAD_STORE_PASSWORD: ${{ inputs.upload-store-password }}
+        UPLOAD_KEY_PASSWORD: ${{ inputs.upload-key-password }}
+        UPLOAD_KEY_ALIAS: ${{ inputs.upload-key-alias }}
+        OTA_KEYSTORE_B64: ${{ inputs.ota-keystore-b64 }}
+        OTA_STORE_PASSWORD: ${{ inputs.ota-store-password }}
+        OTA_KEY_PASSWORD: ${{ inputs.ota-key-password }}
+        OTA_KEY_ALIAS: ${{ inputs.ota-key-alias }}
+        GOOGLE_PLAY_KEY_JSON: ${{ inputs.google-play-key-json }}
+        ASC_API_KEY_P8_B64: ${{ inputs.asc-api-key-p8-b64 }}
+        ASC_API_KEY_ID: ${{ inputs.asc-api-key-id }}
+        ASC_API_ISSUER_ID: ${{ inputs.asc-api-issuer-id }}
+      run: |
+        set -euo pipefail
+        require() { [ -n "${2:-}" ] || { echo "::error::inject-signing: secret '$1' is required but empty. Set it in repo secrets."; exit 1; }; }
+        # Write KEY=VALUE to $GITHUB_ENV using the heredoc-delimiter form so values
+        # with special chars / newlines can't corrupt env parsing or inject vars.
+        put() {
+          local name="$1" value="$2" delim="EOF_$RANDOM$RANDOM"
+          { printf '%s<<%s\n' "$name" "$delim"; printf '%s\n' "$value"; printf '%s\n' "$delim"; } >> "$GITHUB_ENV"
+        }
+        # Decode base64 to a file, tolerating newlines/whitespace in the input.
+        # macOS `base64` wraps output at 76 cols; GNU `base64 -d` rejects that
+        # whitespace as "invalid input", so strip it first. Works on BSD + GNU.
+        decode_to() {
+          local b64="$1" out="$2"
+          # Use -d (not --decode): accepted by both GNU coreutils and BSD/macOS
+          # base64. (--decode also works on current macOS, but -d is the portable
+          # spelling.)
+          printf '%s' "$b64" | tr -d '\r\n \t' | base64 -d > "$out"
+        }
+        # Aliases have well-known defaults; an unset ALIAS secret arrives as "" and
+        # must not override the build's default, so fall back here.
+        [ -n "${ASG_KEY_ALIAS:-}" ]    || ASG_KEY_ALIAS="asg"
+        [ -n "${UPLOAD_KEY_ALIAS:-}" ] || UPLOAD_KEY_ALIAS="upload"
+        [ -n "${OTA_KEY_ALIAS:-}" ]    || OTA_KEY_ALIAS="ota"
+        # Strip trailing CR/LF from password/alias values. A keystore password can
+        # legitimately contain spaces, but never a trailing newline — and a stray
+        # one (e.g. from how a secret was created) makes Gradle report "keystore
+        # password was incorrect". Uses tr (portable on BSD+GNU; BSD sed choked on
+        # an in-pattern \r). Only CR/LF are removed, so real chars are safe.
+        strip_eol() { printf '%s' "$1" | tr -d '\r\n'; }
+        ASG_STORE_PASSWORD="$(strip_eol "${ASG_STORE_PASSWORD:-}")"
+        ASG_KEY_PASSWORD="$(strip_eol "${ASG_KEY_PASSWORD:-}")"
+        UPLOAD_STORE_PASSWORD="$(strip_eol "${UPLOAD_STORE_PASSWORD:-}")"
+        UPLOAD_KEY_PASSWORD="$(strip_eol "${UPLOAD_KEY_PASSWORD:-}")"
+        OTA_STORE_PASSWORD="$(strip_eol "${OTA_STORE_PASSWORD:-}")"
+        OTA_KEY_PASSWORD="$(strip_eol "${OTA_KEY_PASSWORD:-}")"
+        umask 077
+        TMP="${RUNNER_TEMP:-/tmp}/mentra-creds"
+        mkdir -p "$TMP"
+
+        if [ "$ASG" = "true" ]; then
+          require ASG_KEYSTORE_B64 "$ASG_KEYSTORE_B64"
+          require ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
+          require ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
+          mkdir -p asg_client/credentials
+          decode_to "$ASG_KEYSTORE_B64" asg_client/credentials/asg-keystore.jks
+          # The recovery worker signs with the ASG cert and reads its keystore from
+          # asg_client/recovery_worker/credentials/recovery-keystore.jks. On a clean
+          # runner build_and_deploy.sh can't find it (its ~/.mentra and ../../
+          # fallbacks miss), so materialize it directly where the gradle build reads.
+          # It also reads RECOVERY_/OTA_/ASG_ passwords; the ASG_* gradle props above
+          # satisfy that chain.
+          mkdir -p asg_client/recovery_worker/credentials
+          decode_to "$ASG_KEYSTORE_B64" asg_client/recovery_worker/credentials/recovery-keystore.jks
+          # Gradle reads these as project properties (project.hasProperty(...)).
+          put ORG_GRADLE_PROJECT_ASG_STORE_PASSWORD "$ASG_STORE_PASSWORD"
+          put ORG_GRADLE_PROJECT_ASG_KEY_PASSWORD "$ASG_KEY_PASSWORD"
+          put ORG_GRADLE_PROJECT_ASG_KEY_ALIAS "$ASG_KEY_ALIAS"
+          echo "Injected ASG release keystore -> asg_client/credentials/asg-keystore.jks"
+          echo "Injected recovery keystore -> asg_client/recovery_worker/credentials/recovery-keystore.jks"
+        fi
+
+        if [ "$MOBILE" = "true" ]; then
+          require UPLOAD_KEYSTORE_B64 "$UPLOAD_KEYSTORE_B64"
+          require UPLOAD_STORE_PASSWORD "$UPLOAD_STORE_PASSWORD"
+          require UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
+          mkdir -p mobile/credentials
+          decode_to "$UPLOAD_KEYSTORE_B64" mobile/credentials/upload-keystore.jks
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD "$UPLOAD_STORE_PASSWORD"
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD "$UPLOAD_KEY_PASSWORD"
+          put ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS "$UPLOAD_KEY_ALIAS"
+          echo "Injected mobile upload keystore -> mobile/credentials/upload-keystore.jks"
+        fi
+
+        if [ "$OTA" = "true" ]; then
+          require OTA_KEYSTORE_B64 "$OTA_KEYSTORE_B64"
+          require OTA_STORE_PASSWORD "$OTA_STORE_PASSWORD"
+          require OTA_KEY_PASSWORD "$OTA_KEY_PASSWORD"
+          mkdir -p asg_client/ota_updater/credentials
+          decode_to "$OTA_KEYSTORE_B64" asg_client/ota_updater/credentials/ota-keystore.jks
+          # OTA gradle reads these via System.getenv(...).
+          put OTA_STORE_PASSWORD "$OTA_STORE_PASSWORD"
+          put OTA_KEY_PASSWORD "$OTA_KEY_PASSWORD"
+          put OTA_KEY_ALIAS "$OTA_KEY_ALIAS"
+          echo "Injected OTA keystore -> asg_client/ota_updater/credentials/ota-keystore.jks"
+        fi
+
+        if [ "$PLAY" = "true" ]; then
+          require GOOGLE_PLAY_KEY_JSON "$GOOGLE_PLAY_KEY_JSON"
+          printf '%s' "$GOOGLE_PLAY_KEY_JSON" > "$TMP/google-play-key.json"
+          put GOOGLE_PLAY_JSON_KEY "$TMP/google-play-key.json"
+          echo "Injected Google Play key -> $TMP/google-play-key.json"
+        fi
+
+        if [ "$IOS" = "true" ]; then
+          require ASC_API_KEY_P8_B64 "$ASC_API_KEY_P8_B64"
+          require ASC_API_KEY_ID "$ASC_API_KEY_ID"
+          require ASC_API_ISSUER_ID "$ASC_API_ISSUER_ID"
+          P8="$TMP/AuthKey_${ASC_API_KEY_ID}.p8"
+          decode_to "$ASC_API_KEY_P8_B64" "$P8"
+          # Generate the appstore-connect.env that release-ios.mjs parses.
+          {
+            echo "ASC_API_KEY_ID=$ASC_API_KEY_ID"
+            echo "ASC_API_ISSUER_ID=$ASC_API_ISSUER_ID"
+            echo "ASC_API_KEY_PATH=$P8"
+          } > "$TMP/appstore-connect.env"
+          # release-ios.mjs honors this override before ~/.mentra fallback.
+          put MENTRA_ASC_CONFIG_PATH "$TMP/appstore-connect.env"
+          echo "Injected App Store Connect key -> $P8"
+        fi

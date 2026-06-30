@@ -79,12 +79,19 @@ export class SpeakerModule {
 
   /** Play a URL. Resolves when playback completes on the phone. */
   async play(options: PlayAudioOptions): Promise<void> {
-    await this.session.sendRequest<void>({
-      type: MiniappRequestType.PLAY_AUDIO,
-      audioUrl: options.audioUrl,
-      volume: options.volume,
-      stopOtherAudio: options.stopOtherAudio ?? false,
-    })
+    // Playback length is unbounded (a clip can run for minutes), and the host
+    // only sends its REQUEST_RESULT when playback finishes or is interrupted, so
+    // opt out of the default request timeout — otherwise a long clip would reject
+    // with ACTION_TIMEOUT mid-playback. A `stop()` or disconnect still settles it.
+    await this.session.sendRequest<void>(
+      {
+        type: MiniappRequestType.PLAY_AUDIO,
+        audioUrl: options.audioUrl,
+        volume: options.volume,
+        stopOtherAudio: options.stopOtherAudio ?? false,
+      },
+      {timeoutMs: 0},
+    )
   }
 
   /**
@@ -96,14 +103,20 @@ export class SpeakerModule {
    */
   async speak(text: string, options: SpeakOptions = {}): Promise<SpeakResult> {
     try {
-      const result = await this.session.sendRequest<SpeakResult | null>({
-        type: MiniappRequestType.SPEAK,
-        text,
-        voice_id: options.voice_id,
-        voice_settings: options.voice_settings,
-        volume: options.volume,
-        stopOtherAudio: options.stopOtherAudio ?? false,
-      })
+      // Like play(): resolves only when TTS playback completes, so opt out of the
+      // default request timeout (long text can outlast it). Settled by the host
+      // result, a stop(), or disconnect.
+      const result = await this.session.sendRequest<SpeakResult | null>(
+        {
+          type: MiniappRequestType.SPEAK,
+          text,
+          voice_id: options.voice_id,
+          voice_settings: options.voice_settings,
+          volume: options.volume,
+          stopOtherAudio: options.stopOtherAudio ?? false,
+        },
+        {timeoutMs: 0},
+      )
       return result ?? {completed: true}
     } catch (err) {
       // Normalize so callers can `catch (e) { if (e.code === "TTS_TEXT_TOO_LONG") ...`
