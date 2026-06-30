@@ -660,8 +660,17 @@ public final class PhotoSession {
     private void failWarmUp(String errorMessage) {
         WarmUpRequest req = warmUpRequest;
         warmUpRequest = null;
+        clearActiveCapture();
         if (req != null && req.onError != null) {
             hooks.executor().execute(() -> req.onError.accept(errorMessage));
+        }
+    }
+
+    private void failWarmUpOrPhoto(String errorMessage) {
+        if (warmUpRequest != null) {
+            failWarmUp(errorMessage);
+        } else {
+            notifyPhotoError(errorMessage);
         }
     }
 
@@ -1120,7 +1129,7 @@ public final class PhotoSession {
             CameraCaptureSession activeSession = hooks.coordinator().session();
             if (activeSession == null) {
                 Log.e(TAG, "Camera capture session is null in startPreviewWithAeMonitoring");
-                notifyPhotoError("Camera session not ready");
+                failWarmUpOrPhoto("Camera session not ready");
                 hooks.closeCamera();
                 hooks.stopService();
                 return;
@@ -1129,7 +1138,7 @@ public final class PhotoSession {
             Handler backgroundHandler = hooks.backgroundHandler();
             if (backgroundHandler == null || hooks.coordinator().device() == null) {
                 Log.e(TAG, "Camera handler or device not ready in startPreviewWithAeMonitoring");
-                notifyPhotoError("Camera handler not ready");
+                failWarmUpOrPhoto("Camera handler not ready");
                 hooks.closeCamera();
                 hooks.stopService();
                 return;

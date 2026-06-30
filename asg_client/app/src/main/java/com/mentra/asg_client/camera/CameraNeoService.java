@@ -192,8 +192,8 @@ public class CameraNeoService extends LifecycleService {
     /** Bound warm-up callbacks awaiting ready/error. All resolve together — one shared camera. */
     private final List<CameraWarmUpCallback> warmCallbacks = new ArrayList<>();
 
-    /** Latest bound warm-up callback, used only to emit {@code stopped} on keep-alive expiry. */
-    private CameraWarmUpCallback warmStoppedCallback;
+    /** Warm-up callbacks that already received ready and should receive stopped on lease expiry. */
+    private final List<CameraWarmUpCallback> warmStoppedCallbacks = new ArrayList<>();
 
     /**
      * Wall-clock deadline (ms) of the active {@code camera_warm_up} lease, or 0 when none. Lets a
@@ -684,9 +684,13 @@ public class CameraNeoService extends LifecycleService {
                     sInstance != null
                             && sInstance.photoSession.shotState()
                                     == AeStateMachine.ShotState.IDLE;
+            boolean warmUpInFlight =
+                    (sInstance != null && sInstance.photoSession.isWarmingUp())
+                            || !sPendingWarmCallbacks.isEmpty();
             boolean warmReusable =
                     cameraReady
                             && idle
+                            && !warmUpInFlight
                             && sInstance.photoSession.willReuseConfiguredCamera(
                                     size, true, exposureTimeNs);
 
@@ -694,12 +698,13 @@ public class CameraNeoService extends LifecycleService {
                 // Already configured + idle for these params — just re-arm the keep-alive.
                 Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
                 if (callback != null) {
-                    sInstance.warmCallbacks.add(callback);
-                    sInstance.warmStoppedCallback = callback;
+                    sInstance.warmStoppedCallbacks.add(callback);
                 }
                 sInstance.cancelKeepAliveTimer();
                 sInstance.startWarmKeepAliveTimer(ttl);
-                sInstance.executor.execute(sInstance::fireWarmReady);
+                if (callback != null) {
+                    sInstance.executor.execute(callback::onCameraReady);
+                }
                 return;
             }
 
@@ -709,11 +714,10 @@ public class CameraNeoService extends LifecycleService {
             // The caller retries; the camera is about to be warm, so the retry usually hits the
             // already-warm fast path above.
             boolean busy =
-                    (sInstance != null
-                                    && (sInstance.photoSession.isWarmingUp()
-                                            || sInstance.photoSession.shotState()
-                                                    != AeStateMachine.ShotState.IDLE))
-                            || !sPendingWarmCallbacks.isEmpty();
+                    warmUpInFlight
+                            || (sInstance != null
+                                    && sInstance.photoSession.shotState()
+                                            != AeStateMachine.ShotState.IDLE);
             if (busy) {
                 rejectBusy = callback;
             } else {
@@ -888,9 +892,6 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             warmCallbacks.addAll(sPendingWarmCallbacks);
             sPendingWarmCallbacks.clear();
-            if (!warmCallbacks.isEmpty()) {
-                warmStoppedCallback = warmCallbacks.get(warmCallbacks.size() - 1);
-            }
             photoSession.setupWarmUp(
                     size,
                     exposureTimeNs,
@@ -907,6 +908,7 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             ready = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
+            warmStoppedCallbacks.addAll(ready);
         }
         for (CameraWarmUpCallback callback : ready) {
             callback.onCameraReady();
@@ -919,7 +921,6 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             failed = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
-            warmStoppedCallback = null;
         }
         for (CameraWarmUpCallback callback : failed) {
             callback.onCameraError(errorMessage);
@@ -928,13 +929,12 @@ public class CameraNeoService extends LifecycleService {
 
     /** Notify the bound warm-up callback that the camera was closed without capturing. */
     private void notifyWarmStopped() {
-        CameraWarmUpCallback callback;
+        final List<CameraWarmUpCallback> stopped;
         synchronized (SERVICE_LOCK) {
-            callback = warmStoppedCallback;
-            warmStoppedCallback = null;
-            warmCallbacks.clear();
+            stopped = new ArrayList<>(warmStoppedCallbacks);
+            warmStoppedCallbacks.clear();
         }
-        if (callback != null) {
+        for (CameraWarmUpCallback callback : stopped) {
             callback.onCameraStopped();
         }
     }
@@ -1414,6 +1414,8 @@ public class CameraNeoService extends LifecycleService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        List<CameraWarmUpCallback> warmErrors = new ArrayList<>();
+        List<CameraWarmUpCallback> warmStops = new ArrayList<>();
         synchronized (SERVICE_LOCK) {
             Log.d(TAG, "CameraNeoService service destroying");
 
@@ -1429,6 +1431,18 @@ public class CameraNeoService extends LifecycleService {
 
             QueuedPhotoRequestQueue.getInstance()
                     .failAllPending("Camera service terminated unexpectedly");
+            warmErrors.addAll(sPendingWarmCallbacks);
+            sPendingWarmCallbacks.clear();
+            warmErrors.addAll(warmCallbacks);
+            warmCallbacks.clear();
+            warmStops.addAll(warmStoppedCallbacks);
+            warmStoppedCallbacks.clear();
+        }
+        for (CameraWarmUpCallback callback : warmErrors) {
+            callback.onCameraError("Camera service terminated unexpectedly");
+        }
+        for (CameraWarmUpCallback callback : warmStops) {
+            callback.onCameraStopped();
         }
         // API 28+ session callbacks run on backgroundHandler and also take SERVICE_LOCK to detect
         // teardown. Do not join the handler thread while holding that lock.
