@@ -40,6 +40,8 @@ import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming
 import com.mentra.bluetoothsdk.utils.IncidentLogBleUploadService
+import com.mentra.bluetoothsdk.utils.BleJsonCompact
+import com.mentra.bluetoothsdk.utils.BleWireProtocol
 import com.mentra.bluetoothsdk.utils.K900ProtocolUtils
 import com.mentra.bluetoothsdk.utils.MessageChunkReassembler
 import com.mentra.bluetoothsdk.utils.MessageChunker
@@ -89,6 +91,7 @@ class MentraLive : SGCManager() {
         // LC3 frame size for Mentra Live
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
+        private const val BES2700_MTU_LIMIT = 509
 
         // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass
         // types
@@ -198,6 +201,8 @@ class MentraLive : SGCManager() {
 
     // Local-only fields (not in parent SGCManager)
     private var buildNumberInt = 0 // Build number as integer for version checks
+    private var peerWireProtocolVersion = 0
+    private var useBinaryWireProtocol = false
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -751,6 +756,9 @@ class MentraLive : SGCManager() {
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
                 incomingChunkReassembler.clear()
+                peerWireProtocolVersion = 0
+                useBinaryWireProtocol = false
+                BleJsonCompact.resetSession()
             }
             return
         }
@@ -779,6 +787,9 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrength", -1)
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             incomingChunkReassembler.clear()
+            peerWireProtocolVersion = 0
+            useBinaryWireProtocol = false
+            BleJsonCompact.resetSession()
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache()
@@ -2320,7 +2331,7 @@ class MentraLive : SGCManager() {
                     val messageId = generateEsotericMessageId()
                     json.put("mId", messageId)
 
-                    val jsonStr = json.toString()
+                    val jsonStr = compactWireJson(json).toString()
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID " + messageId + ":
                     // " + jsonStr);
 
@@ -2846,10 +2857,15 @@ class MentraLive : SGCManager() {
                 return // Exit after processing file packet
             }
 
+            if (cmdType == K900ProtocolUtils.CMD_TYPE_BINARY_MSG) {
+                processBinaryWireFrame(data)
+                return
+            }
+
             // Otherwise it's a normal JSON message
             val json = K900ProtocolUtils.processReceivedBytesToJson(data)
             if (json != null) {
-                processJsonMessage(json)
+                processJsonMessage(expandCompactWireJson(json))
             } else {
                 Log.w(TAG, "Thread-" + threadId + ": Failed to parse K900 protocol data")
                 // #region agent log [810da2] Hypothesis A+B: log header-declared length vs actual
@@ -3417,10 +3433,7 @@ class MentraLive : SGCManager() {
                 stopReadinessCheckLoop()
 
                 // Send BLE MTU config to glasses so they can adjust file packet sizes.
-                // Use the minimum of negotiated MTU and BES2700's known limit (256).
-                // BES2700 chip often ignores higher negotiated MTUs and truncates to 253 bytes,
-                // but we should respect the actual negotiated value if it's lower.
-                val BES2700_MTU_LIMIT = 256 // BES2700's known notification size limit
+            // Use the minimum of negotiated MTU and BES2700's datapath limit (509).
                 val effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT)
                 Bridge.log(
                         "LIVE: 📦 Sending BLE MTU config: negotiated=" +
@@ -3600,6 +3613,7 @@ class MentraLive : SGCManager() {
                     buildNumberInt = 0
                     Log.e(TAG, "Failed to parse build number as integer: " + buildNumberLegacy)
                 }
+                maybeSendWireHandshake()
             }
             "ota_download_progress" -> {
                 // Process OTA download progress from ASG client
@@ -3785,8 +3799,11 @@ class MentraLive : SGCManager() {
                         // Parse build number as integer for version checks
                         try {
                             val buildNumInt = Integer.parseInt(buildNum)
+                            buildNumberInt = buildNumInt
                             Bridge.log("LIVE: Parsed build number as integer: " + buildNumInt)
+                            maybeSendWireHandshake()
                         } catch (e: NumberFormatException) {
+                            buildNumberInt = 0
                             Log.e(TAG, "Failed to parse build number as integer: " + buildNum)
                         }
                     }
@@ -7007,6 +7024,129 @@ class MentraLive : SGCManager() {
         }
     }
 
+    private fun maybeSendWireHandshake() {
+        if (buildNumberInt < 5 || peerWireProtocolVersion >= BleWireProtocol.PROTOCOL_V2) {
+            return
+        }
+        sendWireHandshake()
+    }
+
+    private fun sendWireHandshake() {
+        if (buildNumberInt < 5) {
+            return
+        }
+        try {
+            val payload = BleWireProtocol.HANDSHAKE_PAYLOAD_V2.toByteArray(StandardCharsets.UTF_8)
+            var flags = BleWireProtocol.BLE_WIRE_FLAG_HANDSHAKE.toInt()
+            flags = flags or BleWireProtocol.BLE_WIRE_FLAG_FIRST_FRAG.toInt()
+            flags = flags or BleWireProtocol.BLE_WIRE_FLAG_LAST_FRAG.toInt()
+            val packed =
+                    K900ProtocolUtils.packBinaryFragment(
+                            flags.toByte(),
+                            0,
+                            0,
+                            1,
+                            payload
+                    )
+            Bridge.log("LIVE: Sending BLE wire v2 handshake")
+            queueData(packed, null)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send wire handshake", e)
+        }
+    }
+
+    private fun handlePeerWireHandshake() {
+        peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
+        useBinaryWireProtocol = true
+        BleJsonCompact.markSessionConnected(System.currentTimeMillis())
+        Bridge.log("LIVE: Peer confirmed BLE wire protocol v2")
+    }
+
+    private fun processBinaryWireFrame(data: ByteArray) {
+        val info = K900ProtocolUtils.extractBinaryFragmentInfo(data) ?: run {
+            Log.w(TAG, "Failed to parse binary wire frame")
+            return
+        }
+
+        if (BleWireProtocol.isHandshakeV2(info)) {
+            handlePeerWireHandshake()
+            return
+        }
+
+        if (!useBinaryWireProtocol && buildNumberInt >= 5) {
+            peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
+            useBinaryWireProtocol = true
+            Bridge.log("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+        }
+
+        val reassembled =
+                incomingChunkReassembler.addBinaryFragment(
+                        info.msgId,
+                        info.fragIdx,
+                        info.fragCount,
+                        info.payload
+                )
+                ?: return
+
+        try {
+            val jsonStr = String(reassembled, StandardCharsets.UTF_8)
+            val json = expandCompactWireJson(JSONObject(jsonStr))
+            logWireMetrics(
+                    reassembled.size,
+                    data.size,
+                    info.fragCount,
+                    BleWireProtocol.PROTOCOL_V2,
+                    "glasses_to_phone"
+            )
+            processJsonMessage(json)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to parse reassembled binary wire JSON", e)
+        }
+    }
+
+    private fun compactWireJson(json: JSONObject): JSONObject {
+        if (!useBinaryWireProtocol || buildNumberInt < 5) {
+            return json
+        }
+        return try {
+            BleJsonCompact.encode(json)
+        } catch (_: JSONException) {
+            json
+        }
+    }
+
+    private fun expandCompactWireJson(json: JSONObject): JSONObject {
+        if (!useBinaryWireProtocol || buildNumberInt < 5) {
+            return json
+        }
+        return try {
+            BleJsonCompact.decode(json)
+        } catch (_: JSONException) {
+            json
+        }
+    }
+
+    private fun logWireMetrics(
+            payloadBytes: Int,
+            wireBytes: Int,
+            packetCount: Int,
+            protocolVersion: Int,
+            direction: String
+    ) {
+        Bridge.log(
+                "BLE_TRACE direction=" +
+                        direction +
+                        " proto=v" +
+                        protocolVersion +
+                        " payload=" +
+                        payloadBytes +
+                        " wire=" +
+                        wireBytes +
+                        " packets=" +
+                        packetCount
+        )
+    }
+
     /**
      * Send data directly to the glasses using the K900 protocol utility. This method uses
      * K900ProtocolUtils.packJsonToK900 to handle C-wrapping and protocol formatting. Large messages
@@ -7020,8 +7160,19 @@ class MentraLive : SGCManager() {
             return
         }
 
+        val wireData =
+                try {
+                    if (useBinaryWireProtocol && buildNumberInt >= 5) {
+                        compactWireJson(JSONObject(data)).toString()
+                    } else {
+                        data
+                    }
+                } catch (_: JSONException) {
+                    data
+                }
+
         try {
-            val outgoingSummary = summarizeOutgoingMessage(data)
+            val outgoingSummary = summarizeOutgoingMessage(wireData)
             val commandTraceInfo = parseOutgoingBleCommandTraceInfo(data)
             val isPhotoRequest = outgoingSummary.contains("type=take_photo")
             if (isPhotoRequest) {
@@ -7033,10 +7184,15 @@ class MentraLive : SGCManager() {
                 )
             }
 
+            if (useBinaryWireProtocol && buildNumberInt >= 5) {
+                sendDataToGlassesBinary(wireData, wakeup, commandTraceInfo, isPhotoRequest)
+                return
+            }
+
             // First check if the message needs chunking
             // Create a test C-wrapped version to check size
             val testWrapper = JSONObject()
-            testWrapper.put("C", data)
+            testWrapper.put("C", wireData)
             if (wakeup) {
                 testWrapper.put("W", 1)
             }
@@ -7054,14 +7210,14 @@ class MentraLive : SGCManager() {
                 // Extract message ID if present for ACK tracking
                 var messageId = -1L
                 try {
-                    val originalJson = JSONObject(data)
+                    val originalJson = JSONObject(wireData)
                     messageId = originalJson.optLong("mId", -1)
                 } catch (e: JSONException) {
                     // Not a JSON message or no mId, that's okay
                 }
 
                 // Create chunks
-                val chunks = MessageChunker.createChunks(data, messageId, wakeup)
+                val chunks = MessageChunker.createChunks(wireData, messageId, wakeup)
                 Bridge.log("LIVE: Sending " + chunks.size + " chunks")
                 if (isPhotoRequest) {
                     Bridge.log(
@@ -7102,7 +7258,7 @@ class MentraLive : SGCManager() {
                             mapOf(
                                     "chunkJsonBytes" to
                                             chunkStr.toByteArray(StandardCharsets.UTF_8).size,
-                                    "messageBytes" to data.toByteArray(StandardCharsets.UTF_8).size
+                                    "messageBytes" to wireData.toByteArray(StandardCharsets.UTF_8).size
                             )
                     )
 
@@ -7125,17 +7281,17 @@ class MentraLive : SGCManager() {
                 }
             } else {
                 // Normal single message transmission
-                Bridge.log("LIVE: Sending data to glasses: " + data)
+                Bridge.log("LIVE: Sending data to glasses: " + wireData)
 
                 // Pack the data using the centralized utility
-                val packedData = K900ProtocolUtils.packJsonToK900(data, wakeup)
+                val packedData = K900ProtocolUtils.packJsonToK900(wireData, wakeup)
                 val trace =
                         createBleWriteTrace(
                                 commandTraceInfo,
                                 null,
                                 null,
                                 null,
-                                data.toByteArray(StandardCharsets.UTF_8).size,
+                                wireData.toByteArray(StandardCharsets.UTF_8).size,
                                 packedData.size,
                                 wakeup,
                                 false
@@ -7143,7 +7299,7 @@ class MentraLive : SGCManager() {
                 logBleChunkTrace(
                         "created",
                         trace,
-                        mapOf("messageBytes" to data.toByteArray(StandardCharsets.UTF_8).size)
+                        mapOf("messageBytes" to wireData.toByteArray(StandardCharsets.UTF_8).size)
                 )
 
                 // Queue the data for sending
@@ -7158,6 +7314,91 @@ class MentraLive : SGCManager() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error creating data JSON", e)
+        }
+    }
+
+    private fun sendDataToGlassesBinary(
+            data: String,
+            wakeup: Boolean,
+            commandTraceInfo: OutgoingBleCommandTraceInfo,
+            isPhotoRequest: Boolean
+    ) {
+        val payloadBytes = data.toByteArray(StandardCharsets.UTF_8)
+        var messageId = 0
+        var ackRequested = false
+        try {
+            val originalJson = JSONObject(data)
+            messageId = (originalJson.optLong("mId", 0L) and 0xFFFFL).toInt()
+            ackRequested = originalJson.has("mId")
+        } catch (_: JSONException) {
+            // Raw non-JSON payloads are still sent as a single binary fragment.
+        }
+
+        val fragments =
+                MessageChunker.createBinaryFragments(
+                        payloadBytes,
+                        messageId,
+                        wakeup,
+                        ackRequested
+                )
+        var totalWireBytes = 0
+        for (i in fragments.indices) {
+            val fragment = fragments[i]
+            val packedData =
+                    K900ProtocolUtils.packBinaryFragment(
+                            fragment.flags,
+                            fragment.msgId,
+                            fragment.fragIdx,
+                            fragment.fragCount,
+                            fragment.payload
+                    )
+            totalWireBytes += packedData.size
+
+            val trace =
+                    createBleWriteTrace(
+                            commandTraceInfo,
+                            null,
+                            fragment.fragIdx,
+                            fragment.fragCount,
+                            fragment.payload.size,
+                            packedData.size,
+                            wakeup && i == 0,
+                            fragments.size > 1
+                    )
+            logBleChunkTrace(
+                    "created",
+                    trace,
+                    mapOf(
+                            "messageBytes" to payloadBytes.size,
+                            "wireProtocol" to "v2"
+                    )
+            )
+            queueData(packedData, trace)
+
+            if (i < fragments.size - 1) {
+                try {
+                    Thread.sleep(50)
+                } catch (e: InterruptedException) {
+                    Log.w(TAG, "Interrupted during binary fragment delay")
+                }
+            }
+        }
+
+        logWireMetrics(
+                payloadBytes.size,
+                totalWireBytes,
+                fragments.size,
+                BleWireProtocol.PROTOCOL_V2,
+                "phone_to_glasses"
+        )
+
+        if (isPhotoRequest) {
+            Bridge.log(
+                    "LIVE: PHOTO PIPELINE BLE handoff — binary v2 queued " +
+                            fragments.size +
+                            " fragments, wireBytes=" +
+                            totalWireBytes
+            )
         }
     }
 
