@@ -3,10 +3,13 @@ import {getTimeZone} from "react-native-localize"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
-import * as Device from "expo-device"
 
 import restComms from "@/services/RestComms"
+import {getBluetoothSettingKeysForDevice, MENTRA_LIVE_SETTING_KEYS} from "@/stores/bluetoothSettingKeys"
+import {useGlassesStore} from "@/stores/glasses"
 import {storage} from "@/utils/storage"
+
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "@/stores/bluetoothSettingKeys"
 
 interface Setting {
   key: string
@@ -959,12 +962,13 @@ export const useSettingsStore = create<SettingsState>()(
     },
     getBluetoothSettings: () => {
       const state = get()
+      const deviceModel =
+        useGlassesStore.getState().deviceModel || state.getSetting(SETTINGS.default_wearable.key)
+      const keys = getBluetoothSettingKeysForDevice(deviceModel, BLUETOOTH_SETTING_KEYS)
       const bluetoothSettings: Record<string, any> = {}
-      Object.values(SETTINGS).forEach((setting) => {
-        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
-          bluetoothSettings[setting.key] = state.getSetting(setting.key)
-        }
-      })
+      for (const key of keys) {
+        bluetoothSettings[key] = state.getSetting(key)
+      }
       return bluetoothSettings
     },
     resetAllSettingsLocally: () => {
