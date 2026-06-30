@@ -1,7 +1,13 @@
 on:
+  workflow_dispatch:
   push:
     branches:
+      - main
       - codex/console2-scaffold
+    paths:
+      - "miniapps/merge/**"
+      - "cloud-v2/packages/auth/**"
+      - ".github/workflows/merge-prod.yml"
 
 name: Deploy Local Merge prod to Porter
 
