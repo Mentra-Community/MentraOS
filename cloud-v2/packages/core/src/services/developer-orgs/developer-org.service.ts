@@ -43,30 +43,49 @@ export class DeveloperOrgService {
     return org ? serializeDeveloperOrg(org) : null;
   }
 
-  async upsertPrimaryOrg(user: ConsoleUserIdentity, input: UpsertDeveloperOrgInput): Promise<DeveloperOrgRecord> {
+  /** Create the caller's first org (onboarding) and seed them as its owner. */
+  async createPrimaryOrg(user: ConsoleUserIdentity, input: UpsertDeveloperOrgInput): Promise<DeveloperOrgRecord> {
     const displayName = normalizeDisplayName(input.displayName);
     const packagePrefix = normalizePackagePrefix(input.packagePrefix);
     assertUsablePackagePrefix(packagePrefix, user);
+    await assertPackagePrefixAvailable(packagePrefix);
 
-    const existing = await DeveloperOrgModel.findOne({ ownerUserId: user.id }).sort({ createdAt: 1 });
+    const created = await DeveloperOrgModel.create({
+      orgId: `dorg_${ulid()}`,
+      ownerUserId: user.id,
+      workosOrgId: input.workosOrgId || undefined,
+      displayName,
+      packagePrefix,
+      packagePrefixStatus: packagePrefix === "com.mentra" ? "verified" : "unverified",
+    });
+    // Seed the creator as the org's first owner. From here, ownership is a
+    // membership role (owner|admin|member), not the ownerUserId scalar.
+    await this.ensureOwner(created.orgId, user.id);
+    return serializeDeveloperOrg(created.toObject());
+  }
+
+  /**
+   * Update an existing org by id. The caller's authorization (owner-only) is
+   * enforced at the handler; this keys on orgId, not the ownerUserId scalar, so
+   * any owner can edit the org. The package-prefix usability check only runs
+   * when the prefix actually changes, so editing the name doesn't trip the
+   * reserved-prefix gate for a co-owner.
+   */
+  async updateOrg(
+    orgId: string,
+    user: ConsoleUserIdentity,
+    input: UpsertDeveloperOrgInput,
+  ): Promise<DeveloperOrgRecord> {
+    const displayName = normalizeDisplayName(input.displayName);
+    const packagePrefix = normalizePackagePrefix(input.packagePrefix);
+
+    const existing = await DeveloperOrgModel.findOne({ orgId });
     if (!existing) {
-      await assertPackagePrefixAvailable(packagePrefix);
-      const created = await DeveloperOrgModel.create({
-        orgId: `dorg_${ulid()}`,
-        ownerUserId: user.id,
-        workosOrgId: input.workosOrgId || undefined,
-        displayName,
-        packagePrefix,
-        packagePrefixStatus: packagePrefix === "com.mentra" ? "verified" : "unverified",
-      });
-      // Seed the creator as the org's first owner. From here, ownership is a
-      // membership role (owner|admin|member), not the ownerUserId scalar.
-      await this.ensureOwner(created.orgId, user.id);
-      return serializeDeveloperOrg(created.toObject());
+      throw new DeveloperOrgServiceError("org_not_found", "developer org was not found", 404);
     }
 
-    const nextPrefix = existing.packagePrefix;
-    if (packagePrefix !== nextPrefix) {
+    if (packagePrefix !== existing.packagePrefix) {
+      assertUsablePackagePrefix(packagePrefix, user);
       if (existing.packagePrefixStatus !== "rejected") {
         throw new DeveloperOrgServiceError(
           "package_prefix_locked",

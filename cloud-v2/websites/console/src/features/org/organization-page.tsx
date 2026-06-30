@@ -99,7 +99,11 @@ export function OrganizationPage() {
     },
   });
   const viewerRole: OrgRole = accessQuery.data?.viewerRole ?? session.data?.viewerRole ?? "member";
+  // Editing an existing org is owner-only (server-enforced); onboarding (no org
+  // yet) is always allowed since the creator becomes the owner.
+  const canEditOrg = !org || viewerRole === "owner";
   const canSave =
+    canEditOrg &&
     displayName.trim().length >= 2 &&
     normalizedPrefix.length > 0 &&
     !orgSave.isPending &&

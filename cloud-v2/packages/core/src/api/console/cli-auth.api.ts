@@ -430,7 +430,20 @@ async function putOrg(c: AppContext) {
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid organization payload");
 
   try {
-    const org = await developerOrgs.upsertPrimaryOrg(authenticatedSession.user, parsed.data);
+    const existingOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+    let org: DeveloperOrgRecord;
+    if (existingOrg) {
+      // Editing an existing org is owner-only, gated on the role rather than the
+      // ownerUserId scalar — and updates the resolved org by id, so a co-owner
+      // edits the same org instead of accidentally creating a second one, and a
+      // demoted creator who still holds ownerUserId can no longer rename it.
+      if ((await resolveOrgRole(authenticatedSession, existingOrg)) !== "owner") {
+        return c.json({ error: "forbidden", error_description: "only owners can update the organization" }, 403);
+      }
+      org = await developerOrgs.updateOrg(existingOrg.id, authenticatedSession.user, parsed.data);
+    } else {
+      org = await developerOrgs.createPrimaryOrg(authenticatedSession.user, parsed.data);
+    }
     const linkedOrg = await ensureWorkosOrgLinked(authenticatedSession, org);
     await syncWorkosOrgName(linkedOrg);
     return c.json({ org: linkedOrg });
