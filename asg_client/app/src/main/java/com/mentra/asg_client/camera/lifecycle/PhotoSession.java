@@ -461,7 +461,10 @@ public final class PhotoSession {
                     return;
                 }
                 Log.d(TAG, "No photo requests in queue");
-                hooks.startKeepAliveTimer();
+                // Warm-aware: if a camera_warm_up lease is still within its TTL, keep the camera
+                // warm for the lease's remaining time instead of the short photo keep-alive, so a
+                // take_photo taken inside the warm window doesn't shorten the reserved lease.
+                hooks.startPostCaptureKeepAlive();
                 return;
             }
             if (shotState != AeStateMachine.ShotState.IDLE) {
@@ -1841,6 +1844,13 @@ public final class PhotoSession {
 
         /** Keep-alive with a caller-supplied TTL used by {@code camera_warm_up}. */
         void startWarmKeepAliveTimer(long durationMs);
+
+        /**
+         * Post-photo keep-alive: the warm lease's remaining TTL if one is active, else the normal
+         * short photo keep-alive. Use after a capture so a take_photo inside a warm window doesn't
+         * shorten the lease.
+         */
+        void startPostCaptureKeepAlive();
 
         void cancelKeepAliveTimer();
 

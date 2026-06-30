@@ -195,6 +195,13 @@ public class CameraNeoService extends LifecycleService {
     /** Latest bound warm-up callback, used only to emit {@code stopped} on keep-alive expiry. */
     private CameraWarmUpCallback warmStoppedCallback;
 
+    /**
+     * Wall-clock deadline (ms) of the active {@code camera_warm_up} lease, or 0 when none. Lets a
+     * take_photo taken inside the warm window re-arm the warm keep-alive for the remaining lease
+     * time instead of the short photo keep-alive. Cleared when the camera closes.
+     */
+    private volatile long warmLeaseDeadlineMs = 0;
+
     // Video recording — owned by VideoRecordingSession (Phase 2.1).
     private VideoRecordingSession videoSession;
 
@@ -223,6 +230,11 @@ public class CameraNeoService extends LifecycleService {
                 @Override
                 public void startWarmKeepAliveTimer(long durationMs) {
                     CameraNeoService.this.startWarmKeepAliveTimer(durationMs);
+                }
+
+                @Override
+                public void startPostCaptureKeepAlive() {
+                    CameraNeoService.this.startPostCaptureKeepAlive();
                 }
 
                 @Override
@@ -1412,6 +1424,7 @@ public class CameraNeoService extends LifecycleService {
 
     /** Close camera resources */
     private void closeCamera() {
+        warmLeaseDeadlineMs = 0;
         boolean lockAcquired = false;
         try {
             lockAcquired = cameraCoordinator.tryAcquireOpenCloseLock(5000);
@@ -1468,6 +1481,7 @@ public class CameraNeoService extends LifecycleService {
      */
     private void startWarmKeepAliveTimer(long durationMs) {
         long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
+        warmLeaseDeadlineMs = System.currentTimeMillis() + ttl;
         cameraCoordinator.startKeepAlive(
                 ttl,
                 () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
@@ -1478,6 +1492,22 @@ public class CameraNeoService extends LifecycleService {
                         stopSelf();
                     }
                 });
+    }
+
+    /**
+     * Arm the keep-alive that should run after a photo settles. If a {@code camera_warm_up} lease is
+     * still within its TTL, re-arm the warm keep-alive for the lease's remaining time (never shorter
+     * than the normal photo keep-alive) so a take_photo taken inside the warm window doesn't shorten
+     * the lease the caller reserved or swallow its {@code stopped} event. Otherwise use the normal
+     * short photo keep-alive.
+     */
+    private void startPostCaptureKeepAlive() {
+        long remaining = warmLeaseDeadlineMs - System.currentTimeMillis();
+        if (remaining > 0) {
+            startWarmKeepAliveTimer(Math.max(remaining, CAMERA_KEEP_ALIVE_MS));
+        } else {
+            startKeepAliveTimer();
+        }
     }
 
     /** Cancel the keep-alive timer */
