@@ -1,14 +1,21 @@
 import type {WarmUpCameraParams} from "../BluetoothSdk.types"
 import {normalizePhotoSizeTier} from "./photoRequestPayload"
-import {generatedCameraRequestId, nonBlankRequestId} from "./requestIds"
+
+function nonBlankString(value?: string | null): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : undefined
+}
 
 /** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
 export function warmUpCameraParamsForNative(
   params: WarmUpCameraParams,
 ): Record<string, string | number> {
   const payload: Record<string, string | number> = {
-    requestId: nonBlankRequestId(params.requestId) ?? generatedCameraRequestId("warm"),
     size: normalizePhotoSizeTier(params.size),
+  }
+  const requestId = nonBlankString(params.requestId)
+  if (requestId != null) {
+    payload.requestId = requestId
   }
   const exposureTimeNs = params.exposureTimeNs
   if (exposureTimeNs != null && Number.isFinite(exposureTimeNs) && exposureTimeNs > 0) {

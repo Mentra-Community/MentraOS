@@ -1,12 +1,27 @@
 package com.mentra.bluetoothsdk.camera
 
+import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.PhotoSize
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PhotoRequestTest {
+    @Test
+    fun `constructor generates requestId when omitted`() {
+        val request =
+            PhotoRequest(
+                size = PhotoSize.MEDIUM,
+                webhookUrl = "https://example.com/upload",
+                compress = PhotoCompression.NONE,
+                sound = true,
+            )
+
+        assertTrue(request.requestId.startsWith("photo-"))
+    }
+
     @Test
     fun `fromMap defaults exposureTimeNs null`() {
         val request =

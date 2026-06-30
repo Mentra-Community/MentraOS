@@ -482,8 +482,7 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("warmUpCamera") { params: Map<String, Any?> ->
-            val requestId = nonBlankRequestId(params["requestId"] as? String)
-                ?: generatedCameraRequestId("warm")
+            val requestId = params["requestId"] as? String
             val size = PhotoSize.fromValue(params["size"] as? String)
             val exposureRaw = (params["exposureTimeNs"] as? Number)?.toDouble()
             val exposureTimeNs =

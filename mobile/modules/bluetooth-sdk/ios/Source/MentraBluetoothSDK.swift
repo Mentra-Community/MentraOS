@@ -795,7 +795,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func warmUpCamera(
-        requestId: String,
+        requestId: String? = nil,
         size: PhotoSize,
         exposureTimeNs: Double?,
         durationMs: Int

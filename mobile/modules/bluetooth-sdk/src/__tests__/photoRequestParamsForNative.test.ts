@@ -18,12 +18,12 @@ describe("photoRequestParamsForNative", () => {
     )
   })
 
-  it("generates requestId when omitted or blank", () => {
+  it("omits requestId when omitted or blank so native can generate it", () => {
     const {requestId: _requestId, ...withoutRequestId} = baseParams
 
-    expect(photoRequestParamsForNative(withoutRequestId).requestId).toMatch(/^photo-/)
-    expect(photoRequestParamsForNative({...baseParams, requestId: ""}).requestId).toMatch(/^photo-/)
-    expect(photoRequestParamsForNative({...baseParams, requestId: "  "}).requestId).toMatch(/^photo-/)
+    expect(photoRequestParamsForNative(withoutRequestId)).not.toHaveProperty("requestId")
+    expect(photoRequestParamsForNative({...baseParams, requestId: ""})).not.toHaveProperty("requestId")
+    expect(photoRequestParamsForNative({...baseParams, requestId: "  "})).not.toHaveProperty("requestId")
   })
 
   it("preserves explicit requestId", () => {
@@ -66,14 +66,14 @@ describe("photoRequestParamsForNative", () => {
 })
 
 describe("warmUpCameraParamsForNative", () => {
-  it("generates requestId and normalizes warm-up fields", () => {
+  it("omits requestId and normalizes warm-up fields so native can generate it", () => {
     const payload = warmUpCameraParamsForNative({
       size: "large",
       exposureTimeNs: 8_333_333,
       durationMs: 12_345.6,
     })
 
-    expect(payload.requestId).toMatch(/^warm-/)
+    expect(payload).not.toHaveProperty("requestId")
     expect(payload.size).toBe("high")
     expect(payload.exposureTimeNs).toBe(8_333_333)
     expect(payload.durationMs).toBe(12_346)

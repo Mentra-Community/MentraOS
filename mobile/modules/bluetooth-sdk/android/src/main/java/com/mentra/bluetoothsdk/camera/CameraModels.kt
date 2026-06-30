@@ -168,7 +168,7 @@ data class CameraFovResult(
 }
 
 data class PhotoRequest @JvmOverloads constructor(
-    val requestId: String,
+    val requestId: String = generatedCameraRequestId("photo"),
     val size: PhotoSize,
     val webhookUrl: String,
     val authToken: String? = null,

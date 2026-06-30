@@ -764,7 +764,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun warmUpCamera(
-        requestId: String,
+        requestId: String? = null,
         size: PhotoSize,
         exposureTimeNs: Long?,
         durationMs: Int,

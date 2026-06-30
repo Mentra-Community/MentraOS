@@ -253,7 +253,7 @@ public struct PhotoRequest {
     public let ispAnalogGain: String?
 
     public init(
-        requestId: String,
+        requestId: String? = nil,
         size: PhotoSize,
         webhookUrl: String? = nil,
         authToken: String? = nil,
@@ -271,7 +271,7 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil
     ) {
-        self.requestId = requestId
+        self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
         self.webhookUrl = webhookUrl
         self.authToken = authToken
@@ -338,7 +338,7 @@ public struct PhotoRequest {
         }
 
         return PhotoRequest(
-            requestId: nonBlankRequestId(params["requestId"] as? String) ?? generatedCameraRequestId("photo"),
+            requestId: params["requestId"] as? String,
             size: PhotoSize(normalizedRawValue: sizeRaw),
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
