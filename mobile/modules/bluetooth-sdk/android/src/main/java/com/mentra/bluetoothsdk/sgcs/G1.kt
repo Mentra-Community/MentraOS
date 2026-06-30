@@ -1614,7 +1614,10 @@ class G1 : SGCManager() {
 
     override fun clearDisplay() {
         Bridge.log("G1: clearDisplay() - sending space")
-        sendTextWall(" ")
+        // Bypass the throttle (a clear must always land) and drop any pending caption so it can't
+        // overwrite the clear after the fact.
+        cancelPendingThrottledText()
+        displayTextWall(" ")
     }
 
     // G1-specific display throttle (300ms, last-wins) — see G1.swift. G1 firmware can't absorb
@@ -1627,6 +1630,13 @@ class G1 : SGCManager() {
     private var textThrottleLastSent: Long = 0L
     private var textThrottleScheduled = false
     private val TEXT_THROTTLE_WINDOW_MS = 300L
+
+    /** Drop any pending throttled text-wall flush so it can't later overwrite a newer, non-text
+     *  display write (a clear, double-text-wall, or bitmap). The posted flush no-ops when
+     *  `textThrottlePending` is null. Called from every G1 display path that bypasses the throttle. */
+    private fun cancelPendingThrottledText() {
+        textThrottlePending = null
+    }
 
     private fun throttledTextWall(text: String) {
         val now = android.os.SystemClock.uptimeMillis()
@@ -1663,11 +1673,13 @@ class G1 : SGCManager() {
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
+        cancelPendingThrottledText() // a newer layout supersedes any pending caption text
         Bridge.log("G1: sendDoubleTextWall() - top: " + top + ", bottom: " + bottom)
         displayDoubleTextWall(top, bottom)
     }
 
     override fun displayBitmap(base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?): Boolean {
+        cancelPendingThrottledText() // a bitmap supersedes any pending caption text
         try {
             // Decode base64 to byte array
             val bmpData = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
