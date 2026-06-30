@@ -13,6 +13,8 @@ import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.service.core.processors.ChunkReassembler;
+import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrategy;
 
 import org.json.JSONObject;
 
@@ -39,6 +41,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private boolean isSerialOpen = false;
     private final DebugNotificationManager notificationManager;
     private BesMessageParser messageParser;
+    private final ChunkReassembler inboundBinaryReassembler = new ChunkReassembler();
+    private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
+            new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
+    private boolean wireV2HandshakeSent = false;
 
     // File transfer state management
     private FileTransferSession currentFileTransfer = null;
@@ -189,12 +195,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             "📡 🔧 JSON data detected, applying C-wrapping and protocol"
                                     + " formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
-                    String wrappedJson = BesWireFormat.createTransmissionWrapperJson(originalData);
-                    if (MessageChunker.needsChunking(wrappedJson)) {
-                        return sendChunkedJson(originalData);
-                    }
 
-                    data = BesWireFormat.formatMessageForTransmission(originalData);
+                    if (BesWireFormat.isBinaryProtocolActive()) {
+                        if (MessageChunker.needsChunking(originalData)) {
+                            return sendBinaryFragmentedJson(originalData);
+                        }
+                        data = BesWireFormat.formatBinaryMessageForTransmission(originalData);
+                        logOutboundWireMetrics(originalData, data, 1);
+                    } else {
+                        String wrappedJson =
+                                BesWireFormat.createTransmissionWrapperJson(originalData);
+                        if (MessageChunker.needsChunking(wrappedJson)) {
+                            return sendChunkedJson(originalData);
+                        }
+                        data = BesWireFormat.formatMessageForTransmission(originalData);
+                    }
 
                     // Log the first 50 bytes of the hex representation
                     StringBuilder hexDump = new StringBuilder();
@@ -240,6 +255,160 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         return sent;
+    }
+
+    /** Reset wire protocol state on new phone connection. */
+    public void resetWireProtocolState() {
+        BesWireFormat.resetBinaryProtocol();
+        inboundBinaryReassembler.clear();
+        wireV2HandshakeSent = false;
+    }
+
+    /** Send BLE Wire v2 handshake frame (payload "v2"). */
+    public boolean sendWireV2Handshake() {
+        if (!isSerialOpen) {
+            return false;
+        }
+        byte[] frame = BesWireFormat.packV2HandshakeFrame();
+        boolean sent = comManager.send(frame);
+        if (sent) {
+            wireV2HandshakeSent = true;
+            BesWireFormat.setBinaryProtocolActive(true);
+            BleTraceLogger.logWireMetrics(
+                    "glasses_to_phone",
+                    "sdk_ble_handshake",
+                    "wire_v2",
+                    BesWireFormat.HANDSHAKE_PAYLOAD_V2.length(),
+                    frame.length,
+                    1,
+                    0,
+                    BesWireFormat.PROTOCOL_VERSION_V2);
+        }
+        return sent;
+    }
+
+    private boolean sendBinaryFragmentedJson(String originalJson) {
+        try {
+            OutgoingJsonTraceInfo traceInfo = parseOutgoingJsonTraceInfo(originalJson);
+            int msgId = BesWireFormat.allocateBinaryMsgId();
+            List<byte[]> frames = MessageChunker.createBinaryFragments(originalJson, msgId);
+            Log.d(TAG, "📡 🧩 Sending binary JSON as " + frames.size() + " fragments");
+
+            boolean allSent = true;
+            long startedAtMs = System.currentTimeMillis();
+            int totalWireBytes = 0;
+            for (int i = 0; i < frames.size(); i++) {
+                byte[] frame = frames.get(i);
+                totalWireBytes += frame.length;
+                boolean sent = comManager.send(frame);
+                allSent = allSent && sent;
+                if (!sent) {
+                    Log.w(TAG, "📡 ❌ Binary fragment " + (i + 1) + "/" + frames.size() + " failed");
+                    break;
+                }
+                if (i < frames.size() - 1) {
+                    try {
+                        Thread.sleep(PACING_DELAY_MS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                }
+            }
+
+            logOutboundWireMetrics(
+                    originalJson,
+                    null,
+                    frames.size(),
+                    totalWireBytes,
+                    System.currentTimeMillis() - startedAtMs,
+                    traceInfo);
+            return allSent;
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending binary fragmented JSON", e);
+            return false;
+        }
+    }
+
+    private void logOutboundWireMetrics(String originalJson, byte[] singleFrame, int packetCount) {
+        logOutboundWireMetrics(
+                originalJson,
+                singleFrame,
+                packetCount,
+                singleFrame != null ? singleFrame.length : 0,
+                0,
+                null);
+    }
+
+    private void logOutboundWireMetrics(
+            String originalJson,
+            byte[] singleFrame,
+            int packetCount,
+            int totalWireBytes,
+            long latencyMs,
+            OutgoingJsonTraceInfo traceInfo) {
+        int payloadBytes = utf8ByteCount(originalJson);
+        int wireBytes = singleFrame != null ? singleFrame.length : totalWireBytes;
+        String messageType =
+                traceInfo != null && traceInfo.commandType != null
+                        ? traceInfo.commandType
+                        : "binary";
+        BleTraceLogger.logWireMetrics(
+                "glasses_to_phone",
+                "sdk_ble_wire",
+                messageType,
+                payloadBytes,
+                wireBytes,
+                packetCount,
+                latencyMs,
+                BesWireFormat.getActiveProtocolVersion());
+    }
+
+    private boolean handleInboundBinaryFrame(byte[] message) {
+        BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(message);
+        if (!header.valid) {
+            return false;
+        }
+
+        if ((header.flags & BesWireFormat.FLAG_HANDSHAKE) != 0) {
+            if (BesWireFormat.isV2HandshakePayload(header.payload)) {
+                Log.i(TAG, "📡 Received BLE wire v2 handshake from peer");
+                BesWireFormat.setBinaryProtocolActive(true);
+                BleTraceLogger.logWireMetrics(
+                        "phone_to_glasses",
+                        "sdk_ble_handshake",
+                        "wire_v2",
+                        header.payloadLen,
+                        message.length,
+                        1,
+                        0,
+                        BesWireFormat.PROTOCOL_VERSION_V2);
+                if (!wireV2HandshakeSent) {
+                    sendWireV2Handshake();
+                }
+            }
+            return true;
+        }
+
+        byte[] reassembled = inboundBinaryStrategy.processBinaryWireFrame(message);
+        if (reassembled == null) {
+            return true;
+        }
+
+        BleTraceLogger.logWireMetrics(
+                "phone_to_glasses",
+                "sdk_ble_wire",
+                "binary_reassembled",
+                reassembled.length,
+                message.length,
+                1,
+                0,
+                BesWireFormat.getActiveProtocolVersion());
+
+        if (!handleSrSyvrResponse(reassembled)) {
+            notifyDataReceived(reassembled);
+        }
+        return true;
     }
 
     /** Queues an internal command without broadcasting it as a phone-facing command response. */
@@ -772,6 +941,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
         isSerialOpen = false;
+        resetWireProtocolState();
         Log.d(TAG, "🔌 ✅ Serial port marked as closed");
 
         // When the serial port closes, we consider ourselves disconnected
@@ -812,7 +982,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         processReceivedMessage(message);
 
                         // Extract payload from K900 protocol message for listeners
-                        if (BesWireFormat.isK900ProtocolFormat(message)) {
+                        if (BesWireFormat.isBinaryWireFrame(message)) {
+                            handleInboundBinaryFrame(message);
+                        } else if (BesWireFormat.isK900ProtocolFormat(message)) {
                             // Try to extract payload (big-endian first, then little-endian)
                             byte[] payload = BesWireFormat.extractPayload(message);
                             if (payload == null) {
