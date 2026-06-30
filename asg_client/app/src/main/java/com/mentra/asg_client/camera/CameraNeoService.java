@@ -1506,6 +1506,14 @@ public class CameraNeoService extends LifecycleService {
         if (remaining > 0) {
             startWarmKeepAliveTimer(Math.max(remaining, CAMERA_KEEP_ALIVE_MS));
         } else {
+            if (warmLeaseDeadlineMs > 0) {
+                // The warm lease expired while a capture was in flight — the warm keep-alive had
+                // been cancelled for the capture, so its expiry never fired notifyWarmStopped. Emit
+                // the lease's stopped event now so clients still see the lease end per the contract,
+                // then fall back to the normal short photo keep-alive for rapid-fire grace.
+                warmLeaseDeadlineMs = 0;
+                notifyWarmStopped();
+            }
             startKeepAliveTimer();
         }
     }
