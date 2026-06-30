@@ -139,8 +139,10 @@ export class DeveloperOrgService {
   }
 
   /**
-   * Upsert a member's role, keyed by lowercased email (the identifier we have
-   * both at invite time and at login). Records userId when known.
+   * Set/overwrite a member's role (used when an owner/admin changes a role).
+   * Keyed by lowercased email. When userId is known, first drops any stale rows
+   * for that same user under a different email, so the userId-first lookup in
+   * getMemberRole can never read an outdated role after an email change.
    */
   async setMemberRole(
     orgId: string,
@@ -150,12 +152,39 @@ export class DeveloperOrgService {
   ): Promise<void> {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) return;
+    if (userId) {
+      await DeveloperOrgMembershipModel.deleteMany({
+        orgId,
+        userId,
+        email: { $ne: normalizedEmail },
+      });
+    }
     await DeveloperOrgMembershipModel.updateOne(
       { orgId, email: normalizedEmail },
       {
         $set: { role, ...(userId ? { userId } : {}) },
         $setOnInsert: { orgId, email: normalizedEmail },
       },
+      { upsert: true },
+    );
+  }
+
+  /**
+   * Record the role an invitee should receive when they join, WITHOUT
+   * overwriting an existing active member's role. An active member's row has a
+   * backfilled `userId`; those are left untouched so an invitation can't be a
+   * backdoor that re-roles a current member (that must go through the
+   * role-change endpoint / setMemberRole). A still-pending row (no userId) is
+   * updated, so a re-invite with a different role takes effect.
+   */
+  async recordInvitedRole(orgId: string, email: string, role: DeveloperOrgRole): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    const existing = await DeveloperOrgMembershipModel.findOne({ orgId, email: normalizedEmail }).lean();
+    if (existing?.userId) return; // active member — never clobber via invite
+    await DeveloperOrgMembershipModel.updateOne(
+      { orgId, email: normalizedEmail },
+      { $set: { role }, $setOnInsert: { orgId, email: normalizedEmail } },
       { upsert: true },
     );
   }

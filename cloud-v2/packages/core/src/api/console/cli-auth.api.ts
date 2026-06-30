@@ -479,8 +479,9 @@ async function postOrgInvitation(c: AppContext) {
       inviterUserId: developer.auth.user.id,
     });
     // Record the intended role in our DB; it materializes onto the membership
-    // when the invitee first authenticates. WorkOS stores no role.
-    await developerOrgs.setMemberRole(org.id, email, invitedRole);
+    // when the invitee first authenticates. WorkOS stores no role. This never
+    // overwrites an existing active member's role (see recordInvitedRole).
+    await developerOrgs.recordInvitedRole(org.id, email, invitedRole);
     return c.json({ invitation: serializeInvitation(invitation, invitedRole) }, 201);
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
@@ -504,7 +505,10 @@ async function deleteOrgInvitation(c: AppContext) {
       return c.json({ error: "not_found", error_description: "invitation was not found" }, 404);
     }
     await workos().userManagement.revokeInvitation(invitationId);
-    await developerOrgs.removeMemberRole(org.id, { email: invitation.email });
+    // Intentionally do NOT delete the role row here: the same email can key an
+    // active member's overlay (a stale/duplicate invite would otherwise demote
+    // them). A genuinely-pending row is inert until the invitee joins, and a
+    // re-invite updates it via recordInvitedRole.
     return c.json({ ok: true });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
