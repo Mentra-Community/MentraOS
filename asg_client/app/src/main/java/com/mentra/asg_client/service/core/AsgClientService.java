@@ -5,10 +5,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Environment;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Binder;
 import android.os.Build;
@@ -213,6 +216,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             } else {
                 applySavedCameraTuningOnStart();
             }
+
+            // Record 30 seconds of audio 20 seconds after startup and save to /sdcard/mentra_mic_test.pcm
+            scheduleStartupTestRecording();
 
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
@@ -627,9 +633,21 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
         AsgNotificationManager notificationManager = resolveNotificationManager();
         notificationManager.createNotificationChannel();
-        startForeground(
-                notificationManager.getDefaultNotificationId(),
-                notificationManager.createForegroundNotification());
+        // On Android 10+ (API 29+) the service type must be passed to startForeground() so that
+        // ActivityManager notifies AudioPolicyService that this UID is allowed to capture audio.
+        // Without the type, AudioPolicyService.UidPolicy never marks the UID as active and
+        // AudioRecord creation fails with "recording not allowed for uid X".
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                    notificationManager.getDefaultNotificationId(),
+                    notificationManager.createForegroundNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                            | android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        } else {
+            startForeground(
+                    notificationManager.getDefaultNotificationId(),
+                    notificationManager.createForegroundNotification());
+        }
         mForegroundStarted = true;
         Log.d(TAG, "✅ Foreground service started");
     }
@@ -1045,6 +1063,63 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // ---------------------------------------------
     // Helper Methods
     // ---------------------------------------------
+
+    /**
+     * Records 30 seconds of audio starting 20 seconds after service startup.
+     * Tries every audio source in sequence (GlassRTC WebRTC uses VOICE_COMMUNICATION by default).
+     * Output: /sdcard/mentra_mic_test.pcm  (44.1 kHz, 16-bit, mono PCM)
+     * Pull:   adb pull /sdcard/mentra_mic_test.pcm ~/mentra_mic_test.pcm
+     */
+    private void scheduleStartupTestRecording() {
+        final long START_DELAY_MS = 20_000L;
+        final long RECORD_DURATION_MS = 30_000L;
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.i(TAG, "Startup test recording: starting now");
+            new Thread(() -> {
+                // Log AppOps so we know if the OS is blocking us
+                try {
+                    android.app.AppOpsManager aom = (android.app.AppOpsManager)
+                            getSystemService(android.app.AppOpsManager.class);
+                    int mode = aom.checkOp(android.app.AppOpsManager.OPSTR_RECORD_AUDIO,
+                            android.os.Process.myUid(), getPackageName());
+                    Log.i(TAG, "Startup test recording: AppOps RECORD_AUDIO = "
+                            + (mode == android.app.AppOpsManager.MODE_ALLOWED ? "ALLOWED" :
+                               mode == android.app.AppOpsManager.MODE_IGNORED ? "IGNORED" :
+                               mode == android.app.AppOpsManager.MODE_ERRORED ? "ERRORED" :
+                               "mode=" + mode)
+                            + " uid=" + android.os.Process.myUid());
+                } catch (Exception e) {
+                    Log.w(TAG, "Startup test recording: AppOps check failed", e);
+                }
+
+                // AudioRecord is blocked by MTK's custom AudioPolicyIntefaceImpl for this UID.
+                // Try MediaRecorder which goes through the media framework and may bypass the check.
+                java.io.File outFile = new java.io.File(
+                        Environment.getExternalStorageDirectory(), "mentra_mic_test.3gp");
+                MediaRecorder mr = new MediaRecorder();
+                try {
+                    mr.setAudioSource(MediaRecorder.AudioSource.MIC);
+                    mr.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
+                    mr.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+                    mr.setOutputFile(outFile.getAbsolutePath());
+                    mr.prepare();
+                    mr.start();
+                    Log.i(TAG, "Startup test recording: MediaRecorder started → "
+                            + outFile.getAbsolutePath());
+                    Thread.sleep(RECORD_DURATION_MS);
+                    mr.stop();
+                    Log.i(TAG, "Startup test recording: MediaRecorder DONE — "
+                            + outFile.length() + " bytes"
+                            + " — pull with: adb pull /sdcard/mentra_mic_test.3gp");
+                } catch (Exception e) {
+                    Log.e(TAG, "Startup test recording: MediaRecorder failed", e);
+                } finally {
+                    try { mr.release(); } catch (Exception ignored) {}
+                }
+            }, "StartupMicTest").start();
+        }, START_DELAY_MS);
+    }
 
     private void onWifiConnected() {
         Log.i(TAG, "🌐 Connected to WiFi network");
