@@ -2,12 +2,13 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import BluetoothSdk, {PhotoResponseEvent} from "@mentra/bluetooth-sdk-internal"
+import {PhotoResponseEvent} from "@mentra/bluetooth-sdk-internal"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BgTimer} from "@mentra/island"
+import {createDebouncedPatchFlusher} from "@/utils/debouncedPatch"
 
 interface RequestConfig {
   method: "GET" | "POST" | "DELETE"
@@ -16,6 +17,10 @@ interface RequestConfig {
   params?: any
   requiresAuth?: boolean
 }
+
+const flushGlassesStateToServer = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
+  void RestComms.getInstance().postGlassesStateNow(patch)
+}, 500)
 
 class RestComms {
   private static instance: RestComms
@@ -48,13 +53,8 @@ class RestComms {
       }`,
     )
 
-    // Sync to native DeviceStore (and persist to SharedPreferences in BluetoothSdkModule when bridge runs)
-    const value = token ?? ""
-    const updateResult = BluetoothSdk.updateBluetoothSettings({core_token: value})
-    if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
-      ;(updateResult as Promise<void>).catch(() => {})
-    }
-
+    // Native core_token is synced via the settings store subscription when
+    // SocketComms.setAuthCreds persists the token — avoid a triple-write here.
     if (token) {
       console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`)
       GlobalEventEmitter.emit("CORE_TOKEN_SET")
@@ -314,6 +314,12 @@ class RestComms {
   }
 
   public updateGlassesState(state: Record<string, any>): AsyncResult<void, Error> {
+    flushGlassesStateToServer(state)
+    return Res.ok(undefined)
+  }
+
+  /** Immediate glasses-state POST (used by the debounced flusher). */
+  public postGlassesStateNow(state: Record<string, any>): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/device/state",
