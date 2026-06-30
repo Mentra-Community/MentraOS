@@ -87,6 +87,10 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
                 logCommandResult("camera_warm_up", false, "Media capture service not available");
+                sendCameraWarmUpError(
+                        requestId,
+                        "media_capture_service_unavailable",
+                        "Media capture service not available");
                 return false;
             }
 
@@ -108,7 +112,43 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera warm-up command", e);
             logCommandResult("camera_warm_up", false, "Exception: " + e.getMessage());
+            String requestId = data.optString("requestId", "");
+            if (!requestId.isEmpty()) {
+                sendCameraWarmUpError(
+                        requestId,
+                        "camera_warm_up_failed",
+                        "Camera warm-up failed: " + e.getMessage());
+            }
             return false;
+        }
+    }
+
+    private void sendCameraWarmUpError(String requestId, String errorCode, String errorMessage) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "camera_status");
+            status.put("state", "error");
+            status.put("requestId", requestId);
+            status.put("timestamp", System.currentTimeMillis());
+            status.put("errorCode", errorCode);
+            status.put("errorMessage", errorMessage);
+
+            if (serviceManager.getBluetoothManager() != null) {
+                serviceManager.getBluetoothManager().sendMessage(status.toString().getBytes());
+                Log.d(
+                        TAG,
+                        "📷 camera_status sent: state=error requestId="
+                                + requestId
+                                + " errorCode="
+                                + errorCode);
+            } else {
+                Log.w(TAG, "Cannot send camera warm-up error - Bluetooth manager unavailable");
+            }
+        } catch (Exception sendError) {
+            Log.e(TAG, "Error sending camera warm-up error", sendError);
         }
     }
 

@@ -4094,7 +4094,11 @@ public class MediaCaptureService {
         // Camera HAL restarting after FOV change — cannot warm right now.
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "camera_warm_up rejected - camera HAL restarting after FOV change");
-            sendCameraStatus(requestId, "error", "Camera restarting after FOV change");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "camera_restart_cooldown",
+                    "Camera restarting after FOV change");
             return false;
         }
 
@@ -4110,9 +4114,22 @@ public class MediaCaptureService {
         }
 
         // A photo job (capture or BLE handoff) is mid-flight — do not disrupt it.
-        if (isPhotoJobInFlight() || isBleTransferInProgress()) {
+        if (isPhotoJobInFlight()) {
             Log.w(TAG, "camera_warm_up rejected - photo job in flight");
-            sendCameraStatus(requestId, "error", "Photo capture in progress");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "photo_capture_in_progress",
+                    "Photo capture in progress");
+            return false;
+        }
+        if (isBleTransferInProgress()) {
+            Log.w(TAG, "camera_warm_up rejected - BLE transfer in progress");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "ble_transfer_in_progress",
+                    "Bluetooth photo transfer in progress");
             return false;
         }
 
@@ -4146,7 +4163,11 @@ public class MediaCaptureService {
 
                     @Override
                     public void onCameraError(String errorMessage) {
-                        sendCameraStatus(requestId, "error", errorMessage);
+                        sendCameraStatus(
+                                requestId,
+                                "error",
+                                cameraWarmUpErrorCode(errorMessage),
+                                errorMessage);
                     }
                 });
         return true;
@@ -4161,6 +4182,20 @@ public class MediaCaptureService {
      * @param errorMessage included only for the {@code error} state
      */
     public void sendCameraStatus(String requestId, String state, String errorMessage) {
+        sendCameraStatus(requestId, state, null, errorMessage);
+    }
+
+    /**
+     * Emit a {@code camera_status} event for a {@code camera_warm_up} request. Mirrors the flat,
+     * top-level JSON shape of {@code photo_status} (sent directly over BLE, not wrapped in {@code
+     * data}) so the phone parses {@code state}/{@code requestId} at the top level.
+     *
+     * @param state one of {@code warming}, {@code ready}, {@code stopped}, {@code error}
+     * @param errorCode stable machine-readable error code, included only when present
+     * @param errorMessage included only for the {@code error} state
+     */
+    public void sendCameraStatus(
+            String requestId, String state, String errorCode, String errorMessage) {
         if (requestId == null || requestId.isEmpty()) {
             return;
         }
@@ -4170,6 +4205,9 @@ public class MediaCaptureService {
             json.put("state", state);
             json.put("requestId", requestId);
             json.put("timestamp", System.currentTimeMillis());
+            if (errorCode != null && !errorCode.isEmpty()) {
+                json.put("errorCode", errorCode);
+            }
             if (errorMessage != null && !errorMessage.isEmpty()) {
                 json.put("errorMessage", errorMessage);
             }
@@ -4183,6 +4221,13 @@ public class MediaCaptureService {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating camera status", e);
         }
+    }
+
+    private static String cameraWarmUpErrorCode(String errorMessage) {
+        if ("camera_busy".equals(errorMessage)) {
+            return "camera_busy";
+        }
+        return "camera_warm_up_failed";
     }
 
     private void sendPhotoStatus(String requestId, String status) {

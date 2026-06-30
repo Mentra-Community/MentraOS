@@ -166,7 +166,7 @@ try await sdk.warmUpCamera(
   </Tab>
 </Tabs>
 
-`warmUpCamera(...)` returns the matching `camera_status` `ready` event. It throws or rejects when the glasses send `camera_status` `error`, when the command cannot be sent, or when the response times out. Listen for `camera_status` if you want progress events: `warming` means the warm-up was accepted, `ready` means the camera is open/configured for reuse, `stopped` means the warm lease expired or the camera closed, and `error` includes `errorMessage` when available.
+`warmUpCamera(...)` returns the matching `camera_status` `ready` event. It throws or rejects when the glasses send `camera_status` `error`, when the command cannot be sent, or when the response times out. Listen for `camera_status` if you want progress events: `warming` means the warm-up was accepted, `ready` means the camera is open/configured for reuse, `stopped` means the warm lease expired or the camera closed, and `error` includes `errorCode` / `errorMessage` when available.
 
 Warm-up reuse is configuration-sensitive: the next photo should use the same `size` and `exposureTimeNs` value. A different size or manual-exposure setting may force the camera to reconfigure. If video recording or streaming already owns the camera, warm-up reports `ready` immediately because the camera is already active. If a photo capture or another warm-up is in flight, the glasses may report a retryable `camera_busy` / `camera_warm_up_failed` error; retry on the next foreground refresh rather than blocking capture UI.
 

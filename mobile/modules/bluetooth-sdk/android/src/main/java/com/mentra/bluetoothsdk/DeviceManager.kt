@@ -1550,7 +1550,12 @@ class DeviceManager {
     ) {
         // Fail fast like other camera commands so the SDK promise rejects immediately instead of
         // hanging until the request timeout with no camera_status.
-        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException(
+                    "unsupported_device",
+                    "This command requires Mentra Live glasses.",
+                )
         live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
     }
 
