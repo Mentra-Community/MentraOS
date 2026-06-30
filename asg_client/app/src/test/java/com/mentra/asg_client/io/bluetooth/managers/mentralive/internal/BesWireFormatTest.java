@@ -16,6 +16,7 @@ public class BesWireFormatTest {
     @After
     public void tearDown() {
         BesWireFormat.resetFilePackSize();
+        BesWireFormat.resetBinaryProtocol();
     }
 
     @Test
@@ -38,10 +39,49 @@ public class BesWireFormatTest {
         assertThat(packed[0]).isEqualTo((byte) 0x23);
         assertThat(packed[1]).isEqualTo((byte) 0x23);
         assertThat(packed[2]).isEqualTo(BesWireFormat.CMD_TYPE_STRING);
-        assertThat(packed[3]).isEqualTo((byte) 0x00);
-        assertThat(packed[4]).isEqualTo((byte) payload.length);
+        assertThat(packed[3]).isEqualTo((byte) (payload.length & 0xFF));
+        assertThat(packed[4]).isEqualTo((byte) ((payload.length >> 8) & 0xFF));
         assertThat(packed[packed.length - 2]).isEqualTo((byte) 0x24);
         assertThat(packed[packed.length - 1]).isEqualTo((byte) 0x24);
+    }
+
+    @Test
+    public void packBinaryFragment_usesLittleEndianLengthAndHeader() {
+        byte[] payload = "hello".getBytes(StandardCharsets.UTF_8);
+        byte flags = (byte) (BesWireFormat.FLAG_FIRST_FRAG | BesWireFormat.FLAG_LAST_FRAG);
+        byte[] frame = BesWireFormat.packBinaryFragment(flags, 0x1234, 0, 1, payload);
+
+        assertThat(frame[2]).isEqualTo(BesWireFormat.CMD_TYPE_BINARY_MSG);
+        int innerLen = (frame[3] & 0xFF) | ((frame[4] & 0xFF) << 8);
+        assertThat(innerLen).isEqualTo(BesWireFormat.BINARY_HEADER_SIZE + payload.length);
+        assertThat(frame.length).isEqualTo(BesWireFormat.LENGTH_CMD_MIN_SIZE + innerLen);
+
+        BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
+        assertThat(header.valid).isTrue();
+        assertThat(header.msgId).isEqualTo(0x1234);
+        assertThat(header.payloadLen).isEqualTo(payload.length);
+        assertThat(header.payload).isEqualTo(payload);
+    }
+
+    @Test
+    public void packV2HandshakeFrame_containsHandshakePayload() {
+        byte[] frame = BesWireFormat.packV2HandshakeFrame();
+        BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
+
+        assertThat(header.valid).isTrue();
+        assertThat(header.flags & BesWireFormat.FLAG_HANDSHAKE).isNotZero();
+        assertThat(BesWireFormat.isV2HandshakePayload(header.payload)).isTrue();
+    }
+
+    @Test
+    public void formatBinaryMessageForTransmission_dropsWrapperForRegularJson() throws Exception {
+        BesWireFormat.setBinaryProtocolActive(true);
+        String json = "{\"type\":\"glasses_ready\",\"timestamp\":1}";
+        byte[] frame = BesWireFormat.formatBinaryMessageForTransmission(json);
+        BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
+
+        assertThat(header.valid).isTrue();
+        assertThat(new String(header.payload, StandardCharsets.UTF_8)).isEqualTo(json);
     }
 
     @Test
@@ -65,6 +105,17 @@ public class BesWireFormatTest {
         String inner = new String(packed, 5, packed.length - 7, StandardCharsets.UTF_8);
         assertThat(inner).contains("\"C\"");
         assertThat(inner).contains("ping");
+    }
+
+    @Test
+    public void createTransmissionWrapperJson_dropsVersionAndBodyWhenV2() throws Exception {
+        BesWireFormat.setBinaryProtocolActive(true);
+        String json = "{\"type\":\"glasses_ready\",\"timestamp\":1}";
+        String wrapped = BesWireFormat.createTransmissionWrapperJson(json);
+
+        assertThat(wrapped).doesNotContain("\"V\"");
+        assertThat(wrapped).doesNotContain("\"B\"");
+        assertThat(wrapped).contains("\"t\":\"glasses_ready\"");
     }
 
     @Test
