@@ -33,6 +33,9 @@ export default function OtaCheckForUpdatesScreen() {
   const [checkKey, setCheckKey] = useState(0)
   /** Incremented each effect run so stale async performCheck exits before mutating state. */
   const performCheckGenerationRef = useRef(0)
+  const activeCheckKeyRef = useRef<number | null>(null)
+  const checkStartedRef = useRef(false)
+  const checkCompletedRef = useRef(false)
 
   focusEffectPreventBack()
 
@@ -49,16 +52,34 @@ export default function OtaCheckForUpdatesScreen() {
   useEffect(() => {
     const MIN_DISPLAY_TIME_MS = 1100
     const MAX_WAIT_FOR_VERSION_INFO_MS = 10000 // Wait up to 10 seconds for version_info
+    if (activeCheckKeyRef.current !== checkKey) {
+      activeCheckKeyRef.current = checkKey
+      checkStartedRef.current = false
+      checkCompletedRef.current = false
+    }
+
     const myGen = ++performCheckGenerationRef.current
     let cancelled = false
 
     const performCheck = async () => {
+      if (checkCompletedRef.current) {
+        return
+      }
+
       if (!glassesConnected) {
+        if (checkStartedRef.current) {
+          console.log("OTA: Glasses disconnected after OTA check started - setting error state")
+          checkCompletedRef.current = true
+          setCheckState("error")
+          return
+        }
         console.log("OTA: Glasses not connected - proceeding to next step")
+        checkCompletedRef.current = true
         handleContinue()
         return
       }
 
+      checkStartedRef.current = true
       const startTime = Date.now()
 
       try {
@@ -83,24 +104,35 @@ export default function OtaCheckForUpdatesScreen() {
           return
         }
 
-        if (result.skippedReason === "disconnected" || result.skippedReason === "missing_build") {
-          console.log(`OTA: Check skipped (${result.skippedReason}) - proceeding to next step`)
+        if (result.skippedReason === "disconnected") {
+          console.log("OTA: Check skipped after glasses disconnected - setting error state")
+          checkCompletedRef.current = true
+          setCheckState("error")
+          return
+        }
+
+        if (result.skippedReason === "missing_build") {
+          console.log("OTA: Check skipped (missing_build) - proceeding to next step")
+          checkCompletedRef.current = true
           handleContinue()
           return
         }
 
         if (!result.hasCheckCompleted) {
           console.log("📱 OTA check did not complete - setting error state")
+          checkCompletedRef.current = true
           setCheckState("error")
           return
         }
 
         if (result.updateAvailable && result.updateInfo) {
           console.log("📱 Updates available - setting update_available state")
+          checkCompletedRef.current = true
           setIsUpdateRequired(result.isRequired)
           setCheckState("update_available")
         } else {
           console.log("📱 No updates available - setting no_update state")
+          checkCompletedRef.current = true
           toolkit.ota.clearUpdateAvailable()
           setCheckState("no_update")
         }
@@ -110,6 +142,7 @@ export default function OtaCheckForUpdatesScreen() {
         const elapsed = Date.now() - startTime
         const remainingDelay = Math.max(0, MIN_DISPLAY_TIME_MS - elapsed)
         await new Promise((resolve) => setTimeout(resolve, remainingDelay))
+        checkCompletedRef.current = true
         setCheckState("error")
       }
     }
