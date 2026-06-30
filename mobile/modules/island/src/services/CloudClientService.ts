@@ -70,6 +70,7 @@ let translationUnsubscribe: (() => void) | null = null
 let authStateUnsubscribe: (() => void) | null = null
 let localDevRuntimeToken: {runtimeUrl: string; token: string; expiresAtMs: number} | null = null
 let lc3FrameSizeUnsubscribe: (() => void) | null = null
+let coreTokenSyncPromise: Promise<string> | null = null
 
 const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
@@ -92,12 +93,24 @@ function getCoreClient(): CloudCore {
   return core
 }
 
-async function syncCoreAccessTokenToBluetooth(): Promise<string> {
+function syncCoreAccessTokenToBluetooth(): Promise<string> {
+  if (coreTokenSyncPromise) return coreTokenSyncPromise
+
+  coreTokenSyncPromise = syncCoreAccessTokenToBluetoothInternal().finally(() => {
+    coreTokenSyncPromise = null
+  })
+  return coreTokenSyncPromise
+}
+
+async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
   if (!client) construct()
   const c = client
   if (!c) throw new Error("cloud client not initialized")
 
   const token = await c.auth.getCoreToken()
+  if (c !== client) {
+    throw new Error("cloud client changed while syncing core token")
+  }
   const result = await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, token, false)
   if (result.is_error()) {
     throw result.error

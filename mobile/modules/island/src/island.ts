@@ -73,6 +73,11 @@ export const toolkit = {
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
     startAudioCloudUplink()
+    try {
+      await cloudClientService.syncCoreTokenToBluetooth()
+    } catch (error) {
+      console.warn("toolkit.start: initial Cloud V2 core token sync failed:", error instanceof Error ? error.message : error)
+    }
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()

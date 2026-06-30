@@ -1,5 +1,6 @@
 import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
 import {cloudClientService} from "../../../modules/island/src/services/CloudClientService"
+import {logBuffer} from "../../../modules/island/src/utils/devLogging"
 
 jest.mock("../../../modules/island/src/services/CloudClientService", () => ({
   cloudClientService: {
@@ -27,7 +28,9 @@ jest.mock("../../../modules/island/src/utils/devLogging", () => ({
 }))
 
 const submitMock = cloudClientService.core.reports.submit as jest.Mock
+const addLogsMock = cloudClientService.core.reports.addLogs as jest.Mock
 const completeMock = cloudClientService.core.reports.complete as jest.Mock
+const getRecentLogsMock = logBuffer.getRecentLogs as jest.Mock
 
 const automaticInput = (throttleKey: string) => ({
   kind: "automatic" as const,
@@ -43,8 +46,12 @@ const automaticInput = (throttleKey: string) => ({
 describe("reports facade automatic throttling", () => {
   beforeEach(() => {
     submitMock.mockReset()
+    addLogsMock.mockReset()
     completeMock.mockReset()
+    getRecentLogsMock.mockReset()
+    addLogsMock.mockResolvedValue({stored: 1})
     completeMock.mockResolvedValue({status: "complete"})
+    getRecentLogsMock.mockReturnValue([])
   })
 
   it("does not throttle a later automatic report after Cloud V2 submit fails", async () => {
@@ -80,5 +87,26 @@ describe("reports facade automatic throttling", () => {
     })
 
     expect(submitMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not throttle a later automatic report after log upload fails", async () => {
+    const key = `artifact-retry-${Date.now()}`
+    getRecentLogsMock.mockReturnValue([{timestamp: 1, level: "info", message: "diagnostic"}])
+    submitMock
+      .mockResolvedValueOnce({reportId: "report-log-1", status: "open"})
+      .mockResolvedValueOnce({reportId: "report-log-2", status: "open"})
+    addLogsMock.mockRejectedValueOnce(new Error("upload failed")).mockResolvedValueOnce({stored: 1})
+
+    await expect(submitAutomaticReport(automaticInput(key))).resolves.toMatchObject({
+      status: "submitted",
+      reportId: "report-log-1",
+    })
+    await expect(submitAutomaticReport(automaticInput(key))).resolves.toMatchObject({
+      status: "submitted",
+      reportId: "report-log-2",
+    })
+
+    expect(submitMock).toHaveBeenCalledTimes(2)
+    expect(addLogsMock).toHaveBeenCalledTimes(2)
   })
 })

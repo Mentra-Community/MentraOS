@@ -933,7 +933,11 @@ export const useSettingsStore = create<SettingsState>()(
       const bluetoothSettings: Record<string, any> = {}
       Object.values(SETTINGS).forEach((setting) => {
         if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
-          bluetoothSettings[setting.key] = state.getSetting(setting.key)
+          const value = state.getSetting(setting.key)
+          if (setting.key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
+            return
+          }
+          bluetoothSettings[setting.key] = value
         }
       })
       return bluetoothSettings

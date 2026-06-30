@@ -108,6 +108,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   const context = await collectDiagnosticContext(input.context)
   let reportId: string
   let reportStatus: ReportStatus
+  let artifactsComplete = true
   try {
     const res =
       input.kind === "feedback"
@@ -131,9 +132,6 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
             })
     reportId = res.reportId
     reportStatus = res.status
-    if (throttle) {
-      markAutomaticThrottleSuccess(throttle.key, Date.now(), throttle.windowMs)
-    }
   } catch (error) {
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}
   }
@@ -144,6 +142,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
       try {
         await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
       } catch (error) {
+        artifactsComplete = false
         console.warn("reports.submit: add phone logs failed:", error instanceof Error ? error.message : error)
       }
     }
@@ -154,6 +153,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
       try {
         await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots)
       } catch (error) {
+        artifactsComplete = false
         console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
       }
     }
@@ -162,8 +162,13 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
       const completed = await cloudClientService.core.reports.complete(reportId)
       reportStatus = completed.status
     } catch (error) {
+      artifactsComplete = false
       console.warn("reports.submit: complete report failed:", error instanceof Error ? error.message : error)
     }
+  }
+
+  if (throttle && artifactsComplete) {
+    markAutomaticThrottleSuccess(throttle.key, Date.now(), throttle.windowMs)
   }
 
   return {status: "submitted", reportId, reportStatus}
