@@ -3,15 +3,16 @@ import { Schema, model, type InferSchemaType } from "mongoose";
 /**
  * Roles a developer-org member can hold, stored and owned entirely in our DB.
  *
- * `owner` is intentionally NOT in this list: ownership is the single
- * `ownerUserId` field on `DeveloperOrg` and stays the source of truth for the
- * one owner. This collection only records the admin/member overlay for
- * everyone else. A user with no row here resolves to `member` by default.
+ * `DeveloperOrg.ownerUserId` is the org's PRIMARY owner (the creator): always an
+ * owner, can never be demoted or removed — that is what guarantees an org always
+ * has at least one owner ("can't remove the last owner"). Additional co-owners
+ * are stored here as `owner` rows, so an org can have multiple owners. A user
+ * with no row resolves to `member` by default.
  *
  * WorkOS is not consulted for roles — it remains identity/login + the member
  * roster only. The permission tier is a Mentra console concept.
  */
-export const DEVELOPER_ORG_ROLES = ["admin", "member"] as const;
+export const DEVELOPER_ORG_ROLES = ["owner", "admin", "member"] as const;
 export type DeveloperOrgRole = (typeof DEVELOPER_ORG_ROLES)[number];
 
 const DeveloperOrgMembershipSchema = new Schema(

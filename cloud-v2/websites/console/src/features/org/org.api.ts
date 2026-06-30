@@ -87,7 +87,7 @@ export function inviteOrgMember(input: {
 
 export function updateOrgMemberRole(input: {
   membershipId: string;
-  role: "admin" | "member";
+  role: "owner" | "admin" | "member";
 }): Promise<{ ok: boolean; role: string }> {
   return apiRequest(
     "/console/org/members/" + encodeURIComponent(input.membershipId),

@@ -44,7 +44,7 @@ const inviteOrgMemberSchema = z.object({
 });
 
 const updateOrgMemberRoleSchema = z.object({
-  role: z.enum(["admin", "member"]),
+  role: z.enum(["owner", "admin", "member"]),
 });
 
 const createMiniAppSchema = z.object({
@@ -519,7 +519,8 @@ async function deleteOrgInvitation(c: AppContext) {
 async function deleteOrgMember(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+  const actorRole = await resolveOrgRole(developer.auth, developer.org);
+  if (!roleAtLeast(actorRole, "admin")) {
     return c.json({ error: "forbidden", error_description: "only owners and admins can remove members" }, 403);
   }
   const membershipId = c.req.param("membershipId");
@@ -531,8 +532,14 @@ async function deleteOrgMember(c: AppContext) {
     if (membership.organizationId !== org.workosOrgId) {
       return c.json({ error: "not_found", error_description: "member was not found" }, 404);
     }
+    // The primary owner (creator) is the org's permanent last owner.
     if (membership.userId === org.ownerUserId) {
       return c.json({ error: "owner_required", error_description: "the org owner cannot be removed" }, 409);
+    }
+    // Only an owner may remove a co-owner.
+    const targetRole = await developerOrgs.getMemberRole(org.id, { userId: membership.userId });
+    if (targetRole === "owner" && actorRole !== "owner") {
+      return c.json({ error: "forbidden", error_description: "only an owner can remove another owner" }, 403);
     }
     await workos().userManagement.deleteOrganizationMembership(membershipId);
     await developerOrgs.removeMemberRole(org.id, { userId: membership.userId });
@@ -546,7 +553,8 @@ async function deleteOrgMember(c: AppContext) {
 async function patchOrgMember(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+  const actorRole = await resolveOrgRole(developer.auth, developer.org);
+  if (!roleAtLeast(actorRole, "admin")) {
     return c.json({ error: "forbidden", error_description: "only owners and admins can change member roles" }, 403);
   }
   const membershipId = c.req.param("membershipId");
@@ -573,6 +581,12 @@ async function patchOrgMember(c: AppContext) {
     }
     if (!email) {
       return c.json({ error: "member_unresolved", error_description: "could not resolve member email" }, 409);
+    }
+    // Granting or changing the owner role is owner-only (no admin can mint an
+    // owner or demote one); admins may only move members between admin/member.
+    const targetRole = await developerOrgs.getMemberRole(org.id, { userId: membership.userId, email });
+    if ((parsed.data.role === "owner" || targetRole === "owner") && actorRole !== "owner") {
+      return c.json({ error: "forbidden", error_description: "only an owner can grant or change the owner role" }, 403);
     }
     await developerOrgs.setMemberRole(org.id, email, parsed.data.role, membership.userId);
     return c.json({ ok: true, role: parsed.data.role });
@@ -1000,11 +1014,12 @@ async function resolveOrgRole(
   authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
   org: DeveloperOrgRecord,
 ): Promise<OrgRole> {
-  if (authenticatedSession.user.id === org.ownerUserId) return "owner";
+  if (authenticatedSession.user.id === org.ownerUserId) return "owner"; // primary owner
   const role = await developerOrgs.getMemberRole(org.id, {
     userId: authenticatedSession.user.id,
     email: authenticatedSession.user.email,
   });
+  if (role === "owner") return "owner"; // co-owner
   return role === "admin" ? "admin" : "member";
 }
 

@@ -260,7 +260,7 @@ type TeamAccessSectionProps = {
   updateMemberRole: UseMutationResult<
     { ok: boolean; role: string },
     Error,
-    { membershipId: string; role: "admin" | "member" },
+    { membershipId: string; role: "owner" | "admin" | "member" },
     unknown
   >;
 };
@@ -384,6 +384,8 @@ function TeamAccessSection({
                     key={row.kind === "invitation" ? `invite:${row.invitation.id}` : `member:${row.member.id}`}
                     row={row}
                     canManage={canManage}
+                    viewerRole={viewerRole}
+                    ownerUserId={org.ownerUserId}
                     removeMember={removeMember}
                     revokeInvite={revokeInvite}
                     updateMemberRole={updateMemberRole}
@@ -407,18 +409,22 @@ type AccessRow =
 function AccessRow({
   row,
   canManage,
+  viewerRole,
+  ownerUserId,
   removeMember,
   revokeInvite,
   updateMemberRole,
 }: {
   row: AccessRow;
   canManage: boolean;
+  viewerRole: OrgRole;
+  ownerUserId: string;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   updateMemberRole: UseMutationResult<
     { ok: boolean; role: string },
     Error,
-    { membershipId: string; role: "admin" | "member" },
+    { membershipId: string; role: "owner" | "admin" | "member" },
     unknown
   >;
 }) {
@@ -431,8 +437,12 @@ function AccessRow({
   const subtitle = [member.email && member.name ? member.email : null, titleCase(member.status)]
     .filter(Boolean)
     .join(" · ");
-  const isOwner = member.role === "owner";
-  const canEditRole = canManage && !isOwner;
+  const isPrimaryOwner = member.userId === ownerUserId; // the creator — never editable
+  const targetIsOwner = member.role === "owner";
+  const viewerIsOwner = viewerRole === "owner";
+  // Admins manage members/admins; only an owner can edit or remove a co-owner;
+  // the primary owner is fixed.
+  const canEditRole = canManage && !isPrimaryOwner && (!targetIsOwner || viewerIsOwner);
 
   return (
     <div className="flex min-h-16 items-center gap-3 border-b border-[#eceeeb] px-3 py-3 last:border-b-0 sm:px-4">
@@ -447,17 +457,19 @@ function AccessRow({
         <select
           value={member.role}
           disabled={updateMemberRole.isPending}
-          onChange={event =>
+          onChange={event => {
+            const next = event.target.value;
             updateMemberRole.mutate({
               membershipId: member.id,
-              role: event.target.value === "admin" ? "admin" : "member",
-            })
-          }
+              role: next === "owner" ? "owner" : next === "admin" ? "admin" : "member",
+            });
+          }}
           className="h-9 rounded-[10px] border border-[#dfe3dc] bg-white px-2 text-sm text-[#1c1d22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9dddc7]/35"
           aria-label={`Role for ${displayName}`}
         >
           <option value="member">Member</option>
           <option value="admin">Admin</option>
+          {viewerIsOwner ? <option value="owner">Owner</option> : null}
         </select>
       ) : (
         <span className="text-xs font-semibold uppercase tracking-[0.08em] text-[#8a8d95]">{titleCase(member.role)}</span>
