@@ -721,7 +721,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             aeExposureDivisor: photoAeExposureDivisor,
             isoCap: photoIsoCap,
             compress: photoCompression.rawValue,
-            sound: false,
+            sound: true,
             resetCaptureTuning: shouldResetCaptureTuning()
         )
     }
@@ -933,7 +933,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             size: photoSize,
             webhookUrl: webhookUrl,
             compress: photoCompression,
-            sound: !scanMode,
+            sound: true,
             exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
             iso: photoExposureManual ? photoIso : nil,
             aeExposureDivisor: photoExposureManual ? nil : photoAeExposureDivisor,

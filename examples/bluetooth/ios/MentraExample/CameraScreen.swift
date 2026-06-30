@@ -90,7 +90,7 @@ private func cameraSdkCall(
           size: .\(size),
           webhookUrl: uploadUrl,
           compress: .\(compression),
-          sound: \(scanMode ? "false" : "true"),
+          sound: true,
     \(exposureLine)
     \(isoLine)\(optionalTuningLines)
         )
