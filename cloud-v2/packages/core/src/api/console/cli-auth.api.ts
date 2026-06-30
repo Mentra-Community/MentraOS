@@ -40,6 +40,11 @@ const upsertDeveloperOrgSchema = z.object({
 
 const inviteOrgMemberSchema = z.object({
   email: z.string().email(),
+  role: z.enum(["admin", "member"]).optional(),
+});
+
+const updateOrgMemberRoleSchema = z.object({
+  role: z.enum(["admin", "member"]),
 });
 
 const createMiniAppSchema = z.object({
@@ -88,6 +93,7 @@ app.get("/org/access", getOrgAccess);
 app.post("/org/invitations", postOrgInvitation);
 app.delete("/org/invitations/:invitationId", deleteOrgInvitation);
 app.delete("/org/members/:membershipId", deleteOrgMember);
+app.patch("/org/members/:membershipId", patchOrgMember);
 app.get("/apps", getApps);
 app.post("/apps", postApps);
 app.delete("/apps/:packageName", deleteApp);
@@ -373,6 +379,7 @@ async function getMe(c: AppContext) {
     return c.json({ authenticated: false, reason: authenticatedSession.reason }, 401);
   }
   const developerOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+  const viewerRole = developerOrg ? await resolveOrgRole(authenticatedSession, developerOrg) : null;
 
   return c.json({
     authenticated: true,
@@ -383,6 +390,7 @@ async function getMe(c: AppContext) {
       lastName: authenticatedSession.user.lastName,
     },
     onboardingRequired: developerOrg === null,
+    viewerRole,
     organizationId: developerOrg?.id ?? null,
     packagePrefix: developerOrg?.packagePrefix ?? null,
     packagePrefixStatus: developerOrg?.packagePrefixStatus ?? null,
@@ -441,6 +449,7 @@ async function getOrgAccess(c: AppContext) {
     const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
     return c.json({
       org,
+      viewerRole: await resolveOrgRole(developer.auth, org),
       members: await listWorkosOrgMembers(org),
       invitations: await listWorkosOrgInvitations(org),
     });
@@ -453,21 +462,26 @@ async function getOrgAccess(c: AppContext) {
 async function postOrgInvitation(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!isOrgOwner(developer.auth, developer.org)) {
-    return c.json({ error: "forbidden", error_description: "only the org owner can invite members" }, 403);
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can invite members" }, 403);
   }
 
   const parsed = inviteOrgMemberSchema.safeParse(await readJsonBody(c));
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid invitation payload");
 
+  const email = parsed.data.email.trim().toLowerCase();
+  const invitedRole = parsed.data.role ?? "member";
   try {
     const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
     const invitation = await workos().userManagement.sendInvitation({
-      email: parsed.data.email.trim().toLowerCase(),
+      email,
       organizationId: requireWorkosOrgId(org),
       inviterUserId: developer.auth.user.id,
     });
-    return c.json({ invitation: serializeInvitation(invitation) }, 201);
+    // Record the intended role in our DB; it materializes onto the membership
+    // when the invitee first authenticates. WorkOS stores no role.
+    await developerOrgs.setMemberRole(org.id, email, invitedRole);
+    return c.json({ invitation: serializeInvitation(invitation, invitedRole) }, 201);
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
@@ -477,8 +491,8 @@ async function postOrgInvitation(c: AppContext) {
 async function deleteOrgInvitation(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!isOrgOwner(developer.auth, developer.org)) {
-    return c.json({ error: "forbidden", error_description: "only the org owner can revoke invitations" }, 403);
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can revoke invitations" }, 403);
   }
   const invitationId = c.req.param("invitationId");
   if (!invitationId) throw new InvalidRequest("invitationId is required");
@@ -490,6 +504,7 @@ async function deleteOrgInvitation(c: AppContext) {
       return c.json({ error: "not_found", error_description: "invitation was not found" }, 404);
     }
     await workos().userManagement.revokeInvitation(invitationId);
+    await developerOrgs.removeMemberRole(org.id, { email: invitation.email });
     return c.json({ ok: true });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
@@ -500,8 +515,8 @@ async function deleteOrgInvitation(c: AppContext) {
 async function deleteOrgMember(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!isOrgOwner(developer.auth, developer.org)) {
-    return c.json({ error: "forbidden", error_description: "only the org owner can remove members" }, 403);
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can remove members" }, 403);
   }
   const membershipId = c.req.param("membershipId");
   if (!membershipId) throw new InvalidRequest("membershipId is required");
@@ -516,7 +531,47 @@ async function deleteOrgMember(c: AppContext) {
       return c.json({ error: "owner_required", error_description: "the org owner cannot be removed" }, 409);
     }
     await workos().userManagement.deleteOrganizationMembership(membershipId);
+    await developerOrgs.removeMemberRole(org.id, { userId: membership.userId });
     return c.json({ ok: true });
+  } catch (error) {
+    if (isWorkosRequestError(error)) return teamAccessError(error);
+    return serviceError(error);
+  }
+}
+
+async function patchOrgMember(c: AppContext) {
+  const developer = await requireConsoleOrg(c);
+  if (!developer.ok) return developer.response;
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can change member roles" }, 403);
+  }
+  const membershipId = c.req.param("membershipId");
+  if (!membershipId) throw new InvalidRequest("membershipId is required");
+
+  const parsed = updateOrgMemberRoleSchema.safeParse(await readJsonBody(c));
+  if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid role payload");
+
+  try {
+    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
+    const membership = await workos().userManagement.getOrganizationMembership(membershipId);
+    if (membership.organizationId !== org.workosOrgId) {
+      return c.json({ error: "not_found", error_description: "member was not found" }, 404);
+    }
+    if (membership.userId === org.ownerUserId) {
+      return c.json({ error: "owner_required", error_description: "the org owner's role cannot be changed" }, 409);
+    }
+    let email = "";
+    try {
+      const user = await workos().userManagement.getUser(membership.userId);
+      email = user.email ?? "";
+    } catch {
+      // We need an email to key the role row; fall through to the guard below.
+    }
+    if (!email) {
+      return c.json({ error: "member_unresolved", error_description: "could not resolve member email" }, 409);
+    }
+    await developerOrgs.setMemberRole(org.id, email, parsed.data.role, membership.userId);
+    return c.json({ ok: true, role: parsed.data.role });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
@@ -688,8 +743,8 @@ async function getTokens(c: AppContext) {
 async function postToken(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!isOrgOwner(developer.auth, developer.org)) {
-    return c.json({ error: "forbidden", error_description: "only the org owner can create API keys" }, 403);
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can create API keys" }, 403);
   }
 
   const parsed = createApiTokenSchema.safeParse(await readJsonBody(c));
@@ -711,8 +766,8 @@ async function postToken(c: AppContext) {
 async function deleteToken(c: AppContext) {
   const developer = await requireConsoleOrg(c);
   if (!developer.ok) return developer.response;
-  if (!isOrgOwner(developer.auth, developer.org)) {
-    return c.json({ error: "forbidden", error_description: "only the org owner can revoke API keys" }, 403);
+  if (!roleAtLeast(await resolveOrgRole(developer.auth, developer.org), "admin")) {
+    return c.json({ error: "forbidden", error_description: "only owners and admins can revoke API keys" }, 403);
   }
 
   const tokenId = c.req.param("tokenId");
@@ -816,6 +871,7 @@ async function listWorkosOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrg
     statuses: ["active", "inactive"],
     limit: 100,
   });
+  const roleOverlay = await developerOrgs.listMemberRoles(org.id);
 
   const users = new Map<string, ConsoleOrgUser>();
   await Promise.all(
@@ -853,7 +909,12 @@ async function listWorkosOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrg
       email: user.email,
       name: user.name,
       avatarUrl: user.avatarUrl,
-      role: membership.userId === org.ownerUserId ? "owner" : "member",
+      role:
+        membership.userId === org.ownerUserId
+          ? "owner"
+          : (user.email ? roleOverlay.get(user.email.toLowerCase()) : undefined) ??
+            roleOverlay.get(`uid:${membership.userId}`) ??
+            "member",
       status: membership.status,
       createdAt: membership.createdAt ?? null,
       updatedAt: membership.updatedAt ?? null,
@@ -866,15 +927,21 @@ async function listWorkosOrgInvitations(org: DeveloperOrgRecord): Promise<Consol
     organizationId: requireWorkosOrgId(org),
     limit: 100,
   });
-  return invitations.data.map(serializeInvitation);
+  const roleOverlay = await developerOrgs.listMemberRoles(org.id);
+  return invitations.data.map(invitation =>
+    serializeInvitation(invitation, roleOverlay.get(invitation.email.toLowerCase())),
+  );
 }
 
-function serializeInvitation(invitation: WorkosInvitationLike): ConsoleOrgInvitation {
+function serializeInvitation(
+  invitation: WorkosInvitationLike,
+  roleOverride?: string,
+): ConsoleOrgInvitation {
   return {
     id: invitation.id,
     email: invitation.email,
     state: invitation.state,
-    role: invitation.roleSlug ?? "member",
+    role: roleOverride ?? invitation.roleSlug ?? "member",
     expiresAt: invitation.expiresAt ?? null,
     createdAt: invitation.createdAt ?? null,
     updatedAt: invitation.updatedAt ?? null,
@@ -916,6 +983,31 @@ function isOrgOwner(
   return authenticatedSession.user.id === org.ownerUserId;
 }
 
+type OrgRole = "owner" | "admin" | "member";
+const ORG_ROLE_RANK: Record<OrgRole, number> = { member: 0, admin: 1, owner: 2 };
+
+/**
+ * The caller's role in an org. `owner` comes from `DeveloperOrg.ownerUserId`
+ * (single source of truth); everyone else is the admin/member overlay stored in
+ * our DB (default `member`). WorkOS is identity/roster only and is not consulted
+ * for roles.
+ */
+async function resolveOrgRole(
+  authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
+  org: DeveloperOrgRecord,
+): Promise<OrgRole> {
+  if (authenticatedSession.user.id === org.ownerUserId) return "owner";
+  const role = await developerOrgs.getMemberRole(org.id, {
+    userId: authenticatedSession.user.id,
+    email: authenticatedSession.user.email,
+  });
+  return role === "admin" ? "admin" : "member";
+}
+
+function roleAtLeast(role: OrgRole, min: OrgRole): boolean {
+  return ORG_ROLE_RANK[role] >= ORG_ROLE_RANK[min];
+}
+
 type ConsoleOrgUser = {
   id: string;
   email: string | null;
@@ -929,7 +1021,7 @@ type ConsoleOrgMember = {
   email: string | null;
   name: string | null;
   avatarUrl: string | null;
-  role: "owner" | "member";
+  role: OrgRole;
   status: string;
   createdAt: string | null;
   updatedAt: string | null;

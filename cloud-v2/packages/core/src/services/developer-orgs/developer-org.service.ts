@@ -1,6 +1,12 @@
 import { ulid } from "ulid";
 import { DeveloperOrgModel, type DeveloperOrgPrefixStatus } from "../../models/developer-org.model";
+import {
+  DeveloperOrgMembershipModel,
+  type DeveloperOrgRole,
+} from "../../models/developer-org-membership.model";
 import { MiniAppModel } from "../../models/miniapp.model";
+
+export type { DeveloperOrgRole } from "../../models/developer-org-membership.model";
 
 export interface ConsoleUserIdentity {
   id: string;
@@ -102,6 +108,84 @@ export class DeveloperOrgService {
     org.workosOrgId = workosOrgId;
     await org.save();
     return serializeDeveloperOrg(org.toObject());
+  }
+
+  /**
+   * Resolve the admin/member overlay role for a member. `owner` is handled by
+   * the caller via `DeveloperOrg.ownerUserId` and never lives here. Matches by
+   * userId first, then by email; when matched by email it backfills userId so
+   * later lookups are by id. Returns null when the user has no row (→ member).
+   */
+  async getMemberRole(
+    orgId: string,
+    identity: { userId?: string | null; email?: string | null },
+  ): Promise<DeveloperOrgRole | null> {
+    if (identity.userId) {
+      const byId = await DeveloperOrgMembershipModel.findOne({ orgId, userId: identity.userId }).lean();
+      if (byId) return byId.role as DeveloperOrgRole;
+    }
+    const email = identity.email?.trim().toLowerCase();
+    if (email) {
+      const byEmail = await DeveloperOrgMembershipModel.findOne({ orgId, email });
+      if (byEmail) {
+        if (identity.userId && !byEmail.userId) {
+          byEmail.userId = identity.userId;
+          await byEmail.save();
+        }
+        return byEmail.role as DeveloperOrgRole;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Upsert a member's role, keyed by lowercased email (the identifier we have
+   * both at invite time and at login). Records userId when known.
+   */
+  async setMemberRole(
+    orgId: string,
+    email: string,
+    role: DeveloperOrgRole,
+    userId?: string | null,
+  ): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    await DeveloperOrgMembershipModel.updateOne(
+      { orgId, email: normalizedEmail },
+      {
+        $set: { role, ...(userId ? { userId } : {}) },
+        $setOnInsert: { orgId, email: normalizedEmail },
+      },
+      { upsert: true },
+    );
+  }
+
+  /** Drop a member's role row(s) on removal / invite revocation. Best-effort. */
+  async removeMemberRole(
+    orgId: string,
+    identity: { userId?: string | null; email?: string | null },
+  ): Promise<void> {
+    const or: Record<string, string>[] = [];
+    if (identity.userId) or.push({ userId: identity.userId });
+    const email = identity.email?.trim().toLowerCase();
+    if (email) or.push({ email });
+    if (!or.length) return;
+    await DeveloperOrgMembershipModel.deleteMany({ orgId, $or: or });
+  }
+
+  /**
+   * Roles for every member of an org, keyed by lowercased email AND by
+   * `uid:<userId>` so the member-list join can match on whichever it has.
+   */
+  async listMemberRoles(orgId: string): Promise<Map<string, DeveloperOrgRole>> {
+    const rows = await DeveloperOrgMembershipModel.find({ orgId }).lean();
+    const byKey = new Map<string, DeveloperOrgRole>();
+    for (const row of rows) {
+      const role = row.role as DeveloperOrgRole;
+      if (row.email) byKey.set(row.email.toLowerCase(), role);
+      if (row.userId) byKey.set(`uid:${row.userId}`, role);
+    }
+    return byKey;
   }
 }
 
