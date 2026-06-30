@@ -169,6 +169,35 @@ export class DeveloperOrgService {
     await DeveloperOrgModel.updateOne({ orgId }, { $set: { ownerUserId: newOwnerUserId } });
   }
 
+  /**
+   * Demote an owner to a lower role, but never the last one. Write-then-verify
+   * so two concurrent demotions can't both pass a count check and leave the org
+   * with zero owners: apply the change, re-count, and roll back if it removed
+   * the last owner. Returns false (no net change) when the user is the only owner.
+   */
+  async demoteOwner(orgId: string, userId: string, newRole: DeveloperOrgRole): Promise<boolean> {
+    await this.setMemberRole(orgId, userId, newRole);
+    if ((await this.countOwners(orgId)) === 0) {
+      await this.setMemberRole(orgId, userId, "owner");
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Remove an owner's role row, but never the last one (same write-then-verify
+   * race guard as demoteOwner). Returns false (and restores the row) when the
+   * user is the only owner.
+   */
+  async removeOwnerIfNotLast(orgId: string, userId: string): Promise<boolean> {
+    await this.removeMemberRole(orgId, userId);
+    if ((await this.countOwners(orgId)) === 0) {
+      await this.setMemberRole(orgId, userId, "owner");
+      return false;
+    }
+    return true;
+  }
+
   /** Roles for every member of an org, keyed by WorkOS userId. */
   async listMemberRoles(orgId: string): Promise<Map<string, DeveloperOrgRole>> {
     const rows = await DeveloperOrgMembershipModel.find({ orgId }).lean();

@@ -37,8 +37,9 @@ export async function runStartupMigrations(): Promise<void> {
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
+  await dedupeDeveloperOrgMemberships();
   await backfillDeveloperOrgOwners();
-  await DeveloperOrgMembershipModel.createIndexes();
+  await safeCreateMembershipIndexes();
 }
 
 async function backfillLegacyUserIdentityFields(): Promise<void> {
@@ -148,6 +149,66 @@ async function backfillDeveloperOrgOwners(): Promise<void> {
   }
   if (seeded > 0) {
     logger.info({ seeded }, "seeded developer-org creators as owners");
+  }
+}
+
+// During the email -> userId rekey, a user invited under two emails could end up
+// with two membership rows sharing one userId. Collapse each (orgId, userId) to a
+// single row (highest role wins) BEFORE the new unique index is built, so the
+// index build can't fail and crash boot.
+async function dedupeDeveloperOrgMemberships(): Promise<void> {
+  const collection = mongoose.connection.collection(DEVELOPER_ORG_MEMBERSHIPS_COLLECTION);
+  let groups;
+  try {
+    groups = await collection
+      .aggregate([
+        { $match: { orgId: { $type: "string" }, userId: { $type: "string" } } },
+        {
+          $group: {
+            _id: { orgId: "$orgId", userId: "$userId" },
+            docs: { $push: { id: "$_id", role: "$role" } },
+            count: { $sum: 1 },
+          },
+        },
+        { $match: { count: { $gt: 1 } } },
+      ])
+      .toArray();
+  } catch {
+    return; // collection does not exist yet
+  }
+
+  const rank: Record<string, number> = { owner: 3, admin: 2, member: 1 };
+  let removed = 0;
+  for (const group of groups) {
+    const docs = (group.docs ?? []) as Array<{ id: mongoose.Types.ObjectId; role: string }>;
+    const losers = [...docs]
+      .sort((a, b) => (rank[b.role] ?? 0) - (rank[a.role] ?? 0))
+      .slice(1)
+      .map((doc) => doc.id);
+    if (!losers.length) continue;
+    const result = await collection.deleteMany({ _id: { $in: losers } });
+    removed += result.deletedCount ?? 0;
+  }
+
+  if (removed > 0) {
+    logger.warn(
+      { collection: DEVELOPER_ORG_MEMBERSHIPS_COLLECTION, removed },
+      "deduped duplicate developer-org membership rows",
+    );
+  }
+}
+
+// Build the (orgId, userId) unique index without letting an unexpected failure
+// crash Core boot — log loudly and continue. dedupeDeveloperOrgMemberships above
+// should prevent the only known failure mode (duplicate rows).
+async function safeCreateMembershipIndexes(): Promise<void> {
+  try {
+    await DeveloperOrgMembershipModel.createIndexes();
+  } catch (error) {
+    logger.error(
+      { collection: DEVELOPER_ORG_MEMBERSHIPS_COLLECTION, error: (error as Error)?.message },
+      "failed to create developer-org membership indexes",
+    );
   }
 }
 

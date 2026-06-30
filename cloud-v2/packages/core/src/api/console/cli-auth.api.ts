@@ -533,7 +533,8 @@ async function deleteOrgMember(c: AppContext) {
       if (actorRole !== "owner") {
         return c.json({ error: "forbidden", error_description: "only an owner can remove another owner" }, 403);
       }
-      if ((await developerOrgs.countOwners(org.id)) <= 1) {
+      // Race-safe: drops the owner row only if another owner remains.
+      if (!(await developerOrgs.removeOwnerIfNotLast(org.id, membership.userId))) {
         return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
       }
     }
@@ -582,11 +583,15 @@ async function patchOrgMember(c: AppContext) {
     if ((newRole === "owner" || targetRole === "owner") && actorRole !== "owner") {
       return c.json({ error: "forbidden", error_description: "only an owner can grant or change the owner role" }, 403);
     }
-    // Never demote the last owner.
-    if (targetRole === "owner" && newRole !== "owner" && (await developerOrgs.countOwners(org.id)) <= 1) {
-      return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
+    // Apply the change. Demoting an owner is race-guarded so two concurrent
+    // requests can't both pass a count check and leave the org with no owner.
+    if (targetRole === "owner" && newRole !== "owner") {
+      if (!(await developerOrgs.demoteOwner(org.id, membership.userId, newRole))) {
+        return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
+      }
+    } else {
+      await developerOrgs.setMemberRole(org.id, membership.userId, newRole);
     }
-    await developerOrgs.setMemberRole(org.id, membership.userId, newRole);
     return c.json({ ok: true, role: newRole });
   } catch (error) {
     if (isWorkosRequestError(error)) return teamAccessError(error);
