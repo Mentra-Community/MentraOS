@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { LoginPage } from "@/components/login-page";
+import { OrganizationSelectionPage } from "@/components/organization-selection-page";
 import { AppsPage } from "@/features/apps/apps-page";
 import { MiniappDetailPage } from "@/features/apps/miniapp-detail-page";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
@@ -18,6 +19,12 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: LoginPage,
+});
+
+const organizationSelectionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/select-organization",
+  component: OrganizationSelectionPage,
 });
 
 const dashboardRoute = createRoute({
@@ -52,6 +59,7 @@ const organizationRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  organizationSelectionRoute,
   dashboardRoute,
   appsRoute,
   miniappDetailRoute,

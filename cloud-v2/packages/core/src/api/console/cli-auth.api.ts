@@ -28,6 +28,7 @@ const SESSION_COOKIE = "mentra_console_session";
 const STATE_COOKIE = "mentra_console_state";
 const PKCE_VERIFIER_COOKIE = "mentra_console_pkce_verifier";
 const RETURN_TO_COOKIE = "mentra_console_return_to";
+const ORG_SELECTION_COOKIE = "mentra_console_org_selection";
 const developerOrgs = new DeveloperOrgService();
 const miniapps = new MiniAppService();
 const signing = new DeveloperSigningService();
@@ -78,6 +79,8 @@ app.get("/health", (c) => c.json({ status: "ok", service: "cloud-core-console" }
 app.get("/auth/login", getLogin);
 app.get("/auth/social/:provider", getSocialLogin);
 app.get("/auth/callback", getCallback);
+app.get("/auth/organization-selection", getOrganizationSelection);
+app.post("/auth/organization-selection", postOrganizationSelection);
 app.get("/auth/me", getMe);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
@@ -206,6 +209,11 @@ async function getCallback(c: AppContext) {
         { status: workosErrorStatus(error), error: body.error, errorDescription: body.error_description },
         "WorkOS console callback exchange failed",
       );
+      const selection = workosOrganizationSelection(error);
+      if (selection) {
+        setOrganizationSelectionCookie(c, selection, returnTo);
+        return c.redirect(`${config.consoleUrl}/select-organization`);
+      }
       return redirectToConsoleLoginError(
         c,
         "Sign-in expired or could not be completed. Please try again.",
@@ -217,6 +225,72 @@ async function getCallback(c: AppContext) {
 
   setSessionCookie(c, response.sealedSession);
   return c.redirect(returnTo ?? `${config.consoleUrl}/dashboard`);
+}
+
+function getOrganizationSelection(c: AppContext) {
+  const selection = getOrganizationSelectionCookie(c);
+  if (!selection) {
+    return c.json(
+      { error: "organization_selection_expired", error_description: "Sign-in expired. Please try again." },
+      401,
+    );
+  }
+
+  return c.json({
+    organizations: selection.organizations,
+    returnTo: selection.returnTo,
+  });
+}
+
+async function postOrganizationSelection(c: AppContext) {
+  const selection = getOrganizationSelectionCookie(c);
+  if (!selection) {
+    return c.json(
+      { error: "organization_selection_expired", error_description: "Sign-in expired. Please try again." },
+      401,
+    );
+  }
+
+  const body = await readJsonBody(c);
+  const organizationId = typeof body.organizationId === "string" ? body.organizationId : "";
+  if (!selection.organizations.some(org => org.id === organizationId)) {
+    throw new InvalidRequest("choose a valid organization");
+  }
+
+  const config = workosConfig();
+  let response: Awaited<ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithOrganizationSelection"]>>;
+  try {
+    response = await workos().userManagement.authenticateWithOrganizationSelection({
+      organizationId,
+      pendingAuthenticationToken: selection.pendingAuthenticationToken,
+      clientId: config.clientId,
+      session: {
+        sealSession: true,
+        cookiePassword: config.cookiePassword,
+      },
+    });
+  } catch (error) {
+    if (isWorkosRequestError(error)) {
+      const body = workosErrorBody(error);
+      c.var.logger.warn(
+        { status: workosErrorStatus(error), error: body.error, errorDescription: body.error_description },
+        "WorkOS console organization selection failed",
+      );
+      deleteCookie(c, ORG_SELECTION_COOKIE, { path: "/api/console/auth" });
+      return new Response(
+        JSON.stringify({ error: body.error, error_description: body.error_description || "Sign-in could not be completed." }),
+        {
+          status: workosErrorStatus(error),
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    throw error;
+  }
+
+  deleteCookie(c, ORG_SELECTION_COOKIE, { path: "/api/console/auth" });
+  setSessionCookie(c, response.sealedSession);
+  return c.json({ redirectTo: selection.returnTo ?? `${config.consoleUrl}/dashboard` });
 }
 
 async function postMagicStart(c: AppContext) {
@@ -1144,6 +1218,112 @@ function workosErrorBody(error: unknown): { error: string; error_description: st
     error: maybe.error || "workos_error",
     error_description: maybe.errorDescription || maybe.message || "WorkOS request failed",
   };
+}
+
+type WorkosOrganizationChoice = {
+  id: string;
+  name: string;
+};
+
+type WorkosOrganizationSelection = {
+  pendingAuthenticationToken: string;
+  organizations: WorkosOrganizationChoice[];
+};
+
+type StoredOrganizationSelection = WorkosOrganizationSelection & {
+  returnTo: string | null;
+};
+
+function workosOrganizationSelection(error: unknown): WorkosOrganizationSelection | null {
+  const maybe = error as {
+    code?: string;
+    pendingAuthenticationToken?: string;
+    rawData?: {
+      code?: string;
+      error?: string;
+      pending_authentication_token?: string;
+      organizations?: unknown;
+    };
+  };
+  const code = maybe.code ?? maybe.rawData?.code ?? maybe.rawData?.error;
+  const pendingAuthenticationToken = maybe.pendingAuthenticationToken ?? maybe.rawData?.pending_authentication_token;
+  if (code !== "organization_selection_required" || !pendingAuthenticationToken) return null;
+
+  const rawOrganizations = Array.isArray(maybe.rawData?.organizations) ? maybe.rawData.organizations : [];
+  const organizations = rawOrganizations
+    .map(org => {
+      if (!org || typeof org !== "object") return null;
+      const value = org as { id?: unknown; name?: unknown; organization_id?: unknown; organization_name?: unknown };
+      const id = typeof value.id === "string"
+        ? value.id
+        : typeof value.organization_id === "string"
+          ? value.organization_id
+          : "";
+      const name = typeof value.name === "string"
+        ? value.name
+        : typeof value.organization_name === "string"
+          ? value.organization_name
+          : id;
+      return id ? { id, name } : null;
+    })
+    .filter((org): org is WorkosOrganizationChoice => Boolean(org));
+
+  return organizations.length > 0 ? { pendingAuthenticationToken, organizations } : null;
+}
+
+function setOrganizationSelectionCookie(
+  c: AppContext,
+  selection: WorkosOrganizationSelection,
+  returnTo: string | null,
+): void {
+  setCookie(c, ORG_SELECTION_COOKIE, encodeOrganizationSelection({ ...selection, returnTo }), {
+    path: "/api/console/auth",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookies(),
+    maxAge: 10 * 60,
+  });
+}
+
+function getOrganizationSelectionCookie(c: AppContext): StoredOrganizationSelection | null {
+  const value = getCookie(c, ORG_SELECTION_COOKIE);
+  if (!value) return null;
+  return decodeOrganizationSelection(value);
+}
+
+function encodeOrganizationSelection(selection: StoredOrganizationSelection): string {
+  return Buffer.from(JSON.stringify(selection), "utf8").toString("base64url");
+}
+
+function decodeOrganizationSelection(value: string): StoredOrganizationSelection | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as {
+      pendingAuthenticationToken?: unknown;
+      organizations?: unknown;
+      returnTo?: unknown;
+    };
+    if (typeof record.pendingAuthenticationToken !== "string") return null;
+    if (!Array.isArray(record.organizations)) return null;
+    const organizations = record.organizations
+      .map(org => {
+        if (!org || typeof org !== "object") return null;
+        const value = org as { id?: unknown; name?: unknown };
+        return typeof value.id === "string" && typeof value.name === "string"
+          ? { id: value.id, name: value.name }
+          : null;
+      })
+      .filter((org): org is WorkosOrganizationChoice => Boolean(org));
+    if (organizations.length === 0) return null;
+    return {
+      pendingAuthenticationToken: record.pendingAuthenticationToken,
+      organizations,
+      returnTo: typeof record.returnTo === "string" ? safeReturnTo(record.returnTo) : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function teamAccessError(error: unknown): Response {
