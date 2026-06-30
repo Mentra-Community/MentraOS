@@ -67,9 +67,7 @@ export function startDeviceEventRouter(): void {
     ),
   })
 
-  // Incremental battery status → glasses store + local miniapps. The Cloud V1
-  // websocket `glasses_battery_update` mirror used to live in the host; local
-  // miniapps still get the stream here without leaking through the host.
+  // Incremental battery status → glasses store + local miniapps.
   subs.push(
     BluetoothSdk.addListener("battery_status", (event) => {
       const state = useGlassesStore.getState()

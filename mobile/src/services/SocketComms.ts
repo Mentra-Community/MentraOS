@@ -178,17 +178,6 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
-    const event = {
-      type: "glasses_battery_update",
-      level,
-      charging,
-      timestamp,
-    }
-
-    ws.sendText(JSON.stringify(event))
-  }
-
   public sendVideoStreamResponse(appId: string, streamUrl: string) {
     const event = {
       type: "video_stream_response",
