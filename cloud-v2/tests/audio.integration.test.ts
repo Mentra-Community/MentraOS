@@ -337,6 +337,39 @@ describe("audio e2e", () => {
     await client.close();
   });
 
+  test("same user reconnect with fresh auth takes over subscriptions immediately", async () => {
+    const client = newClient("alice-fresh-auth-reconnect");
+    const subscriptions = [
+      {
+        kind: "transcription" as const,
+        language: { mode: "auto" as const },
+      },
+    ];
+    client.subscribe(subscriptions);
+    await client.connect();
+
+    const firstSessionId = client.sessionId;
+    const firstTag = client.sessionTag;
+    const tagRecord = await lookupSessionTagInRedis(firstTag);
+    expect(tagRecord).toBeDefined();
+    const mentraUserId = tagRecord!.mentraUserId;
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      firstSessionId,
+    );
+
+    await client.reconnectWithFreshAuthWithoutClosingPreviousForTest();
+
+    const secondSessionId = client.sessionId;
+    expect(secondSessionId).not.toBe(firstSessionId);
+    expect(hasLiveAudioSession(mentraUserId, firstSessionId)).toBe(false);
+    expect(hasLiveAudioSession(mentraUserId, secondSessionId)).toBe(true);
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      secondSessionId,
+    );
+
+    await client.close();
+  });
+
   test("ws responds to control.ping with control.pong", async () => {
     const client = newClient("alice-ping");
     await client.connect();

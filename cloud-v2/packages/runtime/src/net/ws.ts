@@ -117,7 +117,7 @@ export interface WsData {
   /** Epoch ms of the last inbound WS frame — passive liveness for takeover checks. */
   lastInboundAt: number;
   /**
-   * Set when a newer socket for the same auth session takes over. The socket may
+   * Set when a newer socket for the same user takes over. The socket may
    * still be physically open for a short moment, but it must stop owning audio
    * subscriptions immediately.
    */
@@ -681,7 +681,7 @@ async function handleConnectionInit(
     init.audio?.codec ?? "lc3",
     init.audio?.frameSizeBytes,
   );
-  supersedeOlderSessionsForAuthSession(ws.data);
+  supersedeOlderSessionsForUser(ws.data);
 
   // Seed the subscription source-of-truth key atomically with session creation,
   // so audio that starts flowing right after the ack is transcribed against the
@@ -835,13 +835,12 @@ async function handleWsBinaryAudio(
   }
 }
 
-function supersedeOlderSessionsForAuthSession(current: WsData): void {
+function supersedeOlderSessionsForUser(current: WsData): void {
   for (const entry of sessionByTag.values()) {
     const data = entry.data;
     if (data.sessionTag === current.sessionTag) continue;
     if (data.supersededAt !== undefined) continue;
     if (data.mentraUserId !== current.mentraUserId) continue;
-    if (data.authSessionId !== current.authSessionId) continue;
 
     data.supersededAt = Date.now();
     const interval = refreshIntervals.get(data.sessionTag);
@@ -860,10 +859,12 @@ function supersedeOlderSessionsForAuthSession(current: WsData): void {
         mentraUserId: data.mentraUserId,
         oldSessionTag: data.sessionTag,
         oldAudioSessionId: data.audioSessionId,
+        oldAuthSessionId: data.authSessionId,
         newSessionTag: current.sessionTag,
         newAudioSessionId: current.audioSessionId,
+        newAuthSessionId: current.authSessionId,
       },
-      "ws session superseded by newer socket for same auth session",
+      "ws session superseded by newer socket for same user",
     );
     try {
       entry.ws.close(1012, "superseded by newer session");

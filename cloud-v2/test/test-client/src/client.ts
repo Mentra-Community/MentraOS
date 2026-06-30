@@ -262,6 +262,17 @@ export class TestClient {
     await this.openWebSocket(this.runtimeToken);
   }
 
+  async reconnectWithFreshAuthWithoutClosingPreviousForTest(): Promise<void> {
+    if (!this.ws) throw new Error("not connected");
+    this.supersededTestSockets.push(this.ws);
+    this.ws = null;
+    this.ack = null;
+    this.encryptionKey = null;
+    this.accessToken = await this.exchangeForAccessToken();
+    this.runtimeToken = await this.fetchRuntimeToken(this.accessToken);
+    await this.openWebSocket(this.runtimeToken);
+  }
+
   /**
    * Set the subscription list. The cloud opens transcription / translation
    * provider streams matching this list and closes any that disappear.
