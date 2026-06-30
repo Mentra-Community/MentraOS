@@ -5,6 +5,8 @@
 
 !cloud-v2/
 !cloud-v2/**
+cloud-v2/**/node_modules
+cloud-v2/**/.wrangler
 
 !miniapps/
 !miniapps/*/
