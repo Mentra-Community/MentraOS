@@ -92,14 +92,6 @@ public final class PhotoSession {
      */
     @Nullable private volatile WarmUpRequest warmUpRequest;
 
-    /**
-     * A {@code camera_warm_up} that arrived while a capture was in flight. Its 15s lease can't start
-     * until the capture settles, so it's stashed here and consumed by {@link
-     * #dispatchNextPhotoRequest} once the queue drains. Kept separate from {@link #warmUpRequest} so
-     * it never triggers the open-time warm-preview branch.
-     */
-    @Nullable private volatile WarmUpRequest deferredWarmRequest;
-
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
@@ -366,23 +358,6 @@ public final class PhotoSession {
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
     public void onCameraClosed() {
         configuredCameraConfig = null;
-        // A camera_warm_up deferred during an in-flight capture is normally consumed by
-        // dispatchNextPhotoRequest once the capture settles. If the camera is instead torn down
-        // first (e.g. the capture failed with an empty queue), the deferred run never happens — fail
-        // its callbacks here so the phone warmUpCamera promise rejects instead of hanging until
-        // timeout. dispatchNextPhotoRequest clears deferredWarmRequest before its re-run, so a
-        // warm-up reopen never reaches this.
-        WarmUpRequest deferred = deferredWarmRequest;
-        if (deferred != null) {
-            deferredWarmRequest = null;
-            if (deferred.onError != null) {
-                hooks.executor()
-                        .execute(
-                                () ->
-                                        deferred.onError.accept(
-                                                "Camera closed before warm-up could run"));
-            }
-        }
     }
 
     private int getJpegQualityForSize() {
@@ -459,24 +434,6 @@ public final class PhotoSession {
         synchronized (hooks.serviceLock()) {
             QueuedPhotoRequestQueue queue = QueuedPhotoRequestQueue.getInstance();
             if (queue.isEmpty()) {
-                WarmUpRequest deferred = deferredWarmRequest;
-                if (deferred != null) {
-                    // A camera_warm_up arrived mid-capture. Now that the capture settled, re-run the
-                    // full warm-up so it opens/configures for the warm params (isFromSdk=true, the
-                    // requested size/exposure) and reports ready ONLY once genuinely warm — not on
-                    // the just-captured config, and not after a failed capture. setupWarmUp re-defers
-                    // if a capture is somehow still in flight.
-                    Log.d(TAG, "Queue empty — re-running deferred camera_warm_up");
-                    deferredWarmRequest = null;
-                    setupWarmUp(
-                            deferred.size,
-                            deferred.exposureTimeNs,
-                            deferred.captureSettings,
-                            deferred.durationMs,
-                            deferred.onReady,
-                            deferred.onError);
-                    return;
-                }
                 Log.d(TAG, "No photo requests in queue");
                 // Warm-aware: if a camera_warm_up lease is still within its TTL, keep the camera
                 // warm for the lease's remaining time instead of the short photo keep-alive, so a
@@ -615,17 +572,22 @@ public final class PhotoSession {
             Runnable onReady,
             java.util.function.Consumer<String> onError) {
         synchronized (hooks.serviceLock()) {
-            // A capture is in flight. Don't claim "ready" with no lease — the capture's own short
-            // keep-alive would close the camera well before the requested TTL. Defer: stash the
-            // request so dispatchNextPhotoRequest starts the warm lease and fires ready once the
-            // capture settles (honest ready, real lease).
-            if (shotState != AeStateMachine.ShotState.IDLE) {
+            // Serialize warm-ups: the camera is a single shared resource. If a capture is in flight,
+            // or another warm-up is still opening, reject with a retryable busy error rather than
+            // racing or deferring. The caller retries — and since the camera is about to be warm
+            // anyway, the retry usually hits the already-warm fast path. This keeps a single warm-up
+            // in flight at a time and avoids the concurrency hazards of overlapping/deferred starts.
+            if (isWarmingUp() || shotState != AeStateMachine.ShotState.IDLE) {
                 Log.d(
                         TAG,
-                        "camera_warm_up deferred — capture in progress (state " + shotState + ")");
-                deferredWarmRequest =
-                        new WarmUpRequest(
-                                size, exposureTimeNs, captureSettings, durationMs, onReady, onError);
+                        "camera_warm_up rejected — busy (warming="
+                                + isWarmingUp()
+                                + " state="
+                                + shotState
+                                + ")");
+                if (onError != null) {
+                    onError.accept("camera_busy");
+                }
                 return;
             }
 

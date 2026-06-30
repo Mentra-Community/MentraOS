@@ -675,6 +675,7 @@ public class CameraNeoService extends LifecycleService {
             Long exposureTimeNs,
             long durationMs,
             CameraWarmUpCallback callback) {
+        CameraWarmUpCallback rejectBusy = null;
         synchronized (SERVICE_LOCK) {
             long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
             boolean cameraReady =
@@ -702,16 +703,35 @@ public class CameraNeoService extends LifecycleService {
                 return;
             }
 
-            sPendingWarmCallbacks.add(callback);
+            // Serialize: keep a single warm-up in flight, and never start one while a capture is in
+            // progress. Reject overlapping/mid-capture warm-ups with a retryable busy error that
+            // settles only this caller (it isn't bound, so it never reaches the shared callbacks).
+            // The caller retries; the camera is about to be warm, so the retry usually hits the
+            // already-warm fast path above.
+            boolean busy =
+                    (sInstance != null
+                                    && (sInstance.photoSession.isWarmingUp()
+                                            || sInstance.photoSession.shotState()
+                                                    != AeStateMachine.ShotState.IDLE))
+                            || !sPendingWarmCallbacks.isEmpty();
+            if (busy) {
+                rejectBusy = callback;
+            } else {
+                sPendingWarmCallbacks.add(callback);
 
-            Intent intent = new Intent(context, CameraNeoService.class);
-            intent.setAction(ACTION_WARM_UP_CAMERA);
-            intent.putExtra(EXTRA_WARM_UP_SIZE, size);
-            intent.putExtra(EXTRA_WARM_UP_DURATION_MS, ttl);
-            if (exposureTimeNs != null) {
-                intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+                Intent intent = new Intent(context, CameraNeoService.class);
+                intent.setAction(ACTION_WARM_UP_CAMERA);
+                intent.putExtra(EXTRA_WARM_UP_SIZE, size);
+                intent.putExtra(EXTRA_WARM_UP_DURATION_MS, ttl);
+                if (exposureTimeNs != null) {
+                    intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+                }
+                context.startForegroundService(intent);
             }
-            context.startForegroundService(intent);
+        }
+        // Fire the busy rejection outside the lock (it sends a camera_status error over BLE).
+        if (rejectBusy != null) {
+            rejectBusy.onCameraError("camera_busy");
         }
     }
 
