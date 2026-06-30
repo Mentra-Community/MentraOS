@@ -466,7 +466,6 @@ Android:
 val photo = sdk.requestPhoto(
     PhotoRequest(
         requestId = "assistant-${System.currentTimeMillis()}",
-        appId = "com.example.assistant",
         size = PhotoSize.MEDIUM,
         webhookUrl = "https://api.example.com/mentra/photo",
         authToken = "optional-token",
@@ -485,7 +484,6 @@ iOS:
 let photo = try await sdk.requestPhoto(
     PhotoRequest(
         requestId: "assistant-\(Date().timeIntervalSince1970)",
-        appId: "com.example.assistant",
         size: .medium,
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
@@ -503,7 +501,6 @@ React Native:
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
   requestId: `assistant-${Date.now()}`,
-  appId: 'com.example.assistant',
   size: 'medium',
   webhookUrl: 'https://api.example.com/mentra/photo',
   authToken: 'optional-token',

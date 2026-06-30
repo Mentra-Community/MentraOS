@@ -787,7 +787,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 mentraBluetoothSdk.requestPhoto(
                     buildPhotoRequest(
                         requestId = requestId,
-                        appId = "com.mentra.bluetoothsdk.example.android",
                         webhookUrl = uploadUrl,
                     )
                 )
@@ -826,7 +825,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 mentraBluetoothSdk.requestPhoto(
                     buildPhotoRequest(
                         requestId = requestId,
-                        appId = "com.mentra.bluetoothsdk.example.android",
                         webhookUrl = uploadUrl,
                     )
                 )
@@ -843,10 +841,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
     }
 
-    private fun buildPhotoRequest(requestId: String, appId: String, webhookUrl: String): PhotoRequest {
+    private fun buildPhotoRequest(requestId: String, webhookUrl: String): PhotoRequest {
         return PhotoRequest(
             requestId = requestId,
-            appId = appId,
             size = photoSizeToSdk(state.photoSize),
             webhookUrl = webhookUrl,
             compress = PhotoCompression.fromValue(state.photoCompression),
@@ -3194,7 +3191,6 @@ $prefix
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
-      appId = "com.mentra.bluetoothsdk.example.android",
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},

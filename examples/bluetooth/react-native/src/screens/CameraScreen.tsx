@@ -93,7 +93,6 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 const photo = await BluetoothSdk.requestPhoto({
   requestId: photoRequestId,
-  appId: PHOTO_APP_ID,
   webhookUrl: uploadUrl,
   authToken: null,
 ${requestFields}
@@ -103,7 +102,6 @@ console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
 const photo = await BluetoothSdk.requestPhoto({
   requestId: photoRequestId,
-  appId: PHOTO_APP_ID,
   webhookUrl,
   authToken: null,
 ${requestFields}

@@ -1365,7 +1365,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function addRequestTuningFields(
-    fields: Omit<PhotoRequestParams, 'requestId' | 'appId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1400,7 +1400,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function buildPhotoRequestFields(): Omit<
     PhotoRequestParams,
-    'requestId' | 'appId' | 'webhookUrl' | 'authToken'
+    'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
       size: photoSize,
@@ -1586,7 +1586,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       try {
         const response = await BluetoothSdk.requestPhoto({
           requestId,
-          appId: PHOTO_APP_ID,
           webhookUrl: uploadUrlText,
           authToken: null,
           ...buildPhotoRequestFields(),
@@ -1624,7 +1623,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     try {
       const response = await BluetoothSdk.requestPhoto({
         requestId,
-        appId: PHOTO_APP_ID,
         webhookUrl: receiver.uploadUrl,
         authToken: null,
         ...buildPhotoRequestFields(),

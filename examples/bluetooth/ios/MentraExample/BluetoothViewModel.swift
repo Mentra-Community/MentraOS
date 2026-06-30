@@ -877,7 +877,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let responseEvent: PhotoResponseEvent
             do {
                 responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                    buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
+                    buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
                 )
             } catch {
                 if activePhotoRequestId == requestId {
@@ -912,7 +912,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let responseEvent: PhotoResponseEvent
         do {
             responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
+                buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
             )
         } catch {
             directPhotoTimeoutTask?.cancel()
@@ -926,10 +926,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
-    private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
+    private func buildPhotoRequest(requestId: String, webhookUrl: String) -> PhotoRequest {
         return PhotoRequest(
             requestId: requestId,
-            appId: appId,
             size: photoSize,
             webhookUrl: webhookUrl,
             compress: photoCompression,
