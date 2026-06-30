@@ -209,8 +209,16 @@ async function getCallback(c: AppContext) {
         { status: workosErrorStatus(error), error: body.error, errorDescription: body.error_description },
         "WorkOS console callback exchange failed",
       );
-      const selection = workosOrganizationSelection(error);
+      const selection = await filterOrganizationSelectionForCore(workosOrganizationSelection(error));
       if (selection) {
+        if (selection.organizations.length === 1) {
+          return completeOrganizationSelection(
+            c,
+            { ...selection, returnTo },
+            selection.organizations[0].id,
+            "redirect",
+          );
+        }
         setOrganizationSelectionCookie(c, selection, returnTo);
         return c.redirect(`${config.consoleUrl}/select-organization`);
       }
@@ -257,6 +265,15 @@ async function postOrganizationSelection(c: AppContext) {
     throw new InvalidRequest("choose a valid organization");
   }
 
+  return completeOrganizationSelection(c, selection, organizationId, "json");
+}
+
+async function completeOrganizationSelection(
+  c: AppContext,
+  selection: StoredOrganizationSelection,
+  organizationId: string,
+  responseMode: "json" | "redirect",
+): Promise<Response> {
   const config = workosConfig();
   let response: Awaited<ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithOrganizationSelection"]>>;
   try {
@@ -290,7 +307,8 @@ async function postOrganizationSelection(c: AppContext) {
 
   deleteCookie(c, ORG_SELECTION_COOKIE, { path: "/api/console/auth" });
   setSessionCookie(c, response.sealedSession);
-  return c.json({ redirectTo: selection.returnTo ?? `${config.consoleUrl}/dashboard` });
+  const redirectTo = selection.returnTo ?? `${config.consoleUrl}/dashboard`;
+  return responseMode === "json" ? c.json({ redirectTo }) : c.redirect(redirectTo);
 }
 
 async function postMagicStart(c: AppContext) {
@@ -736,9 +754,7 @@ async function ensureWorkosOrgLinked(
   const createdOrg = await workos().organizations.createOrganization({
     name: org.name,
     externalId: org.id,
-    metadata: {
-      packagePrefix: org.packagePrefix,
-    },
+    metadata: workosOrgMetadata(org),
   });
   const linkedOrg = await developerOrgs.setWorkosOrgId(authenticatedSession.user, org.id, createdOrg.id);
   await ensureOwnerWorkosMembership(linkedOrg);
@@ -750,10 +766,34 @@ async function syncWorkosOrgName(org: DeveloperOrgRecord): Promise<void> {
   await workos().organizations.updateOrganization({
     organization: org.workosOrgId,
     name: org.name,
-    metadata: {
-      packagePrefix: org.packagePrefix,
-    },
+    metadata: workosOrgMetadata(org),
   });
+}
+
+function workosOrgMetadata(org: DeveloperOrgRecord): Record<string, string> {
+  return {
+    packagePrefix: org.packagePrefix,
+    mentraConsole: "console2",
+    coreEnvironment: consoleEnvironmentLabel(),
+  };
+}
+
+function consoleEnvironmentLabel(): string {
+  const explicit = process.env.CLOUD_CORE_ENVIRONMENT;
+  if (explicit) return explicit;
+
+  const consoleUrl = process.env.CONSOLE2_URL;
+  if (!consoleUrl) return "local";
+  try {
+    const host = new URL(consoleUrl).hostname;
+    if (host.includes(".dev.")) return "dev";
+    if (host.includes(".staging.")) return "staging";
+    if (host === "console2.mentraglass.com") return "prod";
+    if (host === "localhost" || host === "127.0.0.1") return "local";
+    return host;
+  } catch {
+    return "local";
+  }
 }
 
 async function ensureOwnerWorkosMembership(org: DeveloperOrgRecord): Promise<void> {
@@ -1269,6 +1309,21 @@ function workosOrganizationSelection(error: unknown): WorkosOrganizationSelectio
     .filter((org): org is WorkosOrganizationChoice => Boolean(org));
 
   return organizations.length > 0 ? { pendingAuthenticationToken, organizations } : null;
+}
+
+async function filterOrganizationSelectionForCore(
+  selection: WorkosOrganizationSelection | null,
+): Promise<WorkosOrganizationSelection | null> {
+  if (!selection || selection.organizations.length <= 1) return selection;
+
+  const linkedOrganizations: WorkosOrganizationChoice[] = [];
+  for (const organization of selection.organizations) {
+    const linkedOrg = await developerOrgs.getOrgByWorkosOrgId(organization.id);
+    if (linkedOrg) linkedOrganizations.push(organization);
+  }
+
+  if (linkedOrganizations.length === 0) return selection;
+  return { ...selection, organizations: linkedOrganizations };
 }
 
 function setOrganizationSelectionCookie(
