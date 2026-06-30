@@ -123,9 +123,10 @@ export const NEX_PROFILE: DisplayProfile = {
   id: "mentra-nex",
   name: "Mentra Nex",
 
-  // Display dimensions
-  displayWidthPx: 440,
-  maxLines: 5,
+  // Display dimensions — 576x288 canvas (matches the firmware virtual screen / Even Realities G2).
+  displayWidthPx: 576,
+  displayHeightPx: 288,
+  maxLines: 8,
 
   maxPayloadBytes: 450, // Matches firmware MAX_TEXT_LEN / DisplayText.text cap; delivered via fragmented BLE transport
   bleChunkSize: 176,

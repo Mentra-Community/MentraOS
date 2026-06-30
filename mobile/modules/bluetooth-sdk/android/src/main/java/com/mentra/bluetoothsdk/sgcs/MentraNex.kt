@@ -5,7 +5,12 @@ import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -97,6 +102,20 @@ class MentraNex : SGCManager() {
         // actions of NEX Glasses
         private const val MAIN_TASK_HANDLER_CODE_BATTERY_QUERY: Int = 620
         private const val MAIN_TASK_HANDLER_CODE_HEART_BEAT: Int = 630
+
+        // Canvas bitmap component for the image. The id must be in the firmware's bitmap id pool
+        // (10..13); we use a single fixed slot since each bitmap replaces the last. The component
+        // is created at a fixed 200x200.
+        private const val BITMAP_COMPONENT_ID: Int = 10
+        private const val BITMAP_COMPONENT_SIZE: Int = 200
+
+        // Fixed rect for the live-captions box (G2-style): a single full-canvas text container
+        // reused across caption updates, so each caption is an in-place text change that coexists
+        // with any bitmap/other components. Matches the 576x288 canvas (Even Realities G2 default).
+        private const val CAPTION_BOX_X: Int = 0
+        private const val CAPTION_BOX_Y: Int = 0
+        private const val CAPTION_BOX_W: Int = 576
+        private const val CAPTION_BOX_H: Int = 288
     }
 
     private var heartbeatCount: Int = 0;
@@ -496,36 +515,94 @@ class MentraNex : SGCManager() {
         sendProtobuf(autoBrightnessCmdBytes, 10)
     }
 
-    override fun clearDisplay() { 
-        Bridge.log("Nex: clearDisplay() - sending clear display request command bytes");
+    override fun clearDisplay() {
+        Bridge.log("Nex: clearDisplay() - clearing canvas + caption");
+        // Tear down any canvas components (bitmap + positioned text) and forget the slot mapping,
+        // then clear the caption text path too so either kind of screen is wiped.
+        canvasTextSlots.clear()
+        canvasBitmapX = null
+        canvasBitmapY = null
+        canvasBitmapW = null
+        canvasBitmapH = null
+        sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
         sendProtobuf(clearDisplayPackets, 10)
-        // sendTextWall(" ")
-        Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
+        Bridge.log("Nex: clearDisplay() - sent");
     }
     
 
     override fun sendText(text: String) {
         Bridge.log("Nex: sendText() - text: " + text);
-        val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendProtobuf(textChunks)
+        showCaptionText(text)
     }
 
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);
-        val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendProtobuf(textChunks)
+        showCaptionText(text)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
         Bridge.log("Nex: sendDoubleTextWall() - top: " + top + ", bottom: " + bottom);
-        val finalText: String = buildString {
-            top?.let { append(it) }
-            top?.let { append("\n") }
-            bottom?.let { append(it) }
+        val finalText: String = listOf(top, bottom).filter { it.isNotEmpty() }.joinToString("\n")
+        showCaptionText(finalText)
+    }
+
+    // Live captions / text walls render into a single reused canvas text container (the caption
+    // box), like Even G2: the first call creates it, each subsequent call is an in-place text
+    // update on the same component (reused by rect via sendPositionedText), so captions can sit
+    // alongside a navigation minimap or other canvas components instead of owning the screen.
+    private fun showCaptionText(text: String) {
+        sendPositionedText(text, CAPTION_BOX_X, CAPTION_BOX_Y, CAPTION_BOX_W, CAPTION_BOX_H, 0, 0)
+    }
+
+    // ---- Canvas text containers (G2-style) -------------------------------------------------
+    // Positioned text is drawn as canvas TEXTBOX components so it coexists with the bitmap
+    // component (a navigation screen = minimap + several text boxes shown together). Components
+    // are keyed by their rect+border and reused so repeated updates don't recreate the LVGL
+    // object; ids come from the firmware's text pool (1..6) with oldest-out eviction.
+    private data class CanvasTextSlot(
+        val id: Int, val x: Int, val y: Int, val w: Int, val h: Int,
+        val borderWidth: Int, val borderRadius: Int
+    )
+    private val canvasTextSlots: MutableList<CanvasTextSlot> = mutableListOf()
+    private val canvasTextIdPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
+    // Current rect of the bitmap component (id 10) on the canvas, or null if it doesn't exist.
+    // Repeated frames at the same rect skip the create; a move or resize recreates. Reset on clear.
+    private var canvasBitmapX: Int? = null
+    private var canvasBitmapY: Int? = null
+    private var canvasBitmapW: Int? = null
+    private var canvasBitmapH: Int? = null
+
+    override fun sendPositionedText(
+        text: String, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ) {
+        Bridge.log("Nex: sendPositionedText() rect=$x,$y ${width}x$height border=$borderWidth/$borderRadius")
+
+        // Reuse a slot with the same geometry — only the text changes (no recreate, no flicker).
+        val existing = canvasTextSlots.firstOrNull {
+            it.x == x && it.y == y && it.w == width && it.h == height &&
+                it.borderWidth == borderWidth && it.borderRadius == borderRadius
         }
-        val textChunks = createTextWallChunksForNex(finalText)
-        sendProtobuf(textChunks)
+        if (existing != null) {
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.id, text))
+            return
+        }
+
+        // Allocate the lowest free id; evict the oldest slot when the pool is exhausted.
+        if (canvasTextSlots.size >= canvasTextIdPool.size) {
+            val evicted = canvasTextSlots.removeAt(0)
+            sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(evicted.id))
+        }
+        val used = canvasTextSlots.map { it.id }.toSet()
+        val id = canvasTextIdPool.firstOrNull { it !in used } ?: canvasTextIdPool[0]
+        canvasTextSlots.add(CanvasTextSlot(id, x, y, width, height, borderWidth, borderRadius))
+
+        sendProtobuf(
+            NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+                id, x, y, width, height, borderWidth, borderRadius
+            )
+        )
+        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(id, text))
     }
 
     override fun displayBitmap(
@@ -543,7 +620,19 @@ class MentraNex : SGCManager() {
             }
             val bmp = BitmapFactory.decodeByteArray(bmpData, 0, bmpData.size)
 
-            displayBitmapImageForNexGlasses(bmpData, bmp.width,  bmp.height)
+            // The glasses are a 1-bpp display and the firmware decoder only accepts 1-bit BMPs.
+            // Scale to the requested rect (default 200x200), invert (the Nex panel renders
+            // white-on-black), then Floyd-Steinberg dither so gradients/fine detail survive as dot
+            // patterns instead of a hard 50% threshold. The dither output is already pure
+            // black/white, so the 1-bit encode threshold passes it through losslessly.
+            val w = width ?: BITMAP_COMPONENT_SIZE
+            val h = height ?: BITMAP_COMPONENT_SIZE
+            val scaled = Bitmap.createScaledBitmap(bmp, w, h, true)
+            val inverted = invertBitmap(scaled)
+            val dithered = floydSteinbergDither(inverted)
+            val oneBitBmp = BitmapJavaUtils.convertBitmapTo1BitBmpBytes(dithered, false)
+
+            displayBitmapImageForNexGlasses(oneBitBmp, x ?: 0, y ?: 0, w, h)
             return true
 
         } catch (e: Exception) {
@@ -1248,8 +1337,75 @@ class MentraNex : SGCManager() {
         }
     }
 
-    private fun displayBitmapImageForNexGlasses(bmpData: ByteArray, width: Int, height: Int) {
-        Bridge.log("Starting BMP display process for ${width}x$height image")
+    /**
+     * Returns a colour-inverted copy of [src] (white <-> black). The firmware decoder normalises
+     * BMP palette polarity, so the only way to flip the on-glass result from the SGC is to invert
+     * the actual pixel content here.
+     */
+    private fun invertBitmap(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val paint = Paint().apply {
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+        Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
+
+    /**
+     * Floyd-Steinberg error-diffusion dithering to monochrome. Returns a copy of [src] whose pixels
+     * are pure black or white but whose dot density approximates the original luminance, preserving
+     * far more perceived detail on a 1-bpp panel than a flat threshold. Luminance uses Rec. 601
+     * weights; quantization error is pushed to the right/below neighbours (7/3/5/1 over 16).
+     */
+    private fun floydSteinbergDither(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+
+        // Working luminance buffer (float so diffused error can over/undershoot 0..255).
+        val lum = FloatArray(w * h)
+        for (i in 0 until w * h) {
+            val c = px[i]
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            lum[i] = 0.299f * r + 0.587f * g + 0.114f * b
+        }
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val idx = y * w + x
+                val old = lum[idx]
+                val newVal = if (old < 128f) 0f else 255f
+                val err = old - newVal
+                px[idx] = if (newVal >= 128f) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+
+                if (x + 1 < w) lum[idx + 1] += err * 7f / 16f
+                if (y + 1 < h) {
+                    if (x - 1 >= 0) lum[idx + w - 1] += err * 3f / 16f
+                    lum[idx + w] += err * 5f / 16f
+                    if (x + 1 < w) lum[idx + w + 1] += err * 1f / 16f
+                }
+            }
+        }
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(px, 0, w, 0, 0, w, h)
+        return out
+    }
+
+    private fun displayBitmapImageForNexGlasses(bmpData: ByteArray, x: Int, y: Int, w: Int, h: Int) {
+        Bridge.log("Starting BMP display process at ($x,$y) ${w}x$h")
 
         try {
             if (bmpData.isEmpty()) {
@@ -1262,8 +1418,22 @@ class MentraNex : SGCManager() {
             // Generate proper 2-byte hex stream ID (e.g., "002A") as per protobuf specification
             val totalChunks = (bmpData.size + bmpChunkSize - 1) / bmpChunkSize
             val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
-            
-            val startImageSendingBytes = NexProtobufUtils.generateDisplayImageCommandBytes(streamId, totalChunks, width, height)
+
+            // Create the canvas bitmap component at the requested rect; recreate only when it first
+            // appears, moves, or resizes. Otherwise subsequent frames just stream new pixels into
+            // the same component (no recreate, no buffer churn). The firmware acks OOM if it cannot fit.
+            if (canvasBitmapX != x || canvasBitmapY != y || canvasBitmapW != w || canvasBitmapH != h) {
+                val createBytes = NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(
+                    BITMAP_COMPONENT_ID, x, y, w, h)
+                sendProtobuf(createBytes)
+                canvasBitmapX = x
+                canvasBitmapY = y
+                canvasBitmapW = w
+                canvasBitmapH = h
+            }
+
+            val startImageSendingBytes = NexProtobufUtils.generateCanvasUpdateImageCommandBytes(
+                BITMAP_COMPONENT_ID, streamId, totalChunks)
             sendProtobuf(startImageSendingBytes)
 
             // Send all chunks with proper stream ID parsing

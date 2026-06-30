@@ -15,6 +15,12 @@ import mentraos.ble.MentraosBle.ClearDisplay
 import mentraos.ble.MentraosBle.DisconnectRequest
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
+import mentraos.ble.MentraosBle.CanvasCreateComponent
+import mentraos.ble.MentraosBle.CanvasUpdateImage
+import mentraos.ble.MentraosBle.CanvasUpdateText
+import mentraos.ble.MentraosBle.CanvasDeleteComponent
+import mentraos.ble.MentraosBle.CanvasClear
+import mentraos.ble.MentraosBle.CanvasComponentType
 import mentraos.ble.MentraosBle.BatteryStateRequest
 import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
@@ -237,6 +243,89 @@ object NexProtobufUtils {
         val phoneToGlasses = PhoneToGlasses.newBuilder()
             .setMsgId("img_start_1")
             .setDisplayImage(displayImage)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /**
+     * Canvas: create (or replace) a full-screen bitmap component. The firmware infers the bitmap
+     * pool from the id (10..13); we use a single fixed id for the full-screen image. Pixels follow
+     * via [generateCanvasUpdateImageCommandBytes] + the 0xB0 chunk stream.
+     */
+    fun generateCanvasCreateBitmapCommandBytes(id: Int, x: Int, y: Int, width: Int, height: Int): ByteArray {
+        val create = CanvasCreateComponent.newBuilder()
+            .setId(id)
+            .setType(CanvasComponentType.CANVAS_BITMAP)
+            .setX(x)
+            .setY(y)
+            .setWidth(width)
+            .setHeight(height)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasCreateComponent(create)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: create (or replace) a text component (TEXTBOX). Content follows via CanvasUpdateText. */
+    fun generateCanvasCreateTextboxCommandBytes(
+        id: Int, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ): ByteArray {
+        val create = CanvasCreateComponent.newBuilder()
+            .setId(id)
+            .setType(CanvasComponentType.CANVAS_TEXTBOX)
+            .setX(x)
+            .setY(y)
+            .setWidth(width)
+            .setHeight(height)
+            .setBorderWidth(borderWidth)
+            .setBorderRadius(borderRadius)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasCreateComponent(create)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: set the text of a TEXTBOX / SCROLL_TEXTBOX component. */
+    fun generateCanvasUpdateTextCommandBytes(id: Int, text: String, scrollOffset: Int = 0): ByteArray {
+        val update = CanvasUpdateText.newBuilder()
+            .setId(id)
+            .setText(text)
+            .setScrollOffset(scrollOffset)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasUpdateText(update)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: delete a single component by id. */
+    fun generateCanvasDeleteComponentCommandBytes(id: Int): ByteArray {
+        val del = CanvasDeleteComponent.newBuilder().setId(id).build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasDeleteComponent(del)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: delete all components and exit the canvas view. */
+    fun generateCanvasClearCommandBytes(): ByteArray {
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasClear(CanvasClear.newBuilder().build())
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: begin streaming a 1-bit BMP into an existing bitmap component. */
+    fun generateCanvasUpdateImageCommandBytes(id: Int, streamId: String, totalChunks: Int): ByteArray {
+        val update = CanvasUpdateImage.newBuilder()
+            .setId(id)
+            .setStreamId(streamId)
+            .setTotalChunks(totalChunks)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasUpdateImage(update)
             .build()
         return generateProtobufCommandBytes(phoneToGlasses)
     }
