@@ -26,13 +26,15 @@ import {
 export function OrganizationPage() {
   const queryClient = useQueryClient();
   const session = useQuery(sessionQuery());
+  const canLoadOrg = session.isSuccess;
   const orgQuery = useQuery({
     queryKey: ["developer-org"],
     queryFn: getDeveloperOrg,
+    enabled: canLoadOrg,
   });
   const user = session.data?.user;
   const org = orgQuery.data?.org ?? session.data?.organizations?.[0] ?? null;
-  const onboardingRequired = session.data?.onboardingRequired ?? org === null;
+  const onboardingRequired = session.isSuccess ? (session.data.onboardingRequired ?? org === null) : false;
   const suggested = useMemo(() => suggestedOrgDefaults(user), [user]);
   const [displayName, setDisplayName] = useState(suggested.displayName);
   const [packagePrefix, setPackagePrefix] = useState(suggested.packagePrefix);
@@ -40,7 +42,7 @@ export function OrganizationPage() {
   const accessQuery = useQuery({
     queryKey: ["developer-org-access"],
     queryFn: getOrgAccess,
-    enabled: Boolean(org),
+    enabled: canLoadOrg && Boolean(org),
   });
 
   useEffect(() => {

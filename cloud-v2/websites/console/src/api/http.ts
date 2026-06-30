@@ -10,6 +10,20 @@ export class ApiError extends Error {
   }
 }
 
+export function isUnauthorizedError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+export function redirectToConsoleLogin(): void {
+  if (typeof window === "undefined") return;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (window.location.pathname === "/") return;
+  const search = new URLSearchParams();
+  if (current && current !== "/") search.set("returnTo", current);
+  const target = search.size > 0 ? `/?${search.toString()}` : "/";
+  window.location.replace(target);
+}
+
 export async function apiRequest<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path.startsWith("/") ? path : `/${path}`}`, {
     ...init,

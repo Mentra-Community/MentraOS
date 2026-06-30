@@ -14,10 +14,12 @@ const reviewStatuses = new Set(["submitted", "in_review"]);
 export function MiniappDetailPage() {
   const { packageName } = useParams({ from: "/apps/$packageName" });
   const session = useQuery(sessionQuery());
-  const apps = useQuery(appsQuery());
+  const canLoadPrivateData = session.isSuccess && !session.data.onboardingRequired;
+  const apps = useQuery(appsQuery(canLoadPrivateData));
   const releasesQuery = useQuery({
     queryKey: ["developer-releases", packageName],
     queryFn: () => listDeveloperReleases(packageName),
+    enabled: canLoadPrivateData,
   });
 
   const app = apps.data?.apps.find(item => item.packageName === packageName);

@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { sessionQuery } from "@/features/session/session.queries";
 import { createApiToken, deleteApiToken, type ApiToken } from "./tokens.api";
 import { apiTokensQuery } from "./tokens.queries";
 
 export function TokensPage() {
   const queryClient = useQueryClient();
-  const tokens = useQuery(apiTokensQuery());
+  const session = useQuery(sessionQuery());
+  const tokens = useQuery(apiTokensQuery(session.isSuccess && !session.data.onboardingRequired));
   const tokenList = tokens.data?.tokens ?? [];
   const [tokenName, setTokenName] = useState("");
   const [createdToken, setCreatedToken] = useState<ApiToken | null>(null);

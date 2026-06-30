@@ -10,7 +10,7 @@ import { appsQuery } from "./apps.queries";
 
 export function AppsPage() {
   const session = useQuery(sessionQuery());
-  const apps = useQuery(appsQuery());
+  const apps = useQuery(appsQuery(session.isSuccess && !session.data.onboardingRequired));
   const appList = apps.data?.apps ?? [];
   const packagePrefix = session.data?.packagePrefix;
 

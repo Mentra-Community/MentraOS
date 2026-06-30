@@ -6,11 +6,13 @@ type LoginStep = "email" | "code";
 type LoginStatus = "idle" | "loading" | "error";
 
 export function LoginPage() {
-  const [email, setEmail] = useState("parth@mentra.glass");
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<LoginStep>("email");
   const [status, setStatus] = useState<LoginStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const postLoginTarget = getPostLoginTarget();
+  const returnToUrl = getPostLoginReturnToUrl(postLoginTarget);
 
   async function onContinue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,7 +31,7 @@ export function LoginPage() {
 
       const response = await postJson("/api/console/auth/magic/verify", { email, code });
       if (!response.ok) throw new Error(await responseError(response));
-      window.location.href = "/dashboard";
+      window.location.href = postLoginTarget;
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Sign in failed");
@@ -138,7 +140,7 @@ export function LoginPage() {
 
             <div className="h-[22px]" />
             <a
-              href="/api/console/auth/social/github"
+              href={`/api/console/auth/social/github?return_to=${encodeURIComponent(returnToUrl)}`}
               className="flex h-[46px] w-full items-center justify-center rounded-full bg-white px-[18px] font-display text-sm font-semibold text-[#5b5b63] shadow-[0_0_0_1px_#ececee] transition hover:bg-[#fbfbfc] focus:outline-none focus:ring-4 focus:ring-[#14141a]/5"
             >
               Continue with GitHub
@@ -146,7 +148,7 @@ export function LoginPage() {
 
             <div className="h-2.5" />
             <a
-              href="/api/console/auth/social/google"
+              href={`/api/console/auth/social/google?return_to=${encodeURIComponent(returnToUrl)}`}
               className="flex h-[46px] w-full items-center justify-center rounded-full bg-white px-[18px] font-display text-sm font-semibold text-[#5b5b63] shadow-[0_0_0_1px_#ececee] transition hover:bg-[#fbfbfc] focus:outline-none focus:ring-4 focus:ring-[#14141a]/5"
             >
               Continue with Google
@@ -168,6 +170,27 @@ export function LoginPage() {
       </section>
     </main>
   );
+}
+
+function getPostLoginTarget(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+  if (!returnTo) return "/dashboard";
+
+  try {
+    const url = returnTo.startsWith("/") && !returnTo.startsWith("//")
+      ? new URL(returnTo, window.location.origin)
+      : new URL(returnTo);
+    if (url.origin !== window.location.origin) return "/dashboard";
+    return `${url.pathname}${url.search}${url.hash}` || "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
+}
+
+function getPostLoginReturnToUrl(path: string): string {
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
 }
 
 function postJson(path: string, body: unknown): Promise<Response> {

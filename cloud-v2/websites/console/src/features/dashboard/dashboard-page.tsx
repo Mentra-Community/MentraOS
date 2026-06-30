@@ -15,8 +15,9 @@ const surfaceClass = "rounded-[18px] border-[#e0e4de] bg-white py-0 shadow-[0_1p
 
 export function DashboardPage() {
   const session = useQuery(sessionQuery());
-  const apps = useQuery(appsQuery());
-  const tokens = useQuery(apiTokensQuery());
+  const canLoadPrivateData = session.isSuccess && !session.data.onboardingRequired;
+  const apps = useQuery(appsQuery(canLoadPrivateData));
+  const tokens = useQuery(apiTokensQuery(canLoadPrivateData));
   const firstName = session.data?.user ? displayNameForUser(session.data.user).split(" ")[0] : "";
   const appList = apps.data?.apps ?? [];
   const packagePrefix = session.data?.packagePrefix;
