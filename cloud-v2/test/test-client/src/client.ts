@@ -183,6 +183,7 @@ export class TestClient {
   private udpSeq = 0;
   private messageHandlers: MessageHandler[] = [];
   private receivedMessages: AnyServerMessage[] = [];
+  private supersededTestSockets: WebSocket[] = [];
   /** Subscriptions queued before connect — seeded into `connection.init`. */
   private initialSubscriptions: AudioSubscription[] = [];
   /** Monotonic version for REST subscription writes (seed at connect is 0). */
@@ -207,6 +208,12 @@ export class TestClient {
     const tag = this.ack?.payload.audio?.sessionTag;
     if (tag == null) throw new Error("not connected");
     return tag;
+  }
+
+  get sessionId(): string {
+    const sessionId = this.ack?.payload.sessionId;
+    if (!sessionId) throw new Error("not connected");
+    return sessionId;
   }
 
   /**
@@ -244,6 +251,15 @@ export class TestClient {
    */
   onLivenessClose(cb: () => void): void {
     this.livenessClosedCallback = cb;
+  }
+
+  async reconnectWithoutClosingPreviousForTest(): Promise<void> {
+    if (!this.runtimeToken || !this.ws) throw new Error("not connected");
+    this.supersededTestSockets.push(this.ws);
+    this.ws = null;
+    this.ack = null;
+    this.encryptionKey = null;
+    await this.openWebSocket(this.runtimeToken);
   }
 
   /**
@@ -376,6 +392,7 @@ export class TestClient {
   async close(): Promise<void> {
     this.stopLiveness();
     this.ws?.close();
+    for (const ws of this.supersededTestSockets) ws.close();
     this.udpSocket?.close();
     this.ws = null;
     this.udpSocket = null;
@@ -387,6 +404,7 @@ export class TestClient {
     this.livenessClosedCallback = null;
     this.initialSubscriptions = [];
     this.encryptionKey = null;
+    this.supersededTestSockets = [];
   }
 
   // === Internals ===

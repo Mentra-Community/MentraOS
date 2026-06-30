@@ -92,6 +92,8 @@ import {
   audioStreamKey,
   lookupSessionTagInRedis,
 } from "../packages/runtime/src/services/session/stream";
+import { readSubscriptions } from "../packages/runtime/src/services/session/subscriptions-store";
+import { hasLiveAudioSession } from "../packages/runtime/src/net/ws";
 import {
   getOwner,
   tryClaimOwnership,
@@ -300,6 +302,39 @@ describe("audio e2e", () => {
 
     const after = await lookupSessionTagInRedis(tagSnapshot);
     expect(after).toBeNull();
+  });
+
+  test("same auth-session reconnect takes over subscriptions immediately", async () => {
+    const client = newClient("alice-same-auth-reconnect");
+    const subscriptions = [
+      {
+        kind: "transcription" as const,
+        language: { mode: "auto" as const },
+      },
+    ];
+    client.subscribe(subscriptions);
+    await client.connect();
+
+    const firstSessionId = client.sessionId;
+    const firstTag = client.sessionTag;
+    const tagRecord = await lookupSessionTagInRedis(firstTag);
+    expect(tagRecord).toBeDefined();
+    const mentraUserId = tagRecord!.mentraUserId;
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      firstSessionId,
+    );
+
+    await client.reconnectWithoutClosingPreviousForTest();
+
+    const secondSessionId = client.sessionId;
+    expect(secondSessionId).not.toBe(firstSessionId);
+    expect(hasLiveAudioSession(mentraUserId, firstSessionId)).toBe(false);
+    expect(hasLiveAudioSession(mentraUserId, secondSessionId)).toBe(true);
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      secondSessionId,
+    );
+
+    await client.close();
   });
 
   test("ws responds to control.ping with control.pong", async () => {
