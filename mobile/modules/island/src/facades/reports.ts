@@ -11,7 +11,6 @@ import type {
   ReportAttachmentInput,
   ReportContext,
   ReportStatus,
-  ReportTrigger,
   SubmitReportInput,
 } from "@mentra/cloud-client"
 import {useGlassesStore} from "../stores/glasses"

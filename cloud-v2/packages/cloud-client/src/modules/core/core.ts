@@ -21,13 +21,8 @@ import {
   Reports,
   type AddReportArtifactsResult,
   type ReportAttachmentInput,
-  type ReportContext,
-  type ReportDetails,
-  type ReportKind,
   type ReportLogEntry,
   type ReportStatus,
-  type ReportSystemPriority,
-  type ReportTrigger,
   type SubmitReportInput,
   type SubmitReportResult,
 } from "./reports";
