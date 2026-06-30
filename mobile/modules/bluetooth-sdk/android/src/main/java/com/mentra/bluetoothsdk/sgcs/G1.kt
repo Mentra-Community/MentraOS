@@ -1617,14 +1617,49 @@ class G1 : SGCManager() {
         sendTextWall(" ")
     }
 
+    // G1-specific display throttle (300ms, last-wins) — see G1.swift. G1 firmware can't absorb
+    // rapid text-wall updates; coalesce to the latest within a 300ms window. Belongs in the G1 SGC
+    // (G1 hardware quirk); G2 deliberately does NOT throttle (it must show every caption). The
+    // trailing flush always sends the most recent text, so the final caption is never dropped —
+    // only intermediate frames within a window are coalesced.
+    private val textThrottleHandler = Handler(Looper.getMainLooper())
+    private var textThrottlePending: String? = null
+    private var textThrottleLastSent: Long = 0L
+    private var textThrottleScheduled = false
+    private val TEXT_THROTTLE_WINDOW_MS = 300L
+
+    private fun throttledTextWall(text: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val sinceLast = now - textThrottleLastSent
+        if (sinceLast >= TEXT_THROTTLE_WINDOW_MS) {
+            // Past the window — send now.
+            textThrottleLastSent = now
+            textThrottlePending = null
+            displayTextWall(text)
+        } else {
+            // Inside the window — keep only the latest and schedule one trailing flush.
+            textThrottlePending = text
+            if (!textThrottleScheduled) {
+                textThrottleScheduled = true
+                textThrottleHandler.postDelayed({
+                    textThrottleScheduled = false
+                    val pending = textThrottlePending ?: return@postDelayed
+                    textThrottlePending = null
+                    textThrottleLastSent = android.os.SystemClock.uptimeMillis()
+                    displayTextWall(pending)
+                }, TEXT_THROTTLE_WINDOW_MS - sinceLast)
+            }
+        }
+    }
+
     override fun sendText(text: String) {
         Bridge.log("G1: sendText() - text: " + text)
-        displayTextWall(text)
+        throttledTextWall(text)
     }
 
     override fun sendTextWall(text: String) {
         // Bridge.log("G1: sendTextWall() - text: " + text);
-        displayTextWall(text)
+        throttledTextWall(text)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
