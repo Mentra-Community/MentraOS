@@ -196,6 +196,9 @@ const val PHOTO_ISO_DEFAULT = 200
 const val CAMERA_FOV_MIN = 62
 const val CAMERA_FOV_MAX = 118
 const val CAMERA_FOV_DEFAULT = 102
+const val CAMERA_WARM_UP_DURATION_MS = 30_000
+const val CAMERA_WARM_UP_REFRESH_MS = 20_000L
+const val CAMERA_WARM_UP_DISCONNECTED_RETRY_MS = 2_000L
 val photoAeExposureDivisorOptions = listOf(2, 3, 5)
 val photoIsoCapOptions = listOf(400, 800, 1600)
 val photoIspDigitalGainOptions = listOf(0, 1, 2, 4)
@@ -331,6 +334,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var actionSequence = 0L
     private val activeActions = linkedMapOf<Long, String>()
     private var streamConfigurationChangeInProgress = false
+    private var cameraTabForeground = false
+    private var cameraWarmUpFailureLogged = false
+    private var cameraWarmUpJob: Job? = null
     private var autoOtaCheckedConnectionKey: String? = null
     private var autoOtaCheckInProgress = false
     private var latestOtaVersionInfoSignature: String? = null
@@ -491,6 +497,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             bluetoothStatus = state.bluetoothStatus?.copy(defaultDevice = null),
             selectedDiscoveredDevice = null,
         )
+    }
+
+    fun setCameraTabForeground(foreground: Boolean) {
+        if (cameraTabForeground == foreground) {
+            return
+        }
+        cameraTabForeground = foreground
+        if (foreground) {
+            cameraWarmUpFailureLogged = false
+            startCameraWarmUpLoop()
+        } else {
+            stopCameraWarmUpLoop()
+        }
     }
 
     fun displayHello() = runAction("Display Hello") {
@@ -2244,6 +2263,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun close() {
+        stopCameraWarmUpLoop()
         stopPreviewHealthPoll()
         stopDirectStreamFrameWatchdog()
         directPhotoTimeoutJob?.cancel()
@@ -2454,6 +2474,46 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun isOtaInProgress(): Boolean =
         state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
+
+    private fun startCameraWarmUpLoop() {
+        if (cameraWarmUpJob?.isActive == true) {
+            return
+        }
+        cameraWarmUpJob = scope.launch {
+            while (isActive && cameraTabForeground) {
+                val nextDelayMs =
+                    if (isGlassesConnected()) {
+                        val size = photoSizeToSdk(state.photoSize)
+                        val exposureTimeNs =
+                            if (state.photoExposureManual) state.photoExposureTimeNs.toLong() else null
+                        try {
+                            withContext(Dispatchers.IO) {
+                                mentraBluetoothSdk.warmUpCamera(
+                                    size = size,
+                                    exposureTimeNs = exposureTimeNs,
+                                    durationMs = CAMERA_WARM_UP_DURATION_MS,
+                                )
+                            }
+                            cameraWarmUpFailureLogged = false
+                        } catch (error: Throwable) {
+                            if (cameraTabForeground && isGlassesConnected() && !cameraWarmUpFailureLogged) {
+                                cameraWarmUpFailureLogged = true
+                                addEvent("TX", "camera warm-up failed: ${error.message ?: error::class.java.simpleName}")
+                            }
+                        }
+                        CAMERA_WARM_UP_REFRESH_MS
+                    } else {
+                        CAMERA_WARM_UP_DISCONNECTED_RETRY_MS
+                    }
+                delay(nextDelayMs)
+            }
+        }
+    }
+
+    private fun stopCameraWarmUpLoop() {
+        cameraWarmUpJob?.cancel()
+        cameraWarmUpJob = null
+    }
 
     private fun requireGlassesWifi(feature: String) {
         if (isGlassesWifiConnected(state.glassesStatus)) {

@@ -64,6 +64,9 @@ let photoIsoDefault = 200
 let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
+let cameraWarmUpDurationMs = 30_000
+let cameraWarmUpRefreshMs = 20_000
+let cameraWarmUpDisconnectedRetryMs = 2_000
 let photoAeExposureDivisorOptions = [2, 3, 5]
 let photoIsoCapOptions = [400, 800, 1600]
 let photoIspDigitalGainOptions = [0, 1, 2, 4]
@@ -365,6 +368,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var pollGeneration = 0
     private var videoPollGeneration = 0
     private var directPhotoTimeoutTask: Task<Void, Never>?
+    private var cameraTabForeground = false
+    private var cameraWarmUpFailureLogged = false
+    private var cameraWarmUpTask: Task<Void, Never>?
     private var previewHealthTask: Task<Void, Never>?
     private var directStreamStartTask: Task<Void, Never>?
     private var directStreamStopTask: Task<Void, Never>?
@@ -473,6 +479,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     deinit {
+        cameraWarmUpTask?.cancel()
         previewHealthTask?.cancel()
         directPhotoTimeoutTask?.cancel()
         directStreamStartTask?.cancel()
@@ -560,6 +567,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             mentraBluetoothSdk.clearDefaultDevice()
             bluetoothValues = mentraBluetoothSdk.sdkState
             selectedDiscoveredDevice = nil
+        }
+    }
+
+    func setCameraTabForeground(_ foreground: Bool) {
+        guard cameraTabForeground != foreground else { return }
+        cameraTabForeground = foreground
+        if foreground {
+            cameraWarmUpFailureLogged = false
+            startCameraWarmUpLoop()
+        } else {
+            stopCameraWarmUpLoop()
         }
     }
 
@@ -2018,6 +2036,41 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func isOtaInProgress() -> Bool {
         otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
+    }
+
+    private func startCameraWarmUpLoop() {
+        guard cameraWarmUpTask == nil else { return }
+        cameraWarmUpTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let nextDelayMs = await self?.runCameraWarmUpTick() ?? cameraWarmUpDisconnectedRetryMs
+                try? await Task.sleep(nanoseconds: UInt64(nextDelayMs) * 1_000_000)
+            }
+        }
+    }
+
+    private func stopCameraWarmUpLoop() {
+        cameraWarmUpTask?.cancel()
+        cameraWarmUpTask = nil
+    }
+
+    private func runCameraWarmUpTick() async -> Int {
+        guard cameraTabForeground else { return cameraWarmUpRefreshMs }
+        guard glassesConnected else { return cameraWarmUpDisconnectedRetryMs }
+        let exposureTimeNs = photoExposureManual ? Double(photoExposureTimeNs) : nil
+        do {
+            _ = try await mentraBluetoothSdk.warmUpCamera(
+                size: photoSize,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: cameraWarmUpDurationMs
+            )
+            cameraWarmUpFailureLogged = false
+        } catch {
+            if cameraTabForeground && glassesConnected && !cameraWarmUpFailureLogged {
+                cameraWarmUpFailureLogged = true
+                append(tag: "TX", text: "camera warm-up failed: \(error.localizedDescription)")
+            }
+        }
+        return cameraWarmUpRefreshMs
     }
 
     private func requireConnected(_ feature: String) throws {
