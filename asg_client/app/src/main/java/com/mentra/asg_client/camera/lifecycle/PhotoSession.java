@@ -366,6 +366,23 @@ public final class PhotoSession {
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
     public void onCameraClosed() {
         configuredCameraConfig = null;
+        // A camera_warm_up deferred during an in-flight capture is normally consumed by
+        // dispatchNextPhotoRequest once the capture settles. If the camera is instead torn down
+        // first (e.g. the capture failed with an empty queue), the deferred run never happens — fail
+        // its callbacks here so the phone warmUpCamera promise rejects instead of hanging until
+        // timeout. dispatchNextPhotoRequest clears deferredWarmRequest before its re-run, so a
+        // warm-up reopen never reaches this.
+        WarmUpRequest deferred = deferredWarmRequest;
+        if (deferred != null) {
+            deferredWarmRequest = null;
+            if (deferred.onError != null) {
+                hooks.executor()
+                        .execute(
+                                () ->
+                                        deferred.onError.accept(
+                                                "Camera closed before warm-up could run"));
+            }
+        }
     }
 
     private int getJpegQualityForSize() {
