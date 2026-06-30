@@ -137,9 +137,11 @@ async function backfillDeveloperOrgOwners(): Promise<void> {
     if (!org.orgId || !org.ownerUserId) continue;
     const ownerCount = await DeveloperOrgMembershipModel.countDocuments({ orgId: org.orgId, role: "owner" });
     if (ownerCount > 0) continue;
+    // Force the role to owner: if the creator somehow already has a non-owner
+    // row (so ownerCount was 0), upgrade it rather than leaving the org ownerless.
     await DeveloperOrgMembershipModel.updateOne(
       { orgId: org.orgId, userId: org.ownerUserId },
-      { $setOnInsert: { orgId: org.orgId, userId: org.ownerUserId, role: "owner" } },
+      { $set: { role: "owner" }, $setOnInsert: { orgId: org.orgId, userId: org.ownerUserId } },
       { upsert: true },
     );
     seeded += 1;

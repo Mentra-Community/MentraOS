@@ -154,6 +154,21 @@ export class DeveloperOrgService {
     return DeveloperOrgMembershipModel.countDocuments({ orgId, role: "owner" });
   }
 
+  /** Another owner's userId, for transferring the created-by/bootstrap pointer. */
+  async findAnotherOwner(orgId: string, excludeUserId: string): Promise<string | null> {
+    const row = await DeveloperOrgMembershipModel.findOne({
+      orgId,
+      role: "owner",
+      userId: { $ne: excludeUserId },
+    }).lean();
+    return row?.userId ?? null;
+  }
+
+  /** Repoint DeveloperOrg.ownerUserId (the created-by / WorkOS-bootstrap identity). */
+  async reassignCreator(orgId: string, newOwnerUserId: string): Promise<void> {
+    await DeveloperOrgModel.updateOne({ orgId }, { $set: { ownerUserId: newOwnerUserId } });
+  }
+
   /** Roles for every member of an org, keyed by WorkOS userId. */
   async listMemberRoles(orgId: string): Promise<Map<string, DeveloperOrgRole>> {
     const rows = await DeveloperOrgMembershipModel.find({ orgId }).lean();

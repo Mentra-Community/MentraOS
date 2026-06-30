@@ -6,4 +6,7 @@ export const sessionQuery = () =>
     queryKey: ["console-session"],
     queryFn: getConsoleSession,
     retry: false,
+    // Refresh the viewer's role on tab focus so a just-promoted user's UI
+    // (e.g. the API-keys page gate) reflects their new role without a reload.
+    refetchOnWindowFocus: true,
   });

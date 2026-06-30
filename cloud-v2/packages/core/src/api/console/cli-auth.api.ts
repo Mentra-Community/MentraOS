@@ -537,6 +537,16 @@ async function deleteOrgMember(c: AppContext) {
         return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
       }
     }
+    // If we're removing the created-by / WorkOS-bootstrap identity, hand the
+    // pointer to another owner so org lookup + bootstrap keep pointing at a real
+    // owner (and a removed user never retains access via the creator fast-path).
+    if (membership.userId === org.ownerUserId) {
+      const nextOwner = await developerOrgs.findAnotherOwner(org.id, membership.userId);
+      if (!nextOwner) {
+        return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
+      }
+      await developerOrgs.reassignCreator(org.id, nextOwner);
+    }
     await workos().userManagement.deleteOrganizationMembership(membershipId);
     await developerOrgs.removeMemberRole(org.id, membership.userId);
     return c.json({ ok: true });
@@ -804,7 +814,8 @@ async function ensureWorkosOrgLinked(
     await ensureOwnerWorkosMembership(org);
     return org;
   }
-  if (!isOrgOwner(authenticatedSession, org)) {
+  // Any owner (by role) may bootstrap the WorkOS org, not only the creator.
+  if ((await resolveOrgRole(authenticatedSession, org)) !== "owner") {
     throw new DeveloperOrgServiceError(
       "team_access_not_ready",
       "team access is not ready for this org yet",
@@ -969,13 +980,6 @@ function requireWorkosOrgId(org: DeveloperOrgRecord): string {
     throw new DeveloperOrgServiceError("team_access_not_ready", "team access is not ready for this org yet", 409);
   }
   return org.workosOrgId;
-}
-
-function isOrgOwner(
-  authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
-  org: DeveloperOrgRecord,
-): boolean {
-  return authenticatedSession.user.id === org.ownerUserId;
 }
 
 type OrgRole = "owner" | "admin" | "member";
