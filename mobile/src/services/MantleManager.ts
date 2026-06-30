@@ -3,6 +3,7 @@ import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
+import {router} from "expo-router"
 import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
@@ -350,6 +351,17 @@ class MantleManager {
         stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
         setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
       },
+      wifiSetup: {
+        // session.glasses.requestWifiSetup → open the phone's glasses Wi-Fi
+        // setup flow (same screen pairing/deeplinks use for "wifi-setup"). The
+        // miniapp's `reason` is forwarded as a route param so the screen can show
+        // it as the prompt (mirrors the cloud SDK's requestWifiSetup(reason)).
+        // `as any` matches the repo idiom for dynamic params under typedRoutes
+        // (see stores/navigation.ts).
+        requestSetup: (reason?: string) => {
+          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
+        },
+      },
     })
     // Wire the runtime's status fanout now that the streaming hook is in.
     localMiniappRuntime.wireStreamingStatusFanout()
@@ -670,6 +682,26 @@ class MantleManager {
           const {type: _type, ...wifi} = event
           useGlassesStore.getState().setGlassesInfo({wifi})
         }),
+      )
+
+      // Forward glasses Wi-Fi to miniapps (session.glasses.onWifi) from the
+      // STORE — the single source of truth — so every path converges here:
+      // wifi_status_change, onGlassesStatus, and BLE disconnect. Effective
+      // connectivity requires the glasses to be connected AND on Wi-Fi, so a
+      // disconnect correctly flips `connected` to false (no stale "connected").
+      this.subs.push(
+        useGlassesStore.subscribe(
+          (s) => {
+            const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
+            return {
+              connected,
+              ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+              localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+            }
+          },
+          (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
+          {equalityFn: shallow},
+        ),
       )
 
       // TODO: remove since we can sub to the zustand store for hotspot info:

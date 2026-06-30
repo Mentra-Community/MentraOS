@@ -58,11 +58,7 @@ export interface CloudRuntimeTtsAdapter {
 export interface CloudRuntimeMapsAdapter {
   directions: (req: DirectionsRequest) => Promise<DirectionsResult>
   reverseGeocode: (coord: LatLng) => Promise<ReverseGeocodeResult>
-  placeAutocomplete: (req: {
-    query: string
-    near?: LatLng
-    sessionToken: string
-  }) => Promise<PlaceAutocompleteResult>
+  placeAutocomplete: (req: {query: string; near?: LatLng; sessionToken: string}) => Promise<PlaceAutocompleteResult>
   placeDetails: (req: {placeId: string; sessionToken: string}) => Promise<PlaceDetailsResult>
 }
 
@@ -458,6 +454,17 @@ export interface InteropAdapter {
   audit?: (event: InteropAuditEvent) => void
 }
 
+/**
+ * Opens the phone's glasses Wi-Fi setup flow on behalf of a miniapp
+ * (session.glasses.requestWifiSetup). The host owns the actual setup UI; the
+ * runtime only forwards the request. Glasses Wi-Fi STATE is delivered
+ * separately via the `glasses_wifi` stream (forwarded by the host).
+ */
+export interface WifiSetupAdapter {
+  /** Open the Wi-Fi setup UI. `reason` is a user-facing line for the prompt. */
+  requestSetup: (reason?: string) => Promise<void> | void
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   /**
@@ -523,6 +530,8 @@ export interface RuntimeHooks {
   cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
+  /** Open the glasses Wi-Fi setup flow on the phone (session.glasses.requestWifiSetup). */
+  wifiSetup?: WifiSetupAdapter
   /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
   interop?: InteropAdapter
 }
