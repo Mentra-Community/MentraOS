@@ -183,11 +183,17 @@ public class CameraNeoService extends LifecycleService {
         void onCameraError(String errorMessage);
     }
 
-    // Warm-up callback, set by the static entry and bound to the instance in performWarmUp.
-    private static CameraWarmUpCallback sPendingWarmCallback;
+    // Warm-up callbacks. Several camera_warm_up commands can be in flight at once (e.g. two
+    // miniapps warming the shared camera, or one app firing warmUp twice quickly); a single slot
+    // would drop all but the last and leave those phone-side promises hanging. Pending callbacks
+    // accumulate here (set by the static entry) until performWarmUp binds them to the instance.
+    private static final List<CameraWarmUpCallback> sPendingWarmCallbacks = new ArrayList<>();
 
-    /** Callback bound to the live warm-up so keep-alive expiry can emit {@code stopped}. */
-    private CameraWarmUpCallback warmCallback;
+    /** Bound warm-up callbacks awaiting ready/error. All resolve together — one shared camera. */
+    private final List<CameraWarmUpCallback> warmCallbacks = new ArrayList<>();
+
+    /** Latest bound warm-up callback, used only to emit {@code stopped} on keep-alive expiry. */
+    private CameraWarmUpCallback warmStoppedCallback;
 
     // Video recording — owned by VideoRecordingSession (Phase 2.1).
     private VideoRecordingSession videoSession;
@@ -674,16 +680,17 @@ public class CameraNeoService extends LifecycleService {
             if (warmReusable) {
                 // Already configured + idle for these params — just re-arm the keep-alive.
                 Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
-                sInstance.warmCallback = callback;
+                if (callback != null) {
+                    sInstance.warmCallbacks.add(callback);
+                    sInstance.warmStoppedCallback = callback;
+                }
                 sInstance.cancelKeepAliveTimer();
                 sInstance.startWarmKeepAliveTimer(ttl);
-                if (callback != null) {
-                    sInstance.executor.execute(callback::onCameraReady);
-                }
+                sInstance.executor.execute(sInstance::fireWarmReady);
                 return;
             }
 
-            sPendingWarmCallback = callback;
+            sPendingWarmCallbacks.add(callback);
 
             Intent intent = new Intent(context, CameraNeoService.class);
             intent.setAction(ACTION_WARM_UP_CAMERA);
@@ -841,33 +848,56 @@ public class CameraNeoService extends LifecycleService {
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
     private void performWarmUp(String size, Long exposureTimeNs, long durationMs) {
-        // Bind the pending callback (set by the static warmUpCamera entry) to this instance.
+        // Bind the pending callbacks (set by the static warmUpCamera entry) to this instance.
         synchronized (SERVICE_LOCK) {
-            warmCallback = sPendingWarmCallback;
-            sPendingWarmCallback = null;
+            warmCallbacks.addAll(sPendingWarmCallbacks);
+            sPendingWarmCallbacks.clear();
+            if (!warmCallbacks.isEmpty()) {
+                warmStoppedCallback = warmCallbacks.get(warmCallbacks.size() - 1);
+            }
         }
-        final CameraWarmUpCallback callback = warmCallback;
         photoSession.setupWarmUp(
                 size,
                 exposureTimeNs,
                 PhotoCaptureSettings.EMPTY,
                 durationMs,
-                () -> {
-                    if (callback != null) {
-                        callback.onCameraReady();
-                    }
-                },
-                errorMessage -> {
-                    if (callback != null) {
-                        callback.onCameraError(errorMessage);
-                    }
-                });
+                this::fireWarmReady,
+                this::fireWarmError);
+    }
+
+    /** Resolve every in-flight warm-up: the shared camera is warm for all of them. */
+    private void fireWarmReady() {
+        final List<CameraWarmUpCallback> ready;
+        synchronized (SERVICE_LOCK) {
+            ready = new ArrayList<>(warmCallbacks);
+            warmCallbacks.clear();
+        }
+        for (CameraWarmUpCallback callback : ready) {
+            callback.onCameraReady();
+        }
+    }
+
+    /** Fail every in-flight warm-up (open/configure failure). */
+    private void fireWarmError(String errorMessage) {
+        final List<CameraWarmUpCallback> failed;
+        synchronized (SERVICE_LOCK) {
+            failed = new ArrayList<>(warmCallbacks);
+            warmCallbacks.clear();
+            warmStoppedCallback = null;
+        }
+        for (CameraWarmUpCallback callback : failed) {
+            callback.onCameraError(errorMessage);
+        }
     }
 
     /** Notify the bound warm-up callback that the camera was closed without capturing. */
     private void notifyWarmStopped() {
-        CameraWarmUpCallback callback = warmCallback;
-        warmCallback = null;
+        CameraWarmUpCallback callback;
+        synchronized (SERVICE_LOCK) {
+            callback = warmStoppedCallback;
+            warmStoppedCallback = null;
+            warmCallbacks.clear();
+        }
         if (callback != null) {
             callback.onCameraStopped();
         }
@@ -1259,7 +1289,14 @@ public class CameraNeoService extends LifecycleService {
                             } else {
                                 Log.d(TAG, "Camera session configured and ready");
 
-                                photoSession.pollFirstQueuedRequestIntoCurrent();
+                                // During a warm-up the synthetic warm request is already the active
+                                // capture; polling here would let a take_photo that raced in hijack
+                                // it and then get dropped when warm-up parks. Skip the poll while
+                                // warming — finishWarmUpReady() dispatches any queued photo after the
+                                // session is warm.
+                                if (!photoSession.isWarmingUp()) {
+                                    photoSession.pollFirstQueuedRequestIntoCurrent();
+                                }
 
                                 // Start proper preview for photos with AE state monitoring
                                 photoSession.startPreviewWithAeMonitoring();

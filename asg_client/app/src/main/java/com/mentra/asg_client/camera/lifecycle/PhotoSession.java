@@ -92,6 +92,14 @@ public final class PhotoSession {
      */
     @Nullable private volatile WarmUpRequest warmUpRequest;
 
+    /**
+     * A {@code camera_warm_up} that arrived while a capture was in flight. Its 15s lease can't start
+     * until the capture settles, so it's stashed here and consumed by {@link
+     * #dispatchNextPhotoRequest} once the queue drains. Kept separate from {@link #warmUpRequest} so
+     * it never triggers the open-time warm-preview branch.
+     */
+    @Nullable private volatile WarmUpRequest deferredWarmRequest;
+
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
@@ -434,6 +442,18 @@ public final class PhotoSession {
         synchronized (hooks.serviceLock()) {
             QueuedPhotoRequestQueue queue = QueuedPhotoRequestQueue.getInstance();
             if (queue.isEmpty()) {
+                WarmUpRequest deferred = deferredWarmRequest;
+                if (deferred != null) {
+                    // A camera_warm_up arrived mid-capture; now that the capture settled, start its
+                    // warm lease and report ready instead of the photo's short keep-alive.
+                    Log.d(TAG, "Queue empty — starting deferred camera_warm_up lease");
+                    deferredWarmRequest = null;
+                    hooks.startWarmKeepAliveTimer(deferred.durationMs);
+                    if (deferred.onReady != null) {
+                        hooks.executor().execute(deferred.onReady);
+                    }
+                    return;
+                }
                 Log.d(TAG, "No photo requests in queue");
                 hooks.startKeepAliveTimer();
                 return;
@@ -569,10 +589,17 @@ public final class PhotoSession {
             Runnable onReady,
             java.util.function.Consumer<String> onError) {
         synchronized (hooks.serviceLock()) {
-            // Warm-up must never disrupt an in-flight capture.
+            // A capture is in flight. Don't claim "ready" with no lease — the capture's own short
+            // keep-alive would close the camera well before the requested TTL. Defer: stash the
+            // request so dispatchNextPhotoRequest starts the warm lease and fires ready once the
+            // capture settles (honest ready, real lease).
             if (shotState != AeStateMachine.ShotState.IDLE) {
-                Log.d(TAG, "camera_warm_up ignored — capture in progress (state " + shotState + ")");
-                if (onReady != null) onReady.run();
+                Log.d(
+                        TAG,
+                        "camera_warm_up deferred — capture in progress (state " + shotState + ")");
+                deferredWarmRequest =
+                        new WarmUpRequest(
+                                size, exposureTimeNs, captureSettings, durationMs, onReady, onError);
                 return;
             }
 
@@ -633,6 +660,12 @@ public final class PhotoSession {
         warmUpRequest = null;
         if (req != null && req.onReady != null) {
             hooks.executor().execute(req.onReady);
+        }
+        // A take_photo may have raced in while the camera was opening for warm-up; onConfigured
+        // skips the queue poll during warm-up so it isn't dropped. Take it now on the freshly warmed
+        // session instead of stranding it on the queue until the lease expires.
+        if (!QueuedPhotoRequestQueue.getInstance().isEmpty()) {
+            dispatchNextPhotoRequest();
         }
     }
 
