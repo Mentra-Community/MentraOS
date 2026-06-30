@@ -6,11 +6,12 @@ type LoginStep = "email" | "code";
 type LoginStatus = "idle" | "loading" | "error";
 
 export function LoginPage() {
+  const initialAuthError = getAuthErrorMessage();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<LoginStep>("email");
-  const [status, setStatus] = useState<LoginStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
+  const [status, setStatus] = useState<LoginStatus>(initialAuthError ? "error" : "idle");
+  const [message, setMessage] = useState<string | null>(initialAuthError);
   const postLoginTarget = getPostLoginTarget();
   const returnToUrl = getPostLoginReturnToUrl(postLoginTarget);
 
@@ -191,6 +192,12 @@ function getPostLoginTarget(): string {
 function getPostLoginReturnToUrl(path: string): string {
   if (typeof window === "undefined") return path;
   return new URL(path, window.location.origin).toString();
+}
+
+function getAuthErrorMessage(): string | null {
+  if (typeof window === "undefined") return null;
+  const message = new URLSearchParams(window.location.search).get("auth_error");
+  return message?.trim() || null;
 }
 
 function postJson(path: string, body: unknown): Promise<Response> {

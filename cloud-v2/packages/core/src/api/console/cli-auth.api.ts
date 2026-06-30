@@ -156,20 +156,42 @@ async function getCallback(c: AppContext) {
   deleteCookie(c, STATE_COOKIE, { path: "/api/console/auth" });
   deleteCookie(c, RETURN_TO_COOKIE, { path: "/api/console/auth" });
 
-  if (!code) throw new InvalidRequest("missing WorkOS authorization code");
+  if (!code) {
+    return redirectToConsoleLoginError(
+      c,
+      "Sign-in could not be completed. Please try again.",
+      returnTo,
+    );
+  }
   if (!state || !expectedState || state !== expectedState) {
-    throw new InvalidRequest("invalid WorkOS authorization state");
+    return redirectToConsoleLoginError(
+      c,
+      "Sign-in expired. Please try again.",
+      returnTo,
+    );
   }
 
   const config = workosConfig();
-  const response = await workos().userManagement.authenticateWithCode({
-    code,
-    clientId: config.clientId,
-    session: {
-      sealSession: true,
-      cookiePassword: config.cookiePassword,
-    },
-  });
+  let response: Awaited<ReturnType<ReturnType<typeof workos>["userManagement"]["authenticateWithCode"]>>;
+  try {
+    response = await workos().userManagement.authenticateWithCode({
+      code,
+      clientId: config.clientId,
+      session: {
+        sealSession: true,
+        cookiePassword: config.cookiePassword,
+      },
+    });
+  } catch (error) {
+    if (isWorkosRequestError(error)) {
+      return redirectToConsoleLoginError(
+        c,
+        "Sign-in expired or could not be completed. Please try again.",
+        returnTo,
+      );
+    }
+    throw error;
+  }
 
   setSessionCookie(c, response.sealedSession);
   return c.redirect(returnTo ?? `${config.consoleUrl}/dashboard`);
@@ -1132,6 +1154,16 @@ function workosErrorStatus(error: unknown): number {
   const maybe = error as { status?: number; statusCode?: number };
   const status = maybe.status ?? maybe.statusCode;
   return typeof status === "number" && status >= 400 && status < 600 ? status : 400;
+}
+
+function redirectToConsoleLoginError(c: AppContext, message: string, returnTo: string | null): Response {
+  const url = new URL(workosConfig().consoleUrl);
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("auth_error", message);
+  if (returnTo) url.searchParams.set("returnTo", returnTo);
+  return c.redirect(url.toString());
 }
 
 function isConflictError(error: unknown): boolean {
