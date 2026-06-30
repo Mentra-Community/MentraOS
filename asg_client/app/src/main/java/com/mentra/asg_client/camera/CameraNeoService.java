@@ -880,21 +880,25 @@ public class CameraNeoService extends LifecycleService {
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
     private void performWarmUp(String size, Long exposureTimeNs, long durationMs) {
-        // Bind the pending callbacks (set by the static warmUpCamera entry) to this instance.
+        // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK hold,
+        // so warmUpRequest is set before the lock is released. Splitting them lets a second
+        // warmUpCamera slip through the entry guard in the gap between clearing the pending list and
+        // setupWarmUp setting warmUpRequest; its busy-reject (fireWarmError) would then fail the
+        // first caller's callback too. setupWarmUp re-acquires SERVICE_LOCK reentrantly.
         synchronized (SERVICE_LOCK) {
             warmCallbacks.addAll(sPendingWarmCallbacks);
             sPendingWarmCallbacks.clear();
             if (!warmCallbacks.isEmpty()) {
                 warmStoppedCallback = warmCallbacks.get(warmCallbacks.size() - 1);
             }
+            photoSession.setupWarmUp(
+                    size,
+                    exposureTimeNs,
+                    PhotoCaptureSettings.EMPTY,
+                    durationMs,
+                    this::fireWarmReady,
+                    this::fireWarmError);
         }
-        photoSession.setupWarmUp(
-                size,
-                exposureTimeNs,
-                PhotoCaptureSettings.EMPTY,
-                durationMs,
-                this::fireWarmReady,
-                this::fireWarmError);
     }
 
     /** Resolve every in-flight warm-up: the shared camera is warm for all of them. */
