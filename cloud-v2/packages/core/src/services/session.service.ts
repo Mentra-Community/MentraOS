@@ -32,6 +32,7 @@ import {
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { RevokedJtiModel } from "../models/revoked-jti.model";
 import { OemModel } from "../models/oem.model";
+import { EnterpriseOrgModel } from "../models/enterprise-org.model";
 import {
   InvalidGrant,
   InvalidRequest,
@@ -168,16 +169,11 @@ export async function refreshSession(args: {
     throw new InvalidGrant("refresh_token session identity is incomplete");
   }
 
-  // OEM-disabled mid-session check. If the OEM was terminated after this
-  // session was issued, refuse to re-up. The built-in "mentra" OEM has no oems
-  // record (its users authenticate with a shared secret, not a JWKS), so skip
-  // the lookup for it.
-  if (oldDoc.tenantId !== MENTRA_OEM_ID) {
-    const oem = await OemModel.findOne({ tenantId: oldDoc.tenantId }).lean();
-    if (!oem || oem.disabled) {
-      throw new UnauthorizedClient(`oem ${oldDoc.tenantId} unknown or disabled`);
-    }
-  }
+  // Mid-session revocation check. If the tenant's authority was terminated
+  // after this session was issued, refuse to re-up. The tenant may be an OEM
+  // (oems record) or an enterprise trusted-issuer org (enterprise_orgs record);
+  // the built-in "mentra" tenant has no backing record and is always allowed.
+  await assertTenantStillAuthorized(oldDoc.tenantId);
 
   // Mint fresh tokens. We reuse the existing sessionId so admin handles
   // remain stable across refreshes.
@@ -214,6 +210,40 @@ export async function refreshSession(args: {
     token_type: "Bearer",
     expires_in: ACCESS_TOKEN_TTL_SEC,
   };
+}
+
+/**
+ * Mid-session revocation guard for the refresh flow. A session's tenant is one
+ * of three kinds, each with its own backing record and "still authorized" rule:
+ *   - the built-in "mentra" tenant: no backing record, always allowed,
+ *   - an OEM (legacy JWKS issuer): allowed while its `oems` row is not disabled,
+ *   - an enterprise trusted-issuer org: allowed while its `enterprise_orgs` row
+ *     has status "active".
+ * Enterprise tenants have NO `oems` row (their tenantId comes from EnterpriseOrg,
+ * see verifyTrustedIssuerJwt in oem.service), so checking only OemModel would
+ * reject every enterprise session on its first refresh once the access token
+ * expired. We check OEMs first, then enterprise orgs, then reject.
+ */
+async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
+  if (tenantId === MENTRA_OEM_ID) return;
+
+  const oem = await OemModel.findOne({ tenantId }).lean();
+  if (oem) {
+    if (oem.disabled) {
+      throw new UnauthorizedClient(`oem ${tenantId} unknown or disabled`);
+    }
+    return;
+  }
+
+  const enterpriseOrg = await EnterpriseOrgModel.findOne({ tenantId }).lean();
+  if (enterpriseOrg) {
+    if (enterpriseOrg.status !== "active") {
+      throw new UnauthorizedClient(`enterprise org ${tenantId} disabled`);
+    }
+    return;
+  }
+
+  throw new UnauthorizedClient(`tenant ${tenantId} unknown or disabled`);
 }
 
 /**

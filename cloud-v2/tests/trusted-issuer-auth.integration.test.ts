@@ -176,6 +176,35 @@ describe("enterprise trusted-issuer token exchange", () => {
     const res = await exchange(mintRawJwt({ iss: "legacy-oem", extraClaims: {} }));
     expect(res.status).toBe(401);
   });
+
+  test("enterprise session survives refresh (active org)", async () => {
+    // Regression: refresh used to look the tenant up only in OemModel, but an
+    // enterprise tenantId lives in EnterpriseOrg, so enterprise sessions died on
+    // the first refresh after the access token expired.
+    const exchanged = (await (await exchange(mintEnterpriseJwt({}))).json()) as {
+      refresh_token: string;
+    };
+    expect(exchanged.refresh_token).toBeTruthy();
+
+    const res = await refresh(exchanged.refresh_token);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { access_token?: string; refresh_token?: string };
+    expect(body.access_token).toBeTruthy();
+    expect(body.refresh_token).toBeTruthy();
+  });
+
+  test("refresh is refused after the enterprise org is disabled", async () => {
+    const exchanged = (await (await exchange(mintEnterpriseJwt({}))).json()) as {
+      refresh_token: string;
+    };
+    await EnterpriseOrgModel.updateOne(
+      { tenantId: TENANT_ID },
+      { $set: { status: "disabled" } },
+    );
+
+    const res = await refresh(exchanged.refresh_token);
+    expect(res.status).toBe(401);
+  });
 });
 
 function mintEnterpriseJwt(overrides: {
@@ -214,6 +243,20 @@ async function exchange(jwt: string): Promise<Response> {
   });
   return coreApp.fetch(
     new Request("http://localhost/api/client/auth/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    }),
+  );
+}
+
+async function refresh(refreshToken: string): Promise<Response> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
+  return coreApp.fetch(
+    new Request("http://localhost/api/client/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
