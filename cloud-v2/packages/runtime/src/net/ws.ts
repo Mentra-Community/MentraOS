@@ -103,7 +103,7 @@ export interface WsData {
   audioSessionId: string;
   /** From the verified access token. */
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   /** The auth-session id (from the access token's `session_id` claim). */
   authSessionId: string;
   /**
@@ -116,6 +116,12 @@ export interface WsData {
   encryptionKeyB64: string;
   /** Epoch ms of the last inbound WS frame — passive liveness for takeover checks. */
   lastInboundAt: number;
+  /**
+   * Set when a newer socket for the same user takes over. The socket may
+   * still be physically open for a short moment, but it must stop owning audio
+   * subscriptions immediately.
+   */
+  supersededAt?: number;
 }
 
 export interface SessionEntry {
@@ -266,6 +272,7 @@ export function hasLiveAudioSession(
       entry.data.mentraUserId === mentraUserId &&
       entry.data.audioSessionId === audioSessionId
     ) {
+      if (entry.data.supersededAt !== undefined) return false;
       return Date.now() - entry.data.lastInboundAt <= SESSION_LIVENESS_WINDOW_MS;
     }
   }
@@ -282,7 +289,10 @@ export function forwardToUserSessions(
 ): void {
   const payload = JSON.stringify(message);
   for (const entry of sessionByTag.values()) {
-    if (entry.data.mentraUserId === mentraUserId) {
+    if (
+      entry.data.mentraUserId === mentraUserId &&
+      entry.data.supersededAt === undefined
+    ) {
       try {
         entry.ws.send(payload);
       } catch (err) {
@@ -364,7 +374,7 @@ export async function tryWsUpgrade(
   const encryptionKeyB64 = crypto.randomBytes(32).toString("base64");
   const tagRecord = {
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     audioSessionId,
     authSessionId: verified.sessionId,
     podId,
@@ -388,7 +398,7 @@ export async function tryWsUpgrade(
     sessionTag,
     audioSessionId,
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     authSessionId: verified.sessionId,
     // 32-byte secretbox key for this session. Stored in Redis with the reserved
     // sessionTag so any ingress pod can decrypt UDP frames. Sent to the client
@@ -487,6 +497,14 @@ export const wsHandlers: WebSocketHandler<WsData> = {
 
   message(ws, msg) {
     ws.data.lastInboundAt = Date.now();
+    if (ws.data.supersededAt !== undefined) {
+      try {
+        ws.close(1012, "superseded by newer session");
+      } catch {
+        /* already closing */
+      }
+      return;
+    }
     // String frames are v2 protocol control messages; binary frames are the
     // WS-fallback audio path (same 6-byte header + payload as UDP).
     if (typeof msg === "string") {
@@ -663,6 +681,7 @@ async function handleConnectionInit(
     init.audio?.codec ?? "lc3",
     init.audio?.frameSizeBytes,
   );
+  supersedeOlderSessionsForUser(ws.data);
 
   // Seed the subscription source-of-truth key atomically with session creation,
   // so audio that starts flowing right after the ack is transcribed against the
@@ -777,6 +796,7 @@ async function handleWsBinaryAudio(
   ws: ServerWebSocket<WsData>,
   msg: Buffer | Uint8Array,
 ): Promise<void> {
+  if (ws.data.supersededAt !== undefined) return;
   const packet = parseAudioPacket(msg);
   if (!packet) {
     logger.debug(
@@ -812,6 +832,48 @@ async function handleWsBinaryAudio(
       { err, sessionTag: ws.data.sessionTag },
       "ws binary audio ingest failed",
     );
+  }
+}
+
+function supersedeOlderSessionsForUser(current: WsData): void {
+  for (const entry of sessionByTag.values()) {
+    const data = entry.data;
+    if (data.sessionTag === current.sessionTag) continue;
+    if (data.supersededAt !== undefined) continue;
+    if (data.mentraUserId !== current.mentraUserId) continue;
+
+    data.supersededAt = Date.now();
+    const interval = refreshIntervals.get(data.sessionTag);
+    if (interval) {
+      clearInterval(interval);
+      refreshIntervals.delete(data.sessionTag);
+    }
+    unregisterSessionTag(data.sessionTag).catch((err) => {
+      logger.warn(
+        { err, sessionTag: data.sessionTag },
+        "sessionTag unregister failed after supersede",
+      );
+    });
+    logger.warn(
+      {
+        mentraUserId: data.mentraUserId,
+        oldSessionTag: data.sessionTag,
+        oldAudioSessionId: data.audioSessionId,
+        oldAuthSessionId: data.authSessionId,
+        newSessionTag: current.sessionTag,
+        newAudioSessionId: current.audioSessionId,
+        newAuthSessionId: current.authSessionId,
+      },
+      "ws session superseded by newer socket for same user",
+    );
+    try {
+      entry.ws.close(1012, "superseded by newer session");
+    } catch (err) {
+      logger.warn(
+        { err, sessionTag: data.sessionTag },
+        "ws close failed after supersede",
+      );
+    }
   }
 }
 

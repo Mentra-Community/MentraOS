@@ -6,7 +6,7 @@
  *   - a Supabase session JWT (HS256, verified with SUPABASE_JWT_SECRET), and
  *   - a legacy mentra-core token (HS256, verified with MENTRA_CORE_JWT_SECRET).
  *
- * Both resolve to the built-in "mentra" OEM (oemId "mentra"), which has no oems
+ * Both resolve to the built-in "mentra" OEM (tenantId "mentra"), which has no oems
  * record and no JWKS. This is the path the mobile app uses today, so it gates
  * the device e2e.
  *
@@ -89,7 +89,7 @@ beforeEach(async () => {
 // === Tests ===
 
 describe("Mentra user exchange — Supabase session", () => {
-  test("happy path: supabase JWT → mentra tokens, oemId 'mentra'", async () => {
+  test("happy path: supabase JWT → mentra tokens, tenantId 'mentra'", async () => {
     const jwt = await mintHs256({ sub: "sb-user-1" });
 
     const res = await exchange(jwt);
@@ -106,7 +106,7 @@ describe("Mentra user exchange — Supabase session", () => {
     expect(body.access_token).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/);
 
     const claims = decodeJwtPayload(body.access_token);
-    expect(claims.oem_id).toBe("mentra");
+    expect(claims.tenant_id).toBe("mentra");
     expect(typeof claims.sub).toBe("string");
     expect(claims.sub as string).toMatch(/^mu_/);
   });
@@ -156,7 +156,7 @@ describe("Mentra user exchange — legacy mentra-core token", () => {
     const res = await exchange(jwt);
     expect(res.status).toBe(200);
     const claims = decodeJwtPayload(((await res.json()) as { access_token: string }).access_token);
-    expect(claims.oem_id).toBe("mentra");
+    expect(claims.tenant_id).toBe("mentra");
   });
 });
 

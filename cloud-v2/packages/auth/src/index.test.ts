@@ -3,10 +3,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import * as jose from "jose";
 
 import {
+  MENTRA_JWKS_URLS,
   MentraAuthError,
   createMentraAuth,
   extractBearerToken,
   mentraJwksUrl,
+  mentraJwksUrls,
 } from "./index";
 
 const TEST_PACKAGE = "com.test.miniapp";
@@ -32,8 +34,36 @@ const server = Bun.serve({
   },
 });
 
+// A second Mentra environment: the SAME `kid` with DIFFERENT key material. This
+// reproduces the real cross-environment collision (prod/staging/dev/debug all use
+// kid "mentra-miniapp-1" but distinct keys).
+const keypairB = crypto.generateKeyPairSync("ed25519");
+const privatePemB = keypairB.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const publicPemB = keypairB.publicKey.export({ type: "spki", format: "pem" }).toString();
+const publicKeyB = await jose.importSPKI(publicPemB, "EdDSA", { extractable: true });
+const publicJwkB = await jose.exportJWK(publicKeyB);
+const jwksB = {
+  keys: [{ ...publicJwkB, alg: "EdDSA", use: "sig", kid: "mentra-miniapp-1" }],
+};
+
+const serverB = Bun.serve({
+  port: 0,
+  fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/.well-known/jwks.json") {
+      return Response.json(jwksB);
+    }
+    return new Response("not found", { status: 404 });
+  },
+});
+
+// A guaranteed-unreachable endpoint (port 1) used to prove that a successful or
+// claim-rejected verification never fetches later endpoints in the list.
+const UNREACHABLE_JWKS_URL = "http://127.0.0.1:1/.well-known/jwks.json";
+
 afterAll(() => {
   server.stop(true);
+  serverB.stop(true);
 });
 
 describe("@mentra/auth miniapp auth", () => {
@@ -47,7 +77,7 @@ describe("@mentra/auth miniapp auth", () => {
     const verified = await auth.verifyAuthHeader(`Bearer ${token}`);
 
     expect(verified.mentraUserId).toBe("user_123");
-    expect(verified.oemId).toBe("test-oem");
+    expect(verified.tenantId).toBe("test-oem");
     expect(verified.packageName).toBe(TEST_PACKAGE);
     expect(verified.tokenId).toBe("token_123");
   });
@@ -149,17 +179,99 @@ describe("@mentra/auth miniapp auth", () => {
   });
 });
 
+describe("@mentra/auth multi-environment JWKS fallback", () => {
+  const urlA = `${server.url.origin}/.well-known/jwks.json`;
+  const urlB = `${serverB.url.origin}/.well-known/jwks.json`;
+
+  test("falls through to the environment that signed the token (same kid, different key)", async () => {
+    const token = await mintWithKey(privatePemB, TEST_PACKAGE);
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: [urlA, urlB] });
+
+    const verified = await auth.verifyToken(token);
+
+    expect(verified.mentraUserId).toBe("user_b");
+  });
+
+  test("verifies against the first environment without fetching later ones", async () => {
+    const token = await mintMiniappToken(TEST_PACKAGE); // signed by env A
+    // env A is first; the unreachable URL second would error if it were ever fetched.
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrls: [urlA, UNREACHABLE_JWKS_URL],
+      timeoutMs: 1_000,
+    });
+
+    const verified = await auth.verifyToken(token);
+
+    expect(verified.mentraUserId).toBe("user_123");
+  });
+
+  test("a claim failure on the matching environment is not retried across others", async () => {
+    const token = await mintWithKey(privatePemB, TEST_PACKAGE, {
+      expirationTime: Math.floor(Date.now() / 1000) - 60,
+    });
+    // env B signs and is in the middle; if expiry were mistaken for a key mismatch,
+    // verification would reach the unreachable URL and fail with a fetch error instead.
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrls: [urlA, urlB, UNREACHABLE_JWKS_URL],
+      clockTolerance: 0,
+      timeoutMs: 1_000,
+    });
+
+    await expect(auth.verifyToken(token)).rejects.toThrow(/exp/i);
+  });
+
+  test("rejects when no environment holds the key", async () => {
+    const token = await mintWithKey(privatePemB, TEST_PACKAGE, { kid: "unknown-kid-9" });
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrls: [urlA, urlB] });
+
+    await expect(auth.verifyToken(token)).rejects.toBeInstanceOf(MentraAuthError);
+  });
+
+  test("an explicit single jwksUrl disables fallback", async () => {
+    const token = await mintMiniappToken(TEST_PACKAGE); // signed by env A
+    // Point only at env B: with fallback disabled, the env A token must be rejected.
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlB });
+
+    await expect(auth.verifyToken(token)).rejects.toBeInstanceOf(MentraAuthError);
+  });
+
+  test("defaults to the full ordered Mentra environment list", () => {
+    expect(mentraJwksUrls()).toEqual(MENTRA_JWKS_URLS);
+    expect(mentraJwksUrls()).toHaveLength(4);
+    expect(mentraJwksUrl()).toBe(MENTRA_JWKS_URLS[0]);
+  });
+});
+
 async function mintMiniappToken(
   audience: string,
   opts: { expirationTime?: string | number; issuer?: string } = {},
 ): Promise<string> {
   const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
-  return new jose.SignJWT({ oemId: "test-oem" })
+  return new jose.SignJWT({ tenantId: "test-oem" })
     .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1" })
     .setIssuer(opts.issuer ?? TEST_ISSUER)
     .setAudience(audience)
     .setSubject("user_123")
     .setJti("token_123")
+    .setIssuedAt()
+    .setExpirationTime(opts.expirationTime ?? "1h")
+    .sign(privateKey);
+}
+
+async function mintWithKey(
+  privatePemArg: string,
+  audience: string,
+  opts: { kid?: string; expirationTime?: string | number } = {},
+): Promise<string> {
+  const privateKey = await jose.importPKCS8(privatePemArg, "EdDSA");
+  return new jose.SignJWT({ tenantId: "test-oem" })
+    .setProtectedHeader({ alg: "EdDSA", kid: opts.kid ?? "mentra-miniapp-1" })
+    .setIssuer(TEST_ISSUER)
+    .setAudience(audience)
+    .setSubject("user_b")
+    .setJti("token_b")
     .setIssuedAt()
     .setExpirationTime(opts.expirationTime ?? "1h")
     .sign(privateKey);

@@ -15,6 +15,8 @@ const CLOUD_DEBUG_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
 const CLOUD_DEBUG_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 const CLOUD_STAGING_CORE_URL = "https://core.staging.us-west-2.mentraglass.com"
 const CLOUD_STAGING_RUNTIME_URL = "https://runtime.staging.us-west-2.mentraglass.com"
+const CLOUD_PROD_CORE_URL = "https://core.mentraglass.com"
+const CLOUD_PROD_RUNTIME_URL = "https://runtime.mentraglass.com"
 
 const LOCAL_CORE_PORT = 3000
 const LOCAL_RUNTIME_PORT = 3001
@@ -323,6 +325,15 @@ export default function CloudUrl() {
               flexContainer={false}
               flex
             />
+            <Button
+              compact
+              text="Cloud Prod"
+              onPress={() => applyPreset(CLOUD_PROD_CORE_URL, CLOUD_PROD_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+          </View>
+          <View className="flex-row gap-3">
             {/* Only offered when a Metro dev server is actually detectable.
                 Fills both fields with the metro-auto sentinel: the SAVED value
                 is "my laptop", resolved live on every connect, so it follows

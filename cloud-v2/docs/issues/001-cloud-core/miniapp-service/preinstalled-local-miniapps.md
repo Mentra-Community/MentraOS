@@ -54,7 +54,7 @@ interface PreinstalledMiniappRegistryEntry {
   channel: "stable" | "dev" | "oem"
   minMobileVersion?: string
   maxMobileVersion?: string
-  oemId?: string
+  tenantId?: string
 }
 
 interface PreinstalledMiniappRegistry {

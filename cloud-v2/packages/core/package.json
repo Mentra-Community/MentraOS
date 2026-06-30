@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@mentra/cloud-shared": "workspace:*",
+    "@workos-inc/node": "^10.3.0",
     "hono": "^4.11.1",
     "jose": "^5.9.6",
     "mongoose": "^8.8.4",

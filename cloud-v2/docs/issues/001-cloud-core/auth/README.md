@@ -32,9 +32,9 @@ on-device injection flow). Those two give the full v2 picture.
 ## How the pieces relate
 
 Core-owned paths converge on a Core access token (`aud = "cloud-core"`,
-`sub = mentraUserId`, `oemId`, ...), verified by Core services with the published
+`sub = mentraUserId`, `tenantId`, ...), verified by Core services with the published
 JWKS. OEM users get it via the oem-auth exchange; Mentra-direct users get it via
-the same exchange with reserved `oemId = "mentra"`. Runtime live services are being
+the same exchange with reserved `tenantId = "mentra"`. Runtime live services are being
 split onto their own `cloud-runtime` audience token so Runtime can be self-hosted
 without a live Core dependency; see
 [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md).

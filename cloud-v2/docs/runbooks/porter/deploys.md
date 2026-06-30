@@ -3,10 +3,28 @@
 How code becomes running pods in cloud-v2. Covers our deploy model, env
 layering, and what changes when you `porter apply`.
 
+## Branch to environment mapping
+
+Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
+cluster:
+
+| Branch | Workflow | Porter app | Manifest | Public hosts |
+| --- | --- | --- | --- | --- |
+| `dev` | `cloud-v2-dev.yml` | `cloud-dev` | `porter.dev.yaml` | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com` |
+| `staging` | `cloud-v2-staging.yml` | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| `main` | `cloud-v2-prod.yml` | `cloud-prod` | `porter.prod.yaml` | `core.mentraglass.com`, `runtime.mentraglass.com` |
+
+Each workflow also supports `workflow_dispatch`, which lets us deploy a PR
+branch into one of these environments for validation before merging.
+
+`cloud-debug` is intentionally outside this promotion path. Treat it as an
+explicit shared debugging environment and do not use it as a default test
+target unless the person currently using it agrees.
+
 ## The deploy model
 
-One **Porter app** (`cloud-v2`) with multiple **services**. All services
-share one Docker image — each just runs a different process from it:
+Each Porter app has the same service layout. All services share one Docker
+image — each just runs a different process from it:
 
 | Service | Run | HTTP port | UDP port |
 | --- | --- | --- | --- |
@@ -15,16 +33,16 @@ share one Docker image — each just runs a different process from it:
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
 
-This shape is in [`porter.yaml`](../../../porter.yaml). The build is in
+This shape is in the environment-specific `porter.*.yaml` manifests. The build is in
 [`docker/Dockerfile`](../../../docker/Dockerfile). Note the share-an-image
 approach — single build, multiple entry points. v1 was monolithic; v2's
 three-process model could have been three Docker images, but one image
 with `run:` overrides is simpler and the cost is negligible (a few extra
 MB per service since they all bundle the same node_modules).
 
-## What `porter apply -f porter.yaml` actually does
+## What `porter apply -f porter.<env>.yaml` actually does
 
-1. Reads `porter.yaml`.
+1. Reads the environment manifest.
 2. Builds the Docker image (Dockerfile multi-stage build).
 3. Pushes to our AWS ECR — `042724764545.dkr.ecr.us-west-2.amazonaws.com/...`.
 4. Creates a new app **revision** (Porter's term for a deploy).
@@ -42,14 +60,15 @@ Three layers, in increasing priority:
 1. **Service-level `env:` in `porter.yaml`** — non-secret values like
    `LOG_STDOUT_JSON=true`, `AUDIO_UDP_PORT=8000`.
 2. **Linked env groups** (referenced in `envGroups:` in `porter.yaml`).
-   We use `cloud-v2-dev-doppler` — Doppler auto-syncs the `dev_aws` config
-   into it. See [`doppler/porter-integration.md`](../doppler/porter-integration.md).
+   We use `cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
+   `cloud-v2-prod-doppler`. See
+   [`doppler/porter-integration.md`](../doppler/porter-integration.md).
 3. **App-level env** (rarely set) — overrides env-group values per-app.
 
 Verify what a pod actually sees:
 
 ```bash
-porter env pull --app cloud-v2 --merged | grep MENTRA_JWT
+porter env pull --app cloud-dev --merged | grep MENTRA_JWT
 # Shows the merged env, including env-group values
 ```
 
@@ -57,22 +76,22 @@ porter env pull --app cloud-v2 --merged | grep MENTRA_JWT
 
 ```bash
 # Live logs from one service (Ctrl+C to stop)
-porter app logs cloud-v2 --service core
-porter app logs cloud-v2 --service audio
+porter app logs cloud-dev --service core
+porter app logs cloud-dev --service runtime
 
 # Historical logs
-porter app logs cloud-v2 --service core --since 30m
-porter app logs cloud-v2 --service core --limit 100
+porter app logs cloud-dev --service core --since 30m
+porter app logs cloud-dev --service core --limit 100
 ```
 
 ## Rollback
 
 ```bash
 # Roll back to the previous successful revision
-porter app rollback cloud-v2
+porter app rollback cloud-dev
 
 # Roll back to a specific revision number
-porter app rollback cloud-v2 --revision 5
+porter app rollback cloud-dev --revision 5
 ```
 
 Rollbacks are instant — Porter just shifts the Helm release back to the
@@ -87,7 +106,7 @@ If you only need to change an env var (no code change), you can:
 doppler secrets set FOO=bar --config dev_aws
 
 # Trigger a redeploy so pods pick up the new env.
-porter apply -f porter.yaml
+porter apply -f porter.dev.yaml
 ```
 
 Pods don't auto-restart on env changes (avoids cascading restarts). You

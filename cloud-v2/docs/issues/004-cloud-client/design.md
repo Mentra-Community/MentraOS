@@ -168,7 +168,7 @@ export class Auth implements AuthModule {
   getRuntimeToken(): Promise<string>                                  // cloud-runtime audience
   getCoreToken(): Promise<string>                                     // cloud-core audience
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
-  get identity(): { mentraUserId: string; oemId: string }
+  get identity(): { mentraUserId: string; tenantId: string }
   onExpired(handler: () => void): () => void
 }
 ```
@@ -195,7 +195,7 @@ cloud verifies).
 
 ```ts
 export function decodeClaims(jwt: string): {
-  sub: string; oemId: string; exp: number; [k: string]: unknown
+  sub: string; tenantId: string; exp: number; [k: string]: unknown
 }
 ```
 
@@ -398,8 +398,10 @@ without configuring Core at all.
 3. If two callers ask at once, only **one** refresh request goes out and both get its
    result (a single-flight lock). Without this, a reconnect storm would fire many
    refreshes at once.
-4. If refresh fails (the refresh token is dead or revoked), fire the `onExpired`
-   handler so the host can send the user back through login. Don't retry forever.
+4. If refresh fails (the refresh token is dead or revoked), clear it. If the
+   host configured `getSubjectToken()`, exchange one fresh subject token and
+   continue; otherwise fire `onExpired` so the host can send the user back
+   through login. Don't retry forever.
 
 **`getMiniappToken(packageName)`:** calls `POST /api/client/auth/miniapp-token` with
 the Core token as the Bearer, and caches the result per packageName with its
@@ -407,7 +409,7 @@ expiry. A second call for the same packageName returns the cached token until it
 near expiry, then re-mints (single-flight, same as above). This is what the on-device
 runtime calls at miniapp launch and on refresh.
 
-**`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `oemId` are
+**`identity`:** Core/runtime tokens are JWTs, so claims like `sub` and `tenantId` are
 base64 JSON inside them. `identity` reads them straight off the active token path.
 It does **not** verify the signature: the client isn't a security boundary for its
 own token, the cloud verifies on every call.
@@ -532,8 +534,10 @@ cooperate:
 - If the cloud rejects the live socket with `AUTH_EXPIRED` anyway (clock skew, a
   revoke mid-session), `cloud.runtime` asks `cloud.auth` for a fresh runtime token,
   then reopens with the new token.
-- If token refresh itself fails, `cloud.auth.onExpired` fires once and the host
-  decides what to do (usually: send the user back through login).
+- If token refresh itself fails, `cloud.auth` falls back to one fresh
+  `getSubjectToken()` exchange when available. If that is unavailable or also
+  fails, `cloud.auth.onExpired` fires once and the host decides what to do
+  (usually: send the user back through login).
 
 ## Errors and logging
 

@@ -69,6 +69,7 @@ export default function MiniappDeveloperScannerScreen() {
       let packageName: string | undefined
       let name: string | undefined
       let devPort: string | undefined
+      let devAttestation: string | undefined
 
       if (data.startsWith("miniapp://dev")) {
         const url = new URL(data)
@@ -76,6 +77,7 @@ export default function MiniappDeveloperScannerScreen() {
         name = url.searchParams.get("name") || undefined
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
+        devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
       } else {
@@ -136,6 +138,7 @@ export default function MiniappDeveloperScannerScreen() {
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl: devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
+          devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],

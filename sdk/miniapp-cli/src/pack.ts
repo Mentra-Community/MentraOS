@@ -1,8 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'fs';
 import { resolve, join } from 'path';
+import { buildProduction } from './build.js';
 import { validateManifest } from './manifest.js';
 
 export interface PackOptions {
+  /** Miniapp project root. Defaults to the current working directory. */
+  cwd?: string;
+  /** Run the production build before zipping. Defaults to false. */
+  build?: boolean;
   /** Where to write the resulting zip. Defaults to build/. */
   outDir?: string;
   /** Quiet stdout. The `release` command swallows pack output and prints
@@ -20,7 +25,11 @@ export interface PackOptions {
  * .gitignore coordination needed.
  */
 export async function pack(opts: PackOptions = {}): Promise<string> {
-  const cwd = process.cwd();
+  const cwd = resolve(opts.cwd ?? process.cwd());
+  if (opts.build) {
+    await buildProduction(cwd);
+  }
+
   const distDir = resolve(cwd, 'dist');
   const manifestSrc = resolve(cwd, 'miniapp.json');
   const iconSrc = resolve(cwd, 'icon.png');

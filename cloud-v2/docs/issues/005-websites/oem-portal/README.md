@@ -1,12 +1,13 @@
-# Cloud v2 OEM Portal
+# Cloud v2 Enterprise/OEM Portal
 
-**Status:** Spike in progress. Spec and design pending.
+**Status:** Draft. Spike exists; current proposal is in
+[`../../014-enterprise-portal/`](../../014-enterprise-portal/).
 
 ## Problem
 
-OEM admins need a way to log in to Mentra, manage their account,
-register and rotate their public key, view runtime usage and active
-sessions, invite teammates, and handle other administrative tasks.
+Enterprise and OEM admins need a way to log in to Mentra, manage their account,
+register trusted JWT issuers/JWKS URLs, test token exchange, invite teammates,
+and handle other administrative tasks.
 
 This is a B2B admin surface, distinct from:
 
@@ -25,7 +26,9 @@ This is a B2B admin surface, distinct from:
 - [`spike.md`](./spike.md) — research, prior art on B2B admin auth
   platforms (WorkOS, Clerk B2B, Stytch B2B, Auth0), portal scope
   considerations, decisions still to make
-- `spec.md` — not yet written; pending team review of spike findings
+- [`../../014-enterprise-portal/`](../../014-enterprise-portal/) — current draft
+  spec based on the latest model
+- `spec.md` — not yet written in this folder; superseded for now by 014
 - `design.md` — not yet written; follows spec
 
 ## tl;dr (as of spike)
@@ -37,43 +40,57 @@ Microsoft Entra, generic SAML/OIDC) once, their admins use their
 existing corporate login. Email + password is also supported for
 OEMs without an IdP.
 
+The latest model intentionally keeps the portal lean:
+
+```txt
+EnterpriseOrg
+EnterpriseMembership
+TrustedIssuer
+```
+
+`TrustedIssuer.issuer` is the exact JWT `iss` value and should be a standards-
+aligned HTTPS issuer URL, not a custom `tenantId/env` string.
+
 The portal itself is a small web app with surfaces for:
 
 - Login (handled by WorkOS AuthKit)
-- Account info (the OEM's `oemId`, display name, etc.)
-- Public-key / JWK Set URL management (calls into
-  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) endpoints under
-  `/api/oem/jwks`)
-- Active sessions view (calls
-  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) endpoints for listing /
-  revoking)
+- Account info (the enterprise org's `tenantId`, display name, etc.)
+- Trusted issuer / JWK Set URL management
+- Token exchange test tool
 - Team management (invite admins, role assignment)
+- Audit log
 - Usage and observability surfaces (future)
 
-The portal data model: OEMs have **organizations** (the OEM
-company), with **members** (admin users) belonging to roles
-(owner, admin, viewer). Each member belongs to exactly one OEM.
+The portal data model is separate from Console2's developer org model. A user
+may have access to both products, but the portal models enterprise/OEM auth
+administration, not miniapp package ownership.
 
 Full reasoning, alternatives considered, and open questions in
-[`spike.md`](./spike.md).
+[`spike.md`](./spike.md). Current draft proposal:
+[`../../014-enterprise-portal/`](../../014-enterprise-portal/).
 
 ## Scope boundary
 
-What's in 002:
+What's in scope:
 - OEM admin login flow
 - Portal web app (the screens, routes, role-based access)
-- Org / member / role data model
-- UI for managing the OEM's runtime config (calls the 001 APIs)
+- Enterprise org / member / role data model
+- Trusted issuer and JWKS URL management
+- Token exchange test tool
 
-What's not in 002:
+What's not in scope:
 - The runtime token-exchange endpoint (in 001)
 - Mentra mobile app user auth (separate, Supabase for now)
-- Dev console (separate; consumer auth surface)
+- Dev console / Console2 (separate developer surface)
+- Internal admin site (separate Mentra operator surface)
 - Miniapp store (separate; consumer surface)
 
 ## Cross-references
 
+- [`../../014-enterprise-portal/`](../../014-enterprise-portal/) — current
+  draft spec.
 - [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) — runtime OEM auth. The
-  portal's "manage public key" UI calls 001's endpoints.
+  portal's trusted issuer UI manages the configuration used by this exchange
+  path.
 - Future: audit logging, usage analytics, billing surfaces all
   attach to the portal eventually.
