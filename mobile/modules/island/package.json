@@ -60,7 +60,6 @@
     "expo-location": "*",
     "expo-task-manager": "*",
     "expo-notifications": "*",
-    "expo-modules-core": "*",
     "react-native-share": "*",
     "react-native-localize": "*",
     "react-native-permissions": "*",
