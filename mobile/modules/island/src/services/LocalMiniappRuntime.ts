@@ -159,6 +159,7 @@ const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
+const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
 // delay pongs well past one interval, and killing a healthy-but-busy script
@@ -1099,7 +1100,7 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
         break
-      case MiniappRequestType.REQUEST_WIFI_SETUP:
+      case REQUEST_WIFI_SETUP_TYPE:
         void this.handleRequestWifiSetup(packageName, payload, requestId)
         break
 
@@ -1888,7 +1889,8 @@ class LocalMiniappRuntime {
   private readonly blobStore = new BlobStore({
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
-    getUserId: () => useSettingsStore.getState().getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
+    getUserId: () =>
+      (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) as string | undefined) || "anonymous",
   })
 
   /**

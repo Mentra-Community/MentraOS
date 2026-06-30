@@ -5,8 +5,8 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import NetInfo from "@react-native-community/netinfo"
-import BluetoothSdk from "../../../../bluetooth-sdk/build/_internal"
-import CrustModule from "crust"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import CrustModule from "@mentra/crust"
 import {AppState, AppStateStatus, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 

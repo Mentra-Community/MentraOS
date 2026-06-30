@@ -7,7 +7,7 @@
  * MantleManager. Android-only; a no-op elsewhere. Started by `toolkit.start()`.
  */
 import {shallow} from "zustand/shallow"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
@@ -20,7 +20,7 @@ function pushConfig(): void {
   // Unconditional (matches the prior MantleManager sync) — the listener is
   // Android-only, but CrustModule.setNotificationConfig is a safe no-op elsewhere;
   // the Android-only gating lives on the facade's setEnabled/setBlocklist.
-  CrustModule.setNotificationConfig(enabled, Array.isArray(blocklist) ? blocklist : []).catch((err) =>
+  CrustModule.setNotificationConfig(enabled, Array.isArray(blocklist) ? blocklist : []).catch((err: unknown) =>
     console.warn(`PhoneNotificationsSync: setNotificationConfig failed: ${(err as Error)?.message ?? err}`),
   )
 }

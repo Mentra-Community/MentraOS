@@ -15,8 +15,6 @@ import CrustModule from "@mentra/crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"
-import restComms from "./RestComms"
-import {useSettingsStore} from "../stores/settings"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -180,11 +178,7 @@ class NavigationService {
   }
 
   private noListeners(): boolean {
-    return (
-      this.listeners.size === 0 &&
-      this.locationListeners.size === 0 &&
-      this.routeListeners.size === 0
-    )
+    return this.listeners.size === 0 && this.locationListeners.size === 0 && this.routeListeners.size === 0
   }
 
   public async start(
@@ -726,8 +720,7 @@ async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: numbe
       const props = feature.properties
       // A street-type feature's own name is the road; otherwise read the
       // street from context.
-      const fromStreetType =
-        props?.feature_type === "street" ? props?.name : undefined
+      const fromStreetType = props?.feature_type === "street" ? props?.name : undefined
       const name = (fromStreetType ?? props?.context?.street?.name ?? "").trim()
       if (name) return {ok: true, road: name}
     }

@@ -14,7 +14,7 @@ import {
   useAppStatusStore,
 } from "@mentra/island"
 
-import {DevToolsIcon} from "@/components/miniapps/DevIcons"
+import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
@@ -29,7 +29,6 @@ import {
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
-  lmaInstallerPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
@@ -332,8 +331,8 @@ class BuiltInMiniappCatalog {
       useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
     ) {
       apps.push({
-        packageName: lmaInstallerPackageName,
-        name: translate("miniApps:lmaInstaller"),
+        packageName: "com.mentra.miniappdev",
+        name: translate("miniApps:lmaLoader"),
         type: "standard",
         offline: true,
         offlineRoute: "/miniapps/miniappdev/main",
@@ -346,7 +345,7 @@ class BuiltInMiniappCatalog {
         hidden: false,
         hardwareRequirements: [],
         logoUrl: require("@assets/applet-icons/store.png"),
-        iconComponent: createElement(DevToolsIcon),
+        iconComponent: createElement(DevIcon),
       })
     }
 
