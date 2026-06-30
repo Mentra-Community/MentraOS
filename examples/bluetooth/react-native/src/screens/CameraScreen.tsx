@@ -89,19 +89,15 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
         ispAnalogGain !== null ? `  ispAnalogGain: "${ispAnalogGain}",` : null,
       ].filter((line): line is string => line !== null).join('\n');
   if (!useCloudServer) {
-    return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
-const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
+    return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 const photo = await BluetoothSdk.requestPhoto({
-  requestId: photoRequestId,
   webhookUrl: uploadUrl,
   authToken: null,
 ${requestFields}
 })
 console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   }
-  return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
-const photo = await BluetoothSdk.requestPhoto({
-  requestId: photoRequestId,
+  return `${prefix}const photo = await BluetoothSdk.requestPhoto({
   webhookUrl,
   authToken: null,
 ${requestFields}

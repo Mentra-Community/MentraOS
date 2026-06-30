@@ -3190,7 +3190,6 @@ println("Video stopped: ${'$'}{stopped.status}")
 $prefix
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
-      requestId = requestId,
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
