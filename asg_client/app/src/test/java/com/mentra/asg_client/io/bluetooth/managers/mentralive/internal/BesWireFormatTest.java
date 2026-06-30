@@ -81,7 +81,9 @@ public class BesWireFormatTest {
         BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
 
         assertThat(header.valid).isTrue();
-        assertThat(new String(header.payload, StandardCharsets.UTF_8)).isEqualTo(json);
+        // v2 transport carries the compacted, wrapper-free wire payload (no C/V/B envelope).
+        assertThat(new String(header.payload, StandardCharsets.UTF_8))
+                .isEqualTo(BesWireFormat.createTransmissionWrapperJson(json));
     }
 
     @Test

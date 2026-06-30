@@ -315,7 +315,7 @@ class RestComms {
 
   public updateGlassesState(state: Record<string, any>): AsyncResult<void, Error> {
     flushGlassesStateToServer(state)
-    return Res.ok(undefined)
+    return Res.ok_async(undefined)
   }
 
   /** Immediate glasses-state POST (used by the debounced flusher). */

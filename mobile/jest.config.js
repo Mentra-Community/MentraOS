@@ -17,6 +17,9 @@ module.exports = {
     "<rootDir>/modules/miniapp/",
     "<rootDir>/src/services/photo/",
     "<rootDir>/src/services/streaming/",
+    // bun:test suites — run via `bun test`, not Jest (cannot resolve "bun:test").
+    "<rootDir>/src/stores/settings.test.ts",
+    "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
   ],
   transformIgnorePatterns: [
     "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|core|typesafe-ts|uniwind)",
