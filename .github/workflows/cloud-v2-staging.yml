@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - staging
+      - codex/console2-scaffold
     paths:
       - "cloud-v2/**"
       - ".github/workflows/cloud-v2-staging.yml"
