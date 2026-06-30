@@ -4,7 +4,7 @@ import {
 } from "../../modules/island/src/services/GlassesStatusProjection"
 import {useCoreStore} from "../../modules/island/src/stores/core"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock, emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("GlassesStatusProjection", () => {
   beforeEach(() => {
@@ -42,6 +42,38 @@ describe("GlassesStatusProjection", () => {
       expect.objectContaining({
         deviceModel: "Mentra Live",
         batteryLevel: 77,
+      }),
+    )
+  })
+
+  it("does not let a delayed initial glasses snapshot overwrite a live status event", async () => {
+    let resolveInitialSnapshot: (status: unknown) => void = () => {}
+    ;(bluetoothSdkMock.getGlassesStatus as jest.Mock).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInitialSnapshot = resolve
+      }),
+    )
+
+    startGlassesStatusProjection()
+    emitBluetoothSdkEvent("glasses_status", {
+      connection: {state: "connected", fullyBooted: true},
+      deviceModel: "Live event",
+      batteryLevel: 88,
+    })
+
+    resolveInitialSnapshot({
+      connection: {state: "disconnected"},
+      deviceModel: "Stale snapshot",
+      batteryLevel: 1,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(useGlassesStore.getState()).toEqual(
+      expect.objectContaining({
+        connection: expect.objectContaining({state: "connected"}),
+        deviceModel: "Live event",
+        batteryLevel: 88,
       }),
     )
   })

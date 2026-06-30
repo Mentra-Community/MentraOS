@@ -17,12 +17,18 @@ import {useGlassesStore} from "../stores/glasses"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 
 let unsubs: Array<() => void> = []
+let projectionRunId = 0
 
 export function startGlassesStatusProjection(): void {
   if (unsubs.length) return
 
+  const runId = ++projectionRunId
+  let bluetoothEventSeen = false
+  let glassesEventSeen = false
+
   void BluetoothSdk.getBluetoothStatus()
     .then((status) => {
+      if (runId !== projectionRunId || bluetoothEventSeen) return
       useCoreStore.getState().setCoreInfo(status)
     })
     .catch((error) => {
@@ -31,6 +37,7 @@ export function startGlassesStatusProjection(): void {
 
   void BluetoothSdk.getGlassesStatus()
     .then((status) => {
+      if (runId !== projectionRunId || glassesEventSeen) return
       useGlassesStore.getState().setGlassesInfo(status)
     })
     .catch((error) => {
@@ -40,6 +47,7 @@ export function startGlassesStatusProjection(): void {
   // Bluetooth-adapter status -> core store.
   unsubs.push(
     BluetoothSdk.onBluetoothStatus((changed) => {
+      bluetoothEventSeen = true
       useCoreStore.getState().setCoreInfo(changed)
     }),
   )
@@ -48,6 +56,7 @@ export function startGlassesStatusProjection(): void {
   // OTA-available flag on disconnect).
   unsubs.push(
     BluetoothSdk.onGlassesStatus((changed) => {
+      glassesEventSeen = true
       useGlassesStore.getState().setGlassesInfo(changed)
       localMiniappRuntime.forwardEvent("glasses_connection_state", changed)
       if (changed.connection?.state === "disconnected") {
@@ -58,6 +67,7 @@ export function startGlassesStatusProjection(): void {
 }
 
 export function stopGlassesStatusProjection(): void {
+  projectionRunId++
   unsubs.forEach((unsub) => unsub())
   unsubs = []
 }
