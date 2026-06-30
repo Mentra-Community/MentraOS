@@ -148,6 +148,31 @@ describe("miniapp release lifecycle", () => {
     expect(savedApp?.activeReleaseId).toBe(release.id);
   });
 
+  test("getBundleAsset only serves bundles for accepted or published releases", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.secret",
+      displayName: "Secret",
+      description: "unpublished",
+    });
+    const release = await miniapps.createRelease(developer, {
+      packageName: "com.example.secret",
+      version: "1.0.0",
+      manifest: { packageName: "com.example.secret", name: "Secret", version: "1.0.0" },
+      bundle: new TextEncoder().encode("zip bytes for test"),
+      fileName: "bundle.zip",
+    });
+    const assetId = release.releaseBundleAssetId!;
+
+    // A draft (unreviewed) bundle must not be downloadable by asset id.
+    await expect(registries.getBundleAsset(assetId)).rejects.toMatchObject({ status: 404 });
+
+    // Once accepted, the same asset id resolves.
+    await miniapps.submitRelease(developer, "com.example.secret", release.id);
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    const asset = await registries.getBundleAsset(assetId);
+    expect(asset._id.toString()).toBe(assetId);
+  });
+
   test("developer signing key authorizes dev attestation only for owned package", async () => {
     await miniapps.createMiniApp(developer, {
       packageName: "com.example.devtool",

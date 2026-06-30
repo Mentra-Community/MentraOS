@@ -21,6 +21,7 @@ import {
 } from "../packages/core/src/connections/mongo.connection";
 import { EnterpriseOrgModel } from "../packages/core/src/models/enterprise-org.model";
 import { TrustedIssuerModel } from "../packages/core/src/models/trusted-issuer.model";
+import { OemModel } from "../packages/core/src/models/oem.model";
 import {
   EnterpriseService,
   EnterpriseServiceError,
@@ -54,6 +55,7 @@ beforeEach(async () => {
     EnterpriseOrgModel.deleteMany({ ownerUserId: user.id }),
     EnterpriseOrgModel.deleteMany({ tenantId: /^acme/ }),
     TrustedIssuerModel.deleteMany({ issuer: /^https:\/\/auth\.acme\.example/ }),
+    OemModel.deleteMany({ tenantId: /^legacy/ }),
   ]);
 });
 
@@ -118,6 +120,25 @@ describe("enterprise portal service", () => {
         tenantId: "acme-renamed",
       }),
     ).rejects.toThrow(EnterpriseServiceError);
+  });
+
+  test("rejects the reserved 'mentra' tenant id", async () => {
+    await expect(
+      enterprise.upsertPrimaryOrg(user, { displayName: "Faux Mentra", tenantId: "mentra" }),
+    ).rejects.toMatchObject({ code: "tenant_id_reserved", status: 409 });
+  });
+
+  test("rejects a tenant id already registered to an OEM", async () => {
+    await OemModel.create({
+      tenantId: "legacyoem",
+      displayName: "Legacy OEM",
+      publicKeyMode: "static",
+      publicKey: "test-key",
+    });
+
+    await expect(
+      enterprise.upsertPrimaryOrg(user, { displayName: "Collider", tenantId: "legacyoem" }),
+    ).rejects.toMatchObject({ code: "tenant_id_taken", status: 409 });
   });
 
   test("allows the same issuer URL across environments", async () => {

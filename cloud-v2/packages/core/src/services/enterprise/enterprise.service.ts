@@ -1,5 +1,6 @@
 import { ulid } from "ulid";
 import { EnterpriseOrgModel, type EnterpriseOrg } from "../../models/enterprise-org.model";
+import { OemModel } from "../../models/oem.model";
 import { TrustedIssuerModel, type TrustedIssuer } from "../../models/trusted-issuer.model";
 
 export interface EnterpriseUserIdentity {
@@ -161,9 +162,25 @@ export class EnterpriseServiceError extends Error {
   }
 }
 
+// Tenant IDs are a single namespace shared with OEMs and the built-in "mentra"
+// tenant. The refresh-time revocation check (assertTenantStillAuthorized in
+// session.service) resolves a tenantId against "mentra" -> OEM -> enterprise in
+// that order, so an enterprise org must never claim a reserved or OEM tenantId:
+// a collision would bind enterprise sessions to the wrong authority or bypass
+// revocation entirely.
+const RESERVED_TENANT_IDS = new Set(["mentra"]);
+
 async function assertTenantIdAvailable(tenantId: string): Promise<void> {
-  const existing = await EnterpriseOrgModel.findOne({ tenantId }).lean();
-  if (existing) throw new EnterpriseServiceError("tenant_id_taken", "Tenant ID is already registered", 409);
+  if (RESERVED_TENANT_IDS.has(tenantId)) {
+    throw new EnterpriseServiceError("tenant_id_reserved", "Tenant ID is reserved", 409);
+  }
+  const [enterprise, oem] = await Promise.all([
+    EnterpriseOrgModel.findOne({ tenantId }).lean(),
+    OemModel.findOne({ tenantId }).lean(),
+  ]);
+  if (enterprise || oem) {
+    throw new EnterpriseServiceError("tenant_id_taken", "Tenant ID is already registered", 409);
+  }
 }
 
 async function uniqueSlug(base: string): Promise<string> {

@@ -217,6 +217,15 @@ export class PreinstalledRegistryService {
   async getBundleAsset(assetId: string) {
     const asset = await MiniAppAssetModel.findOne({ _id: assetId, role: "release_bundle" }).lean();
     if (!asset) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
+    // Only serve bundles that belong to a release which cleared review
+    // (accepted/published). Without this, any release_bundle asset id resolves to
+    // a downloadable zip, exposing draft/rejected/unpublished bundles to anyone
+    // who has the id. 404 (not 403) so we do not confirm an id exists.
+    const released = await MiniAppReleaseModel.exists({
+      releaseBundleAssetId: assetId,
+      status: { $in: ["accepted", "published"] },
+    });
+    if (!released) throw new PreinstalledRegistryServiceError("not_found", "bundle asset not found", 404);
     return asset;
   }
 
