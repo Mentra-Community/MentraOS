@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 import { createLogger } from "@mentra/cloud-shared";
 import { WorkOS } from "@workos-inc/node";
 import { DeveloperOrgModel } from "../models/developer-org.model";
+import { DeveloperOrgInvitationModel } from "../models/developer-org-invitation.model";
 import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
@@ -18,6 +19,9 @@ const REFRESH_TOKENS_COLLECTION = "refreshTokens";
 const LEGACY_USER_IDENTITY_INDEX = "oemId_1_oemUserId_1";
 const DEVELOPER_ORG_MEMBERSHIPS_COLLECTION = "developer_org_memberships";
 const LEGACY_MEMBERSHIP_EMAIL_INDEX = "orgId_1_email_1";
+const DEVELOPER_ORGS_COLLECTION = "developer_orgs";
+const DEVELOPER_ORG_INVITATIONS_COLLECTION = "developer_org_invitations";
+const LEGACY_INVITATION_EMAIL_INDEX = "orgId_1_email_1";
 
 type DuplicateUserGroup = {
   _id: {
@@ -42,8 +46,36 @@ export async function runStartupMigrations(): Promise<void> {
   // Build the unique index BEFORE any upserts so concurrent Core startups can't
   // race in duplicate (orgId,userId) rows.
   await safeCreateMembershipIndexes();
+  await safeCreateInvitationIndexes();
   await backfillDeveloperOrgOwners();
   await backfillMembersFromWorkos();
+}
+
+// The invitation collection's (orgId,email) index moved to a partial-unique
+// ("one pending invite per email"). Drop any plain legacy index first so the
+// unique one can be built, then create indexes. Non-fatal.
+async function safeCreateInvitationIndexes(): Promise<void> {
+  const collection = mongoose.connection.collection(DEVELOPER_ORG_INVITATIONS_COLLECTION);
+  try {
+    const indexes = await collection.indexes();
+    const legacy = indexes.find(
+      (index) => index.name === LEGACY_INVITATION_EMAIL_INDEX && !index.partialFilterExpression,
+    );
+    if (legacy) {
+      await collection.dropIndex(LEGACY_INVITATION_EMAIL_INDEX);
+      logger.info({ collection: DEVELOPER_ORG_INVITATIONS_COLLECTION }, "dropped legacy invitation email index");
+    }
+  } catch {
+    // collection may not exist yet
+  }
+  try {
+    await DeveloperOrgInvitationModel.createIndexes();
+  } catch (error) {
+    logger.error(
+      { collection: DEVELOPER_ORG_INVITATIONS_COLLECTION, error: (error as Error)?.message },
+      "failed to create invitation indexes",
+    );
+  }
 }
 
 async function backfillLegacyUserIdentityFields(): Promise<void> {
@@ -204,27 +236,30 @@ async function dedupeDeveloperOrgMemberships(): Promise<void> {
 
 // Membership moved from WorkOS into our DB. Seed the roster once from the
 // existing WorkOS memberships (userId + email/name), preserving any roles we
-// already assigned. Idempotent + skips orgs already backfilled (a member row
-// with an email). Best-effort per org; never fails boot.
+// already assigned. A `membersMigratedAt` marker on the org is set ONLY after
+// every page succeeds, so a mid-pagination failure retries on the next boot
+// instead of getting stuck partially migrated. Best-effort per org; never fails boot.
 async function backfillMembersFromWorkos(): Promise<void> {
   const apiKey = process.env.WORKOS_API_KEY;
   if (!apiKey) return;
   const workos = new WorkOS(apiKey);
-  const orgs = await DeveloperOrgModel.find(
-    { workosOrgId: { $type: "string" } },
-    { orgId: 1, workosOrgId: 1 },
-  ).lean<Array<{ orgId: string; workosOrgId: string }>>();
+  const orgsCollection = mongoose.connection.collection(DEVELOPER_ORGS_COLLECTION);
+  const orgs = await orgsCollection
+    .find(
+      { workosOrgId: { $type: "string" }, membersMigratedAt: { $exists: false } },
+      { projection: { orgId: 1, workosOrgId: 1 } },
+    )
+    .toArray();
 
   let seeded = 0;
   for (const org of orgs) {
-    if (await DeveloperOrgMembershipModel.exists({ orgId: org.orgId, email: { $type: "string" } })) {
-      continue; // already migrated
-    }
+    const orgId = org.orgId as string;
+    const workosOrgId = org.workosOrgId as string;
     try {
       let after: string | undefined;
       do {
         const page = await workos.userManagement.listOrganizationMemberships({
-          organizationId: org.workosOrgId,
+          organizationId: workosOrgId,
           statuses: ["active", "inactive"],
           limit: 100,
           after,
@@ -234,7 +269,7 @@ async function backfillMembersFromWorkos(): Promise<void> {
           if (
             await DeveloperOrgMembershipModel.exists({
               userId: membership.userId,
-              orgId: { $ne: org.orgId },
+              orgId: { $ne: orgId },
             })
           ) {
             continue;
@@ -249,10 +284,10 @@ async function backfillMembersFromWorkos(): Promise<void> {
             // profile fetch is best-effort
           }
           await DeveloperOrgMembershipModel.updateOne(
-            { orgId: org.orgId, userId: membership.userId },
+            { orgId, userId: membership.userId },
             {
               $set: { ...(email ? { email } : {}), ...(name ? { name } : {}) },
-              $setOnInsert: { orgId: org.orgId, userId: membership.userId, role: "member" },
+              $setOnInsert: { orgId, userId: membership.userId, role: "member" },
             },
             { upsert: true },
           );
@@ -260,8 +295,10 @@ async function backfillMembersFromWorkos(): Promise<void> {
         }
         after = page.listMetadata?.after ?? undefined;
       } while (after);
+      // All pages succeeded — mark done so we don't re-scan WorkOS every boot.
+      await orgsCollection.updateOne({ orgId }, { $set: { membersMigratedAt: new Date() } });
     } catch (error) {
-      logger.warn({ orgId: org.orgId, error: (error as Error)?.message }, "member backfill failed for org");
+      logger.warn({ orgId, error: (error as Error)?.message }, "member backfill failed for org");
     }
   }
   if (seeded > 0) {
