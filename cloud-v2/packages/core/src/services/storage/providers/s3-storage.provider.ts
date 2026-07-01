@@ -72,9 +72,14 @@ export function createS3StorageProvider(provider: "r2" | "s3" = "r2"): S3Storage
   );
   // R2 accepts the sentinel "auto" region, but real AWS S3 requires a valid
   // region name, so fall back to a standard AWS region when one is not set.
+  // For provider "s3" the R2-only region vars are intentionally ignored: an
+  // R2_REGION=auto would otherwise sign AWS requests with an invalid region.
   const defaultRegion = provider === "s3" ? "us-east-1" : "auto";
   const region =
-    env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION") ?? defaultRegion;
+    (provider === "s3"
+      ? env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION")
+      : env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION")) ??
+    defaultRegion;
 
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     throw new Error(

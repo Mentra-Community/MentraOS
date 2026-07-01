@@ -13,7 +13,15 @@ export function suggestedOrgDefaults(user: ConsoleUser | undefined) {
     return { displayName: "Mentra Developers", packagePrefix: "com.mentra" };
   }
 
-  const local = email.split("@")[0]?.replace(/[^a-z0-9_]+/g, ".").replace(/^\.+|\.+$/g, "") || "developer";
+  // Build a `dev.<local>` prefix that always satisfies isValidPackagePrefix:
+  // split the email local-part on invalid chars, then drop any leading
+  // non-letters from each segment so every segment starts with a letter
+  // (reverse-DNS segments beginning with a digit or underscore are rejected).
+  const localSegments = (email.split("@")[0] ?? "")
+    .split(/[^a-z0-9_]+/)
+    .map(segment => segment.replace(/^[^a-z]+/, ""))
+    .filter(Boolean);
+  const local = localSegments.join(".") || "developer";
   return {
     displayName: `${name} Team`,
     packagePrefix: `dev.${local}`,

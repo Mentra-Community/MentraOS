@@ -122,6 +122,13 @@ export interface WsData {
    * subscriptions immediately.
    */
   supersededAt?: number;
+  /**
+   * Set while an older socket has been marked superseded but the newer session
+   * has not yet confirmed it can take over (seed succeeded). The socket is held
+   * open — inbound frames are ignored rather than closing it — so a failed
+   * init can restore it. Cleared when the supersede is finalized or restored.
+   */
+  supersedePending?: boolean;
 }
 
 export interface SessionEntry {
@@ -498,6 +505,10 @@ export const wsHandlers: WebSocketHandler<WsData> = {
   message(ws, msg) {
     ws.data.lastInboundAt = Date.now();
     if (ws.data.supersededAt !== undefined) {
+      // A superseded-but-still-pending socket is held open until the newer
+      // session confirms its takeover — ignore its frames without closing so a
+      // failed init can restore it. Once finalized (or never pending), close.
+      if (ws.data.supersedePending) return;
       try {
         ws.close(1012, "superseded by newer session");
       } catch {
@@ -866,6 +877,7 @@ function markOlderSessionsSuperseded(current: WsData): SessionEntry[] {
     if (data.mentraUserId !== current.mentraUserId) continue;
 
     data.supersededAt = Date.now();
+    data.supersedePending = true;
     superseded.push(entry);
     logger.warn(
       {
@@ -891,6 +903,7 @@ function markOlderSessionsSuperseded(current: WsData): SessionEntry[] {
 function finalizeSupersededSessions(entries: SessionEntry[]): void {
   for (const entry of entries) {
     const data = entry.data;
+    data.supersedePending = false;
     const interval = refreshIntervals.get(data.sessionTag);
     if (interval) {
       clearInterval(interval);
@@ -923,6 +936,7 @@ function restoreSupersededSessions(entries: SessionEntry[]): void {
   for (const entry of entries) {
     if (entry.data.supersededAt === undefined) continue;
     entry.data.supersededAt = undefined;
+    entry.data.supersedePending = false;
     logger.warn(
       {
         mentraUserId: entry.data.mentraUserId,

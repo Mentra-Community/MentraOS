@@ -15,10 +15,7 @@ import {
   disconnectMongo,
 } from "../packages/core/src/connections/mongo.connection";
 import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
-import {
-  MiniAppService,
-  MiniAppServiceError,
-} from "../packages/core/src/services/miniapps/miniapp.service";
+import { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
 import { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
 
 const ENVIRONMENT = process.env.SEED_ENV ?? "dev";
@@ -58,23 +55,16 @@ async function main() {
   const bundle = new Uint8Array(readFileSync(BUNDLE_PATH));
   console.log(`bundle=${BUNDLE_PATH} bytes=${bundle.byteLength}`);
 
-  // 1) miniapp (idempotent-ish: ignore "already exists")
-  try {
-    await miniapps.createMiniApp(developer, {
-      packageName: PACKAGE,
-      displayName: "Captions",
-      description: "Seeded preinstall miniapp",
-    });
-    console.log(`created miniapp ${PACKAGE}`);
-  } catch (err) {
-    // Only the "already claimed" case is safe to ignore for idempotent re-seeds;
-    // anything else is a real setup failure and must surface.
-    if (err instanceof MiniAppServiceError && err.code === "package_taken") {
-      console.log(`createMiniApp: ${err.message} (already claimed, continuing)`);
-    } else {
-      throw err;
-    }
-  }
+  // 1) miniapp: createMiniApp is idempotent for the same developer/org (it
+  // returns the existing app), so no error-swallowing is needed. It only throws
+  // "package_taken" when the package is owned by another org or archived, which
+  // is a real setup conflict that must surface rather than fail later at release.
+  await miniapps.createMiniApp(developer, {
+    packageName: PACKAGE,
+    displayName: "Captions",
+    description: "Seeded preinstall miniapp",
+  });
+  console.log(`created miniapp ${PACKAGE}`);
 
   // 2) release
   const release = await miniapps.createRelease(developer, {
