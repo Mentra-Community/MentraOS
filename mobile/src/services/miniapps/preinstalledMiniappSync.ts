@@ -1,12 +1,54 @@
 import type {PreinstalledMiniappRegistryEntry} from "@mentra/cloud-client/react-native"
 import {appRegistry} from "@mentra/island"
 import {Directory, File, Paths} from "expo-file-system"
+import semver from "semver"
 
 import {cloudClient} from "@/services/cloudClient"
 
 const LOG_TAG = "PreinstalledMiniappSync"
 
+// The user-facing mobile app version (e.g. "2.12.0"), sourced the same way as
+// the rest of the app (see mobile/src/app/index.tsx getLocalVersion).
+const MOBILE_APP_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || null
+
+/**
+ * Whether the current mobile build satisfies an entry's minMobileVersion /
+ * maxMobileVersion gate. Both bounds are optional and inclusive. Versions are
+ * coerced (semver.coerce) so partial bounds like "2.11" work. If the app
+ * version can't be determined or a bound is unparseable, we conservatively
+ * treat the gate as satisfied rather than blocking installs on bad metadata.
+ */
+function isMobileVersionSupported(entry: PreinstalledMiniappRegistryEntry): boolean {
+  const min = entry.minMobileVersion
+  const max = entry.maxMobileVersion
+  if (!min && !max) return true
+
+  const current = semver.coerce(MOBILE_APP_VERSION ?? undefined)
+  if (!current) {
+    console.warn(
+      `${LOG_TAG}: cannot determine mobile app version (EXPO_PUBLIC_MENTRAOS_VERSION=${MOBILE_APP_VERSION}); skipping version gate for ${entry.packageName}`,
+    )
+    return true
+  }
+
+  if (min) {
+    const minVer = semver.coerce(min)
+    if (minVer && semver.lt(current, minVer)) return false
+  }
+  if (max) {
+    const maxVer = semver.coerce(max)
+    if (maxVer && semver.gt(current, maxVer)) return false
+  }
+  return true
+}
+
 function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
+  if (!isMobileVersionSupported(entry)) {
+    console.log(
+      `${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — mobile ${MOBILE_APP_VERSION} outside [${entry.minMobileVersion ?? "*"}, ${entry.maxMobileVersion ?? "*"}]`,
+    )
+    return false
+  }
   const installedVersions = appRegistry.getInstalledVersions(entry.packageName)
   if (installedVersions.includes(entry.version)) return false
   if (entry.installPolicy === "install_once") return installedVersions.length === 0

@@ -4144,6 +4144,12 @@ public class MediaCaptureService {
                         + " durationMs="
                         + durationMs);
 
+        // CameraNeoService.warmUpCamera rejects an overlapping/mid-capture warm-up synchronously
+        // (it fires onCameraError on this thread before returning). Track that so the return value
+        // reflects a synchronous busy rejection instead of always reporting acceptance. Rejections
+        // that resolve later (async, in the service) are surfaced via camera_status as usual.
+        AtomicBoolean warmUpDispatching = new AtomicBoolean(true);
+        AtomicBoolean rejectedSynchronously = new AtomicBoolean(false);
         CameraNeoService.warmUpCamera(
                 mContext,
                 size,
@@ -4169,14 +4175,23 @@ public class MediaCaptureService {
 
                     @Override
                     public void onCameraError(String errorMessage) {
+                        if (warmUpDispatching.get()) {
+                            rejectedSynchronously.set(true);
+                        }
                         sendCameraStatus(
                                 requestId,
                                 "error",
                                 cameraWarmUpErrorCode(errorMessage),
                                 errorMessage);
                     }
+
+                    @Override
+                    public String getRequestId() {
+                        return requestId;
+                    }
                 });
-        return true;
+        warmUpDispatching.set(false);
+        return !rejectedSynchronously.get();
     }
 
     /**

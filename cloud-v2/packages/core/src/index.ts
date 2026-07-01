@@ -49,7 +49,16 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     "mongodb://127.0.0.1:27017/mentra-cloud-v2";
 
   await connectMongo(mongoUrl);
-  await runStartupMigrations();
+  try {
+    await runStartupMigrations();
+  } catch (error) {
+    // Disconnect best-effort: a secondary disconnect failure must not mask the
+    // original migration error, which is what we rethrow.
+    await disconnectMongo().catch(disconnectError => {
+      logger.warn({ disconnectError }, "failed to disconnect mongo after migration failure");
+    });
+    throw error;
+  }
 
   const app = createApp({ readinessChecks: [mongoReadinessCheck] });
   const server = Bun.serve({ port, fetch: app.fetch });
