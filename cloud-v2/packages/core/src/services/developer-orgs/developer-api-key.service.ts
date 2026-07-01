@@ -45,7 +45,8 @@ export class DeveloperApiKeyService {
   }
 
   async list(orgId: string, env: string): Promise<ApiKeyRecord[]> {
-    const rows = await DeveloperOrgApiKeyModel.find({ orgId, revokedAt: null })
+    // Scope to the current environment, matching create/validate which pin env.
+    const rows = await DeveloperOrgApiKeyModel.find({ orgId, env: safeEnv(env), revokedAt: null })
       .sort({ createdAt: -1 })
       .lean();
     return rows.map(row => serializeApiKey(row, env));
