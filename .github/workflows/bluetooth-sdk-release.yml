@@ -75,6 +75,21 @@ jobs:
             exit 1
           fi
 
+      - name: Setup Bun for release preflight
+        if: steps.release-info.outputs.run_release == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Validate root Bun lockfile
+        if: steps.release-info.outputs.run_release == 'true'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate mobile Bun lockfile
+        if: steps.release-info.outputs.run_release == 'true'
+        working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
       - name: Summarize release decision
         run: |
           {
