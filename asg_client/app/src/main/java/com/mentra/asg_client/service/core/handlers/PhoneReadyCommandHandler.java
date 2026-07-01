@@ -72,13 +72,17 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             if (serviceManager != null
                     && serviceManager.getBluetoothManager() instanceof K900BluetoothManager) {
                 ((K900BluetoothManager) serviceManager.getBluetoothManager())
-                        .resetWireProtocolState();
+                        .resetPhoneWireProtocolState();
             }
 
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
 
             Log.d(TAG, "📱 🔨 Building glasses_ready response...");
             JSONObject response = responseBuilder.buildGlassesReadyResponse();
+            K900BluetoothManager k900Manager = getK900BluetoothManager();
+            if (k900Manager != null) {
+                k900Manager.addPhoneWireCapsIfSupported(response);
+            }
             Log.d(TAG, "📱 📤 Sending glasses_ready response: " + response.toString());
 
             boolean sent = communicationManager.sendBluetoothResponse(response);
@@ -93,13 +97,11 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                 serviceManager.onPhoneReadyHandshakeComplete();
             }
 
-            if (sent
-                    && serviceManager != null
-                    && serviceManager.getBluetoothManager() instanceof K900BluetoothManager) {
-                K900BluetoothManager k900Manager =
-                        (K900BluetoothManager) serviceManager.getBluetoothManager();
+            if (sent && k900Manager != null && k900Manager.isBesBinaryRelaySupported()) {
                 Log.d(TAG, "📱 🤝 Sending BLE wire v2 handshake after glasses_ready");
                 k900Manager.sendWireV2Handshake();
+            } else if (sent && k900Manager != null) {
+                Log.d(TAG, "📱 🤝 Staying on legacy BLE wire path; BES binary relay not advertised");
             }
 
             // Auto-send WiFi status after glasses_ready
@@ -132,6 +134,14 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             Log.e(TAG, "📱 💥 Error handling phone ready command", e);
             return false;
         }
+    }
+
+    private K900BluetoothManager getK900BluetoothManager() {
+        if (serviceManager == null
+                || !(serviceManager.getBluetoothManager() instanceof K900BluetoothManager)) {
+            return null;
+        }
+        return (K900BluetoothManager) serviceManager.getBluetoothManager();
     }
 
     /** Send current hotspot status to phone via BLE */
