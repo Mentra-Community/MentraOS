@@ -98,7 +98,7 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   const startPairing = async (device: Device) => {
-    const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
+    const deviceTypesWithBtClassic = [DeviceTypes.LIVE, DeviceTypes.NIMO]
     if (Platform.OS === "android" || bluetoothClassicConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
       setTimeout(() => {
         BluetoothSdk.connect(device).catch((error) => {

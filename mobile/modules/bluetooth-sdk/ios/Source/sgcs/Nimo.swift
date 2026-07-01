@@ -6,6 +6,7 @@
 //  separate H-T-L-V Opus microphone channel (char 2025).
 //
 
+import AudioToolbox
 import AVFoundation
 import Compression
 import CoreBluetooth
@@ -469,78 +470,207 @@ enum NimoAudioParser {
     }
 }
 
-// MARK: - Opus Decoder (AVAudioConverter)
+// MARK: - Opus Decoder (AudioToolbox)
 
-/// Decodes the glasses' 16 kHz mono Opus frames to 16-bit PCM via the system
-/// Opus decoder, so no native Opus library has to be vendored.
-private class NimoOpusDecoder {
-    private let opusFormat: AVAudioFormat
-    private let pcmFormat: AVAudioFormat
-    private var converter: AVAudioConverter?
+/// Holds the single Opus packet being fed to the AudioConverter for its C input
+/// callback. Uses a manually-allocated buffer + packet-description pointer that
+/// stay valid AFTER the callback returns (the converter reads them out of band),
+/// which a scoped `withUnsafeBytes` pointer would not.
+private final class NimoOpusInputContext {
+    var buffer: UnsafeMutableRawPointer?
+    var byteSize: Int = 0
+    let packetDescPtr = UnsafeMutablePointer<AudioStreamPacketDescription>.allocate(capacity: 1)
+    var consumed = false
+
+    func set(_ data: Data) {
+        buffer?.deallocate()
+        byteSize = data.count
+        let buf = UnsafeMutableRawPointer.allocate(byteCount: max(1, byteSize), alignment: 1)
+        data.copyBytes(to: buf.assumingMemoryBound(to: UInt8.self), count: byteSize)
+        buffer = buf
+        packetDescPtr.pointee = AudioStreamPacketDescription(
+            mStartOffset: 0, mVariableFramesInPacket: 0, mDataByteSize: UInt32(byteSize)
+        )
+        consumed = false
+    }
+
+    deinit {
+        buffer?.deallocate()
+        packetDescPtr.deallocate()
+    }
+}
+
+/// Returned by the input proc once the single cached packet is exhausted. Signalling
+/// "no more data" with a NON-zero status (instead of 0 packets + noErr) is critical:
+/// 0-packets-noErr latches AudioConverter into a permanent end-of-stream state, which
+/// makes it decode the first packet and then return 0 frames for every packet after.
+private let kNimoOpusNoMoreData: OSStatus = 0x6E6F_4D44 // 'noMD'
+
+/// AudioConverter input callback: hand over the one cached Opus packet exactly once,
+/// then report "no more data" so the converter drains and returns what it decoded.
+private func nimoOpusInputProc(
+    _: AudioConverterRef,
+    _ ioNumberDataPackets: UnsafeMutablePointer<UInt32>,
+    _ ioData: UnsafeMutablePointer<AudioBufferList>,
+    _ outDataPacketDescription: UnsafeMutablePointer<UnsafeMutablePointer<AudioStreamPacketDescription>?>?,
+    _ inUserData: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let inUserData else {
+        ioNumberDataPackets.pointee = 0
+        return kNimoOpusNoMoreData
+    }
+    let ctx = Unmanaged<NimoOpusInputContext>.fromOpaque(inUserData).takeUnretainedValue()
+    if ctx.consumed || ctx.buffer == nil {
+        ioNumberDataPackets.pointee = 0
+        return kNimoOpusNoMoreData
+    }
+    ctx.consumed = true
+    ioData.pointee.mNumberBuffers = 1
+    ioData.pointee.mBuffers.mNumberChannels = 1
+    ioData.pointee.mBuffers.mDataByteSize = UInt32(ctx.byteSize)
+    ioData.pointee.mBuffers.mData = ctx.buffer
+    ioNumberDataPackets.pointee = 1
+    outDataPacketDescription?.pointee = ctx.packetDescPtr
+    return noErr
+}
+
+/// Decodes the glasses' mono Opus frames to 16 kHz 16-bit PCM via the system Opus
+/// decoder (AudioToolbox), so no native Opus library has to be vendored.
+///
+/// Uses the low-level AudioConverter (not AVAudioConverter) specifically so the
+/// OpusHead magic cookie can be set — Apple's Opus decoder needs it to initialize,
+/// and AVAudioConverter has no way to provide it, so the AVAudioConverter path
+/// rejected every packet with an AudioCodec bad-data error. Decodes at Opus' native
+/// 48 kHz (the only rate the decoder supports) and downsamples to 16 kHz, mirroring
+/// the Android MediaCodec path.
+private final class NimoOpusDecoder {
+    private var converter: AudioConverterRef?
+    private let input = NimoOpusInputContext()
+    private var errorLogCount = 0
+    private var zeroFrameCount = 0
+    private var emittedFirst = false
 
     init?() {
-        var desc = AudioStreamBasicDescription(
-            mSampleRate: 16000,
-            mFormatID: kAudioFormatOpus,
-            mFormatFlags: 0,
-            mBytesPerPacket: 0,
-            mFramesPerPacket: 320, // 20 ms at 16 kHz
-            mBytesPerFrame: 0,
-            mChannelsPerFrame: 1,
-            mBitsPerChannel: 0,
-            mReserved: 0
+        var inASBD = AudioStreamBasicDescription(
+            mSampleRate: 48000, mFormatID: kAudioFormatOpus, mFormatFlags: 0,
+            mBytesPerPacket: 0, mFramesPerPacket: 960, mBytesPerFrame: 0,
+            mChannelsPerFrame: 1, mBitsPerChannel: 0, mReserved: 0
         )
-        guard let inFormat = AVAudioFormat(streamDescription: &desc),
-              let outFormat = AVAudioFormat(
-                  commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true
-              )
-        else { return nil }
-        opusFormat = inFormat
-        pcmFormat = outFormat
-        converter = AVAudioConverter(from: inFormat, to: outFormat)
-        if converter == nil {
+        var outASBD = AudioStreamBasicDescription(
+            mSampleRate: 48000, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0
+        )
+
+        var conv: AudioConverterRef?
+        let status = AudioConverterNew(&inASBD, &outASBD, &conv)
+        guard status == noErr, let conv else {
+            Bridge.log("NIMO: AudioConverterNew(Opus) failed: \(status)")
             return nil
         }
+        converter = conv
+
+        // OpusHead identification header (19 bytes) — the same structure the Android
+        // MediaCodec path passes as csd-0. Set as the decompression magic cookie so
+        // the Opus decoder can initialize.
+        var cookie: [UInt8] = Array("OpusHead".utf8)
+        cookie.append(1) // version
+        cookie.append(1) // channel count (mono)
+        cookie.append(contentsOf: [0, 0]) // pre-skip (LE)
+        let rate: UInt32 = 48000 // input sample rate (LE), matches the ASBD
+        cookie.append(UInt8(rate & 0xFF))
+        cookie.append(UInt8((rate >> 8) & 0xFF))
+        cookie.append(UInt8((rate >> 16) & 0xFF))
+        cookie.append(UInt8((rate >> 24) & 0xFF))
+        cookie.append(contentsOf: [0, 0]) // output gain (LE)
+        cookie.append(0) // channel mapping family
+        let cookieStatus = AudioConverterSetProperty(
+            conv, kAudioConverterDecompressionMagicCookie, UInt32(cookie.count), cookie
+        )
+        if cookieStatus != noErr {
+            Bridge.log("NIMO: set Opus magic cookie failed: \(cookieStatus)")
+        }
+        Bridge.log("NIMO: Opus decoder ready (AudioToolbox @48k, OpusHead cookie)")
+    }
+
+    deinit {
+        if let converter { AudioConverterDispose(converter) }
     }
 
     func decode(_ opusFrame: Data) -> Data? {
         guard let converter, !opusFrame.isEmpty else { return nil }
+        input.set(opusFrame)
 
-        let compressed = AVAudioCompressedBuffer(
-            format: opusFormat, packetCapacity: 1, maximumPacketSize: opusFrame.count
-        )
-        opusFrame.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            compressed.data.copyMemory(from: raw.baseAddress!, byteCount: opusFrame.count)
-        }
-        compressed.byteLength = UInt32(opusFrame.count)
-        compressed.packetCount = 1
-        compressed.packetDescriptions?.pointee = AudioStreamPacketDescription(
-            mStartOffset: 0, mVariableFramesInPacket: 0, mDataByteSize: UInt32(opusFrame.count)
-        )
+        let maxFrames: UInt32 = 2880 // up to 60 ms @ 48 kHz
+        var outSamples = [Int16](repeating: 0, count: Int(maxFrames))
+        var producedFrames = maxFrames
+        var status: OSStatus = noErr
 
-        // Up to 40 ms of output per frame, to be safe.
-        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: 640) else {
-            return nil
+        outSamples.withUnsafeMutableBytes { rawOut in
+            var bufferList = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(
+                    mNumberChannels: 1,
+                    mDataByteSize: UInt32(rawOut.count),
+                    mData: rawOut.baseAddress
+                )
+            )
+            let ctx = Unmanaged.passUnretained(input).toOpaque()
+            status = AudioConverterFillComplexBuffer(
+                converter, nimoOpusInputProc, ctx, &producedFrames, &bufferList, nil
+            )
         }
-        var fed = false
-        var error: NSError?
-        let status = converter.convert(to: pcmBuffer, error: &error) { _, outStatus in
-            if fed {
-                outStatus.pointee = .noDataNow
-                return nil
+
+        // Our input proc returns kNimoOpusNoMoreData once the packet is consumed; that
+        // is the normal terminator, not a failure. Anything else with no output is real.
+        if producedFrames == 0 {
+            if status != noErr, status != kNimoOpusNoMoreData {
+                errorLogCount += 1
+                if errorLogCount == 1 || errorLogCount % 100 == 0 {
+                    Bridge.log("NIMO: Opus decode error: \(status) (count=\(errorLogCount))")
+                }
+            } else {
+                zeroFrameCount += 1
+                if zeroFrameCount == 1 || zeroFrameCount % 100 == 0 {
+                    Bridge.log("NIMO: Opus decode produced 0 frames (status=\(status), count=\(zeroFrameCount))")
+                }
             }
-            fed = true
-            outStatus.pointee = .haveData
-            return compressed
-        }
-        if status == .error {
-            Bridge.log("NIMO: Opus decode error: \(error?.localizedDescription ?? "unknown")")
             return nil
         }
-        guard pcmBuffer.frameLength > 0, let channel = pcmBuffer.int16ChannelData else {
-            return nil
+
+        let count = Int(producedFrames)
+        let pcm48 = Array(outSamples.prefix(count)).withUnsafeBufferPointer { Data(buffer: $0) }
+        // The MentraOS pipeline expects 16 kHz mono → decimate 48 kHz by 3.
+        let pcm16 = downsample48kTo16k(pcm48)
+        if !emittedFirst {
+            emittedFirst = true
+            Bridge.log(
+                "NIMO: first Opus PCM decoded (\(count) frames @48k → \(pcm16.count) bytes @16k)"
+            )
         }
-        return Data(bytes: channel[0], count: Int(pcmBuffer.frameLength) * 2)
+        return pcm16
+    }
+
+    /// 48 kHz → 16 kHz: average each group of 3 Int16 samples (cheap low-pass +
+    /// decimate). Matches the Android decoder's downsample48kTo16k.
+    private func downsample48kTo16k(_ pcm48: Data) -> Data {
+        let inSamples = pcm48.count / 2
+        let outSamples = inSamples / 3
+        if outSamples == 0 { return Data() }
+        var out = Data(count: outSamples * 2)
+        pcm48.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
+            let s = src.bindMemory(to: Int16.self)
+            out.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
+                let d = dst.bindMemory(to: Int16.self)
+                for o in 0 ..< outSamples {
+                    let i = o * 3
+                    let sum = Int(s[i]) + Int(s[i + 1]) + Int(s[i + 2])
+                    d[o] = Int16(max(-32768, min(32767, sum / 3)))
+                }
+            }
+        }
+        return out
     }
 }
 
@@ -1365,11 +1495,74 @@ class Nimo: NSObject, SGCManager {
             return true
         }
 
+        // The main Nimo device does NOT advertise its name (or itself) over BLE —
+        // only the "<name>_ble" ANCS side channel does. On Android the vendor
+        // discovers it over CLASSIC (BR/EDR) inquiry; iOS can't do classic
+        // discovery, so instead the glasses are bonded over classic in the iOS
+        // Settings app, which iOS keeps connected at the system level.
+        // retrieveConnectedPeripherals surfaces that system-connected device here —
+        // the primary iOS discovery path (mirrors the vendor's getConnectedDevice(7033)).
+        checkSystemConnectedDevices()
+
+        // Scan unfiltered and identify the Nimo by name OR advertised service UUID
+        // (see didDiscover). Filtering the scan by [7033] would silently miss the
+        // device if it exposes the UART service only in GATT and not in its LE
+        // advertising packet — so we scan everything and inspect each advert.
         centralManager!.scanForPeripherals(
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
         return true
+    }
+
+    /// Surfaces (and auto-connects) Nimo glasses already connected/paired at the
+    /// iOS system level. The device is bonded over classic BT in Settings and does
+    /// not re-advertise its name over LE, so a plain scan can't find it — but
+    /// retrieveConnectedPeripherals(withServices:) returns it with a resolved name.
+    private func checkSystemConnectedDevices() {
+        guard let centralManager else { return }
+        let connected = centralManager.retrieveConnectedPeripherals(
+            withServices: [NimoBLE.SERVICE_UUID]
+        )
+        Bridge.log(
+            "NIMO: retrieveConnectedPeripherals([7033]) → \(connected.count) device(s); "
+                + "target=\(DEVICE_SEARCH_ID)"
+        )
+        for peripheral in connected {
+            let name = peripheral.name ?? "<no name>"
+            Bridge.log("NIMO: system-connected candidate \(name) (\(peripheral.identifier))")
+            // System-connected peripherals carry a resolved name; if one is missing
+            // it can't be name-matched, so connect directly during a targeted connect.
+            if let realName = peripheral.name {
+                handleDiscoveredPeripheral(peripheral, name: realName, rssi: 0)
+            } else if DEVICE_SEARCH_ID != "NOT_SET", self.peripheral == nil {
+                stopScan()
+                self.peripheral = peripheral
+                peripheral.delegate = self
+                centralManager.connect(peripheral, options: nil)
+            }
+        }
+    }
+
+    /// Shared handling for a candidate Nimo peripheral from either the active scan
+    /// or the system-connected list: report it to the UI, and auto-connect when it
+    /// matches the requested device id. Must run on the main queue.
+    private func handleDiscoveredPeripheral(_ peripheral: CBPeripheral, name: String, rssi: Int) {
+        guard isNimoMainDevice(name) else { return }
+
+        Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssi)
+
+        guard DEVICE_SEARCH_ID != "NOT_SET" else { return }
+        guard name == DEVICE_SEARCH_ID else { return }
+        guard self.peripheral == nil else { return }
+
+        Bridge.log("NIMO: Connecting to \(name)")
+        stopScan()
+        lastDeviceName = name
+        lastDeviceUUID = peripheral.identifier.uuidString
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        centralManager?.connect(peripheral, options: nil)
     }
 
     private func connectByUUID() -> Bool {
@@ -2058,29 +2251,41 @@ extension Nimo: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        guard
-            let name = peripheral.name
-                ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        else { return }
+        // The main device advertises service 7033 but no local name; fall back to
+        // the peripheral's (system-resolved) name, which may still be nil here.
+        let name = peripheral.name
+            ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let advServices =
+            advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        let advertisesUart = advServices.contains(NimoBLE.SERVICE_UUID)
         let rssiValue = rssi.intValue
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            guard self.isNimoMainDevice(name) else { return }
+            let nameMatch = name.map(self.isNimoMainDevice) ?? false
+            // Only log plausible candidates to avoid flooding the log with every
+            // nearby BLE device.
+            if nameMatch || advertisesUart {
+                Bridge.log(
+                    "NIMO: discovered name=\(name ?? "<none>") uartAdv=\(advertisesUart) "
+                        + "services=\(advServices.map { $0.uuidString })"
+                )
+            }
 
-            Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
-
-            guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
-            guard name == self.DEVICE_SEARCH_ID else { return }
-            guard self.peripheral == nil else { return }
-
-            Bridge.log("NIMO: Connecting to \(name)")
+            if let name, nameMatch {
+                self.handleDiscoveredPeripheral(peripheral, name: name, rssi: rssiValue)
+                return
+            }
+            // Nameless but advertises the Nimo-exclusive UART service → it IS a Nimo
+            // main device that just doesn't broadcast a name over LE. During a
+            // targeted connect, connect to resolve the name (saved in didConnect).
+            guard advertisesUart, self.DEVICE_SEARCH_ID != "NOT_SET", self.peripheral == nil
+            else { return }
+            Bridge.log("NIMO: nameless UART-service match — connecting to resolve name")
             self.stopScan()
-            self.lastDeviceName = name
-            self.lastDeviceUUID = peripheral.identifier.uuidString
             self.peripheral = peripheral
             peripheral.delegate = self
-            central.connect(peripheral, options: nil)
+            self.centralManager?.connect(peripheral, options: nil)
         }
     }
 
@@ -2088,6 +2293,11 @@ extension Nimo: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Bridge.log("NIMO: Connected to \(peripheral.name ?? "unknown")")
+            // Persist the now-resolved name so the next launch can UUID-fast-path,
+            // and so a connection made via the nameless service match is remembered.
+            if let name = peripheral.name {
+                self.lastDeviceName = name
+            }
             self.lastDeviceUUID = peripheral.identifier.uuidString
             peripheral.discoverServices([NimoBLE.SERVICE_UUID])
         }
