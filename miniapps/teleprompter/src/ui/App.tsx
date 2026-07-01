@@ -46,7 +46,6 @@ export function App() {
               onSetWpm={tp.setWpm}
               onSetLines={tp.setLines}
               onSetWidth={tp.setWidth}
-              onSetVoiceFollow={tp.setVoiceFollow}
               onSetAutoRestart={tp.setAutoRestart}
               onSetShowTimecode={tp.setShowTimecode}
             />
@@ -60,6 +59,7 @@ export function App() {
               onRestart={tp.restart}
               onSeek={tp.seek}
               onNudge={tp.nudge}
+              onSetVoiceFollow={tp.setVoiceFollow}
             />
           )}
         </div>

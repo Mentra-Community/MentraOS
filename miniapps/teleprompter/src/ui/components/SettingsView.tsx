@@ -1,4 +1,4 @@
-import {AlignLeft, Gauge, Mic, Repeat, Rows3, Timer} from "lucide-react"
+import {AlignLeft, Gauge, Repeat, Rows3, Timer} from "lucide-react"
 
 import type {LineWidth, TeleprompterSettings} from "../../shared/types"
 import {ACCENT, ACCENT_FG} from "../lib/theme"
@@ -8,7 +8,6 @@ interface SettingsViewProps {
   onSetWpm: (wpm: number) => void
   onSetLines: (lines: number) => void
   onSetWidth: (width: LineWidth) => void
-  onSetVoiceFollow: (enabled: boolean) => void
   onSetAutoRestart: (enabled: boolean) => void
   onSetShowTimecode: (enabled: boolean) => void
 }
@@ -18,22 +17,14 @@ export function SettingsView({
   onSetWpm,
   onSetLines,
   onSetWidth,
-  onSetVoiceFollow,
   onSetAutoRestart,
   onSetShowTimecode,
 }: SettingsViewProps) {
   return (
     <div className="h-full overflow-y-auto px-4 py-5 space-y-5 bg-zinc-100 scrollbar-hide">
-      {/* Scrolling */}
+      {/* Scrolling — AI Scroll (voice-follow) lives in the Script cockpit; this
+          panel sets the timed scroll speed Play uses. */}
       <Section title="Scrolling">
-        <ToggleRow
-          icon={<Mic className="w-5 h-5" />}
-          label="Voice-follow"
-          description="The prompter listens and advances as you speak. Turn off for a steady timed scroll."
-          checked={settings.voiceFollow}
-          onChange={onSetVoiceFollow}
-        />
-        <Divider />
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <Gauge className="w-5 h-5 text-zinc-900" />

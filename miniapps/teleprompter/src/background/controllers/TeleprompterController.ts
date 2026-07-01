@@ -35,9 +35,9 @@ type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels
 const DEFAULT_SCRIPT = [
   "Welcome to your teleprompter.",
   "",
-  "Paste or type your script here, put on your glasses, and press play. The words appear in front of you, line by line.",
+  "Paste or type your script here, put on your glasses, and press play. The words scroll by on their own at the speed you set, line by line.",
   "",
-  "Leave voice-follow on and the prompter listens — it advances as you speak, and waits when you pause. Turn it off to scroll at a steady pace you set in words per minute.",
+  "Want it to keep pace with you instead? Turn on AI Scroll and the prompter listens — it advances as you speak, and waits when you pause.",
   "",
   "That's it. Look up, speak naturally, and never lose your place.",
 ].join("\n")
@@ -47,7 +47,10 @@ const DEFAULT_SETTINGS: TeleprompterSettings = {
   wpm: 130,
   numberOfLines: 4,
   lineWidth: 2,
-  voiceFollow: true,
+  // Default to timed auto-scroll: pressing Play advances the script on its own.
+  // Voice-follow ("AI Scroll") is an explicit opt-in via the cockpit toggle —
+  // otherwise Play silently waits for speech and reads as "it doesn't work".
+  voiceFollow: false,
   autoRestart: false,
   showTimecode: false,
 }
