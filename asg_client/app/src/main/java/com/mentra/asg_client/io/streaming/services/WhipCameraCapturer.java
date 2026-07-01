@@ -404,6 +404,14 @@ public class WhipCameraCapturer implements VideoCapturer {
                     new Range<>(mCameraFps, mCameraFps));
             builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
 
+            // Manual exposure: 1/90s shutter to reduce motion blur in live streams.
+            // AE must be OFF for SENSOR_EXPOSURE_TIME to take effect; the HAL ignores
+            // it when CONTROL_AE_MODE_ON is active.
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, 11_111_111L); // 1/90s in nanoseconds
+            builder.set(CaptureRequest.SENSOR_FRAME_DURATION, 33_333_333L); // 30fps frame duration
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, 800); // ISO sensitivity
+
             // Power-saving: disable video stabilization
             builder.set(
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,

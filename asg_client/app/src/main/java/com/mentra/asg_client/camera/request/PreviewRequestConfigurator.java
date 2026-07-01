@@ -39,6 +39,14 @@ public final class PreviewRequestConfigurator {
             Range<Integer> videoFpsRange = Range.create(videoFps, videoFps);
             previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, videoFpsRange);
             Log.d(TAG, "Video: Using fixed FPS range " + videoFpsRange + " for consistent frame rate");
+
+            // Manual exposure: 1/90s shutter to reduce motion blur in recorded video.
+            // Overrides the CONTROL_AE_MODE_ON set above; SENSOR_EXPOSURE_TIME is only
+            // honoured by the HAL when AE is disabled.
+            previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+            previewBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, 11_111_111L); // 1/90s in nanoseconds
+            previewBuilder.set(CaptureRequest.SENSOR_FRAME_DURATION, 33_333_333L); // 30fps frame duration
+            previewBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 800); // ISO sensitivity
         } else {
             previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
             Log.d(TAG, "Photo: Using dynamic FPS range " + selectedFpsRange + " for exposure flexibility");
