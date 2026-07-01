@@ -4184,6 +4184,11 @@ public class MediaCaptureService {
                                 cameraWarmUpErrorCode(errorMessage),
                                 errorMessage);
                     }
+
+                    @Override
+                    public String getRequestId() {
+                        return requestId;
+                    }
                 });
         warmUpDispatching.set(false);
         return !rejectedSynchronously.get();
