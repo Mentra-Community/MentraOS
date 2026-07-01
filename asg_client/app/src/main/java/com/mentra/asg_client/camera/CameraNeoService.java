@@ -173,6 +173,12 @@ public class CameraNeoService extends LifecycleService {
 
     /** Callback for {@code camera_warm_up} lifecycle (no capture). */
     public interface CameraWarmUpCallback {
+        /**
+         * Warm-up accepted — the camera is spinning up. Emitted only once the request is committed
+         * (not for a busy rejection), so callers never see {@code warming} followed by {@code error}.
+         */
+        void onWarming();
+
         /** Session configured and preview/AE running — next take_photo will be warm. */
         void onCameraReady();
 
@@ -676,6 +682,7 @@ public class CameraNeoService extends LifecycleService {
             long durationMs,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
+        CameraWarmUpCallback accepted = null;
         synchronized (SERVICE_LOCK) {
             long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
             boolean cameraReady =
@@ -703,7 +710,12 @@ public class CameraNeoService extends LifecycleService {
                 sInstance.cancelKeepAliveTimer();
                 sInstance.startWarmKeepAliveTimer(ttl);
                 if (callback != null) {
-                    sInstance.executor.execute(callback::onCameraReady);
+                    final CameraWarmUpCallback cb = callback;
+                    sInstance.executor.execute(
+                            () -> {
+                                cb.onWarming();
+                                cb.onCameraReady();
+                            });
                 }
                 return;
             }
@@ -721,6 +733,7 @@ public class CameraNeoService extends LifecycleService {
             if (busy) {
                 rejectBusy = callback;
             } else {
+                accepted = callback;
                 sPendingWarmCallbacks.add(callback);
 
                 Intent intent = new Intent(context, CameraNeoService.class);
@@ -733,9 +746,14 @@ public class CameraNeoService extends LifecycleService {
                 context.startForegroundService(intent);
             }
         }
-        // Fire the busy rejection outside the lock (it sends a camera_status error over BLE).
+        // Fire outside the lock (these send a camera_status over BLE). A warm-up emits `warming`
+        // only once accepted, so a busy rejection goes straight to `error` with no premature
+        // `warming`.
         if (rejectBusy != null) {
             rejectBusy.onCameraError("camera_busy");
+        }
+        if (accepted != null) {
+            accepted.onWarming();
         }
     }
 

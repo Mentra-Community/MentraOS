@@ -4143,7 +4143,6 @@ public class MediaCaptureService {
                         + exposureTimeNs
                         + " durationMs="
                         + durationMs);
-        sendCameraStatus(requestId, "warming", null);
 
         CameraNeoService.warmUpCamera(
                 mContext,
@@ -4151,6 +4150,13 @@ public class MediaCaptureService {
                 exposureTimeNs,
                 durationMs,
                 new CameraNeoService.CameraWarmUpCallback() {
+                    @Override
+                    public void onWarming() {
+                        // Emitted only once CameraNeoService commits to the warm-up (not on a busy
+                        // rejection), so a serialized/busy request never sees warming then error.
+                        sendCameraStatus(requestId, "warming", null);
+                    }
+
                     @Override
                     public void onCameraReady() {
                         sendCameraStatus(requestId, "ready", null);
