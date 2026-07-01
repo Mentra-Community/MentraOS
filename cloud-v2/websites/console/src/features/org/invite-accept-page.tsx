@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { isUnauthorizedError, redirectToConsoleLogin } from "@/api/http";
 import { acceptOrgInvitation } from "./org.api";
 
-// Survives StrictMode's double-mount so a single-use token isn't consumed twice.
-const attemptedTokens = new Set<string>();
+// Cache the in-flight accept per token so StrictMode's double-mount reuses one
+// request (single-use safe) while the live mount still receives the outcome.
+const acceptRequests = new Map<string, ReturnType<typeof acceptOrgInvitation>>();
 
 export function InviteAcceptPage() {
   const { token } = useParams({ from: "/invite/$token" });
@@ -12,14 +13,19 @@ export function InviteAcceptPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (attemptedTokens.has(token)) return;
-    attemptedTokens.add(token);
     let cancelled = false;
-    void (async () => {
-      try {
-        await acceptOrgInvitation(token);
+    let request = acceptRequests.get(token);
+    if (!request) {
+      request = acceptOrgInvitation(token);
+      acceptRequests.set(token, request);
+    }
+    request.then(
+      () => {
         if (!cancelled) navigate({ to: "/organization" });
-      } catch (err) {
+      },
+      (err) => {
+        // Allow a retry (e.g. after signing in) rather than caching the failure.
+        acceptRequests.delete(token);
         // Not signed in yet: bounce through login, then return here to accept.
         if (isUnauthorizedError(err)) {
           redirectToConsoleLogin();
@@ -28,8 +34,8 @@ export function InviteAcceptPage() {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "This invitation is invalid or has expired.");
         }
-      }
-    })();
+      },
+    );
     return () => {
       cancelled = true;
     };
