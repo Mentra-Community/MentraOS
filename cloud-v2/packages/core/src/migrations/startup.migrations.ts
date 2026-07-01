@@ -39,8 +39,10 @@ export async function runStartupMigrations(): Promise<void> {
   await UserModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dedupeDeveloperOrgMemberships();
-  await backfillDeveloperOrgOwners();
+  // Build the unique index BEFORE any upserts so concurrent Core startups can't
+  // race in duplicate (orgId,userId) rows.
   await safeCreateMembershipIndexes();
+  await backfillDeveloperOrgOwners();
   await backfillMembersFromWorkos();
 }
 
@@ -219,31 +221,45 @@ async function backfillMembersFromWorkos(): Promise<void> {
       continue; // already migrated
     }
     try {
-      const memberships = await workos.userManagement.listOrganizationMemberships({
-        organizationId: org.workosOrgId,
-        statuses: ["active", "inactive"],
-        limit: 100,
-      });
-      for (const membership of memberships.data) {
-        let email: string | null = null;
-        let name: string | null = null;
-        try {
-          const user = await workos.userManagement.getUser(membership.userId);
-          email = user.email ?? null;
-          name = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || null;
-        } catch {
-          // profile fetch is best-effort
+      let after: string | undefined;
+      do {
+        const page = await workos.userManagement.listOrganizationMemberships({
+          organizationId: org.workosOrgId,
+          statuses: ["active", "inactive"],
+          limit: 100,
+          after,
+        });
+        for (const membership of page.data) {
+          // One org per user: skip anyone already on another org's roster.
+          if (
+            await DeveloperOrgMembershipModel.exists({
+              userId: membership.userId,
+              orgId: { $ne: org.orgId },
+            })
+          ) {
+            continue;
+          }
+          let email: string | null = null;
+          let name: string | null = null;
+          try {
+            const user = await workos.userManagement.getUser(membership.userId);
+            email = user.email ?? null;
+            name = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || null;
+          } catch {
+            // profile fetch is best-effort
+          }
+          await DeveloperOrgMembershipModel.updateOne(
+            { orgId: org.orgId, userId: membership.userId },
+            {
+              $set: { ...(email ? { email } : {}), ...(name ? { name } : {}) },
+              $setOnInsert: { orgId: org.orgId, userId: membership.userId, role: "member" },
+            },
+            { upsert: true },
+          );
+          seeded += 1;
         }
-        await DeveloperOrgMembershipModel.updateOne(
-          { orgId: org.orgId, userId: membership.userId },
-          {
-            $set: { ...(email ? { email } : {}), ...(name ? { name } : {}) },
-            $setOnInsert: { orgId: org.orgId, userId: membership.userId, role: "member" },
-          },
-          { upsert: true },
-        );
-        seeded += 1;
-      }
+        after = page.listMetadata?.after ?? undefined;
+      } while (after);
     } catch (error) {
       logger.warn({ orgId: org.orgId, error: (error as Error)?.message }, "member backfill failed for org");
     }

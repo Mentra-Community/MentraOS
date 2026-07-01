@@ -22,7 +22,11 @@ const DeveloperOrgInvitationSchema = new Schema(
   { timestamps: true, collection: "developer_org_invitations" },
 );
 
-DeveloperOrgInvitationSchema.index({ orgId: 1, email: 1 });
+// At most one pending invite per (org, email) — the DB backs the supersede logic.
+DeveloperOrgInvitationSchema.index(
+  { orgId: 1, email: 1 },
+  { unique: true, partialFilterExpression: { status: "pending" } },
+);
 
 export type DeveloperOrgInvitation = InferSchemaType<typeof DeveloperOrgInvitationSchema>;
 export const DeveloperOrgInvitationModel = model(

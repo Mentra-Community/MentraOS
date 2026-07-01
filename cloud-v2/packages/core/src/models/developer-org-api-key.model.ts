@@ -13,6 +13,7 @@ const DeveloperOrgApiKeySchema = new Schema(
     keyId: { type: String, required: true, unique: true },
     orgId: { type: String, required: true, index: true },
     name: { type: String, required: true },
+    env: { type: String, required: true },
     hash: { type: String, required: true },
     last4: { type: String, required: true },
     createdByUserId: { type: String, required: true },

@@ -59,11 +59,11 @@ export async function sendOrgInviteEmail(opts: {
         as ${roleLabel} on the Mentra developer console.
       </p>
       <p style="margin:0 0 28px">
-        <a href="${opts.acceptUrl}" style="display:inline-block;background:#111217;color:#fff;text-decoration:none;padding:11px 22px;border-radius:999px;font-size:15px;font-weight:600">Accept invitation</a>
+        <a href="${escapeHtml(opts.acceptUrl)}" style="display:inline-block;background:#111217;color:#fff;text-decoration:none;padding:11px 22px;border-radius:999px;font-size:15px;font-weight:600">Accept invitation</a>
       </p>
       <p style="font-size:13px;line-height:1.6;color:#8a8d95;margin:0">
         Or paste this link into your browser:<br/>
-        <span style="word-break:break-all">${opts.acceptUrl}</span>
+        <span style="word-break:break-all">${escapeHtml(opts.acceptUrl)}</span>
       </p>
     </div>`;
   return sendEmail({ to: opts.to, subject: `You're invited to ${opts.orgName} on Mentra`, html });

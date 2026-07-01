@@ -527,19 +527,30 @@ async function postAcceptInvitation(c: AppContext) {
     if (!invite) {
       return c.json({ error: "invalid_invitation", error_description: "this invitation is invalid or has expired" }, 404);
     }
+    // The invite is addressed to a specific email; the signed-in account must match.
+    if (authenticatedSession.user.email.trim().toLowerCase() !== invite.email) {
+      return c.json(
+        { error: "email_mismatch", error_description: "this invitation was sent to a different email address" },
+        403,
+      );
+    }
     // One org per user: block joining a second org (re-accepting the same one is fine).
     const ownedOrg = await developerOrgs.getPrimaryOrgForUser(authenticatedSession.user);
     const currentOrgId = ownedOrg?.id ?? (await developerOrgs.getMembershipOrgId(authenticatedSession.user.id));
     if (currentOrgId && currentOrgId !== invite.orgId) {
       return c.json({ error: "already_in_org", error_description: "you already belong to an organization" }, 409);
     }
-    // Join with the invited role (their real identity; role kept if already a member).
+    // Single-use: atomically claim the invite before creating the membership so
+    // two concurrent accepts can't both enroll.
+    if (!(await invitations.claim(invite.invitationId))) {
+      return c.json({ error: "invalid_invitation", error_description: "this invitation has already been used" }, 404);
+    }
+    // Join with the invited role (role kept if already a member).
     await developerOrgs.ensureMembership(invite.orgId, authenticatedSession.user.id, {
       email: authenticatedSession.user.email,
       name: sessionDisplayName(authenticatedSession),
       roleIfNew: invite.role,
     });
-    await invitations.markAccepted(invite.invitationId);
     return c.json({ ok: true, org: await developerOrgs.getOrgById(invite.orgId) });
   } catch (error) {
     return serviceError(error);

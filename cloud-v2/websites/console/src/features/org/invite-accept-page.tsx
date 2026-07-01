@@ -3,12 +3,17 @@ import { useEffect, useState } from "react";
 import { isUnauthorizedError, redirectToConsoleLogin } from "@/api/http";
 import { acceptOrgInvitation } from "./org.api";
 
+// Survives StrictMode's double-mount so a single-use token isn't consumed twice.
+const attemptedTokens = new Set<string>();
+
 export function InviteAcceptPage() {
   const { token } = useParams({ from: "/invite/$token" });
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (attemptedTokens.has(token)) return;
+    attemptedTokens.add(token);
     let cancelled = false;
     void (async () => {
       try {

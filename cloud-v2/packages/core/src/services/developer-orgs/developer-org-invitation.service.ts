@@ -49,7 +49,11 @@ export class DeveloperOrgInvitationService {
   }
 
   async listPending(orgId: string): Promise<InvitationRecord[]> {
-    const rows = await DeveloperOrgInvitationModel.find({ orgId, status: "pending" })
+    const rows = await DeveloperOrgInvitationModel.find({
+      orgId,
+      status: "pending",
+      expiresAt: { $gt: new Date() },
+    })
       .sort({ createdAt: -1 })
       .lean<RawInvitation[]>();
     return rows.map(serialize);
@@ -77,12 +81,17 @@ export class DeveloperOrgInvitationService {
     return { invitationId: row.invitationId, orgId: row.orgId, email: row.email, role: row.role as InvitationRole };
   }
 
-  /** Mark a pending invite accepted (call after the membership is created). */
-  async markAccepted(invitationId: string): Promise<void> {
-    await DeveloperOrgInvitationModel.updateOne(
+  /**
+   * Atomically claim a pending invite (single-use). Returns false if another
+   * request already claimed it — the `{ status: "pending" }` filter + Mongo's
+   * atomic updateOne mean only one concurrent accept wins.
+   */
+  async claim(invitationId: string): Promise<boolean> {
+    const result = await DeveloperOrgInvitationModel.updateOne(
       { invitationId, status: "pending" },
       { $set: { status: "accepted" } },
     );
+    return result.matchedCount === 1;
   }
 }
 

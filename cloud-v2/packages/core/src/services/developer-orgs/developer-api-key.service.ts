@@ -36,6 +36,7 @@ export class DeveloperApiKeyService {
       keyId,
       orgId,
       name,
+      env: safeEnv(env),
       hash: sha256Hex(secret),
       last4: secret.slice(-4),
       createdByUserId,
@@ -71,6 +72,8 @@ export class DeveloperApiKeyService {
 
     const row = await DeveloperOrgApiKeyModel.findOne({ keyId, revokedAt: null }).lean();
     if (!row) return null;
+    // Env is bound to the stored row, not just the client-supplied prefix.
+    if (row.env !== safeEnv(env)) return null;
     const expected = Buffer.from(row.hash, "hex");
     const actual = Buffer.from(sha256Hex(secret), "hex");
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;

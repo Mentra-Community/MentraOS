@@ -229,9 +229,25 @@ export class DeveloperOrgService {
    * user is the only owner.
    */
   async removeOwnerIfNotLast(orgId: string, userId: string): Promise<boolean> {
+    const existing = await DeveloperOrgMembershipModel.findOne({ orgId, userId }).lean<
+      { email?: string | null; name?: string | null; status?: string | null } | null
+    >();
     await this.removeMemberRole(orgId, userId);
     if ((await this.countOwners(orgId)) === 0) {
-      await this.setMemberRole(orgId, userId, "owner");
+      // Restore the full row (profile fields included), not just the role.
+      await DeveloperOrgMembershipModel.updateOne(
+        { orgId, userId },
+        {
+          $set: {
+            role: "owner",
+            email: existing?.email ?? null,
+            name: existing?.name ?? null,
+            status: existing?.status ?? "active",
+          },
+          $setOnInsert: { orgId, userId },
+        },
+        { upsert: true },
+      );
       return false;
     }
     return true;
