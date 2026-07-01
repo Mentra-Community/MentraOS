@@ -24,10 +24,11 @@ permissions:
 
 jobs:
   build:
-    # GitHub-hosted Ubuntu. Signing creds come from secrets via inject-signing
-    # (no longer needs the mac runners' ~/.mentra/credentials), freeing mac
-    # capacity for iOS + staging/release builds.
-    runs-on: ubuntu-latest
+    # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing
+    # (no longer needs the mac runners' ~/.mentra/credentials), keeping mac
+    # capacity free for iOS + staging/release builds. Faster than the free
+    # ubuntu-latest tier (more vCPU + NVMe); same provider as our cloud builds.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Update PR comment - Build started

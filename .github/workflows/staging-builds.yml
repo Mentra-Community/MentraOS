@@ -559,10 +559,11 @@ jobs:
 
   build-asg:
     name: Build ASG Client
-    # GitHub-hosted Ubuntu. Signing creds come from secrets via inject-signing;
+    # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing;
     # it's a clean gradle build (no fastlane/upload), so it doesn't need the mac
-    # runners. The GH-release upload happens later in the ubuntu upload-releases job.
-    runs-on: ubuntu-latest
+    # runners. Faster than the free ubuntu-latest tier; the GH-release upload
+    # still happens later in the ubuntu-latest upload-releases job.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
       version_code: ${{ steps.asg-build-info.outputs.version_code }}
