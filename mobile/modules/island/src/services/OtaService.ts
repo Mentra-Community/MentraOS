@@ -1,6 +1,6 @@
 /**
  * OTA service — island-owned. Subscribes to the glasses' OTA BLE events and projects
- * them into the island glasses store (otaUpdateAvailable / otaStatus / otaProgress), so
+ * them into the island glasses store (otaStatus / otaProgress), so
  * the OTA read surface works for ANY host — not just the first-party Mentra app, where
  * these handlers used to live in MantleManager.
  *
@@ -14,7 +14,6 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
-import {isGlassesConnected} from "./GlassesReadiness"
 import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
 import {
   legacyOtaProgressFromOtaStatusEvent,
@@ -26,27 +25,6 @@ let subs: Array<{remove: () => void}> = []
 
 export function startOtaService(): void {
   if (subs.length) return
-
-  // An update is available on the glasses (cache-ready or manifest-detected).
-  subs.push(
-    BluetoothSdk.addListener("ota_update_available", (event) => {
-      if (!isGlassesConnected(useGlassesStore.getState().connection)) return
-      useGlassesStore.getState().setOtaUpdateAvailable({
-        available: true,
-        versionCode: event.version_code ?? 0,
-        versionName: event.version_name ?? "",
-        updates: event.updates ?? [],
-        totalSize: event.total_size ?? 0,
-        cacheReady: event.cache_ready === true,
-      })
-      GlobalEventEmitter.emit("ota_update_available", {
-        versionCode: event.version_code,
-        versionName: event.version_name,
-        updates: event.updates,
-        totalSize: event.total_size,
-      })
-    }),
-  )
 
   // MTK firmware update finished (self power-cycle path).
   subs.push(
