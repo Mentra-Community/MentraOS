@@ -44,11 +44,14 @@ export const orgMemberSchema = z.object({
   updatedAt: z.string().nullable(),
 });
 
+export const orgInvitationStateSchema = z.enum(["pending", "accepted", "revoked"]);
+export const orgInvitationRoleSchema = z.enum(["admin", "member"]);
+
 export const orgInvitationSchema = z.object({
   id: z.string(),
   email: z.string(),
-  state: z.string(),
-  role: z.string(),
+  state: orgInvitationStateSchema,
+  role: orgInvitationRoleSchema,
   expiresAt: z.string().nullable(),
   createdAt: z.string().nullable(),
   updatedAt: z.string().nullable(),

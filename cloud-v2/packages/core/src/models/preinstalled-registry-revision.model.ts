@@ -29,6 +29,14 @@ const PreinstalledRegistryRevisionSchema = new Schema(
   { timestamps: true, collection: "preinstalled_registry_revisions" },
 );
 
+// At most one active revision per registry (activeRevisionId is a singular pointer;
+// promoteRevision archives all others). Partial to "active" so draft/archived rows
+// are unconstrained and concurrent promotions can't leave two active revisions.
+PreinstalledRegistryRevisionSchema.index(
+  { registryId: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: "active" } },
+);
+
 export type PreinstalledRegistryRevision = InferSchemaType<typeof PreinstalledRegistryRevisionSchema>;
 export const PreinstalledRegistryRevisionModel = model(
   "PreinstalledRegistryRevision",

@@ -15,7 +15,10 @@ import {
   disconnectMongo,
 } from "../packages/core/src/connections/mongo.connection";
 import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
-import { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
+import {
+  MiniAppService,
+  MiniAppServiceError,
+} from "../packages/core/src/services/miniapps/miniapp.service";
 import { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
 
 const ENVIRONMENT = process.env.SEED_ENV ?? "dev";
@@ -38,7 +41,16 @@ async function main() {
   const mongoUrl =
     process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2";
   await connectMongo(mongoUrl);
-  console.log(`connected mongo=${mongoUrl} env=${ENVIRONMENT}`);
+  // Log only safe metadata (host + db name); never the full URI, which can carry credentials.
+  let mongoTarget = mongoUrl;
+  try {
+    const u = new URL(mongoUrl);
+    mongoTarget = `${u.host}${u.pathname}`;
+  } catch {
+    // Non-URL connection string; fall back to a redacted marker rather than leaking it.
+    mongoTarget = "<redacted>";
+  }
+  console.log(`connected mongo=${mongoTarget} env=${ENVIRONMENT}`);
 
   const miniapps = new MiniAppService();
   const registries = new PreinstalledRegistryService();
@@ -55,7 +67,13 @@ async function main() {
     });
     console.log(`created miniapp ${PACKAGE}`);
   } catch (err) {
-    console.log(`createMiniApp: ${(err as Error).message} (continuing)`);
+    // Only the "already claimed" case is safe to ignore for idempotent re-seeds;
+    // anything else is a real setup failure and must surface.
+    if (err instanceof MiniAppServiceError && err.code === "package_taken") {
+      console.log(`createMiniApp: ${err.message} (already claimed, continuing)`);
+    } else {
+      throw err;
+    }
   }
 
   // 2) release

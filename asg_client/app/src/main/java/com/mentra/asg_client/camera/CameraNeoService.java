@@ -682,7 +682,6 @@ public class CameraNeoService extends LifecycleService {
             long durationMs,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
-        CameraWarmUpCallback accepted = null;
         synchronized (SERVICE_LOCK) {
             long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
             boolean cameraReady =
@@ -733,7 +732,6 @@ public class CameraNeoService extends LifecycleService {
             if (busy) {
                 rejectBusy = callback;
             } else {
-                accepted = callback;
                 sPendingWarmCallbacks.add(callback);
 
                 Intent intent = new Intent(context, CameraNeoService.class);
@@ -746,14 +744,13 @@ public class CameraNeoService extends LifecycleService {
                 context.startForegroundService(intent);
             }
         }
-        // Fire outside the lock (these send a camera_status over BLE). A warm-up emits `warming`
-        // only once accepted, so a busy rejection goes straight to `error` with no premature
-        // `warming`.
+        // Fire outside the lock (this sends a camera_status over BLE). Only the busy rejection is
+        // settled here; an accepted warm-up emits `warming` later in performWarmUp, once
+        // PhotoSession.setupWarmUp clears its own busy check and actually starts. Emitting `warming`
+        // at the entry gate could race a capture that starts before setupWarmUp runs, letting the
+        // phone see `warming` immediately followed by `error` (camera_busy).
         if (rejectBusy != null) {
             rejectBusy.onCameraError("camera_busy");
-        }
-        if (accepted != null) {
-            accepted.onWarming();
         }
     }
 
@@ -907,6 +904,7 @@ public class CameraNeoService extends LifecycleService {
         // warmUpCamera slip through the entry guard in the gap between clearing the pending list and
         // setupWarmUp setting warmUpRequest; its busy-reject (fireWarmError) would then fail the
         // first caller's callback too. setupWarmUp re-acquires SERVICE_LOCK reentrantly.
+        final List<CameraWarmUpCallback> warming;
         synchronized (SERVICE_LOCK) {
             warmCallbacks.addAll(sPendingWarmCallbacks);
             sPendingWarmCallbacks.clear();
@@ -917,6 +915,15 @@ public class CameraNeoService extends LifecycleService {
                     durationMs,
                     this::fireWarmReady,
                     this::fireWarmError);
+            // setupWarmUp runs its own busy check synchronously and, if a capture slipped in, has
+            // already fired fireWarmError (clearing warmCallbacks). The callbacks still bound here
+            // are the ones that actually started warming — emit `warming` only for them, so a
+            // busy-rejected request never sees `warming` before its `error`. ready/error resolve
+            // asynchronously later, so this `warming` always precedes them.
+            warming = new ArrayList<>(warmCallbacks);
+        }
+        for (CameraWarmUpCallback callback : warming) {
+            callback.onWarming();
         }
     }
 

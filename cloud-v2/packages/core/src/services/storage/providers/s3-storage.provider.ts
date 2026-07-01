@@ -45,7 +45,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 }
 
-export function createS3StorageProvider(): S3StorageProvider {
+export function createS3StorageProvider(provider: "r2" | "s3" = "r2"): S3StorageProvider {
   const endpoint = env(
     "CLOUD_STORAGE_S3_ENDPOINT",
     "CLOUD_CORE_STORAGE_S3_ENDPOINT",
@@ -70,8 +70,11 @@ export function createS3StorageProvider(): S3StorageProvider {
     "CLOUD_CORE_R2_SECRET_ACCESS_KEY",
     "R2_SECRET_ACCESS_KEY",
   );
+  // R2 accepts the sentinel "auto" region, but real AWS S3 requires a valid
+  // region name, so fall back to a standard AWS region when one is not set.
+  const defaultRegion = provider === "s3" ? "us-east-1" : "auto";
   const region =
-    env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION") ?? "auto";
+    env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION") ?? defaultRegion;
 
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     throw new Error(

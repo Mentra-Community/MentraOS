@@ -771,7 +771,14 @@ class MentraBluetoothSdk private constructor(
     ): CameraStatusEvent {
         val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
         val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
-        pendingCameraStatusRequests[effectiveRequestId] = pending
+        // Guard against a concurrent warm-up reusing the same requestId: a blind put would overwrite
+        // (and strand) the first caller's continuation until it times out. Reject the duplicate.
+        if (pendingCameraStatusRequests.putIfAbsent(effectiveRequestId, pending) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A camera warm-up request with this requestId is already waiting for a glasses response.",
+            )
+        }
         try {
             deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
             return pending.await()

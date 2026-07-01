@@ -22,7 +22,18 @@ export function AppsPage() {
             <CardTitle className="font-display text-[19px]">Miniapps</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {appList.length === 0 ? (
+            {apps.isPending ? (
+              <div className="flex min-h-[260px] flex-col items-center justify-center p-6 text-center text-sm text-[#747780] sm:min-h-[320px] sm:p-8">
+                Loading miniapps…
+              </div>
+            ) : apps.isError ? (
+              <div className="flex min-h-[260px] flex-col items-center justify-center p-6 text-center sm:min-h-[320px] sm:p-8">
+                <h2 className="font-display text-[21px] font-bold">Couldn’t load miniapps</h2>
+                <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">
+                  {apps.error instanceof Error ? apps.error.message : "Something went wrong. Please try again."}
+                </p>
+              </div>
+            ) : appList.length === 0 ? (
               <div className="flex min-h-[260px] flex-col items-center justify-center p-6 text-center sm:min-h-[320px] sm:p-8">
                 <div className="flex size-12 items-center justify-center rounded-[14px] bg-[#e9f8f1] text-[#087d50]">
                   <Boxes className="size-6" />

@@ -11,8 +11,13 @@ export async function onRequest(context: {
   }
 
   const sourceUrl = new URL(context.request.url);
-  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, coreUrl);
+  // Preserve any path prefix configured on CORE_URL by resolving a relative
+  // path (strip the leading "/") against a normalized base ending in "/".
+  const base = new URL(coreUrl);
+  base.pathname = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+  const upstreamUrl = new URL(`.${sourceUrl.pathname}${sourceUrl.search}`, base);
   const headers = new Headers(context.request.headers);
+  stripForwardingAndHopByHopHeaders(headers);
   headers.delete("host");
   headers.set("x-mentra-public-origin", sourceUrl.origin);
 
@@ -22,4 +27,31 @@ export async function onRequest(context: {
     body: context.request.method === "GET" || context.request.method === "HEAD" ? undefined : context.request.body,
     redirect: "manual",
   });
+}
+
+// Client-supplied forwarding/hop-by-hop headers must never reach CORE_URL: they
+// would let a request spoof trusted proxy metadata (client IP, protocol, host).
+// The edge sets its own trusted values (e.g. x-mentra-public-origin) after this.
+const FORWARDING_AND_HOP_BY_HOP_HEADERS = [
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-forwarded-port",
+  "x-real-ip",
+  "connection",
+  "keep-alive",
+  "proxy-authorization",
+  "proxy-authenticate",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "x-mentra-public-origin",
+];
+
+function stripForwardingAndHopByHopHeaders(headers: Headers): void {
+  for (const name of FORWARDING_AND_HOP_BY_HOP_HEADERS) {
+    headers.delete(name);
+  }
 }
