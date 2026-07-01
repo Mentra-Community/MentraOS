@@ -309,6 +309,17 @@ public class BesWireFormat {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataCommand(byte[] data, byte cmdType) {
+        // Historic default is little-endian (the wire-v2 convention). Callers that
+        // know the negotiated link endianness should use the overload below.
+        return packDataCommand(data, cmdType, K900LengthCodec.Endian.LE);
+    }
+
+    /**
+     * Pack raw byte data with K900 BES2700 protocol format, writing the 2-byte length field with an
+     * explicit endianness. Use the negotiated per-link endianness so both legacy big-endian and
+     * wire-v2 little-endian peers can parse the frame.
+     */
+    public static byte[] packDataCommand(byte[] data, byte cmdType, K900LengthCodec.Endian endian) {
         if (data == null) {
             return null;
         }
@@ -325,9 +336,8 @@ public class BesWireFormat {
         // Command type
         result[2] = cmdType;
 
-        // Length (2 bytes, little-endian)
-        result[3] = (byte) (dataLength & 0xFF);
-        result[4] = (byte) ((dataLength >> 8) & 0xFF);
+        // Length (2 bytes, negotiated endianness)
+        K900LengthCodec.writeLength(result, 3, dataLength, endian);
 
         // Copy the data
         System.arraycopy(data, 0, result, 5, dataLength);
@@ -422,6 +432,15 @@ public class BesWireFormat {
      * @return Formatted bytes ready for transmission
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
+        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.LE);
+    }
+
+    /**
+     * Format an ASG-client JSON message for transmission, writing STRING frame lengths with the
+     * negotiated per-link endianness. Binary v2 frames are always little-endian and ignore the
+     * {@code endian} argument.
+     */
+    public static byte[] formatMessageForTransmission(String jsonData, K900LengthCodec.Endian endian) {
         try {
             Log.d("BesWireFormat", "🔄 Formatting message: " + jsonData);
 
@@ -434,7 +453,8 @@ public class BesWireFormat {
 
             // Now format with BES2700 protocol
             byte[] result =
-                    packDataCommand(wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING);
+                    packDataCommand(
+                            wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING, endian);
 
             // Log some bytes for debugging
             StringBuilder hexDump = new StringBuilder();
@@ -505,7 +525,7 @@ public class BesWireFormat {
         if (!isBinaryProtocolActive()) {
             return json;
         }
-        return BleJsonCompact.decode(json);
+        return BleJsonCompact.decodeIfSupported(json);
     }
 
     /**
@@ -570,20 +590,45 @@ public class BesWireFormat {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayload(byte[] protocolData) {
+        return extractPayload(protocolData, K900LengthCodec.Endian.LE);
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, reading the length field with an explicit
+     * endianness. Prefer {@link #extractPayloadAuto} on receive when the peer endianness is not yet
+     * negotiated.
+     */
+    public static byte[] extractPayload(byte[] protocolData, K900LengthCodec.Endian endian) {
         if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
             return null;
         }
 
-        // Extract length (little-endian)
-        int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
+        int length = K900LengthCodec.readLength(protocolData, 3, endian);
 
         if (length + 7 > protocolData.length) {
             return null; // Invalid length
         }
 
-        // Extract payload
         byte[] payload = new byte[length];
         System.arraycopy(protocolData, 5, payload, 0, length);
+        return payload;
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, heuristically detecting the length field's
+     * endianness. This is the safe RX entry point when talking to a peer of unknown vintage (fixes
+     * the {@code Extracted length=9472} misframe against legacy big-endian BES firmware).
+     */
+    public static byte[] extractPayloadAuto(byte[] protocolData) {
+        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
+            return null;
+        }
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(protocolData);
+        if (detected == null) {
+            return null;
+        }
+        byte[] payload = new byte[detected.length];
+        System.arraycopy(protocolData, 5, payload, 0, detected.length);
         return payload;
     }
 
@@ -594,40 +639,9 @@ public class BesWireFormat {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayloadFromK900(byte[] protocolData) {
-        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
-            Log.e(
-                    "BesWireFormat",
-                    "extractPayloadFromK900: Not K900 format or too short. Length="
-                            + (protocolData != null ? protocolData.length : 0));
-            return null;
-        }
-
-        // Extract length (little-endian for device-to-phone)
-        int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
-
-        Log.d(
-                "BesWireFormat",
-                "extractPayloadFromK900: Extracted length="
-                        + length
-                        + ", message length="
-                        + protocolData.length
-                        + ", expected total="
-                        + (length + 7));
-
-        if (length + 7 > protocolData.length) {
-            Log.e(
-                    "BesWireFormat",
-                    "extractPayloadFromK900: Invalid length. Need "
-                            + (length + 7)
-                            + " bytes but have "
-                            + protocolData.length);
-            return null; // Invalid length
-        }
-
-        // Extract payload
-        byte[] payload = new byte[length];
-        System.arraycopy(protocolData, 5, payload, 0, length);
-        return payload;
+        // Retained for backward compatibility: device-to-phone frames may arrive in either
+        // endianness depending on firmware vintage, so auto-detect rather than assuming LE.
+        return extractPayloadAuto(protocolData);
     }
 
     /**
@@ -660,8 +674,13 @@ public class BesWireFormat {
             return null;
         }
 
-        // Extract the length using little-endian format
-        int payloadLength = (data[3] & 0xFF) | ((data[4] & 0xFF) << 8);
+        // Extract the length, auto-detecting endianness so we parse both legacy big-endian
+        // and wire-v2 little-endian frames.
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(data);
+        int payloadLength =
+                detected != null
+                        ? detected.length
+                        : ((data[3] & 0xFF) | ((data[4] & 0xFF) << 8));
 
         Log.d(
                 "BesWireFormat",
