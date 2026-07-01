@@ -1,6 +1,6 @@
 {
   "name": "@mentra/auth",
-  "version": "0.0.0",
+  "version": "0.1.0-dev.0",
   "description": "Verify Mentra Local Runtime auth tokens (JWKS) in miniapp backends.",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,7 +14,7 @@
   "files": ["dist", "README.md"],
   "publishConfig": {
     "access": "public",
-    "tag": "alpha"
+    "tag": "dev"
   },
   "scripts": {
     "build": "tsc -b",
