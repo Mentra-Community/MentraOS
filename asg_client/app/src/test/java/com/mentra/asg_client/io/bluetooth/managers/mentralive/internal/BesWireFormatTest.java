@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -74,16 +75,37 @@ public class BesWireFormatTest {
     }
 
     @Test
-    public void formatBinaryMessageForTransmission_dropsWrapperForRegularJson() throws Exception {
+    public void formatBinaryMessageForTransmission_dropsWrapperForHighRoiJson() throws Exception {
         BesWireFormat.setBinaryProtocolActive(true);
-        String json = "{\"type\":\"glasses_ready\",\"timestamp\":1}";
+        String json = "{\"type\":\"photo_status\",\"status\":\"capturing\",\"timestamp\":1}";
         byte[] frame = BesWireFormat.formatBinaryMessageForTransmission(json);
         BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
 
         assertThat(header.valid).isTrue();
-        // v2 transport carries the compacted, wrapper-free wire payload (no C/V/B envelope).
         assertThat(new String(header.payload, StandardCharsets.UTF_8))
                 .isEqualTo(BesWireFormat.createTransmissionWrapperJson(json));
+    }
+
+    @Test
+    public void createTransmissionWrapperJson_keepsLowRoiExpandedOnV2() throws Exception {
+        BesWireFormat.setBinaryProtocolActive(true);
+        String json = "{\"type\":\"ping\"}";
+        String wrapped = BesWireFormat.createTransmissionWrapperJson(json);
+
+        assertThat(wrapped).doesNotContain("\"V\"");
+        assertThat(wrapped).doesNotContain("\"B\"");
+        assertThat(wrapped).contains("\"type\":\"ping\"");
+        assertThat(wrapped).doesNotContain("\"t\":\"ping\"");
+    }
+
+    @Test
+    public void createTransmissionWrapperJson_compactsHighRoiOnV2() throws Exception {
+        BesWireFormat.setBinaryProtocolActive(true);
+        String json = "{\"type\":\"photo_status\",\"status\":\"capturing\"}";
+        String wrapped = BesWireFormat.createTransmissionWrapperJson(json);
+
+        assertThat(wrapped).contains("\"t\":\"photo_status\"");
+        assertThat(wrapped).contains("\"s\":3");
     }
 
     @Test
@@ -117,7 +139,8 @@ public class BesWireFormatTest {
 
         assertThat(wrapped).doesNotContain("\"V\"");
         assertThat(wrapped).doesNotContain("\"B\"");
-        assertThat(wrapped).contains("\"t\":\"glasses_ready\"");
+        assertThat(wrapped).contains("\"type\":\"glasses_ready\"");
+        assertThat(wrapped).doesNotContain("\"t\":\"glasses_ready\"");
     }
 
     @Test
@@ -125,5 +148,93 @@ public class BesWireFormatTest {
         String wrapped = BesWireFormat.createCWrappedJson("hello");
 
         assertThat(wrapped).isEqualTo("{\"C\":\"hello\"}");
+    }
+
+    @Test
+    public void packDataCommand_bigEndianWritesLengthMsbFirst() {
+        byte[] payload = "{\"ping\":1}".getBytes(StandardCharsets.UTF_8);
+        byte[] packed =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        assertThat(packed[3]).isEqualTo((byte) ((payload.length >> 8) & 0xFF));
+        assertThat(packed[4]).isEqualTo((byte) (payload.length & 0xFF));
+    }
+
+    @Test
+    public void otaAuthorizationRequest_usesLegacyBigEndianStringFrameBeforeWireCaps()
+            throws Exception {
+        String authRequest =
+                new JSONObject().put("C", "mh_ota").put("V", 1).put("B", "{}").toString();
+        byte[] payload = authRequest.getBytes(StandardCharsets.UTF_8);
+
+        byte[] packed =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        assertThat(packed[2]).isEqualTo(BesWireFormat.CMD_TYPE_STRING);
+        assertThat(K900LengthCodec.readLength(packed, 3, K900LengthCodec.Endian.BE))
+                .isEqualTo(payload.length);
+        assertThat(K900LengthCodec.readLength(packed, 3, K900LengthCodec.Endian.LE))
+                .isGreaterThan(K900LengthCodec.MAX_STRING_LENGTH);
+        byte[] extracted = BesWireFormat.extractPayloadAuto(packed);
+        assertThat(extracted).isEqualTo(payload);
+
+        JSONObject parsed = new JSONObject(new String(extracted, StandardCharsets.UTF_8));
+        assertThat(parsed.getString("C")).isEqualTo("mh_ota");
+        assertThat(parsed.getInt("V")).isEqualTo(1);
+        assertThat(parsed.getString("B")).isEqualTo("{}");
+    }
+
+    @Test
+    public void extractPayload_roundTripsForBothEndianness() {
+        byte[] payload = "{\"type\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
+
+        byte[] be =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+        byte[] le =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.LE);
+
+        assertThat(BesWireFormat.extractPayload(be, K900LengthCodec.Endian.BE)).isEqualTo(payload);
+        assertThat(BesWireFormat.extractPayload(le, K900LengthCodec.Endian.LE)).isEqualTo(payload);
+    }
+
+    @Test
+    public void extractPayloadAuto_detectsBigEndianLegacyFrame() {
+        byte[] payload = "{\"type\":\"cs_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] be =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        assertThat(BesWireFormat.extractPayloadAuto(be)).isEqualTo(payload);
+    }
+
+    @Test
+    public void extractPayloadAuto_detectsLittleEndianWireV2Frame() {
+        byte[] payload = "{\"type\":\"cs_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] le =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.LE);
+
+        assertThat(BesWireFormat.extractPayloadAuto(le)).isEqualTo(payload);
+    }
+
+    @Test
+    public void repackStringFrame_transcodesLengthEndiannessOnly() {
+        byte[] payload = "{\"type\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] be =
+                BesWireFormat.packDataCommand(
+                        payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        byte[] le =
+                K900LengthCodec.repackStringFrame(
+                        be, K900LengthCodec.Endian.BE, K900LengthCodec.Endian.LE);
+
+        // Length bytes swapped, payload untouched.
+        assertThat(le[3]).isEqualTo((byte) (payload.length & 0xFF));
+        assertThat(le[4]).isEqualTo((byte) ((payload.length >> 8) & 0xFF));
+        assertThat(BesWireFormat.extractPayload(le, K900LengthCodec.Endian.LE)).isEqualTo(payload);
     }
 }
