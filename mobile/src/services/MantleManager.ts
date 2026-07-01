@@ -324,6 +324,7 @@ class MantleManager {
         }),
       photo: {
         takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
+        warmUp: (pkg, opts) => phonePhotoCoordinator.warmUpCamera(pkg, opts),
       },
       videoRecording: {
         startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),

@@ -1622,13 +1622,12 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
             "type": "take_photo",
             "requestId": request.requestId,
-            "appId": request.appId,
         ]
 
         // Always generate BLE ID for potential fallback
@@ -1677,6 +1676,32 @@ class MentraLive: NSObject, SGCManager {
 
         Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
+
+        sendJson(json, wakeUp: true)
+    }
+
+    func warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) {
+        Bridge.log(
+            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) durationMs=\(durationMs)"
+        )
+
+        let allowedSizes = ["low", "medium", "high", "max"]
+        let sizeRaw = size.rawValue
+        var json: [String: Any] = [
+            "type": "camera_warm_up",
+            "requestId": requestId,
+            "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
+            "durationMs": durationMs > 0 ? durationMs : 15000,
+        ]
+
+        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            json["exposureTimeNs"] = Int64(e)
+        }
 
         sendJson(json, wakeUp: true)
     }
@@ -2173,6 +2198,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "photo_status":
             emitPhotoStatus(json)
+
+        case "camera_status":
+            emitCameraStatus(json)
 
         case "photo_response":
             emitPhotoResponse(json)
@@ -4467,6 +4495,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitPhotoStatus(_ json: [String: Any]) {
         Bridge.sendPhotoStatus(json)
+    }
+
+    private func emitCameraStatus(_ json: [String: Any]) {
+        Bridge.sendCameraStatus(json)
     }
 
     private func emitPhotoResponse(_ json: [String: Any]) {
