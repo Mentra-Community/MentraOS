@@ -4,9 +4,6 @@
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
