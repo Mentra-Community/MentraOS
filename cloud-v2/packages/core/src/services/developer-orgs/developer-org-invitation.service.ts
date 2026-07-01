@@ -78,11 +78,12 @@ export class DeveloperOrgInvitationService {
     }).lean<{ invitationId: string; orgId: string; email: string; role: string; expiresAt: Date } | null>();
     if (!row) return null;
     if (new Date(row.expiresAt).getTime() < Date.now()) {
-      // Retire the expired invite so it stops showing as pending.
+      // Retire the expired invite so it stops showing as pending. Best-effort —
+      // never let a transient write failure turn a clean expired-null into a 5xx.
       await DeveloperOrgInvitationModel.updateOne(
         { invitationId: row.invitationId, status: "pending" },
         { $set: { status: "revoked" } },
-      );
+      ).catch(() => {});
       return null;
     }
     return { invitationId: row.invitationId, orgId: row.orgId, email: row.email, role: row.role as InvitationRole };

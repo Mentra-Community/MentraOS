@@ -387,9 +387,12 @@ async function getMe(c: AppContext) {
   // Keep the roster fresh: ensure a membership row for the current human user
   // and backfill their profile fields (skips API-key principals).
   if (developerOrg && !authenticatedSession.user.id.startsWith("api_key:")) {
-    // Self-heal: guarantee the creator has their owner row (a failed ensureOwner
-    // during creation would otherwise leave them a member).
-    if (authenticatedSession.user.id === developerOrg.ownerUserId) {
+    // Self-heal ONLY an ownerless org (a failed create-time ensureOwner): if any
+    // owner already exists we must not re-grant owner to a demoted creator.
+    if (
+      authenticatedSession.user.id === developerOrg.ownerUserId &&
+      (await developerOrgs.countOwners(developerOrg.id)) === 0
+    ) {
       await developerOrgs.ensureOwner(developerOrg.id, authenticatedSession.user.id);
     }
     await developerOrgs.ensureMembership(developerOrg.id, authenticatedSession.user.id, {
@@ -456,7 +459,12 @@ async function putOrg(c: AppContext) {
       // ownerUserId scalar. Self-heal the creator's owner row first: a failed
       // ensureOwner during creation must not permanently brick onboarding.
       let role = await resolveOrgRole(authenticatedSession, existingOrg);
-      if (role !== "owner" && authenticatedSession.user.id === existingOrg.ownerUserId) {
+      // Self-heal only an ownerless org — never re-grant owner to a demoted creator.
+      if (
+        role !== "owner" &&
+        authenticatedSession.user.id === existingOrg.ownerUserId &&
+        (await developerOrgs.countOwners(existingOrg.id)) === 0
+      ) {
         await developerOrgs.ensureOwner(existingOrg.id, authenticatedSession.user.id);
         role = "owner";
       }
