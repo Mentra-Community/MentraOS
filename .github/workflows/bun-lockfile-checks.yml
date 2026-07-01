@@ -63,19 +63,16 @@ jobs:
         working-directory: mobile
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Clean workspace installs before SDK validation
-        run: git clean -ffdX
-
-      # Bun 1.3.14 on Ubuntu currently hits ELOOP while resolving this workspace.
-      - name: Setup Bun for SDK lockfile validation
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-
       - name: Validate SDK Bun lockfile
-        working-directory: sdk
-        env:
-          BUN_INSTALL_CACHE_DIR: /tmp/bun-sdk-lockfile-cache
         run: |
-          rm -rf "$BUN_INSTALL_CACHE_DIR"
-          bun install --frozen-lockfile --ignore-scripts
+          set -euo pipefail
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+          git archive HEAD | tar -x -C "$tmp_dir"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
+            -v "$tmp_dir:/work" \
+            -w /work/sdk \
+            oven/bun:1.3.11 \
+            bun install --frozen-lockfile --ignore-scripts
