@@ -175,7 +175,6 @@ export default function App() {
       const fields = scanFields()
       const response = await BluetoothSdk.requestPhoto({
         requestId,
-        appId: "com.mentra.bluetoothsdk.example",
         webhookUrl,
         authToken: null,
         ...fields,

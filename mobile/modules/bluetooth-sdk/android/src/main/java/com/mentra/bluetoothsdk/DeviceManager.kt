@@ -1551,6 +1551,23 @@ class DeviceManager {
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
     }
 
+    fun warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        // Fail fast like other camera commands so the SDK promise rejects immediately instead of
+        // hanging until the request timeout with no camera_status.
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException(
+                    "unsupported_device",
+                    "This command requires Mentra Live glasses.",
+                )
+        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
@@ -1680,7 +1697,7 @@ class DeviceManager {
                 iso = manualIso,
             )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

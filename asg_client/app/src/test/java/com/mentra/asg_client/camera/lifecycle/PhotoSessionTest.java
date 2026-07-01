@@ -140,14 +140,14 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void dispatchNextPhotoRequest_emptyQueue_startsKeepAlive() {
+    public void dispatchNextPhotoRequest_emptyQueue_startsPostCaptureKeepAlive() {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();
 
         PhotoSession session = new PhotoSession(hooks);
         session.dispatchNextPhotoRequest();
 
-        verify(hooks).startKeepAliveTimer();
+        verify(hooks).startPostCaptureKeepAlive();
         verify(hooks, never()).cancelKeepAliveTimer();
     }
 
@@ -166,7 +166,7 @@ public class PhotoSessionTest {
 
         assertThat(activeCapture(session)).isNull();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
-        verify(hooks).startKeepAliveTimer();
+        verify(hooks).startPostCaptureKeepAlive();
     }
 
     @Test
@@ -188,7 +188,7 @@ public class PhotoSessionTest {
         verify(callback).onPhotoCaptured(eq("/tmp/first.jpg"), (JSONObject) isNull());
         assertThat(activeCapture(session)).isNull();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
-        verify(hooks).startKeepAliveTimer();
+        verify(hooks).startPostCaptureKeepAlive();
     }
 
     @Test
@@ -209,7 +209,7 @@ public class PhotoSessionTest {
         assertThat(pendingCaptureMetadataTimeout(session)).isNull();
         assertThat(activeCapture(session)).isNull();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
-        verify(hooks).startKeepAliveTimer();
+        verify(hooks).startPostCaptureKeepAlive();
     }
 
     @Test

@@ -347,6 +347,10 @@ class Bridge {
         Bridge.sendTypedMessage("photo_status", body: status)
     }
 
+    static func sendCameraStatus(_ status: [String: Any]) {
+        Bridge.sendTypedMessage("camera_status", body: status)
+    }
+
     static func sendPhotoResponse(_ response: [String: Any]) {
         Bridge.sendTypedMessage("photo_response", body: response)
     }
