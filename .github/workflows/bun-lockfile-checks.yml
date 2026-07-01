@@ -11,7 +11,8 @@ on:
       - "mobile/modules/**/package.json"
       - "cloud-v2/packages/**/package.json"
       - "miniapps/**/package.json"
-      - "sdk/miniapp-cli/package.json"
+      - "sdk/bun.lock"
+      - "sdk/**/package.json"
       - ".github/workflows/bun-lockfile-checks.yml"
       - ".github/workflows/ci-gate.yml"
   push:
@@ -24,7 +25,8 @@ on:
       - "mobile/modules/**/package.json"
       - "cloud-v2/packages/**/package.json"
       - "miniapps/**/package.json"
-      - "sdk/miniapp-cli/package.json"
+      - "sdk/bun.lock"
+      - "sdk/**/package.json"
       - ".github/workflows/bun-lockfile-checks.yml"
       - ".github/workflows/ci-gate.yml"
   workflow_dispatch:
@@ -50,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock') }}
+          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock', 'sdk/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-lockfiles-
 
@@ -59,4 +61,8 @@ jobs:
 
       - name: Validate mobile Bun lockfile
         working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate SDK Bun lockfile
+        working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
