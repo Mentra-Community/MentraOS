@@ -758,7 +758,7 @@ async function handleConnectionInit(
     // client reconnects and re-runs the handshake cleanly. Restore the older
     // sessions we only marked (never tore down) so the user keeps a working
     // session rather than losing both to a transient error.
-    restoreSupersededSessions(superseded);
+    restoreSupersededSessions(ws.data, superseded);
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
       "failed to seed subscriptions on connection.init; closing socket",
@@ -932,7 +932,12 @@ function finalizeSupersededSessions(entries: SessionEntry[]): void {
  * `supersededAt` hands authority back to the still-open old socket so the user
  * keeps a working session instead of being left with none.
  */
-function restoreSupersededSessions(entries: SessionEntry[]): void {
+function restoreSupersededSessions(current: WsData, entries: SessionEntry[]): void {
+  // If our own socket was itself superseded by an even newer init while we were
+  // seeding, we lost the reconnect race: that newer init now owns the supersede
+  // lifecycle, so reviving here could bring back a socket it already replaced.
+  // Leave the entries as-is and let the winning init finalize them.
+  if (current.supersededAt !== undefined) return;
   for (const entry of entries) {
     if (entry.data.supersededAt === undefined) continue;
     entry.data.supersededAt = undefined;

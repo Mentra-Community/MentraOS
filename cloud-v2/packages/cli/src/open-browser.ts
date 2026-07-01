@@ -22,6 +22,10 @@ export async function openBrowser(url: string): Promise<boolean> {
       detached: true,
       stdio: "ignore",
     });
+    // Detach from the child so a long-lived launcher (e.g. xdg-open staying
+    // attached to the browser) can't keep the CLI's event loop alive after
+    // login completes and we've already resolved.
+    child.unref();
 
     // A spawn error (e.g. launcher not found) is a genuine failure; callers fall
     // back to printing the URL.
