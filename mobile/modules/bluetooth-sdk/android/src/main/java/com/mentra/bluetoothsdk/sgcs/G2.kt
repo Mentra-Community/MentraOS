@@ -2126,9 +2126,14 @@ class G2 : SGCManager() {
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         for (i in imageContainers.indices) {
-            // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
-            imageContainers[i].bmpData = ByteArray(0)
-            imageContainers[i].dirty = false
+            // The firmware still shows this container's image; emptying bmpData locally never reaches
+            // it (#3232 dropped the teardown that used to drop empty containers on rebuild). Empty +
+            // dirty tells the reconcile loop to push an all-black frame that overwrites the image
+            // on-glass — the page stays up, so no audio/mic churn. Skip already-empty containers.
+            if (imageContainers[i].bmpData.isNotEmpty()) {
+                imageContainers[i].bmpData = ByteArray(0)
+                imageContainers[i].dirty = true
+            }
         }
         signalDisplayDirty()
     }
@@ -2398,10 +2403,21 @@ class G2 : SGCManager() {
             guardCount += 1
             val container = imageContainers[i]
             val sentBytes = container.bmpData
-            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
-            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            // Empty + dirty means "just cleared": the firmware still shows the old image, so push an
+            // all-black frame sized to the container to overwrite it on-glass (the page stays up — no
+            // teardown, no mic churn). A container only reaches here when dirty, and clearDisplay is
+            // the sole source of an empty-but-dirty container, so this fires exactly on a clear.
             if (sentBytes.isEmpty()) {
-                imageContainers[i].dirty = false
+                val blank = blankBmp(container.width, container.height)
+                if (blank != null) {
+                    sendImageData(container.id, container.name, blank)
+                }
+                // Only settle the flag if it's still empty — a displayBitmap during the await would
+                // have set new bytes, so leave it dirty for the next pass to send the real image.
+                val jj = imageContainers.indexOfFirst { it.id == container.id }
+                if (jj >= 0 && imageContainers[jj].bmpData.isEmpty()) {
+                    imageContainers[jj].dirty = false
+                }
                 continue
             }
             sendImageData(container.id, container.name, sentBytes)
@@ -2801,6 +2817,17 @@ class G2 : SGCManager() {
         destBitmap.recycle()
 
         return build4BitBmp(grayscalePixels, containerWidth, containerHeight)
+    }
+
+    /**
+     * Build an all-black BMP sized to a container. Sent to overwrite (and thus visually clear) an
+     * image container without tearing the page down — on the green monochrome display, pixel 0 is
+     * unlit, so an all-zero frame reads as blank. Used by the reconcile loop to clear a bitmap.
+     */
+    private fun blankBmp(width: Int, height: Int): ByteArray? {
+        if (width <= 0 || height <= 0) return null
+        val zeros = ByteArray(width * height)  // all-zero 8-bit grayscale = black
+        return build4BitBmp(zeros, width, height)
     }
 
     private fun build4BitBmp(grayscalePixels: ByteArray, width: Int, height: Int): ByteArray? {
