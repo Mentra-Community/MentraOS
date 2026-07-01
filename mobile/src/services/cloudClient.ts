@@ -29,14 +29,14 @@ const LOG_TAG = "cloudClient"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Team-friendly defaults for dev builds. Point every build at the Debug cloud
+// Team-friendly defaults for dev builds. Point every build at the Dev cloud
 // by default so a local build with no EXPO_PUBLIC_CLOUD_* env (see
-// .env.example) matches CI instead of silently diverging onto Cloud Dev. Local
-// Cloud V2 is still one tap away via the METRO_AUTO dev-settings preset; it
-// should not be the invisible default because it depends on a local stack plus
-// adb reverse/LAN reachability.
-const DEFAULT_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
-const DEFAULT_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
+// .env.example) matches CI instead of silently diverging. Local Cloud V2 is
+// still one tap away via the METRO_AUTO dev-settings preset; it should not be
+// the invisible default because it depends on a local stack plus adb
+// reverse/LAN reachability.
+const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
+const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
