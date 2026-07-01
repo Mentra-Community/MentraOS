@@ -22,6 +22,7 @@ import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -1192,6 +1193,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
+                addPhoneWireCapsIfSupported(chunk3);
 
                 Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
                 serviceInitializer
@@ -1210,6 +1212,16 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             Log.e(TAG, "💥 Error creating version info JSON", e);
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending version info", e);
+        }
+    }
+
+    private void addPhoneWireCapsIfSupported(JSONObject message) {
+        if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+            return;
+        }
+        Object bluetoothManager = serviceInitializer.getServiceManager().getBluetoothManager();
+        if (bluetoothManager instanceof K900BluetoothManager) {
+            ((K900BluetoothManager) bluetoothManager).addPhoneWireCapsIfSupported(message);
         }
     }
 
