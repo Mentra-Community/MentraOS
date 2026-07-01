@@ -52,7 +52,8 @@ public final class BleWireProtocol {
         if (payloadLen > 0) {
             System.arraycopy(payload, 0, inner, BINARY_HEADER_SIZE, payloadLen);
         }
-        return K900ProtocolUtils.packDataToK900(inner, CMD_TYPE_BINARY_MSG);
+        return K900ProtocolUtils.packDataToK900(
+                inner, CMD_TYPE_BINARY_MSG, K900LengthCodec.Endian.LE);
     }
 
     public static BinaryFragmentInfo extractBinaryFragmentInfo(byte[] frame) {

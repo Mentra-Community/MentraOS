@@ -122,6 +122,20 @@ public class K900ProtocolUtilsEndiannessTest {
     }
 
     @Test
+    public void packBinaryFragmentUsesLittleEndianOuterLength() {
+        byte[] payload = new byte[300];
+        byte flags =
+                (byte)
+                        (BleWireProtocol.BLE_WIRE_FLAG_FIRST_FRAG
+                                | BleWireProtocol.BLE_WIRE_FLAG_LAST_FRAG);
+        byte[] frame = K900ProtocolUtils.packBinaryFragment(flags, 1, 0, 1, payload);
+
+        int innerLen = frame[3] & 0xFF | ((frame[4] & 0xFF) << 8);
+        assertEquals(BleWireProtocol.BINARY_HEADER_SIZE + payload.length, innerLen);
+        assertNotNull(K900ProtocolUtils.extractBinaryFragmentInfo(frame));
+    }
+
+    @Test
     public void packAndExtractBinaryFragmentRoundTrip() {
         byte[] payload = "v2".getBytes(StandardCharsets.UTF_8);
         byte flags = (byte) (BleWireProtocol.BLE_WIRE_FLAG_HANDSHAKE
