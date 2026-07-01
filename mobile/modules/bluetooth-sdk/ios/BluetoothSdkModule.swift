@@ -31,6 +31,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "hotspot_error",
             "photo_response",
             "photo_status",
+            "camera_status",
             "video_recording_status",
             "media_success",
             "media_error",
@@ -362,11 +363,39 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
             let req = PhotoRequest.from(params: params)
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) appId=\(req.appId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.requestPhoto(req).values
+        }
+
+        AsyncFunction("warmUpCamera") { (params: [String: Any]) in
+            let requestId = params["requestId"] as? String
+            let sizeRaw = params["size"] as? String ?? "medium"
+            let size = PhotoSize(normalizedRawValue: sizeRaw)
+            let exposureTimeNs: Double?
+            switch params["exposureTimeNs"] {
+            case let value as Double:
+                exposureTimeNs = value.isFinite && value > 0 ? value : nil
+            case let value as Int:
+                exposureTimeNs = value > 0 ? Double(value) : nil
+            case let value as NSNumber:
+                let d = value.doubleValue
+                exposureTimeNs = d.isFinite && d > 0 ? d : nil
+            default:
+                exposureTimeNs = nil
+            }
+            let durationRaw = intValue(params["durationMs"]) ?? 0
+            let durationMs = durationRaw > 0 ? durationRaw : 15000
+
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.warmUpCamera(
+                requestId: requestId,
+                size: size,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: durationMs
+            ).values
         }
 
         // MARK: - OTA Commands
@@ -688,6 +717,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("photo_response", response.values)
         case let .photoStatus(status):
             sendEvent("photo_status", status.values)
+        case let .cameraStatus(status):
+            sendEvent("camera_status", status.values)
         case let .videoRecordingStatus(status):
             sendEvent("video_recording_status", status.values)
         case let .mediaUpload(event):

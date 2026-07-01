@@ -8,6 +8,16 @@ import { startDevSidecar } from './dev-server.js';
 const DEFAULT_DEV_PORT = 3000;
 const DEV_PORT_SCAN_LIMIT = 50;
 
+export interface DevAttestationInput {
+  packageName: string;
+  devServerUrl: string;
+}
+
+export interface DevOptions {
+  cwd?: string;
+  signDevAttestation?: (input: DevAttestationInput) => string | Promise<string | null | undefined> | null | undefined;
+}
+
 function getLanIp(): string | null {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -88,8 +98,8 @@ async function runBuild(cwd: string): Promise<void> {
   }
 }
 
-export async function dev(): Promise<void> {
-  const cwd = process.cwd();
+export async function dev(options: DevOptions = {}): Promise<void> {
+  const cwd = resolve(options.cwd ?? process.cwd());
   const manifestPath = resolve(cwd, 'miniapp.json');
   if (!existsSync(manifestPath)) {
     console.error('Error: miniapp.json not found in current directory');
@@ -217,9 +227,20 @@ export async function dev(): Promise<void> {
     );
   }
 
-  const buildDevUrl = (ip: string) => {
-    const base = `miniapp://dev?url=${encodeURIComponent(`http://${ip}:${port}`)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
-    return sidecarPort ? `${base}&dev=${sidecarPort}` : base;
+  const buildDevUrl = async (ip: string): Promise<string> => {
+    const devServerUrl = `http://${ip}:${port}`;
+    const base = `miniapp://dev?url=${encodeURIComponent(devServerUrl)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
+    const withDevPort = sidecarPort ? `${base}&dev=${sidecarPort}` : base;
+    if (!options.signDevAttestation) return withDevPort;
+
+    try {
+      const attestation = await options.signDevAttestation({ packageName, devServerUrl });
+      if (!attestation) return withDevPort;
+      return `${withDevPort}&attestation=${encodeURIComponent(attestation)}`;
+    } catch (error) {
+      console.warn(`Warning: could not sign dev URL (${(error as Error).message}). Miniapp auto-auth will be unavailable.`);
+      return withDevPort;
+    }
   };
 
   const printBanner = (): void => {
@@ -236,18 +257,18 @@ export async function dev(): Promise<void> {
   };
 
   printBanner();
-  const devUrl = buildDevUrl(lanIp);
+  const devUrl = await buildDevUrl(lanIp);
   printQR(devUrl);
   console.log(`\n${devUrl}\n`);
 
   // Monitor for LAN IP changes (e.g., WiFi switch).
-  const ipCheckInterval = setInterval(() => {
+  const ipCheckInterval = setInterval(async () => {
     const newIp = getLanIp();
     if (newIp && newIp !== lanIp) {
       lanIp = newIp;
       console.log(`\nLAN IP changed to ${newIp}. New QR:`);
       printBanner();
-      const newDevUrl = buildDevUrl(newIp);
+      const newDevUrl = await buildDevUrl(newIp);
       printQR(newDevUrl);
       console.log(`\n${newDevUrl}\n`);
     }

@@ -38,6 +38,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
+import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
@@ -153,7 +154,8 @@ const PING_TIMEOUT_THRESHOLD = 6 // ~30s
 // so they're trivial to grep in incident logs and to delete. Cross-platform —
 // host-side only, no native changes.
 // ===========================================================================
-const BGCAP_TELEMETRY = true
+const BGCAP_TELEMETRY = false
+const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 let bgcapHbTimer: ReturnType<typeof setInterval> | null = null
 let bgcapHbLast = 0
 let bgcapTxCount = 0
@@ -359,6 +361,7 @@ class LocalMiniappRuntime {
   /** Guards one-time wiring of the cloud transcript/translation fan-out. */
   private cloudResultsWired = false
   private cloudStatusWired = false
+  private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -1075,6 +1078,9 @@ class LocalMiniappRuntime {
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
+        break
+      case MiniappRequestType.CAMERA_WARM_UP:
+        void this.handleCameraWarmUp(packageName, payload, requestId)
         break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
@@ -2418,6 +2424,51 @@ class LocalMiniappRuntime {
     }
   }
 
+  private async handleCameraWarmUp(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    // Manifest CAMERA permission gate (same as photo).
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to warm up the camera", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.CAMERA_WARM_UP,
+      })
+      return
+    }
+
+    const photo = getRuntimeHooks().photo
+    if (!photo) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Camera warm-up is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      await photo.warmUp(packageName, {
+        size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        durationMs: payload.durationMs as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Camera warm-up failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
+      })
+    }
+  }
+
   private async handleVideoRecordingStart(
     packageName: string,
     payload: Record<string, unknown>,
@@ -2750,13 +2801,21 @@ class LocalMiniappRuntime {
     if (cloud) {
       this.ensureCloudResultsWired(cloud)
       const subs = this.buildCloudAudioSubscriptions(cloudStreams)
-      console.log(
-        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
-      )
-      cloud.setSubscriptions(subs).catch((err) => {
-        // Best-effort: the cloud may not be connected yet. Logging is enough.
-        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
-      })
+      const nextKey = this.audioSubscriptionKey(subs)
+      if (!this.cloudAudioSubscriptionSync.begin(nextKey)) return
+      console.log(`${LOG_TAG}: updateCloudSubscriptions cloudSubs=${subs.length}`)
+      cloud
+        .setSubscriptions(subs)
+        .then(() => {
+          this.cloudAudioSubscriptionSync.succeeded(nextKey)
+        })
+        .catch((err) => {
+          // Best-effort: the cloud may not be connected yet. Keep failed writes
+          // retryable; otherwise a reconnect that recomputes the same desired
+          // transcription set gets deduped and local captions never recover.
+          this.cloudAudioSubscriptionSync.failed(nextKey)
+          console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+        })
     }
   }
 
@@ -2793,6 +2852,26 @@ class LocalMiniappRuntime {
     return subs
   }
 
+  private audioSubscriptionKey(subs: AudioSubscription[]): string {
+    return JSON.stringify(
+      subs
+        .map((sub) => {
+          if (sub.kind === "transcription") {
+            return {
+              kind: sub.kind,
+              language: sub.language,
+            }
+          }
+          return {
+            kind: sub.kind,
+            source: sub.source,
+            target: sub.target,
+          }
+        })
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    )
+  }
+
   /**
    * Wire the cloud's transcription/translation results into the existing
    * miniapp fan-out exactly once. Maps each cloud result back to the
@@ -2805,6 +2884,12 @@ class LocalMiniappRuntime {
     this.cloudResultsWired = true
 
     cloud.onTranscript((d: TranscriptionData) => {
+      const receivedAt = Date.now()
+      if (TRANSCRIPT_TIMING_TELEMETRY) {
+        console.log(
+          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${d.resolvedLanguage} text="${d.text.slice(0, 48)}"`,
+        )
+      }
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
         type: "transcription",
         text: d.text,
@@ -2818,6 +2903,7 @@ class LocalMiniappRuntime {
         duration: d.durationMs,
         provider: d.provider,
         confidence: d.confidence,
+        __hostReceivedAt: receivedAt,
       })
     })
 
@@ -2981,6 +3067,15 @@ class LocalMiniappRuntime {
     }
 
     for (const packageName of matchedSubs) {
+      if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
+        const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
+        const now = Date.now()
+        console.log(
+          `${LOG_TAG}: transcript fanout t=${now} app=${packageName} final=${!!transcript?.isFinal} hostDelta=${
+            transcript?.__hostReceivedAt ? now - transcript.__hostReceivedAt : -1
+          }ms text="${(transcript?.text ?? "").slice(0, 48)}"`,
+        )
+      }
       // While a nav trip is active the Nav SDK's road-snapped fixes are
       // already being forwarded via addLocationListener (see NAV_START handler).
       // Suppress the raw background-GPS forward for that miniapp so the two

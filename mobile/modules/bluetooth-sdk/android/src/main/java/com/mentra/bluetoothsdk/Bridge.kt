@@ -375,6 +375,11 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        fun sendCameraStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("camera_status", statusJson)
+        }
+
+        @JvmStatic
         fun sendPhotoResponse(responseJson: Map<String, Any>) {
             sendTypedMessage("photo_response", responseJson)
         }

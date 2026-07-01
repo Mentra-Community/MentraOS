@@ -32,6 +32,7 @@ import {
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { RevokedJtiModel } from "../models/revoked-jti.model";
 import { OemModel } from "../models/oem.model";
+import { EnterpriseOrgModel } from "../models/enterprise-org.model";
 import {
   InvalidGrant,
   InvalidRequest,
@@ -40,7 +41,7 @@ import {
   type TokenResponse,
 } from "../types/oauth.types";
 import { findOrCreateUser } from "./user.service";
-import { recordSeenJti, verifyOemJwt } from "./oem.service";
+import { recordSeenJti, verifyTenantJwt } from "./oem.service";
 
 const logger = createLogger("core").child({ service: "session.service" });
 
@@ -59,7 +60,7 @@ const MENTRA_ALG = "EdDSA";
 const MINIAPP_ISSUER = "cloud-core";
 
 // The built-in "OEM zero". Mentra's own users (a phone logging in with a
-// Supabase session, or a legacy mentra-core token) resolve to this oemId. It
+// Supabase session, or a legacy mentra-core token) resolve to this tenantId. It
 // has no `oems` record and no JWKS: the subject token is verified with a shared
 // HS256 secret, not an OEM public key.
 const MENTRA_OEM_ID = "mentra";
@@ -81,7 +82,7 @@ const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
 // === Public API ===
 
 /**
- * Token exchange. Resolves the subject token to an (oemId, oemUserId) identity,
+ * Token exchange. Resolves the subject token to an (tenantId, tenantUserId) identity,
  * finds/creates the user, and mints a fresh access + refresh token pair. Returns
  * the RFC 6749 token-response shape.
  *
@@ -89,11 +90,11 @@ const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
  * token-type URN and dispatched by `resolveSubjectIdentity`:
  *   - an OEM-signed JWT (verified against the OEM's JWKS), or
  *   - a Mentra Supabase session / legacy mentra-core token (verified with a
- *     shared HS256 secret; oemId "mentra").
+ *     shared HS256 secret; tenantId "mentra").
  *
  * Step-by-step matches design.md "Lifecycles / Issue session":
  *   1–5. Delegated to `resolveSubjectIdentity`.
- *   6.   findOrCreateUser by (oemId, oemUserId).
+ *   6.   findOrCreateUser by (tenantId, tenantUserId).
  *   7–8. Mint access + refresh, persist refresh-token hash, return.
  */
 export async function createSession(args: {
@@ -102,8 +103,8 @@ export async function createSession(args: {
   const identity = await resolveSubjectIdentity(args.subjectToken);
 
   const user = await findOrCreateUser({
-    oemId: identity.oemId,
-    oemUserId: identity.oemUserId,
+    tenantId: identity.tenantId,
+    tenantUserId: identity.tenantUserId,
   });
 
   // Burn the subject token's jti BEFORE minting anything. The unique-index
@@ -116,7 +117,7 @@ export async function createSession(args: {
     }
     await recordSeenJti({
       jti: identity.jti,
-      oemId: identity.oemId,
+      tenantId: identity.tenantId,
       expUnixSec: identity.exp,
     });
   }
@@ -124,17 +125,17 @@ export async function createSession(args: {
   const sessionId = `sess_${ulid()}`;
   const { token: accessToken } = await issueAccessToken({
     mentraUserId: user.mentraUserId,
-    oemId: identity.oemId,
+    tenantId: identity.tenantId,
     sessionId,
   });
   const refreshToken = await issueRefreshToken({
     sessionId,
     mentraUserId: user.mentraUserId,
-    oemId: identity.oemId,
+    tenantId: identity.tenantId,
   });
 
   logger.info(
-    { sessionId, mentraUserId: user.mentraUserId, oemId: identity.oemId },
+    { sessionId, mentraUserId: user.mentraUserId, tenantId: identity.tenantId },
     "session created",
   );
 
@@ -164,23 +165,21 @@ export async function refreshSession(args: {
   if (!oldDoc) {
     throw new InvalidGrant("refresh_token unknown, expired, or already used");
   }
-
-  // OEM-disabled mid-session check. If the OEM was terminated after this
-  // session was issued, refuse to re-up. The built-in "mentra" OEM has no oems
-  // record (its users authenticate with a shared secret, not a JWKS), so skip
-  // the lookup for it.
-  if (oldDoc.oemId !== MENTRA_OEM_ID) {
-    const oem = await OemModel.findOne({ oemId: oldDoc.oemId }).lean();
-    if (!oem || oem.disabled) {
-      throw new UnauthorizedClient(`oem ${oldDoc.oemId} unknown or disabled`);
-    }
+  if (!oldDoc.sessionId || !oldDoc.mentraUserId || !oldDoc.tenantId) {
+    throw new InvalidGrant("refresh_token session identity is incomplete");
   }
+
+  // Mid-session revocation check. If the tenant's authority was terminated
+  // after this session was issued, refuse to re-up. The tenant may be an OEM
+  // (oems record) or an enterprise trusted-issuer org (enterprise_orgs record);
+  // the built-in "mentra" tenant has no backing record and is always allowed.
+  await assertTenantStillAuthorized(oldDoc.tenantId);
 
   // Mint fresh tokens. We reuse the existing sessionId so admin handles
   // remain stable across refreshes.
   const { token: accessToken } = await issueAccessToken({
     mentraUserId: oldDoc.mentraUserId,
-    oemId: oldDoc.oemId,
+    tenantId: oldDoc.tenantId,
     sessionId: oldDoc.sessionId,
   });
   const nextRefresh = mintRefreshToken();
@@ -214,6 +213,40 @@ export async function refreshSession(args: {
 }
 
 /**
+ * Mid-session revocation guard for the refresh flow. A session's tenant is one
+ * of three kinds, each with its own backing record and "still authorized" rule:
+ *   - the built-in "mentra" tenant: no backing record, always allowed,
+ *   - an OEM (legacy JWKS issuer): allowed while its `oems` row is not disabled,
+ *   - an enterprise trusted-issuer org: allowed while its `enterprise_orgs` row
+ *     has status "active".
+ * Enterprise tenants have NO `oems` row (their tenantId comes from EnterpriseOrg,
+ * see verifyTrustedIssuerJwt in oem.service), so checking only OemModel would
+ * reject every enterprise session on its first refresh once the access token
+ * expired. We check OEMs first, then enterprise orgs, then reject.
+ */
+async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
+  if (tenantId === MENTRA_OEM_ID) return;
+
+  const oem = await OemModel.findOne({ tenantId }).lean();
+  if (oem) {
+    if (oem.disabled) {
+      throw new UnauthorizedClient(`oem ${tenantId} unknown or disabled`);
+    }
+    return;
+  }
+
+  const enterpriseOrg = await EnterpriseOrgModel.findOne({ tenantId }).lean();
+  if (enterpriseOrg) {
+    if (enterpriseOrg.status !== "active") {
+      throw new UnauthorizedClient(`enterprise org ${tenantId} disabled`);
+    }
+    return;
+  }
+
+  throw new UnauthorizedClient(`tenant ${tenantId} unknown or disabled`);
+}
+
+/**
  * Revoke a single session. Deletes its refresh-token doc. The associated
  * access-token jti is not known here (we didn't store it), so until the
  * access token's natural expiry, callers must either accept a 1-hour
@@ -237,11 +270,11 @@ export async function revokeSession(args: { sessionId: string }): Promise<void> 
  * requires storing the access-token jti at issue time so we can blacklist
  * them here.
  */
-export async function revokeAllForOem(oemId: string): Promise<{ deletedSessions: number }> {
-  await OemModel.updateOne({ oemId }, { $set: { disabled: true } });
-  const result = await RefreshTokenModel.deleteMany({ oemId });
+export async function revokeAllForOem(tenantId: string): Promise<{ deletedSessions: number }> {
+  await OemModel.updateOne({ tenantId }, { $set: { disabled: true } });
+  const result = await RefreshTokenModel.deleteMany({ tenantId });
   logger.info(
-    { oemId, deletedSessions: result.deletedCount },
+    { tenantId, deletedSessions: result.deletedCount },
     "bulk-revoked oem sessions",
   );
   return { deletedSessions: result.deletedCount ?? 0 };
@@ -289,7 +322,7 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * Mint a miniapp-scoped token for one packageName.
  *
  * The caller has already verified the device's access token and read the
- * identity from it (mentraUserId + oemId). This token is audience-pinned to a
+ * identity from it (mentraUserId + tenantId). This token is audience-pinned to a
  * single miniapp (`aud = packageName`) and signed with the separate
  * miniapp-token key, so it is only ever valid against that one miniapp's
  * developer backend. It is the only token a miniapp ever holds; the access
@@ -305,14 +338,14 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  */
 export async function issueMiniappToken(args: {
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   packageName: string;
 }): Promise<{ token: string; expiresAt: number }> {
   const { privateKey } = await getMiniappKeys();
   const ttlSec = miniappTokenTtlSec();
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec;
 
-  const token = await new jose.SignJWT({ oemId: args.oemId })
+  const token = await new jose.SignJWT({ tenantId: args.tenantId })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({ alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID })
     .setIssuer(MINIAPP_ISSUER)
@@ -333,14 +366,14 @@ export async function issueMiniappToken(args: {
  */
 export async function issueRuntimeToken(args: {
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
 }): Promise<{ token: string; expiresAt: number }> {
   const expiresAt = Math.floor(Date.now() / 1000) + RUNTIME_TOKEN_TTL_SEC;
   const token = await signRuntimeToken({
     privateKey: requireEnv("MENTRA_JWT_PRIVATE_KEY"),
     issuer: process.env.CLOUD_CORE_RUNTIME_TOKEN_ISSUER ?? "cloud-core",
     subject: args.mentraUserId,
-    oemId: args.oemId,
+    tenantId: args.tenantId,
     jti: ulid(),
     expiresInSeconds: RUNTIME_TOKEN_TTL_SEC,
     kid: RUNTIME_TOKEN_KID,
@@ -366,20 +399,20 @@ function miniappTokenTtlSec(): number {
 // === Internals: subject-token identity resolution ===
 
 /**
- * Resolve a subject token to an (oemId, oemUserId) identity. All three accepted
+ * Resolve a subject token to an (tenantId, tenantUserId) identity. All three accepted
  * subject tokens arrive as a JWT under the one RFC 8693 JWT token-type URN, so
  * we dispatch on the token itself:
  *   - HS* (symmetric) tokens are Mentra-internal. A Supabase session (its `iss`
  *     points at Supabase) verifies with SUPABASE_JWT_SECRET; anything else
  *     symmetric is treated as a legacy mentra-core token (MENTRA_CORE_JWT_SECRET).
- *     Both resolve to oemId "mentra".
+ *     Both resolve to tenantId "mentra".
  *   - Everything else is an OEM-signed JWT, verified against that OEM's JWKS.
  */
 async function resolveSubjectIdentity(
   subjectToken: string,
 ): Promise<{
-  oemId: string;
-  oemUserId: string;
+  tenantId: string;
+  tenantUserId: string;
   jti?: string;
   exp?: number;
 }> {
@@ -397,14 +430,14 @@ async function resolveSubjectIdentity(
     const secretEnv = looksLikeSupabase(iss)
       ? "SUPABASE_JWT_SECRET"
       : "MENTRA_CORE_JWT_SECRET";
-    const oemUserId = await verifyHs256Subject(subjectToken, secretEnv);
-    return { oemId: MENTRA_OEM_ID, oemUserId };
+    const tenantUserId = await verifyHs256Subject(subjectToken, secretEnv);
+    return { tenantId: MENTRA_OEM_ID, tenantUserId };
   }
 
-  const verified = await verifyOemJwt(subjectToken);
+  const verified = await verifyTenantJwt(subjectToken);
   return {
-    oemId: verified.oemId,
-    oemUserId: verified.oemUserId,
+    tenantId: verified.tenantId,
+    tenantUserId: verified.tenantUserId,
     jti: verified.jti,
     exp: verified.exp,
   };
@@ -574,13 +607,13 @@ function requireEnv(name: string): string {
 
 async function issueAccessToken(args: {
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   sessionId: string;
 }): Promise<{ token: string; jti: string }> {
   const { privateKey } = await getMentraKeys();
   const jti = ulid();
   const token = await new jose.SignJWT({
-    oem_id: args.oemId,
+    tenant_id: args.tenantId,
     session_id: args.sessionId,
   })
     // The `kid` points verifiers at the access-token public key in the JWKS.
@@ -598,7 +631,7 @@ async function issueAccessToken(args: {
 async function issueRefreshToken(args: {
   sessionId: string;
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
 }): Promise<string> {
   const token = mintRefreshToken();
 
@@ -606,7 +639,7 @@ async function issueRefreshToken(args: {
     sessionId: args.sessionId,
     refreshTokenHash: token.hash,
     mentraUserId: args.mentraUserId,
-    oemId: args.oemId,
+    tenantId: args.tenantId,
     issuedAt: new Date(),
     expiresAt: token.expiresAt,
   });

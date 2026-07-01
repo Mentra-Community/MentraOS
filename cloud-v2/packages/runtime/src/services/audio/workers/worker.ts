@@ -188,9 +188,8 @@ let running = true
 
 /**
  * Which transcription provider to use. Defaults to the real Soniox provider, so
- * production is real unless told otherwise. Tests that exercise the routing /
- * scaling / failover layer (not the transcription itself) set
- * `AUDIO_PROVIDER=mock` for a deterministic, offline transcript source.
+ * production is real unless told otherwise. Tests can override this when they
+ * exercise routing / scaling / failover without depending on transcription.
  */
 const PROVIDER_KIND = process.env.AUDIO_PROVIDER ?? "soniox"
 

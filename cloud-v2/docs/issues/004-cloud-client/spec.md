@@ -52,7 +52,7 @@ interface AuthModule {
   getRuntimeToken(): Promise<string>                // cloud-runtime audience
   getCoreToken(): Promise<string>                   // cloud-core audience, Core-backed mode only
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>  // cached per package
-  readonly identity: { mentraUserId: string; oemId: string }
+  readonly identity: { mentraUserId: string; tenantId: string }
   onExpired(handler: () => void): () => void        // refresh failed; host must re-auth
 }
 ```

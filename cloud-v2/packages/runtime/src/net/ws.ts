@@ -103,7 +103,7 @@ export interface WsData {
   audioSessionId: string;
   /** From the verified access token. */
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   /** The auth-session id (from the access token's `session_id` claim). */
   authSessionId: string;
   /**
@@ -116,6 +116,12 @@ export interface WsData {
   encryptionKeyB64: string;
   /** Epoch ms of the last inbound WS frame — passive liveness for takeover checks. */
   lastInboundAt: number;
+  /**
+   * Set when a newer socket for the same user takes over. The socket may
+   * still be physically open for a short moment, but it must stop owning audio
+   * subscriptions immediately.
+   */
+  supersededAt?: number;
 }
 
 export interface SessionEntry {
@@ -266,6 +272,7 @@ export function hasLiveAudioSession(
       entry.data.mentraUserId === mentraUserId &&
       entry.data.audioSessionId === audioSessionId
     ) {
+      if (entry.data.supersededAt !== undefined) return false;
       return Date.now() - entry.data.lastInboundAt <= SESSION_LIVENESS_WINDOW_MS;
     }
   }
@@ -282,7 +289,10 @@ export function forwardToUserSessions(
 ): void {
   const payload = JSON.stringify(message);
   for (const entry of sessionByTag.values()) {
-    if (entry.data.mentraUserId === mentraUserId) {
+    if (
+      entry.data.mentraUserId === mentraUserId &&
+      entry.data.supersededAt === undefined
+    ) {
       try {
         entry.ws.send(payload);
       } catch (err) {
@@ -364,7 +374,7 @@ export async function tryWsUpgrade(
   const encryptionKeyB64 = crypto.randomBytes(32).toString("base64");
   const tagRecord = {
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     audioSessionId,
     authSessionId: verified.sessionId,
     podId,
@@ -388,7 +398,7 @@ export async function tryWsUpgrade(
     sessionTag,
     audioSessionId,
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     authSessionId: verified.sessionId,
     // 32-byte secretbox key for this session. Stored in Redis with the reserved
     // sessionTag so any ingress pod can decrypt UDP frames. Sent to the client
@@ -487,6 +497,14 @@ export const wsHandlers: WebSocketHandler<WsData> = {
 
   message(ws, msg) {
     ws.data.lastInboundAt = Date.now();
+    if (ws.data.supersededAt !== undefined) {
+      try {
+        ws.close(1012, "superseded by newer session");
+      } catch {
+        /* already closing */
+      }
+      return;
+    }
     // String frames are v2 protocol control messages; binary frames are the
     // WS-fallback audio path (same 6-byte header + payload as UDP).
     if (typeof msg === "string") {
@@ -663,6 +681,12 @@ async function handleConnectionInit(
     init.audio?.codec ?? "lc3",
     init.audio?.frameSizeBytes,
   );
+  // Optimistically mark this user's older sockets superseded — this pauses them
+  // and makes them look dead to the takeover check below — but defer their
+  // teardown until the new session has actually seeded. If init fails we restore
+  // them, so a transient seed error on reconnect never leaves the user with no
+  // session at all. See markOlderSessionsSuperseded.
+  const superseded = markOlderSessionsSuperseded(ws.data);
 
   // Seed the subscription source-of-truth key atomically with session creation,
   // so audio that starts flowing right after the ack is transcribed against the
@@ -720,7 +744,10 @@ async function handleConnectionInit(
     // Do NOT fall through to connection.ack: without a seeded subscription key
     // the client would stream audio that is transcribed against nothing, with no
     // in-band signal anything is wrong. Surface the failure and close so the
-    // client reconnects and re-runs the handshake cleanly.
+    // client reconnects and re-runs the handshake cleanly. Restore the older
+    // sessions we only marked (never tore down) so the user keeps a working
+    // session rather than losing both to a transient error.
+    restoreSupersededSessions(superseded);
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
       "failed to seed subscriptions on connection.init; closing socket",
@@ -733,6 +760,10 @@ async function handleConnectionInit(
     }
     return;
   }
+
+  // The new session is now the subscription authority for this user; it is safe
+  // to tear down the older sockets we paused above.
+  finalizeSupersededSessions(superseded);
 
   ws.send(
     JSON.stringify({
@@ -777,6 +808,7 @@ async function handleWsBinaryAudio(
   ws: ServerWebSocket<WsData>,
   msg: Buffer | Uint8Array,
 ): Promise<void> {
+  if (ws.data.supersededAt !== undefined) return;
   const packet = parseAudioPacket(msg);
   if (!packet) {
     logger.debug(
@@ -811,6 +843,93 @@ async function handleWsBinaryAudio(
     logger.error(
       { err, sessionTag: ws.data.sessionTag },
       "ws binary audio ingest failed",
+    );
+  }
+}
+
+/**
+ * Mark this user's older sockets as superseded WITHOUT tearing them down yet.
+ * Setting `supersededAt` pauses their audio processing and makes them look dead
+ * to takeover checks (`hasLiveAudioSession`), which the new session needs before
+ * it seeds/takes over the subscription key. The destructive teardown (refresh
+ * interval, sessionTag unregister, socket close) is deferred to
+ * `finalizeSupersededSessions` so that a failed init can instead
+ * `restoreSupersededSessions` — a transient seed error on reconnect must not
+ * kill the still-working old socket and leave the user with no session.
+ */
+function markOlderSessionsSuperseded(current: WsData): SessionEntry[] {
+  const superseded: SessionEntry[] = [];
+  for (const entry of sessionByTag.values()) {
+    const data = entry.data;
+    if (data.sessionTag === current.sessionTag) continue;
+    if (data.supersededAt !== undefined) continue;
+    if (data.mentraUserId !== current.mentraUserId) continue;
+
+    data.supersededAt = Date.now();
+    superseded.push(entry);
+    logger.warn(
+      {
+        mentraUserId: data.mentraUserId,
+        oldSessionTag: data.sessionTag,
+        oldAudioSessionId: data.audioSessionId,
+        oldAuthSessionId: data.authSessionId,
+        newSessionTag: current.sessionTag,
+        newAudioSessionId: current.audioSessionId,
+        newAuthSessionId: current.authSessionId,
+      },
+      "ws session marked superseded by newer socket for same user",
+    );
+  }
+  return superseded;
+}
+
+/**
+ * Tear down sockets superseded by a now-established newer session: stop their
+ * refresh, drop their sessionTag registration, and close them. Called only once
+ * the new session has successfully seeded/taken over its subscription key.
+ */
+function finalizeSupersededSessions(entries: SessionEntry[]): void {
+  for (const entry of entries) {
+    const data = entry.data;
+    const interval = refreshIntervals.get(data.sessionTag);
+    if (interval) {
+      clearInterval(interval);
+      refreshIntervals.delete(data.sessionTag);
+    }
+    unregisterSessionTag(data.sessionTag).catch((err) => {
+      logger.warn(
+        { err, sessionTag: data.sessionTag },
+        "sessionTag unregister failed after supersede",
+      );
+    });
+    try {
+      entry.ws.close(1012, "superseded by newer session");
+    } catch (err) {
+      logger.warn(
+        { err, sessionTag: data.sessionTag },
+        "ws close failed after supersede",
+      );
+    }
+  }
+}
+
+/**
+ * Un-pause sessions that were optimistically marked superseded when the newer
+ * session failed to initialize. Because they were never torn down, clearing
+ * `supersededAt` hands authority back to the still-open old socket so the user
+ * keeps a working session instead of being left with none.
+ */
+function restoreSupersededSessions(entries: SessionEntry[]): void {
+  for (const entry of entries) {
+    if (entry.data.supersededAt === undefined) continue;
+    entry.data.supersededAt = undefined;
+    logger.warn(
+      {
+        mentraUserId: entry.data.mentraUserId,
+        sessionTag: entry.data.sessionTag,
+        audioSessionId: entry.data.audioSessionId,
+      },
+      "restored superseded session after newer session init failed",
     );
   }
 }

@@ -105,7 +105,7 @@ socket. (The audio-specific lifecycle, claim ownership / assign a worker on conn
 lives in `audio.service.ts`, which the connect handler calls into.)
 
 ```ts
-export interface WsData { sessionTag: number; audioSessionId: string; mentraUserId: string; oemId: string; authSessionId: string }
+export interface WsData { sessionTag: number; audioSessionId: string; mentraUserId: string; tenantId: string; authSessionId: string }
 export interface SessionEntry { ws: ServerWebSocket<WsData>; data: WsData }
 export function configureAudioSession(opts: { udpAdvertisedHost: string; udpAdvertisedPort: number }): void
 export function getSessionByTag(tag: number): SessionEntry | undefined

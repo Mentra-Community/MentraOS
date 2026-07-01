@@ -3,7 +3,7 @@
  * hand-driven exploration. Re-exports the `TestClient` class from `./client`.
  *
  * Hand-runnable form (when invoked directly):
- *   bun test/test-client/src/index.ts <oemUserId>
+ *   bun test/test-client/src/index.ts <tenantUserId>
  *
  * Pings the local stack: TEST OEM (:3100) → core (:3000) → audio (:3001 WS),
  * completes the connection.init/ack handshake, sends one fake-LC3 UDP packet,
@@ -16,12 +16,12 @@ import { TestClient } from "./client";
 
 const isMain = import.meta.main;
 if (isMain) {
-  const oemUserId = process.argv[2] ?? "tc-alice";
+  const tenantUserId = process.argv[2] ?? "tc-alice";
   const client = new TestClient({
     testOemUrl: process.env.TEST_OEM_URL ?? "http://localhost:3100",
     coreUrl: process.env.CORE_URL ?? "http://localhost:3000",
     audioWsUrl: process.env.AUDIO_WS_URL ?? "ws://localhost:3001/ws/session",
-    oemUserId,
+    tenantUserId,
   });
   await client.connect();
   console.log("connected; sessionTag =", client.sessionTag);

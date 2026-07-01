@@ -184,9 +184,15 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     let code: string | undefined;
     let detail = "";
     try {
-      const data = (await res.json()) as { code?: string; message?: string };
-      code = data?.code;
-      detail = data?.message ? `: ${data.message}` : "";
+      const data = (await res.json()) as {
+        code?: string;
+        message?: string;
+        error?: string;
+        error_description?: string;
+      };
+      code = data?.code ?? data?.error;
+      const message = data?.message ?? data?.error_description;
+      detail = message ? `: ${message}` : "";
     } catch {
       // No JSON body, or unparseable: fall back to status alone.
     }

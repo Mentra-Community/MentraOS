@@ -1258,6 +1258,26 @@ struct ViewState {
         try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
 
+    func warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) throws {
+        guard let live = sgc as? MentraLive else {
+            // Fail fast like other camera commands so the SDK promise rejects immediately instead
+            // of hanging until the request timeout with no camera_status.
+            throw BluetoothSdkError(
+                code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+        }
+        live.warmUpCamera(
+            requestId: requestId,
+            size: size,
+            exposureTimeNs: exposureTimeNs,
+            durationMs: durationMs
+        )
+    }
+
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
     func requestVersionInfo() {
@@ -1365,7 +1385,6 @@ struct ViewState {
         let manualIso = manualExposureNs != nil ? request.iso.flatMap { $0 > 0 ? $0 : nil } : nil
         let routed = PhotoRequest(
             requestId: request.requestId,
-            appId: request.appId,
             size: request.size,
             webhookUrl: request.webhookUrl,
             authToken: request.authToken,
@@ -1384,7 +1403,7 @@ struct ViewState {
             ispAnalogGain: request.ispAnalogGain
         )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) appId=\(routed.appId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(

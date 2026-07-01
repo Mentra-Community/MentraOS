@@ -271,38 +271,9 @@ class DeviceManager {
         // setupPermissionMonitoring()
         setupBluetoothStateMonitoring()
         phoneMic = PhoneMic.getInstance()
-        // Initialize local STT transcriber
-        try {
-            val context = Bridge.getContext()
-            transcriber = SherpaOnnxTranscriber(context)
-            transcriber?.setTranscriptListener(
-                object : SherpaOnnxTranscriber.TranscriptListener {
-                    override fun onPartialResult(text: String, language: String) {
-                        Bridge.log("STT: Partial result: $text")
-                        // The Sherpa model emits all-caps text; lowercase English
-                        // output to match the rest of the pipeline (parity with iOS).
-                        val formatted = if (language == "en-US") text.lowercase() else text
-                        Bridge.sendLocalTranscription(formatted, false, language)
-                    }
-
-                    override fun onFinalResult(text: String, language: String) {
-                        Bridge.log("STT: Final result: $text")
-                        // The Sherpa model emits all-caps text; lowercase English
-                        // output to match the rest of the pipeline (parity with iOS).
-                        val formatted = if (language == "en-US") text.lowercase() else text
-                        Bridge.sendLocalTranscription(formatted, true, language)
-                    }
-                }
-            )
-            transcriber?.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        } catch (e: Exception) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-        } catch (e: LinkageError) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-        }
+        // Sherpa is intentionally lazy. Initializing it during app startup
+        // competes with Cloud V2 captions even when cloud transcription is
+        // healthy; start it only when offline/local transcription is requested.
 
         // Initialize LC3 encoder/decoder for unified audio encoding
         try {
@@ -770,7 +741,9 @@ class DeviceManager {
         // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
         if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
-            transcriber?.acceptAudio(pcmData)
+            if (ensureTranscriberInitialized()) {
+                transcriber?.acceptAudio(pcmData)
+            }
         }
     }
 
@@ -1189,7 +1162,49 @@ class DeviceManager {
 
     fun restartTranscriber() {
         Bridge.log("MAN: Restarting transcriber via command")
-        transcriber?.restart()
+        if (ensureTranscriberInitialized()) {
+            transcriber?.restart()
+        }
+    }
+
+    private fun ensureTranscriberInitialized(): Boolean {
+        if (transcriber != null) return true
+
+        return try {
+            val context = Bridge.getContext()
+            val nextTranscriber = SherpaOnnxTranscriber(context)
+            nextTranscriber.setTranscriptListener(
+                object : SherpaOnnxTranscriber.TranscriptListener {
+                    override fun onPartialResult(text: String, language: String) {
+                        Bridge.log("STT: Partial result: $text")
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, false, language)
+                    }
+
+                    override fun onFinalResult(text: String, language: String) {
+                        Bridge.log("STT: Final result: $text")
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, true, language)
+                    }
+                }
+            )
+            nextTranscriber.initialize()
+            transcriber = nextTranscriber
+            Bridge.log("SherpaOnnxTranscriber fully initialized")
+            true
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
+            false
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
+            false
+        }
     }
 
     // MARK: - connection state management
@@ -1542,6 +1557,23 @@ class DeviceManager {
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
     }
 
+    fun warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        // Fail fast like other camera commands so the SDK promise rejects immediately instead of
+        // hanging until the request timeout with no camera_status.
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException(
+                    "unsupported_device",
+                    "This command requires Mentra Live glasses.",
+                )
+        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
@@ -1671,7 +1703,7 @@ class DeviceManager {
                 iso = manualIso,
             )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

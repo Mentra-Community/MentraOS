@@ -76,7 +76,7 @@ bookkeeping.
 
 1. The glasses open a WebSocket; the load balancer sends it to whatever pod, say pod
    B. Pod B checks the user's `cloud-runtime` token and reads the configured user
-   id plus `oemId` claims.
+   id plus `tenantId` claims.
 2. Pod B tries to claim ownership: write "owner = pod B" into Redis **only if nobody
    else holds it**, with the 5-second timer. If someone else already owns the user,
    pod B closes the socket and the glasses retry.

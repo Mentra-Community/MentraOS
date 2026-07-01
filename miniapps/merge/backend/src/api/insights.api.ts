@@ -13,7 +13,20 @@ const mentraAuth = createMentraAuth({
   packageName: process.env.MERGE_PACKAGE_NAME ?? "com.mentra.local-merge",
 })
 
-insightsApi.use("*", mentraAuth.hono())
+insightsApi.use(
+  "*",
+  mentraAuth.hono({
+    onUnauthorized: (error, c) => {
+      console.warn("[LocalMerge] miniapp auth rejected", {
+        error: error.message,
+        packageName: process.env.MERGE_PACKAGE_NAME ?? "com.mentra.local-merge",
+        jwksUrl: process.env.MENTRA_AUTH_JWKS_URL,
+        issuers: process.env.MENTRA_AUTH_ISSUERS ?? process.env.MENTRA_AUTH_ISSUER,
+      })
+      return c.json({error: error.message}, 401)
+    },
+  }),
+)
 
 insightsApi.post("/", async (c) => {
   try {

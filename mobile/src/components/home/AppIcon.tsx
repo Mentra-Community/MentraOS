@@ -1,13 +1,17 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
-import {memo} from "react"
-import {ActivityIndicator, StyleProp, StyleSheet, TouchableOpacity, View, ViewStyle} from "react-native"
+import {memo, useEffect, useState} from "react"
+import {ActivityIndicator, StyleProp, StyleSheet, Text, TouchableOpacity, View, ViewStyle} from "react-native"
 import {withUniwind} from "uniwind"
 
 import {Icon} from "@/components/ignite"
 import {DevIcon, DevMiniappBadge} from "@/components/miniapps/DevIcons"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useCachedRemoteImageSource} from "@/hooks/useCachedRemoteImageSource"
+import {
+  isRemoteImageSourceFailed,
+  markRemoteImageSourceFailed,
+  useCachedRemoteImageSource,
+} from "@/hooks/useCachedRemoteImageSource"
 import type {ClientApp} from "@mentra/island"
 import React from "react"
 
@@ -32,13 +36,23 @@ interface AppIconProps {
    * icon at once after gating on prefetch completion).
    */
   instant?: boolean
+  resolveCachedSource?: boolean
 }
 
-const AppIcon = ({app, onClick, style, disableLoader, instant}: AppIconProps) => {
+const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSource = true}: AppIconProps) => {
   const {theme} = useAppTheme()
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
-  const imageSource = useCachedRemoteImageSource(app.logoUrl)
+  const imageSource = useCachedRemoteImageSource(app.logoUrl, {enabled: resolveCachedSource})
+  const [iconFailed, setIconFailed] = useState(() => isRemoteImageSourceFailed(app.logoUrl))
+  const isRemoteLogo =
+    typeof app.logoUrl === "string" && (app.logoUrl.startsWith("http://") || app.logoUrl.startsWith("https://"))
+  const imageUri = typeof imageSource === "object" && imageSource !== null && "uri" in imageSource ? imageSource.uri : null
+  const remoteUnavailable = isRemoteLogo && !imageUri
+
+  useEffect(() => {
+    setIconFailed(isRemoteImageSourceFailed(app.logoUrl))
+  }, [app.logoUrl])
 
   const iconSize = {
     width: flatStyle?.width ?? 64,
@@ -69,14 +83,39 @@ const AppIcon = ({app, onClick, style, disableLoader, instant}: AppIconProps) =>
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}
-          {!app.iconComponent && app.isMiniappDev && !app.logoUrl && <DevIcon size={iconSize.width as number} />}
-          {!app.iconComponent && (app.logoUrl || !app.isMiniappDev) && (
+          {!app.iconComponent && app.isMiniappDev && (!app.logoUrl || iconFailed || remoteUnavailable) && (
+            <DevIcon size={iconSize.width as number} />
+          )}
+          {!app.iconComponent && !app.isMiniappDev && (iconFailed || remoteUnavailable) && (
+            <View
+              style={{
+                width: "100%",
+                height: "100%",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: theme.colors.palette.neutral200,
+              }}>
+              <Text
+                style={{
+                  color: theme.colors.textDim,
+                  fontSize: Math.max(18, Number(iconSize.width) * 0.38),
+                  fontWeight: "700",
+                }}>
+                {(app.name || app.packageName || "?").trim().charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          {!app.iconComponent && !iconFailed && !remoteUnavailable && (app.logoUrl || !app.isMiniappDev) && (
             <Image
               source={imageSource}
               style={{width: "100%", height: "100%", resizeMode: "cover"}}
               contentFit="cover"
               transition={instant ? 0 : 200}
               cachePolicy="memory-disk"
+              onError={() => {
+                markRemoteImageSourceFailed(app.logoUrl)
+                setIconFailed(true)
+              }}
             />
           )}
           {app.iconComponent &&

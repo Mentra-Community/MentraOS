@@ -573,7 +573,6 @@ class SocketComms {
 
   private handle_photo_request(msg: any) {
     const requestId = msg.requestId ?? ""
-    const appId = msg.appId ?? ""
     const webhookUrl = msg.webhookUrl ?? ""
     const size = normalizePhotoSize(msg.size)
     const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : null
@@ -582,18 +581,17 @@ class SocketComms {
     const rawExp = msg.exposureTimeNs
     const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
-    if (!requestId || !appId) {
+    if (!requestId) {
       console.log(
-        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${appId || "empty"})`,
+        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"})`,
       )
       return
     }
     console.log(`SOCKET: PHOTO PIPELINE [2/6] Forwarding to BluetoothSdk.requestPhoto requestId=${requestId}`)
     void BluetoothSdk.requestPhoto({
       requestId,
-      appId,
       size,
       webhookUrl,
       authToken,

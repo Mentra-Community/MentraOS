@@ -50,6 +50,12 @@ export interface PhotoTaken {
   size: number
 }
 
+export interface WarmUpCameraOptions {
+  size?: "low" | "medium" | "high" | "max"
+  exposureTimeNs?: number
+  durationMs?: number
+}
+
 export interface StartVideoRecordingOptions {
   /** Video width in pixels. Omit to use the device's saved button-video default. */
   width?: number
@@ -121,6 +127,28 @@ export class CameraModule {
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
       exposureTimeNs: options.exposureTimeNs,
+    })
+  }
+
+  /**
+   * Pre-warm the glasses camera so the next takePhoto() is near-instant.
+   * The camera stays warm for ~durationMs (default 15s); call warmUp() again to
+   * extend it. Warm with the same `size` you'll capture with — a mismatched size
+   * forces the camera to reconfigure and loses the speedup. Requires CAMERA
+   * permission in miniapp.json. Resolves once the camera reports ready.
+   *
+   * Warm-ups are serialized: only one runs at a time and none may start while a
+   * photo is being captured. If the camera is busy (a capture is in flight, or
+   * another warm-up is still opening) this rejects with `camera_busy` — retry
+   * shortly, or just call takePhoto() (it works regardless, only slower). The
+   * normal warmUp() → takePhoto() sequence never hits this.
+   */
+  async warmUp(options: WarmUpCameraOptions = {}): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.CAMERA_WARM_UP,
+      size: options.size ?? "medium",
+      exposureTimeNs: options.exposureTimeNs,
+      durationMs: options.durationMs ?? 15000,
     })
   }
 

@@ -61,7 +61,7 @@ export interface TestClientOptions {
   /** Where cloud-audio's WS endpoint runs. e.g. `ws://localhost:3001/ws/session`. */
   audioWsUrl: string;
   /** OEM's user identifier — passed as `sub` in the OEM JWT. */
-  oemUserId: string;
+  tenantUserId: string;
   /** Audio codec advertised in `connection.init`. Default `"lc3"`. */
   codec?: "lc3" | "pcm";
   /** Sample rate advertised in `connection.init`. Default `16000`. */
@@ -183,6 +183,7 @@ export class TestClient {
   private udpSeq = 0;
   private messageHandlers: MessageHandler[] = [];
   private receivedMessages: AnyServerMessage[] = [];
+  private supersededTestSockets: WebSocket[] = [];
   /** Subscriptions queued before connect — seeded into `connection.init`. */
   private initialSubscriptions: AudioSubscription[] = [];
   /** Monotonic version for REST subscription writes (seed at connect is 0). */
@@ -207,6 +208,12 @@ export class TestClient {
     const tag = this.ack?.payload.audio?.sessionTag;
     if (tag == null) throw new Error("not connected");
     return tag;
+  }
+
+  get sessionId(): string {
+    const sessionId = this.ack?.payload.sessionId;
+    if (!sessionId) throw new Error("not connected");
+    return sessionId;
   }
 
   /**
@@ -244,6 +251,26 @@ export class TestClient {
    */
   onLivenessClose(cb: () => void): void {
     this.livenessClosedCallback = cb;
+  }
+
+  async reconnectWithoutClosingPreviousForTest(): Promise<void> {
+    if (!this.runtimeToken || !this.ws) throw new Error("not connected");
+    this.supersededTestSockets.push(this.ws);
+    this.ws = null;
+    this.ack = null;
+    this.encryptionKey = null;
+    await this.openWebSocket(this.runtimeToken);
+  }
+
+  async reconnectWithFreshAuthWithoutClosingPreviousForTest(): Promise<void> {
+    if (!this.ws) throw new Error("not connected");
+    this.supersededTestSockets.push(this.ws);
+    this.ws = null;
+    this.ack = null;
+    this.encryptionKey = null;
+    this.accessToken = await this.exchangeForAccessToken();
+    this.runtimeToken = await this.fetchRuntimeToken(this.accessToken);
+    await this.openWebSocket(this.runtimeToken);
   }
 
   /**
@@ -376,6 +403,7 @@ export class TestClient {
   async close(): Promise<void> {
     this.stopLiveness();
     this.ws?.close();
+    for (const ws of this.supersededTestSockets) ws.close();
     this.udpSocket?.close();
     this.ws = null;
     this.udpSocket = null;
@@ -387,6 +415,7 @@ export class TestClient {
     this.livenessClosedCallback = null;
     this.initialSubscriptions = [];
     this.encryptionKey = null;
+    this.supersededTestSockets = [];
   }
 
   // === Internals ===
@@ -397,7 +426,7 @@ export class TestClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        oemUserId: this.opts.oemUserId,
+        tenantUserId: this.opts.tenantUserId,
         extraClaims: this.opts.extraClaims,
       }),
     });
