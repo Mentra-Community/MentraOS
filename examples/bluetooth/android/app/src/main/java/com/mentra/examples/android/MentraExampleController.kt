@@ -3853,6 +3853,7 @@ fun deviceModelLabel(model: DeviceModel): String =
         DeviceModel.MACH1 -> "Mach1"
         DeviceModel.Z100 -> "Z100"
         DeviceModel.FRAME -> "Frame"
+        DeviceModel.NIMO -> "Nimo"
         DeviceModel.R1 -> "R1"
         DeviceModel.SIMULATED -> "Simulated"
     }
