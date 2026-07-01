@@ -121,6 +121,7 @@ class MiniappLauncher {
         .map((p) => (typeof p === "string" ? p : p?.type))
         .filter((t): t is string => typeof t === "string")
       const installedManifest: InstalledMiniappManifest = {
+        name: manifest.name,
         permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
       }
@@ -152,6 +153,7 @@ class MiniappLauncher {
     if (!entryPaths?.background) return null
 
     const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+      name?: string
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
     } | null
@@ -159,7 +161,7 @@ class MiniappLauncher {
       .map((p) => p.type)
       .filter((t): t is string => typeof t === "string")
     const installedManifest: InstalledMiniappManifest | undefined = manifest
-      ? {permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
+      ? {name: manifest.name, permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
       : undefined
 
     let bgSource: string

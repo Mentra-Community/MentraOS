@@ -67,6 +67,9 @@ import type {ClientApp} from "../types/applet"
 // =============================================================================
 
 export interface InstalledMiniappManifest {
+  /** Human-facing app name (from miniapp.json `name`). Shown in the "Starting
+   * <name>…" boot message; falls back to the package name when absent. */
+  name?: string
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
 }
@@ -666,6 +669,13 @@ class LocalMiniappRuntime {
     this.recomputeLocationTier()
     this.ensureCloudStatusWired()
     this.ensurePingLoop()
+
+    // Show the system boot message ("Starting <name>…") on the glasses for the
+    // bounded boot window, mirroring the cloud DisplayManager boot screen. The
+    // window ends early once this app pushes its first display (see
+    // LocalDisplayManager.request), or after ~1.5s. Fires once per spawn —
+    // including a crash-respawn, since each spawn is a fresh "app is starting".
+    localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
   }
 
   /**
