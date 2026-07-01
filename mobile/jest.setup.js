@@ -566,6 +566,7 @@ jest.mock("@mentra/island", () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
+      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
@@ -619,6 +620,7 @@ jest.mock("@mentra/island", () => {
     useStopAll: jest.fn(() => appStatusState.stopAll),
     useStart: jest.fn(() => appStatusState.start),
     useStop: jest.fn(() => appStatusState.stop),
+    installAppStoreHooks: jest.fn(),
     sortAppsByLastOpenTime: jest.fn((apps) => apps),
     decideDevLaunchRoute: jest.fn(),
     buildMiniappGlobalsScript: jest.fn(() => ""),
