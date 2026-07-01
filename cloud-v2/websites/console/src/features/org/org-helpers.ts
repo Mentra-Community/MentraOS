@@ -23,3 +23,13 @@ export function suggestedOrgDefaults(user: ConsoleUser | undefined) {
 export function normalizePackagePrefix(value: string): string {
   return value.trim().toLowerCase().replace(/\.+$/, "");
 }
+
+/**
+ * Lowercase reverse-DNS prefix: two or more dot-separated segments, each
+ * starting with a letter and containing only lowercase letters, digits, or
+ * underscores (e.g. `io.acme`, `dev.jane_doe`). Rejects leading/trailing/repeated
+ * dots and other invalid characters that the UI otherwise lets through.
+ */
+export function isValidPackagePrefix(value: string): boolean {
+  return /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(value);
+}

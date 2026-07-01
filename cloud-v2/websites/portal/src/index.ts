@@ -33,7 +33,14 @@ console.log(`Proxying /api/* to ${coreUrl}`);
 async function serveBuiltApp(req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname !== "/") {
-    const asset = resolve(distRoot, `.${decodeURIComponent(url.pathname)}`);
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch {
+      // Malformed percent-encoding in the path.
+      return new Response("Bad Request", { status: 400, headers: { "content-type": "text/plain" } });
+    }
+    const asset = resolve(distRoot, `.${decodedPath}`);
     if (isInsideDist(asset)) {
       const file = Bun.file(asset);
       if (await file.exists()) return new Response(file);

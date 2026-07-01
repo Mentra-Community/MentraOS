@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { displayNameForUser } from "@/features/session/session.api";
 import { sessionQuery } from "@/features/session/session.queries";
-import { normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
+import { isValidPackagePrefix, normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
 import {
   getDeveloperOrg,
   getOrgAccess,
@@ -105,7 +105,7 @@ export function OrganizationPage() {
   const canSave =
     canEditOrg &&
     displayName.trim().length >= 2 &&
-    normalizedPrefix.length > 0 &&
+    isValidPackagePrefix(normalizedPrefix) &&
     !orgSave.isPending &&
     (displayName.trim() !== org?.name || normalizedPrefix !== org?.packagePrefix);
 

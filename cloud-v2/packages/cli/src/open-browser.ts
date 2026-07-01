@@ -16,9 +16,10 @@ export async function openBrowser(url: string): Promise<boolean> {
       stdio: "ignore",
     });
     child.on("error", () => resolve(false));
-    child.on("spawn", () => {
-      child.unref();
-      resolve(true);
-    });
+    // The launcher (`open`/`xdg-open`/`start`) exits quickly after handing the
+    // URL to the browser, so wait for its exit code rather than resolving on
+    // `spawn`. A non-zero exit means the launch failed and callers can fall
+    // back to printing the URL.
+    child.on("close", (code) => resolve(code === 0));
   });
 }

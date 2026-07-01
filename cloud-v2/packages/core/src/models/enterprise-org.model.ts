@@ -17,7 +17,13 @@ const EnterpriseOrgSchema = new Schema(
 );
 
 EnterpriseOrgSchema.index({ ownerUserId: 1, createdAt: 1 });
-EnterpriseOrgSchema.index({ workosOrgId: 1 }, { unique: true, sparse: true });
+// Partial (not sparse): `workosOrgId` defaults to null until WorkOS provisioning,
+// and a sparse unique index skips only omitted fields, so a second unprovisioned
+// org would collide on the explicit null. Constrain uniqueness to real string ids.
+EnterpriseOrgSchema.index(
+  { workosOrgId: 1 },
+  { unique: true, partialFilterExpression: { workosOrgId: { $type: "string" } } },
+);
 
 export type EnterpriseOrg = InferSchemaType<typeof EnterpriseOrgSchema>;
 export const EnterpriseOrgModel = model("EnterpriseOrg", EnterpriseOrgSchema);

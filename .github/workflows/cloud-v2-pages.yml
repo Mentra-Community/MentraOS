@@ -72,6 +72,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             env_name="${{ inputs.environment }}"
             site="${{ inputs.site }}"
+            # Guard: a manual prod deploy is only allowed from the main branch.
+            if [[ "${env_name}" == "prod" && "${{ github.ref_name }}" != "main" ]]; then
+              echo "Refusing to deploy prod from ref '${{ github.ref_name }}'; prod deploys are only allowed from main." >&2
+              exit 1
+            fi
           else
             case "${{ github.ref_name }}" in
               dev) env_name="dev" ;;

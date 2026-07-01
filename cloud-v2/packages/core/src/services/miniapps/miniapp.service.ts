@@ -234,42 +234,50 @@ export class MiniAppService {
       createdBy: developer.developerId,
     });
 
-    const storageKey = [
-      "miniapps",
-      packageName,
-      "releases",
-      input.version,
-      `${ulid()}-bundle.zip`,
-    ].join("/");
-    const stored = await storage.putObject({
-      key: storageKey,
-      body: input.bundle,
-      contentType: "application/zip",
-    });
-    const expectedSha = sha256Hex(input.bundle);
-    if (stored.sha256 !== expectedSha) {
-      throw new MiniAppServiceError("hash_mismatch", "stored bundle hash mismatch", 500);
+    // Store the bundle and link it to the release. If any step fails, roll back
+    // the freshly created release row so a retry with the same package/version
+    // is not permanently blocked by the `release_exists` check above.
+    try {
+      const storageKey = [
+        "miniapps",
+        packageName,
+        "releases",
+        input.version,
+        `${ulid()}-bundle.zip`,
+      ].join("/");
+      const stored = await storage.putObject({
+        key: storageKey,
+        body: input.bundle,
+        contentType: "application/zip",
+      });
+      const expectedSha = sha256Hex(input.bundle);
+      if (stored.sha256 !== expectedSha) {
+        throw new MiniAppServiceError("hash_mismatch", "stored bundle hash mismatch", 500);
+      }
+
+      const asset = await MiniAppAssetModel.create({
+        orgId: developer.orgId,
+        miniAppId: app._id.toString(),
+        releaseId: release._id.toString(),
+        role: "release_bundle",
+        storageKey,
+        fileName: input.fileName ?? "bundle.zip",
+        contentType: stored.contentType,
+        sizeBytes: stored.sizeBytes,
+        sha256: stored.sha256,
+        createdBy: developer.developerId,
+      });
+
+      release.releaseBundleAssetId = asset._id.toString();
+      release.bundleSha256 = stored.sha256;
+      release.bundleSizeBytes = stored.sizeBytes;
+      await release.save();
+
+      return serializeRelease(release.toObject());
+    } catch (error) {
+      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch(() => {});
+      throw error;
     }
-
-    const asset = await MiniAppAssetModel.create({
-      orgId: developer.orgId,
-      miniAppId: app._id.toString(),
-      releaseId: release._id.toString(),
-      role: "release_bundle",
-      storageKey,
-      fileName: input.fileName ?? "bundle.zip",
-      contentType: stored.contentType,
-      sizeBytes: stored.sizeBytes,
-      sha256: stored.sha256,
-      createdBy: developer.developerId,
-    });
-
-    release.releaseBundleAssetId = asset._id.toString();
-    release.bundleSha256 = stored.sha256;
-    release.bundleSizeBytes = stored.sizeBytes;
-    await release.save();
-
-    return serializeRelease(release.toObject());
   }
 
   private async getMiniAppById(developer: DeveloperIdentity, id: string) {
