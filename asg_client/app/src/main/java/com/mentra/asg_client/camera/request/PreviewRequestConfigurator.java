@@ -45,7 +45,8 @@ public final class PreviewRequestConfigurator {
             // honoured by the HAL when AE is disabled.
             previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
             previewBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, 11_111_111L); // 1/90s in nanoseconds
-            previewBuilder.set(CaptureRequest.SENSOR_FRAME_DURATION, 33_333_333L); // 30fps frame duration
+            long frameDurationNs = 1_000_000_000L / Math.max(videoFps, 1);
+            previewBuilder.set(CaptureRequest.SENSOR_FRAME_DURATION, frameDurationNs);
             previewBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 800); // ISO sensitivity
         } else {
             previewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);

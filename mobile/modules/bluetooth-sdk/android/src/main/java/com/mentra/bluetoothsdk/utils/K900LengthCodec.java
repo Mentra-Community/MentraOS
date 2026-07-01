@@ -101,8 +101,11 @@ public final class K900LengthCodec {
      * payload untouched. Returns a new array; the input is not modified.
      */
     public static byte[] repackStringFrame(byte[] frame, Endian from, Endian to) {
-        if (frame == null || frame.length < FRAME_OVERHEAD || from == to) {
+        if (frame == null || frame.length < FRAME_OVERHEAD) {
             return frame;
+        }
+        if (from == to) {
+            return frame.clone();
         }
         byte[] out = frame.clone();
         int length = readLength(frame, LENGTH_OFFSET, from);

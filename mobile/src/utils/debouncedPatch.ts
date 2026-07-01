@@ -15,7 +15,9 @@ export function createDebouncedPatchFlusher<T extends Record<string, unknown>>(
 
   return (patch: Partial<T>) => {
     pending = {...pending, ...patch}
-    if (timer) return
+    if (timer != null) {
+      clearTimeout(timer)
+    }
     schedule(() => {
       timer = null
       const batch = pending

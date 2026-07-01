@@ -3706,13 +3706,16 @@ class MentraLive: NSObject, SGCManager {
         queueSend(packed, id: "-1")
     }
 
-    private func handlePeerWireHandshake() {
+    private func activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.protocolV2
         useBinaryWireProtocol = true
-        // A successful v2 binary handshake implies a wire-v2 peer, which uses LE K900 lengths.
         peerK900Le = true
         BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
-        Bridge.log("LIVE: Peer confirmed BLE wire protocol v2")
+        Bridge.log(logMessage)
+    }
+
+    private func handlePeerWireHandshake() {
+        activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
     }
 
     private func processBinaryWireFrame(_ data: Data) {
@@ -3727,9 +3730,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         if !useBinaryWireProtocol, isNewVersion {
-            peerWireProtocolVersion = BleWireProtocol.protocolV2
-            useBinaryWireProtocol = true
-            Bridge.log("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+            activateBinaryWireV2Session("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
         }
 
         guard let reassembled = incomingChunkReassembler.addBinaryFragment(
@@ -4685,7 +4686,9 @@ extension MentraLive {
                 Bridge.log("LIVE: wire_caps negotiated k900 endian=LE")
             }
         }
-        peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        if caps.keys.contains("binary") {
+            peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        }
     }
 
     /**
@@ -4693,7 +4696,7 @@ extension MentraLive {
      * Format: ## + command_type + length(2bytes) + data + $$
      * Uses little-endian byte order for length field
      */
-    private func packDataToK900(_ data: Data?, cmdType: UInt8, littleEndian: Bool = true) -> Data? {
+    private func packDataToK900(_ data: Data?, cmdType: UInt8, littleEndian: Bool = false) -> Data? {
         guard let data else { return nil }
 
         let dataLength = data.count
@@ -5043,7 +5046,11 @@ extension MentraLive {
             }
             let commandData = try JSONSerialization.data(withJSONObject: payload)
             guard
-                let packet = packDataToK900(commandData, cmdType: K900ProtocolUtils.CMD_TYPE_STRING)
+                let packet = packDataToK900(
+                    commandData,
+                    cmdType: K900ProtocolUtils.CMD_TYPE_STRING,
+                    littleEndian: peerK900Le
+                )
             else {
                 Bridge.log("LIVE: Failed to pack raw K900 command")
                 return false

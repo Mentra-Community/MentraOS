@@ -55,6 +55,10 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonCommand(String jsonData) {
+        return packJsonCommand(jsonData, K900LengthCodec.Endian.BE);
+    }
+
+    public static byte[] packJsonCommand(String jsonData, K900LengthCodec.Endian endian) {
         if (jsonData == null) {
             return null;
         }
@@ -69,7 +73,7 @@ public class K900ProtocolUtils {
 
             // Then pack with BES2700 protocol format
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataCommand(jsonBytes, CMD_TYPE_STRING);
+            return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
             android.util.Log.e("K900ProtocolUtils", "Error creating JSON wrapper", e);
@@ -86,9 +90,8 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataCommand(byte[] data, byte cmdType) {
-        // Historic default is little-endian (the wire-v2 convention). Callers that know the
-        // negotiated link endianness should use the overload below.
-        return packDataCommand(data, cmdType, K900LengthCodec.Endian.LE);
+        // Default to legacy big-endian until wire_caps negotiates little-endian.
+        return packDataCommand(data, cmdType, K900LengthCodec.Endian.BE);
     }
 
     /**
@@ -136,34 +139,15 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataToK900(byte[] data, byte cmdType) {
-        if (data == null) {
-            return null;
-        }
+        return packDataToK900(data, cmdType, K900LengthCodec.Endian.BE);
+    }
 
-        int dataLength = data.length;
-
-        // Command structure: ## + type + length(2 bytes) + data + $$
-        byte[] result = new byte[dataLength + 7]; // 2(start) + 1(type) + 2(length) + data + 2(end)
-
-        // Start code ##
-        result[0] = CMD_START_CODE[0]; // #
-        result[1] = CMD_START_CODE[1]; // #
-
-        // Command type
-        result[2] = cmdType;
-
-        // Length (2 bytes, little-endian for phone-to-device)
-        result[3] = (byte) (dataLength & 0xFF);        // LSB first
-        result[4] = (byte) ((dataLength >> 8) & 0xFF); // MSB second
-
-        // Copy the data
-        System.arraycopy(data, 0, result, 5, dataLength);
-
-        // End code $$
-        result[5 + dataLength] = CMD_END_CODE[0]; // $
-        result[6 + dataLength] = CMD_END_CODE[1]; // $
-
-        return result;
+    /**
+     * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication.
+     * Format: ## + command_type + length(2bytes) + data + $$
+     */
+    public static byte[] packDataToK900(byte[] data, byte cmdType, K900LengthCodec.Endian endian) {
+        return packDataCommand(data, cmdType, endian);
     }
 
     /**
@@ -175,7 +159,7 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonToK900(String jsonData, boolean wakeup) {
-        return packJsonToK900(jsonData, wakeup, K900LengthCodec.Endian.LE);
+        return packJsonToK900(jsonData, wakeup, K900LengthCodec.Endian.BE);
     }
 
     /**
@@ -219,7 +203,7 @@ public class K900ProtocolUtils {
      * @return Formatted bytes ready for transmission
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
-        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.LE);
+        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.BE);
     }
 
     /**
@@ -259,7 +243,7 @@ public class K900ProtocolUtils {
         } catch (JSONException e) {
             android.util.Log.e("K900ProtocolUtils", "❌ Error in formatMessageForTransmission", e);
             // Fallback: if json is invalid, still try to pack it without validation
-            return packJsonCommand(jsonData);
+            return packJsonCommand(jsonData, endian);
         }
     }
 

@@ -6409,7 +6409,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
 
             queueData(packedData)
@@ -6593,7 +6594,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
             queueData(packedData)
         } catch (e: JSONException) {
@@ -6622,7 +6624,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
             queueData(packedData)
         } catch (e: JSONException) {
@@ -6696,7 +6699,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
             Bridge.log("LIVE: AUDIO: Sending cs_getvol command: " + jsonStr)
             queueData(packedData)
@@ -6720,7 +6724,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
             queueData(packedData)
             return true
@@ -7099,7 +7104,9 @@ class MentraLive : SGCManager() {
                 Bridge.log("LIVE: wire_caps negotiated k900 endian=LE")
             }
         }
-        peerWireCapsBinary = caps.optBoolean("binary", false)
+        if (caps.has("binary")) {
+            peerWireCapsBinary = caps.optBoolean("binary", false)
+        }
     }
 
     private fun maybeSendWireHandshake() {
@@ -7138,13 +7145,16 @@ class MentraLive : SGCManager() {
         }
     }
 
-    private fun handlePeerWireHandshake() {
+    private fun activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
         useBinaryWireProtocol = true
-        // A successful v2 binary handshake implies a wire-v2 peer, which uses LE K900 lengths.
         peerK900Le = true
         BleJsonCompact.markSessionConnected(System.currentTimeMillis())
-        Bridge.log("LIVE: Peer confirmed BLE wire protocol v2")
+        Bridge.log(logMessage)
+    }
+
+    private fun handlePeerWireHandshake() {
+        activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
     }
 
     private fun processBinaryWireFrame(data: ByteArray) {
@@ -7159,9 +7169,9 @@ class MentraLive : SGCManager() {
         }
 
         if (!useBinaryWireProtocol && buildNumberInt >= 5) {
-            peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
-            useBinaryWireProtocol = true
-            Bridge.log("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+            activateBinaryWireV2Session(
+                    "LIVE: Auto-enabled BLE wire v2 from incoming binary frame"
+            )
         }
 
         val reassembled =
@@ -8700,7 +8710,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
                     )
             if (packedData == null) {
                 Bridge.log("LIVE: Failed to pack Voice Activity Detection setting command")

@@ -13,26 +13,26 @@ import java.nio.charset.StandardCharsets;
 public class K900ProtocolUtilsEndiannessTest {
 
     @Test
-    public void packDataCommandUsesLittleEndianLength() {
+    public void packDataCommandUsesBigEndianLengthByDefault() {
         byte[] payload = new byte[0x123];
         byte[] packed = K900ProtocolUtils.packDataCommand(payload, K900ProtocolUtils.CMD_TYPE_STRING);
 
-        assertEquals(0x23, packed[3] & 0xFF);
-        assertEquals(0x01, packed[4] & 0xFF);
+        assertEquals(0x01, packed[3] & 0xFF);
+        assertEquals(0x23, packed[4] & 0xFF);
     }
 
     @Test
-    public void extractPayloadUsesLittleEndianLength() {
+    public void extractPayloadUsesBigEndianLengthByDefault() {
         byte[] payload = "{\"t\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
         byte[] packed = K900ProtocolUtils.packDataToK900(payload, K900ProtocolUtils.CMD_TYPE_STRING);
-        byte[] extracted = K900ProtocolUtils.extractPayload(packed);
+        byte[] extracted = K900ProtocolUtils.extractPayload(packed, K900LengthCodec.Endian.BE);
 
         assertNotNull(extracted);
         assertArrayEquals(payload, extracted);
     }
 
     @Test
-    public void processReceivedBytesToJsonUsesLittleEndianLength() throws Exception {
+    public void processReceivedBytesToJsonUsesBigEndianLengthByDefault() throws Exception {
         String inner = "{\"type\":\"ping\"}";
         byte[] packed = K900ProtocolUtils.packDataToK900(
                 inner.getBytes(StandardCharsets.UTF_8),
