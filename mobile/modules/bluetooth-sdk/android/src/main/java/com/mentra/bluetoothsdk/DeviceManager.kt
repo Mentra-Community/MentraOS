@@ -1359,6 +1359,12 @@ class DeviceManager {
             return
         }
 
+        run {
+            @Suppress("UNCHECKED_CAST") val l = event["layout"] as? Map<String, Any>
+            val preview = ((l?.get("text") ?: l?.get("topText")) as? String ?: "").take(60)
+            Bridge.log("MAN: displayEvent view=$view layout=${l?.get("layoutType")} text=\"$preview\"")
+        }
+
         val isDashboard = view == "dashboard"
         val stateIndex = if (isDashboard) 1 else 0
 
