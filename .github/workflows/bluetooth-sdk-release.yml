@@ -46,6 +46,7 @@ jobs:
       previous_version: ${{ steps.release-info.outputs.previous_version }}
       compare_sha: ${{ steps.release-info.outputs.compare_sha }}
       version_changed: ${{ steps.release-info.outputs.version_changed }}
+      force_release: ${{ steps.release-info.outputs.force_release }}
       run_release: ${{ steps.release-info.outputs.run_release }}
       dry_run: ${{ steps.release-info.outputs.dry_run }}
       swiftpm_tag: ${{ steps.release-info.outputs.swiftpm_tag }}
@@ -96,8 +97,8 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     outputs:
       manifest_url: ${{ steps.sdk-ota-info.outputs.manifest_url }}
-      version_code: ${{ steps.asg-build-info.outputs.version_code }}
-      version_name: ${{ steps.asg-build-info.outputs.version_name }}
+      version_code: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}
     steps:
       - name: Refuse non-dev publish
         if: needs.detect.outputs.dry_run != 'true' && github.ref_name != 'dev'
@@ -163,20 +164,62 @@ jobs:
           echo "manifest_asset=${MANIFEST_ASSET}" >> "$GITHUB_OUTPUT"
           echo "manifest_url=${MANIFEST_URL}" >> "$GITHUB_OUTPUT"
 
+      - name: Check existing SDK OTA manifest
+        id: existing-sdk-ota
+        if: needs.detect.outputs.dry_run != 'true'
+        env:
+          MANIFEST_URL: ${{ steps.sdk-ota-info.outputs.manifest_url }}
+        run: |
+          set -euo pipefail
+
+          http_status=$(curl --silent --show-error --location \
+            --output /tmp/sdk_ota_version.json \
+            --write-out "%{http_code}" \
+            "$MANIFEST_URL" || true)
+
+          if [[ "$http_status" == "404" ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$http_status" != "200" ]]; then
+            echo "Unexpected HTTP ${http_status} while checking ${MANIFEST_URL}" >&2
+            exit 1
+          fi
+
+          jq -e \
+            '.apps["com.mentra.asg_client"].versionCode
+              and .apps["com.mentra.asg_client"].versionName
+              and (.mtk_patches | type == "array" and length > 0)
+              and (.bes_firmware | type == "object")' \
+            /tmp/sdk_ota_version.json >/dev/null
+
+          version_code=$(jq -er '.apps["com.mentra.asg_client"].versionCode' /tmp/sdk_ota_version.json)
+          version_name=$(jq -er '.apps["com.mentra.asg_client"].versionName' /tmp/sdk_ota_version.json)
+
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
+          echo "Reusing existing SDK OTA manifest at ${MANIFEST_URL}."
+
       - name: Setup Java
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         uses: actions/setup-java@v3
         with:
           java-version: "17"
           distribution: "temurin"
 
       - name: Setup Android SDK
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         uses: android-actions/setup-android@v2
 
       - name: Setup ASG environment
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
         run: cp .env.example .env
 
       - name: Clone StreamPackLite dependency
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
         run: |
           git clone https://github.com/Mentra-Community/StreamPackLite.git
@@ -184,6 +227,7 @@ jobs:
           git checkout working
 
       - name: Cache Gradle dependencies
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -195,6 +239,7 @@ jobs:
             asg-gradle-${{ runner.os }}-
 
       - name: Build recovery worker asset
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client/recovery_worker
         run: |
           chmod +x ./build_and_deploy.sh
@@ -203,12 +248,13 @@ jobs:
 
       - name: Build ASG release APK
         id: gradle-build
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
         run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
 
       - name: Retry ASG build with clean cache
-        if: steps.gradle-build.outcome == 'failure'
+        if: steps.existing-sdk-ota.outputs.exists != 'true' && steps.gradle-build.outcome == 'failure'
         working-directory: ./asg_client
         run: |
           echo "First ASG build failed, cleaning Gradle cache and retrying..."
@@ -218,6 +264,7 @@ jobs:
 
       - name: Collect ASG APK info
         id: asg-apk-info
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         run: |
           set -euo pipefail
           APK="asg_client/app/build/outputs/apk/release/app-release.apk"
@@ -230,6 +277,7 @@ jobs:
           echo "size=$(wc -c < "$APK" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Generate SDK OTA manifest
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
         env:
           ASG_APK_SHA256: ${{ steps.asg-apk-info.outputs.sha256 }}
           ASG_APK_SIZE: ${{ steps.asg-apk-info.outputs.size }}
@@ -242,7 +290,7 @@ jobs:
         run: node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
 
       - name: Upload ASG APK and manifest to SDK OTA release
-        if: needs.detect.outputs.dry_run != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.existing-sdk-ota.outputs.exists != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -336,7 +384,7 @@ jobs:
       - name: Verify SDK OTA manifest release asset
         if: needs.detect.outputs.dry_run != 'true'
         env:
-          VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
+          VERSION_CODE: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
         run: |
           set -euo pipefail
 
@@ -363,10 +411,11 @@ jobs:
             echo "## Bluetooth SDK OTA artifact"
             echo ""
             echo "- SDK version: \`${{ needs.detect.outputs.version }}\`"
-            echo "- ASG versionCode: \`${{ steps.asg-build-info.outputs.version_code }}\`"
-            echo "- ASG versionName: \`${{ steps.asg-build-info.outputs.version_name }}\`"
-            echo "- APK asset: \`${{ steps.sdk-ota-info.outputs.apk_asset }}\`"
+            echo "- ASG versionCode: \`${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}\`"
+            echo "- ASG versionName: \`${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}\`"
+            echo "- APK asset: \`${{ steps.existing-sdk-ota.outputs.exists == 'true' && 'reused from existing manifest' || steps.sdk-ota-info.outputs.apk_asset }}\`"
             echo "- Manifest URL: \`${{ steps.sdk-ota-info.outputs.manifest_url }}\`"
+            echo "- Existing manifest reused: \`${{ steps.existing-sdk-ota.outputs.exists == 'true' }}\`"
             echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
