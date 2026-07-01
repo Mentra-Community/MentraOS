@@ -63,6 +63,9 @@ jobs:
         working-directory: mobile
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Clean workspace installs before SDK validation
+        run: git clean -ffdX
+
       - name: Validate SDK Bun lockfile
         working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
