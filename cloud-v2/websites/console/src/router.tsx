@@ -4,6 +4,7 @@ import { OrganizationSelectionPage } from "@/components/organization-selection-p
 import { AppsPage } from "@/features/apps/apps-page";
 import { MiniappDetailPage } from "@/features/apps/miniapp-detail-page";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
+import { InviteAcceptPage } from "@/features/org/invite-accept-page";
 import { OrganizationPage } from "@/features/org/organization-page";
 import { TokensPage } from "@/features/tokens/tokens-page";
 
@@ -57,6 +58,12 @@ const organizationRoute = createRoute({
   component: OrganizationPage,
 });
 
+const inviteAcceptRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/invite/$token",
+  component: InviteAcceptPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   organizationSelectionRoute,
@@ -65,6 +72,7 @@ const routeTree = rootRoute.addChildren([
   miniappDetailRoute,
   tokensRoute,
   organizationRoute,
+  inviteAcceptRoute,
 ]);
 
 export const router = createRouter({ routeTree });

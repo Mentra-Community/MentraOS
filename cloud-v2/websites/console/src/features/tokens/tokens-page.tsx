@@ -15,6 +15,7 @@ export function TokensPage() {
   const session = useQuery(sessionQuery());
   const tokens = useQuery(apiTokensQuery(session.isSuccess && !session.data.onboardingRequired));
   const tokenList = tokens.data?.tokens ?? [];
+  const canManageKeys = session.data?.viewerRole === "owner" || session.data?.viewerRole === "admin";
   const [tokenName, setTokenName] = useState("");
   const [createdToken, setCreatedToken] = useState<ApiToken | null>(null);
   const [copied, setCopied] = useState(false);
@@ -41,7 +42,7 @@ export function TokensPage() {
       await queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
     },
   });
-  const canCreate = tokenName.trim().length > 0 && !createToken.isPending;
+  const canCreate = canManageKeys && tokenName.trim().length > 0 && !createToken.isPending;
 
   async function copyCreatedToken() {
     if (!createdToken?.value) return;
@@ -89,11 +90,17 @@ export function TokensPage() {
                 <CardDescription className="mt-1 text-[13px] leading-5 sm:text-[14px]">
                   Keys are scoped to this org and can be revoked at any time.
                 </CardDescription>
+                {!canManageKeys ? (
+                  <p className="mt-1 text-xs leading-5 text-[#8a8d95]">
+                    Only owners and admins can create or revoke API keys.
+                  </p>
+                ) : null}
               </div>
               <Button
                 type="button"
                 className="h-10 rounded-full bg-[#111217] px-5 text-white hover:bg-[#25262c]"
                 onClick={() => setCreateFormOpen(open => !open)}
+                disabled={!canManageKeys}
               >
                 {createFormOpen ? "Cancel" : "Create API key"}
               </Button>
@@ -155,6 +162,7 @@ export function TokensPage() {
                     <TokenRow
                       key={token.id}
                       token={token}
+                      canRevoke={canManageKeys}
                       isRevoking={revokeToken.isPending}
                       onRevoke={() => revokeToken.mutate(token.id)}
                     />
@@ -244,10 +252,12 @@ function CreateApiKeyForm({
 
 function TokenRow({
   token,
+  canRevoke,
   isRevoking,
   onRevoke,
 }: {
   token: ApiToken;
+  canRevoke: boolean;
   isRevoking: boolean;
   onRevoke: () => void;
 }) {
@@ -263,17 +273,21 @@ function TokenRow({
         <div>{token.createdAt ? `Created ${formatDate(token.createdAt)}` : "Created recently"}</div>
         <div>{token.lastUsedAt ? `Used ${formatDate(token.lastUsedAt)}` : "Never used"}</div>
       </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="justify-self-start rounded-full text-[#8a8d95] hover:bg-[#fff3f1] hover:text-[#a64235] md:justify-self-end"
-        disabled={isRevoking}
-        onClick={onRevoke}
-        aria-label={`Revoke ${token.name}`}
-      >
-        <Trash2 className="size-4" />
-      </Button>
+      {canRevoke ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="justify-self-start rounded-full text-[#8a8d95] hover:bg-[#fff3f1] hover:text-[#a64235] md:justify-self-end"
+          disabled={isRevoking}
+          onClick={onRevoke}
+          aria-label={`Revoke ${token.name}`}
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      ) : (
+        <span className="md:justify-self-end" />
+      )}
     </div>
   );
 }
