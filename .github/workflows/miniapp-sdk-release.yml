@@ -32,6 +32,7 @@ on:
       - "cloud-v2/packages/cli/**"
       - ".github/scripts/miniapp-sdk-release-info.mjs"
       - ".github/scripts/rewrite-file-deps.mjs"
+      - ".github/scripts/stamp-template-versions.mjs"
       - ".github/workflows/miniapp-sdk-release.yml"
   workflow_dispatch:
     inputs:
@@ -123,6 +124,13 @@ jobs:
       # mutates the checkout that gets packed/published — it is never committed.
       - name: "Rewrite workspace file: deps"
         run: node .github/scripts/rewrite-file-deps.mjs "${{ matrix.pkg.dir }}"
+
+      # Stamp the scaffolder's template pins to the exact versions being published
+      # this run, so a scaffolded project installs on any channel (the caret pins
+      # in the repo can't reach -dev prereleases). No-op for packages without a
+      # template/package.json. Packed checkout only — never committed.
+      - name: Stamp scaffolder template versions
+        run: node .github/scripts/stamp-template-versions.mjs "${{ matrix.pkg.dir }}"
 
       - name: Check npm registry
         id: registry

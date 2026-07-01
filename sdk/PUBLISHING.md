@@ -71,6 +71,11 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
   rewrite touches only the checkout that gets packed — it is never committed, so
   local dev keeps the `file:` link. An exact pin is dist-tag-agnostic; the
   tradeoff is that a base bump needs the wrapper republished to pick it up.
+- **Template stamp:** also before packing, [`stamp-template-versions.mjs`](../.github/scripts/stamp-template-versions.mjs)
+  rewrites `create-mentra-miniapp`'s `template/package.json` `@mentra/*` pins to
+  the **exact versions being published this run** (prerelease → exact, stable →
+  caret). This is why a project scaffolded from *any* channel installs — see
+  below. No-op for packages without a `template/`; never committed.
 - **Guardrail:** a plain (non-prerelease) version resolves to the `latest`
   dist-tag — the workflow refuses to publish that from any branch other than
   `main`, so a `-dev` build can never accidentally become what `npm install`
@@ -89,15 +94,25 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
 3. Promotion is a version bump, not a re-tag: land `0.4.0-beta.1` on `staging`,
    then land `0.4.0` on `main`.
 
-## Publish order & the template pin
+## Publish order & the template stamp
 
 `create-mentra-miniapp` bundles `template/package.json`, which pins
-`@mentra/miniapp` and `@mentra/miniapp-cli`. The scaffolder itself publishes
-fine regardless (npm doesn't validate template contents), but a **scaffolded
-project's `bun install` only works once those pinned versions exist on npm**.
-The workflow's ordering handles this within a run; when you bump the SDK to a
-version the template's caret range can't reach (e.g. a major), update
-`sdk/create-mentra-miniapp/template/package.json` in the same change.
+`@mentra/miniapp` and `@mentra/miniapp-cli`. In the repo these stay as friendly
+caret ranges (`^0.3.0`) for readability — but a caret **excludes prereleases**,
+so a project scaffolded from a dev/beta build (where only `0.3.0-dev.0` exists on
+npm, no stable `0.3.0`) could never `bun install`.
+
+The publish job fixes this automatically: `stamp-template-versions.mjs` rewrites
+those pins to the **exact versions being published in the same run** before
+packing. So `create-mentra-miniapp@dev` ships a template pinned to
+`@mentra/miniapp@0.3.0-dev.0` (exact — installs regardless of dist-tag), and the
+`latest` scaffolder ships `^<stable>`. Each channel's scaffolder is
+self-consistent, and you never hand-edit the template for a release. The matrix
+still publishes in dependency order so the pinned versions exist by the time a
+scaffolded project installs them.
+
+This is the publish-time-stamp pattern (à la `create-vite`): deterministic,
+offline-safe, and no runtime registry call during scaffolding.
 
 ## The CLIs are Bun-only (settled)
 
