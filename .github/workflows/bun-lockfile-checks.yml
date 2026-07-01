@@ -1,0 +1,62 @@
+name: Bun Lockfile Checks
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "mobile/package.json"
+      - "mobile/bun.lock"
+      - "mobile/modules/**/package.json"
+      - "cloud-v2/packages/**/package.json"
+      - "miniapps/**/package.json"
+      - "sdk/miniapp-cli/package.json"
+      - ".github/workflows/bun-lockfile-checks.yml"
+      - ".github/workflows/ci-gate.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "mobile/package.json"
+      - "mobile/bun.lock"
+      - "mobile/modules/**/package.json"
+      - "cloud-v2/packages/**/package.json"
+      - "miniapps/**/package.json"
+      - "sdk/miniapp-cli/package.json"
+      - ".github/workflows/bun-lockfile-checks.yml"
+      - ".github/workflows/ci-gate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: bun-lockfile-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-lockfiles-
+
+      - name: Validate root Bun lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate mobile Bun lockfile
+        working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
