@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - cloud-v2/dev
-      - cloud-v2/dev/**
+      - dev
     paths:
       - "cloud-v2/**"
       - ".github/workflows/cloud-v2-dev.yml"
 
 concurrency:
-  group: cloud-v2-dev-${{ github.ref }}
+  group: cloud-v2-dev
   cancel-in-progress: true
 
 permissions:
@@ -52,7 +51,7 @@ jobs:
         working-directory: cloud-v2
         env:
           PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
-        run: porter apply -w -f porter.dev.yaml
+        run: porter apply -w -f porter.dev.yaml -x aws-us-west-2-default --cluster "${PORTER_CLUSTER}" --project "${PORTER_PROJECT}"
 
       - name: Verify dev health
         run: |

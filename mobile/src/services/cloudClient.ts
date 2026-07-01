@@ -10,7 +10,7 @@
  * via `setNativeUdp` / `setSecureStorage` BEFORE the client is constructed.
  */
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
-import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 import {
   createCloudUdpSocket,
@@ -132,7 +132,7 @@ async function getLocalDevRuntimeToken(opts?: {forceRefresh?: boolean}): Promise
   const base = new URL(runtimeUrl())
   base.port = String(LOCAL_AUTH_PORT)
   base.pathname = "/api/dev/runtime-token"
-  base.search = new URLSearchParams({userId: "local-phone-user", oemId: "mentra"}).toString()
+  base.search = new URLSearchParams({userId: "local-phone-user", tenantId: "mentra"}).toString()
   const url = base.toString()
   const res = await fetch(url)
   if (!res.ok) {
@@ -447,7 +447,19 @@ function buildAdapter(): CloudRuntimeAdapter {
  * in.
  */
 export const cloudClient = {
-  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
+  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
+    if (!client) {
+      this.init()
+    }
+    const c = client
+    if (!c?.core) throw new Error("cloud client core is unavailable")
+    return c.core.miniapps.getRegistry()
+  },
+
+  async getMiniappAuthToken(
+    packageName: string,
+    opts?: {minTtlMs?: number; devAttestation?: string},
+  ): Promise<MiniappAuthToken> {
     if (!client) {
       this.init()
     }
@@ -458,7 +470,7 @@ export const cloudClient = {
     const identity = c.auth.identity
     return {
       mentraUserId: identity.mentraUserId,
-      oemId: identity.oemId,
+      tenantId: identity.tenantId,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }

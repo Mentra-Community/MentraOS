@@ -414,12 +414,17 @@ export function AppsGrid({
     }
   }, [nextOrderMap, orderMap])
 
+  const visibleGridData = useMemo(
+    () => (showAllApps && !showPlaceholders ? gridData : gridData.slice(0, PRIMARY_HOME_SLOT_COUNT)),
+    [gridData, showAllApps, showPlaceholders],
+  )
+
   // The remote icon URLs we need decoded before revealing the grid. Dummy
   // (@empty) slots, apps that render a React iconComponent, and non-remote
   // sources don't participate — they have nothing to fetch.
   const remoteIconUrls = useMemo(() => {
     const urls = new Set<string>()
-    for (const app of gridData) {
+    for (const app of visibleGridData) {
       if (app.packageName.startsWith("@empty")) continue
       if (app.iconComponent) continue
       const url = app.logoUrl
@@ -428,14 +433,14 @@ export function AppsGrid({
       }
     }
     return Array.from(urls)
-  }, [gridData])
+  }, [visibleGridData])
 
   // How many skeleton cells to draw: the real (non-dummy) apps, so skeleton boxes
   // only sit where actual icons will land — not over the grid's blank @empty
   // padding cells. Cheap: same array we already build.
   const skeletonCount = useMemo(
-    () => gridData.filter((app) => !app.packageName.startsWith("@empty")).length,
-    [gridData],
+    () => visibleGridData.filter((app) => !app.packageName.startsWith("@empty")).length,
+    [visibleGridData],
   )
 
   // Gate the FIRST grid reveal behind a single "all icons ready" flag so we go
@@ -452,6 +457,7 @@ export function AppsGrid({
 
   useEffect(() => {
     if (!gateOnIconsReady || iconsReady) return
+    if (showPlaceholders) return
     if (remoteIconUrls.length === 0) {
       setIconsReady(true)
       return
@@ -476,7 +482,7 @@ export function AppsGrid({
     }
     // iconUrlsKey captures the URL set; remoteIconUrls identity changes every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iconUrlsKey, iconsReady, gateOnIconsReady])
+  }, [iconUrlsKey, iconsReady, gateOnIconsReady, showPlaceholders])
 
   // The masonry list renders empty until it measures its own width via onLayout
   // (item positions depend on containerWidth, which starts at 0), then needs a
@@ -675,7 +681,7 @@ export function AppsGrid({
 
   const showPopover = useCallback(
     (key: string) => {
-      const app = gridData.find((a) => a.packageName === key)
+      const app = visibleGridData.find((a) => a.packageName === key)
       // get the index of the app
       // const index = gridData.findIndex((a) => a.packageName === key)
       if (!app?.name) return
@@ -718,7 +724,7 @@ export function AppsGrid({
         () => console.warn("measureLayout failed"),
       )
     },
-    [gridData],
+    [visibleGridData],
   )
 
   const handleDragStart = ({key}: {key: string; fromIndex: number}) => {
@@ -740,7 +746,7 @@ export function AppsGrid({
   const handleDragEnd = ({data}: {data: MasonryAppItem[]}) => {
     isMovingRef.current = false
 
-    const newOrderMap: OrderMap = {}
+    const newOrderMap: OrderMap = showAllApps ? {} : {...orderMap}
     data.forEach((item, index) => {
       newOrderMap[item.packageName] = index
     })
@@ -804,7 +810,7 @@ export function AppsGrid({
       <View className="flex-1 mt-3">
         <View ref={containerRef}>
           <DraggableMasonryList
-            data={gridData}
+            data={visibleGridData}
             renderItem={renderItem}
             rowGap={0}
             columnGap={0}
@@ -829,6 +835,10 @@ export function AppsGrid({
     )
   }
 
+  if (showPlaceholders) {
+    return <PlaceholderGrid count={skeletonCount || PLACEHOLDER_COUNT} />
+  }
+
   // Gated path (all-apps sheet): the masonry grid renders empty until it measures
   // its width (onLayout) and paints, so revealing on mount flashes an empty grid.
   // We mount the grid IN NORMAL FLOW (so it measures, scrolls, and drives the
@@ -843,7 +853,7 @@ export function AppsGrid({
     <View className="flex-1 mt-3" style={covering ? {minHeight: SKELETON_MIN_HEIGHT} : undefined}>
       <View ref={containerRef} onLayout={handleGridWrapperLayout} style={{opacity: covering ? 0 : 1}}>
         <DraggableMasonryList
-          data={gridData}
+          data={visibleGridData}
           renderItem={renderItem}
           rowGap={0}
           columnGap={0}

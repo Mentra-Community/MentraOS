@@ -92,6 +92,8 @@ import {
   audioStreamKey,
   lookupSessionTagInRedis,
 } from "../packages/runtime/src/services/session/stream";
+import { readSubscriptions } from "../packages/runtime/src/services/session/subscriptions-store";
+import { hasLiveAudioSession } from "../packages/runtime/src/net/ws";
 import {
   getOwner,
   tryClaimOwnership,
@@ -121,7 +123,7 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
 
   // Wait for index sync so the seen-jti replay index actually fires.
@@ -166,7 +168,7 @@ beforeEach(async () => {
   if (ownerKeys.length > 0) await redis.del(...ownerKeys);
   // Seed the TEST OEM record so core trusts JWTs signed by it.
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -300,6 +302,72 @@ describe("audio e2e", () => {
 
     const after = await lookupSessionTagInRedis(tagSnapshot);
     expect(after).toBeNull();
+  });
+
+  test("same auth-session reconnect takes over subscriptions immediately", async () => {
+    const client = newClient("alice-same-auth-reconnect");
+    const subscriptions = [
+      {
+        kind: "transcription" as const,
+        language: { mode: "auto" as const },
+      },
+    ];
+    client.subscribe(subscriptions);
+    await client.connect();
+
+    const firstSessionId = client.sessionId;
+    const firstTag = client.sessionTag;
+    const tagRecord = await lookupSessionTagInRedis(firstTag);
+    expect(tagRecord).toBeDefined();
+    const mentraUserId = tagRecord!.mentraUserId;
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      firstSessionId,
+    );
+
+    await client.reconnectWithoutClosingPreviousForTest();
+
+    const secondSessionId = client.sessionId;
+    expect(secondSessionId).not.toBe(firstSessionId);
+    expect(hasLiveAudioSession(mentraUserId, firstSessionId)).toBe(false);
+    expect(hasLiveAudioSession(mentraUserId, secondSessionId)).toBe(true);
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      secondSessionId,
+    );
+
+    await client.close();
+  });
+
+  test("same user reconnect with fresh auth takes over subscriptions immediately", async () => {
+    const client = newClient("alice-fresh-auth-reconnect");
+    const subscriptions = [
+      {
+        kind: "transcription" as const,
+        language: { mode: "auto" as const },
+      },
+    ];
+    client.subscribe(subscriptions);
+    await client.connect();
+
+    const firstSessionId = client.sessionId;
+    const firstTag = client.sessionTag;
+    const tagRecord = await lookupSessionTagInRedis(firstTag);
+    expect(tagRecord).toBeDefined();
+    const mentraUserId = tagRecord!.mentraUserId;
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      firstSessionId,
+    );
+
+    await client.reconnectWithFreshAuthWithoutClosingPreviousForTest();
+
+    const secondSessionId = client.sessionId;
+    expect(secondSessionId).not.toBe(firstSessionId);
+    expect(hasLiveAudioSession(mentraUserId, firstSessionId)).toBe(false);
+    expect(hasLiveAudioSession(mentraUserId, secondSessionId)).toBe(true);
+    expect((await readSubscriptions(mentraUserId))?.sessionId).toBe(
+      secondSessionId,
+    );
+
+    await client.close();
   });
 
   test("ws responds to control.ping with control.pong", async () => {
@@ -583,12 +651,12 @@ describe("audio e2e", () => {
 
 // === Helpers ===
 
-function newClient(oemUserId: string): TestClient {
+function newClient(tenantUserId: string): TestClient {
   return new TestClient({
     testOemUrl: testOemHandle.url,
     coreUrl: coreHandle.url,
     audioWsUrl: audioHandle.wsUrl,
-    oemUserId,
+    tenantUserId,
   });
 }
 

@@ -23,6 +23,7 @@ import {
   mongoReadinessCheck,
 } from "./connections/mongo.connection";
 import { createApp } from "./api/app";
+import { runStartupMigrations } from "./migrations/startup.migrations";
 
 const logger = createLogger("core");
 
@@ -48,6 +49,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     "mongodb://127.0.0.1:27017/mentra-cloud-v2";
 
   await connectMongo(mongoUrl);
+  await runStartupMigrations();
 
   const app = createApp({ readinessChecks: [mongoReadinessCheck] });
   const server = Bun.serve({ port, fetch: app.fetch });

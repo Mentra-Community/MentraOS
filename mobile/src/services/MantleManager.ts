@@ -3,6 +3,7 @@ import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
+import {router} from "expo-router"
 import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
@@ -14,6 +15,7 @@ import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
@@ -34,6 +36,7 @@ import {
   micStateCoordinator,
   offlineSpeechModelService,
   DEV_APP_PACKAGE_NAME,
+  getDevAppAttestation,
   getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
@@ -59,6 +62,32 @@ import mentraAuth from "@/utils/auth/authClient"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+// ===========================================================================
+// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove with the
+// matching block in LocalMiniappRuntime.ts after the "captions fall behind then
+// flood in waves" fix lands). Tracks the glasses-mic → cloud AUDIO UPLINK rate.
+// The mic_lc3 handler runs on the RN JS thread; if that thread is starved in
+// the background, audio stops flowing UP to the cloud and transcripts dry up at
+// the source. A drop/gap here means the stall is on the uplink side; steady
+// here while captions still fall behind points downstream (render side).
+// All lines prefixed "BGCAP:" for grep + easy removal.
+// ===========================================================================
+const BGCAP_TELEMETRY = false
+let bgcapMicFrames = 0
+let bgcapMicLastLogAt = 0
+let bgcapMicLastVia = ""
+function bgcapNoteMicFrame(via: string): void {
+  if (!BGCAP_TELEMETRY) return
+  bgcapMicFrames++
+  bgcapMicLastVia = via
+  const now = Date.now()
+  if (now - bgcapMicLastLogAt >= 1000) {
+    console.log(`BGCAP: mic_lc3 uplink=${bgcapMicFrames} frames in ${now - bgcapMicLastLogAt}ms via=${bgcapMicLastVia}`)
+    bgcapMicFrames = 0
+    bgcapMicLastLogAt = now
+  }
+}
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -124,6 +153,8 @@ class MantleManager {
   private clearTextTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private MIC_TIMEOUT_MS: number = 1000
+  private micDataActive: boolean = false
+  private lastMicDataAt: number = 0
   private transcriptProcessor: TranscriptProcessor
   private subs: Array<any> = []
   private initialized: boolean = false
@@ -140,6 +171,36 @@ class MantleManager {
     this.transcriptProcessor = new TranscriptProcessor(() => {
       this.sendPendingTranscript()
     })
+  }
+
+  private noteMicDataReceived() {
+    this.lastMicDataAt = Date.now()
+
+    if (!this.micDataActive) {
+      this.micDataActive = true
+      useDebugStore.getState().setDebugInfo({micDataRecvd: true})
+    }
+
+    if (this.micDataTimeout) {
+      return
+    }
+
+    this.micDataTimeout = BgTimer.setTimeout(() => this.checkMicDataStillActive(), this.MIC_TIMEOUT_MS)
+  }
+
+  private checkMicDataStillActive() {
+    this.micDataTimeout = null
+    const staleForMs = Date.now() - this.lastMicDataAt
+
+    if (staleForMs < this.MIC_TIMEOUT_MS) {
+      this.micDataTimeout = BgTimer.setTimeout(() => this.checkMicDataStillActive(), this.MIC_TIMEOUT_MS - staleForMs)
+      return
+    }
+
+    if (this.micDataActive) {
+      this.micDataActive = false
+      useDebugStore.getState().setDebugInfo({micDataRecvd: false})
+    }
   }
 
   private sendPendingTranscript() {
@@ -189,13 +250,21 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
-      miniappAuth: {
-        getToken: (packageName, opts) => {
-          const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
+        miniappAuth: {
+          getToken: (packageName, opts) => {
+          const isDevApp = packageName === DEV_APP_PACKAGE_NAME
+          const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
           if (!authPackageName) {
             throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
           }
-          return cloudClient.getMiniappAuthToken(authPackageName, opts)
+          const devAttestation = isDevApp ? getDevAppAttestation() : undefined
+          if (isDevApp && !devAttestation) {
+            throw new Error("Dev miniapp auth token unavailable without a signed `mentra dev` attestation")
+          }
+          return cloudClient.getMiniappAuthToken(authPackageName, {
+            ...opts,
+            ...(devAttestation ? {devAttestation} : {}),
+          })
         },
       },
       audioPlayback: {
@@ -281,6 +350,17 @@ class MantleManager {
         startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
         stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
         setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
+      },
+      wifiSetup: {
+        // session.glasses.requestWifiSetup → open the phone's glasses Wi-Fi
+        // setup flow (same screen pairing/deeplinks use for "wifi-setup"). The
+        // miniapp's `reason` is forwarded as a route param so the screen can show
+        // it as the prompt (mirrors the cloud SDK's requestWifiSetup(reason)).
+        // `as any` matches the repo idiom for dynamic params under typedRoutes
+        // (see stores/navigation.ts).
+        requestSetup: (reason?: string) => {
+          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
+        },
       },
     })
     // Wire the runtime's status fanout now that the streaming hook is in.
@@ -401,6 +481,11 @@ class MantleManager {
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+
+    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
+    // lets Core move users to newer bundled miniapp releases without shipping a
+    // new mobile binary.
+    await preinstalledMiniappSync.sync()
   }
 
   /**
@@ -586,6 +671,7 @@ class MantleManager {
     {
       this.subs.push(
         BluetoothSdk.addListener("log", (event) => {
+          if (event.message?.startsWith("MAN: displayEvent ")) return
           console.log("CORE:", event.message)
         }),
       )
@@ -596,6 +682,26 @@ class MantleManager {
           const {type: _type, ...wifi} = event
           useGlassesStore.getState().setGlassesInfo({wifi})
         }),
+      )
+
+      // Forward glasses Wi-Fi to miniapps (session.glasses.onWifi) from the
+      // STORE — the single source of truth — so every path converges here:
+      // wifi_status_change, onGlassesStatus, and BLE disconnect. Effective
+      // connectivity requires the glasses to be connected AND on Wi-Fi, so a
+      // disconnect correctly flips `connected` to false (no stale "connected").
+      this.subs.push(
+        useGlassesStore.subscribe(
+          (s) => {
+            const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
+            return {
+              connected,
+              ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+              localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+            }
+          },
+          (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),
+          {equalityFn: shallow},
+        ),
       )
 
       // TODO: remove since we can sub to the zustand store for hotspot info:
@@ -1040,13 +1146,7 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("mic_lc3", (event) => {
-          if (this.micDataTimeout) {
-            BgTimer.clearTimeout(this.micDataTimeout)
-          }
-          this.micDataTimeout = BgTimer.setTimeout(() => {
-            useDebugStore.getState().setDebugInfo({micDataRecvd: false})
-          }, this.MIC_TIMEOUT_MS)
-          useDebugStore.getState().setDebugInfo({micDataRecvd: true})
+          this.noteMicDataReceived()
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
 
@@ -1054,8 +1154,10 @@ class MantleManager {
           if (udp.enabledAndReady()) {
             // UDP audio is enabled and ready - send directly via UDP
             udp.sendAudio(event.lc3)
+            bgcapNoteMicFrame("udp") // BGCAP diagnostic
           } else {
             socketComms.sendBinary(event.lc3)
+            bgcapNoteMicFrame("ws") // BGCAP diagnostic
           }
 
           // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
@@ -1075,13 +1177,7 @@ class MantleManager {
           // bytes upstream, or we'd interleave them with LC3 frames on
           // the same binary WebSocket and corrupt the cloud's decoder.
           // Sherpa-ONNX is fed PCM natively inside the BT SDK, not here.
-          if (this.micDataTimeout) {
-            BgTimer.clearTimeout(this.micDataTimeout)
-          }
-          this.micDataTimeout = BgTimer.setTimeout(() => {
-            useDebugStore.getState().setDebugInfo({micDataRecvd: false})
-          }, this.MIC_TIMEOUT_MS)
-          useDebugStore.getState().setDebugInfo({micDataRecvd: true})
+          this.noteMicDataReceived()
 
           // Fan raw PCM to local miniapps that subscribed to `audio_chunk`
           // (session.mic.onAudioChunk). forwardEvent is subscriber-gated —

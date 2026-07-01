@@ -102,7 +102,7 @@ alongside our friendlier names.
 Our naming:
 
 - `mentraUserId` is the application-level name for JWT `sub`.
-- `oemId` is our tenant/OEM claim, not a standard JWT claim.
+- `tenantId` is our tenant/OEM claim, not a standard JWT claim.
 - `packageName` is the application-level name for JWT `aud` on miniapp tokens.
 - `issuer` is JWT `iss`.
 - JWKS is the public key set a backend fetches to verify token signatures.
@@ -126,7 +126,7 @@ The intended flow:
    - `sub`: the Mentra user id
    - `aud`: the miniapp package name, for example `com.mentra.local-merge`
    - `exp`: short expiry
-   - optional/custom claims: `oemId`, `jti`, etc.
+   - optional/custom claims: `tenantId`, `jti`, etc.
 7. The runtime passes only that miniapp token into the miniapp session via
    `CONNECT_ACK` and later `AUTH_UPDATE` refreshes.
 8. The miniapp calls its backend with `session.auth.fetch(...)`.

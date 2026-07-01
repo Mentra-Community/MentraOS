@@ -67,7 +67,7 @@ console.log("[smoke] booting test-oem, core, runtime…");
 
 const testOem = await startTestOem({
   port: PORT_TEST_OEM,
-  oemId: "smoke-test-oem",
+  tenantId: "smoke-test-oem",
 });
 
 const core = await startCore({ port: PORT_CORE });
@@ -87,9 +87,9 @@ console.log(`  runtime:  ${runtime.wsUrl} (audio UDP :${runtime.udpPort})`);
 console.log(`  provider: ${process.env.AUDIO_PROVIDER}`);
 
 // Seed the test OEM record so token exchange works.
-await OemModel.deleteMany({ oemId: testOem.oemId });
+await OemModel.deleteMany({ tenantId: testOem.tenantId });
 await OemModel.create({
-  oemId: testOem.oemId,
+  tenantId: testOem.tenantId,
   displayName: "Smoke Test OEM",
   publicKeyMode: "static",
   publicKey: `-----BEGIN PUBLIC KEY-----\n${testOem.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -99,7 +99,7 @@ const client = new TestClient({
   testOemUrl: testOem.url,
   coreUrl: core.url,
   audioWsUrl: runtime.wsUrl,
-  oemUserId: "smoke-alice",
+  tenantUserId: "smoke-alice",
   connectTimeoutMs: 10_000,
 });
 

@@ -154,6 +154,9 @@ export enum MiniappRequestType {
   MANAGED_STREAM_START = "miniapp_managed_stream_start",
   MANAGED_STREAM_STOP = "miniapp_managed_stream_stop",
 
+  /** Ask the host to open the glasses Wi-Fi setup flow (mirrors the cloud SDK's requestWifiSetup). */
+  REQUEST_WIFI_SETUP = "miniapp_request_wifi_setup",
+
   // ----- Inter-miniapp interop (SYSTEM apps only) -----
   /** List installed miniapps (compatibility-filtered, with declared actions). */
   MINIAPPS_LIST = "miniapp_apps_list",
@@ -253,6 +256,8 @@ export enum MiniappStreamType {
   GLASSES_BATTERY = "glasses_battery",
   PHONE_BATTERY = "phone_battery",
   GLASSES_CONNECTION = "glasses_connection",
+  /** Glasses Wi-Fi state (connected/ssid). Glasses with Wi-Fi only; needed for streaming. */
+  GLASSES_WIFI = "glasses_wifi",
 
   // Speech / audio (cloud or local)
   TRANSCRIPTION = "transcription", // language variant: "transcription:en-US"

@@ -145,7 +145,7 @@ If it's an emergency and you need to stop the bleeding:
 2. **Scale down**: in `porter.yaml`, set `instances: 0` for the bad
    service and apply. (Trade availability for no crash spam.)
 3. **Disable the affected feature**: if it's e.g. Soniox burning out the
-   pod, flip `AUDIO_PROVIDER=mock` in Doppler and redeploy.
+   pod, confirm `SONIOX_API_KEY` is present in Doppler and redeploy.
 
 ## Lessons we've already learned (from v1)
 

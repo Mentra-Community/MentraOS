@@ -1651,40 +1651,83 @@ class G2: NSObject, SGCManager {
 
     // MARK: - BLE Sending
 
-    // Per-side FIFO write queues. We DON'T dump a multi-packet burst into CoreBluetooth in a tight
-    // loop: when its internal buffer is full, `.withoutResponse` writes are silently DROPPED, so the
-    // glasses receive an incomplete fragment, never ACK it, and the send appears to hang. Instead we
-    // enqueue and drain only while `canSendWriteWithoutResponse` is true, resuming from
-    // `peripheralIsReady(toSendWriteWithoutResponse:)`. This also keeps pacing off any timer/looper.
+    // Per-side FIFO write queues, drained by a single paced async writer per side.
+    //
+    // We write `.withoutResponse` directly and pace with a small `Task.sleep` between packets —
+    // exactly like G1 (`G1.swift attemptSend`). We deliberately do NOT gate on
+    // `canSendWriteWithoutResponse` / wait for `peripheralIsReady(toSendWriteWithoutResponse:)`:
+    // iOS suppresses that "ready" callback for a backgrounded bluetooth-central app (G2 has no
+    // active AVAudioSession — glasses-mic audio arrives over BLE), so a gated drain DEADLOCKS in the
+    // background: the queue grows for the whole bg window and floods the glasses on resume — the
+    // captions "freeze in bg, then flood" bug. G1 never gates and never floods; this matches it.
+    // The pace replaces the gate's overflow protection (the original reason for gating). Any packet
+    // CoreBluetooth still drops self-heals: text is re-sent (TextContainer.pendingSends) and image
+    // fragments retry on their ACK (`awaitImageAck`).
     private var leftWriteQueue: [Data] = []
     private var rightWriteQueue: [Data] = []
+    private var leftDraining = false
+    private var rightDraining = false
+    // Pace between consecutive packets (~G1's chunk pacing). Off any external callback, so the drain
+    // keeps making progress in the background instead of waiting for a callback iOS won't deliver.
+    private let writePaceNanos: UInt64 = 6_000_000
+    // Diagnostic: warn if a side's queue ever backs up (it shouldn't now — the drainer is always
+    // making progress). Rate-limited. Prefixed "BGCAP:" so it's easy to grep/strip after validation.
+    private var bgcapDepthLogAt: Double = 0
 
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
-        // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         if right {
             rightWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: true)
+            startDrain(right: true)
         }
         if left {
             leftWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: false)
+            startDrain(right: false)
         }
     }
 
-    /// Drain one side's queue while the peripheral can accept write-without-response. Stops as soon
-    /// as the buffer is full; `peripheralIsReady(toSendWriteWithoutResponse:)` resumes the drain.
-    private func drainWriteQueue(right: Bool) {
-        let peripheral = right ? rightPeripheral : leftPeripheral
-        let char = right ? rightWriteChar : leftWriteChar
-        guard let peripheral = peripheral, let char = char else {
-            // No connection for this side; drop its pending packets so they can't replay later.
-            if right { rightWriteQueue.removeAll() } else { leftWriteQueue.removeAll() }
-            return
+    /// Ensure a single paced drainer is running for this side. Idempotent — a second call while one
+    /// is already draining is a no-op (the running loop will pick up the newly-enqueued packets).
+    private func startDrain(right: Bool) {
+        if right {
+            if rightDraining { return }
+            rightDraining = true
+        } else {
+            if leftDraining { return }
+            leftDraining = true
         }
-        while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
-            guard peripheral.canSendWriteWithoutResponse else { return }
+        Task { @MainActor [weak self] in
+            await self?.drainLoop(right: right)
+        }
+    }
+
+    /// Drain one side's queue: write each packet directly (`.withoutResponse`), paced by a small
+    /// sleep. No `canSend` gate (see note above). Runs until the queue is empty, then clears the
+    /// per-side flag so the next enqueue restarts it.
+    private func drainLoop(right: Bool) async {
+        while true {
+            guard let peripheral = right ? rightPeripheral : leftPeripheral,
+                let char = right ? rightWriteChar : leftWriteChar
+            else {
+                // No connection for this side; drop pending packets so they can't replay later.
+                if right { rightWriteQueue.removeAll(); rightDraining = false }
+                else { leftWriteQueue.removeAll(); leftDraining = false }
+                return
+            }
+            let depth = (right ? rightWriteQueue : leftWriteQueue).count
+            if depth == 0 {
+                if right { rightDraining = false } else { leftDraining = false }
+                return
+            }
+            if depth > 20 {
+                let now = Date().timeIntervalSince1970
+                if now - bgcapDepthLogAt >= 1.0 {
+                    Bridge.log("BGCAP: g2 write queue depth=\(depth) side=\(right ? "R" : "L") (draining, not blocked)")
+                    bgcapDepthLogAt = now
+                }
+            }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            try? await Task.sleep(nanoseconds: writePaceNanos)
         }
     }
 
@@ -4771,15 +4814,16 @@ extension G2: CBPeripheralDelegate {
         }
     }
 
-    /// CoreBluetooth's write-without-response buffer freed up — resume draining that side's queue.
-    /// Called on the BLE queue; hop to the main actor to touch the queue state.
+    /// CoreBluetooth's write-without-response buffer freed up. The paced drainer doesn't depend on
+    /// this (it's suppressed in the background), but in the foreground it's a cheap nudge to make
+    /// sure a drainer is running for that side.
     nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             if peripheral === self.rightPeripheral {
-                self.drainWriteQueue(right: true)
+                self.startDrain(right: true)
             } else if peripheral === self.leftPeripheral {
-                self.drainWriteQueue(right: false)
+                self.startDrain(right: false)
             }
         }
     }
