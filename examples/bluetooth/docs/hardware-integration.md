@@ -69,6 +69,9 @@ Treat each advanced feature as optional. Your app should degrade gracefully if a
 | Model | Display | Camera | Microphone | Speaker | Primary strengths |
 | --- | --- | --- | --- | --- | --- |
 | Mentra Live | No | Yes | Yes | Yes | Camera, microphone, speaker, Wi-Fi, streaming, phone-connected workflows |
+
+Mentra Live uses negotiated BLE wire capabilities (`wire_caps`) for K900 length endianness and optional binary transport. Apps only need a current SDK version; see [Mentra Live BLE Wire Protocol Notes](mentra-live-ble-wire-protocol.md).
+
 | G2 | Yes | No | Yes | No | Display and glanceable UI workflows |
 
 Treat unsupported operations as recoverable SDK errors and keep UI state aligned with the latest status callback.
