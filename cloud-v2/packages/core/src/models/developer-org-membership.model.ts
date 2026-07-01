@@ -28,6 +28,9 @@ const DeveloperOrgMembershipSchema = new Schema(
 );
 
 DeveloperOrgMembershipSchema.index({ orgId: 1, userId: 1 }, { unique: true });
+// One org per user: a user has at most one membership row across all orgs. This
+// DB-enforces the invariant that the app's one-org checks rely on.
+DeveloperOrgMembershipSchema.index({ userId: 1 }, { unique: true });
 
 export type DeveloperOrgMembership = InferSchemaType<typeof DeveloperOrgMembershipSchema>;
 export const DeveloperOrgMembershipModel = model(

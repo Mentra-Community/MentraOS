@@ -77,7 +77,14 @@ export class DeveloperOrgInvitationService {
       status: "pending",
     }).lean<{ invitationId: string; orgId: string; email: string; role: string; expiresAt: Date } | null>();
     if (!row) return null;
-    if (new Date(row.expiresAt).getTime() < Date.now()) return null;
+    if (new Date(row.expiresAt).getTime() < Date.now()) {
+      // Retire the expired invite so it stops showing as pending.
+      await DeveloperOrgInvitationModel.updateOne(
+        { invitationId: row.invitationId, status: "pending" },
+        { $set: { status: "revoked" } },
+      );
+      return null;
+    }
     return { invitationId: row.invitationId, orgId: row.orgId, email: row.email, role: row.role as InvitationRole };
   }
 
@@ -92,6 +99,14 @@ export class DeveloperOrgInvitationService {
       { $set: { status: "accepted" } },
     );
     return result.matchedCount === 1;
+  }
+
+  /** Revert a claim (back to pending) if the post-claim membership write failed. */
+  async unclaim(invitationId: string): Promise<void> {
+    await DeveloperOrgInvitationModel.updateOne(
+      { invitationId, status: "accepted" },
+      { $set: { status: "pending" } },
+    );
   }
 }
 

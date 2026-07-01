@@ -387,6 +387,11 @@ async function getMe(c: AppContext) {
   // Keep the roster fresh: ensure a membership row for the current human user
   // and backfill their profile fields (skips API-key principals).
   if (developerOrg && !authenticatedSession.user.id.startsWith("api_key:")) {
+    // Self-heal: guarantee the creator has their owner row (a failed ensureOwner
+    // during creation would otherwise leave them a member).
+    if (authenticatedSession.user.id === developerOrg.ownerUserId) {
+      await developerOrgs.ensureOwner(developerOrg.id, authenticatedSession.user.id);
+    }
     await developerOrgs.ensureMembership(developerOrg.id, authenticatedSession.user.id, {
       email: authenticatedSession.user.email,
       name: sessionDisplayName(authenticatedSession),
@@ -447,11 +452,15 @@ async function putOrg(c: AppContext) {
     const existingOrg = await resolveDeveloperOrgForSession(authenticatedSession);
     let org: DeveloperOrgRecord;
     if (existingOrg) {
-      // Editing an existing org is owner-only, gated on the role rather than the
-      // ownerUserId scalar — and updates the resolved org by id, so a co-owner
-      // edits the same org instead of accidentally creating a second one, and a
-      // demoted creator who still holds ownerUserId can no longer rename it.
-      if ((await resolveOrgRole(authenticatedSession, existingOrg)) !== "owner") {
+      // Editing an existing org is owner-only, gated on the role not the
+      // ownerUserId scalar. Self-heal the creator's owner row first: a failed
+      // ensureOwner during creation must not permanently brick onboarding.
+      let role = await resolveOrgRole(authenticatedSession, existingOrg);
+      if (role !== "owner" && authenticatedSession.user.id === existingOrg.ownerUserId) {
+        await developerOrgs.ensureOwner(existingOrg.id, authenticatedSession.user.id);
+        role = "owner";
+      }
+      if (role !== "owner") {
         return c.json({ error: "forbidden", error_description: "only owners can update the organization" }, 403);
       }
       org = await developerOrgs.updateOrg(existingOrg.id, authenticatedSession.user, parsed.data);
@@ -545,12 +554,18 @@ async function postAcceptInvitation(c: AppContext) {
     if (!(await invitations.claim(invite.invitationId))) {
       return c.json({ error: "invalid_invitation", error_description: "this invitation has already been used" }, 404);
     }
-    // Join with the invited role (role kept if already a member).
-    await developerOrgs.ensureMembership(invite.orgId, authenticatedSession.user.id, {
-      email: authenticatedSession.user.email,
-      name: sessionDisplayName(authenticatedSession),
-      roleIfNew: invite.role,
-    });
+    // Join with the invited role (role kept if already a member). If the write
+    // fails, un-claim so the invitee can retry with the same link.
+    try {
+      await developerOrgs.ensureMembership(invite.orgId, authenticatedSession.user.id, {
+        email: authenticatedSession.user.email,
+        name: sessionDisplayName(authenticatedSession),
+        roleIfNew: invite.role,
+      });
+    } catch (err) {
+      await invitations.unclaim(invite.invitationId);
+      throw err;
+    }
     return c.json({ ok: true, org: await developerOrgs.getOrgById(invite.orgId) });
   } catch (error) {
     return serviceError(error);
