@@ -153,6 +153,26 @@ describe("LocalDisplayManager", () => {
       expect(mgr._peekForTest().isBooting).toBe(false)
     })
 
+    // registerApp fires onMount for EVERY spawn (background app, crash-respawn),
+    // so a second app's boot must not blank whatever the first app is showing.
+    // On timeout with nothing rendered, the prior frame is restored, not cleared.
+    test("a second app's boot that times out restores the prior frame, not a blank", () => {
+      // App A renders content (its own boot ends early on first display).
+      mgr.onMount("com.app.a", "A")
+      mgr.request("com.app.a", {layout: {layoutType: "text_wall", text: "A-content"}})
+      expect(lastText()).toBe("A-content")
+
+      // App B spawns and never renders.
+      mgr.onMount("com.app.b", "B")
+      expect(lastText()).toBe("Starting B…")
+      displayEventMock.mockClear()
+
+      advance(1500)
+      // B never rendered → A's frame restored, glasses not blanked.
+      expect(lastLayoutType()).not.toBe("clear_view")
+      expect(lastText()).toBe("A-content")
+    })
+
     test("mounting a second app cancels the first boot", () => {
       mgr.onCoreAppChange("com.app.foo")
       mgr.onMount("com.app.foo", "Foo")

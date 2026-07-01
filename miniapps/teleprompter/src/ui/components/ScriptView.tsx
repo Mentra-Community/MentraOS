@@ -89,6 +89,10 @@ export function ScriptView({
 
   const totalWords = status?.totalWords ?? 0
   const playing = status?.state === "playing"
+  // Whether voice is the ACTUAL scroll driver — false when AI Scroll is on but
+  // the device has no mic (the engine falls back to timed scroll), so the
+  // caption doesn't promise voice-follow that isn't happening.
+  const voiceActive = status?.voiceMode ?? settings.voiceFollow
   const progress = drag ?? status?.progress ?? 0
   const totalSec = status?.estimatedTotalSec ?? 0
   const remainingSec = status?.remainingSec ?? totalSec
@@ -165,11 +169,14 @@ export function ScriptView({
           </div>
         </div>
 
-        {/* What Play does right now — defuses the "why isn't it moving?" confusion. */}
+        {/* What Play does right now — defuses the "why isn't it moving?" confusion.
+            Three states: off, on-with-voice, and on-but-no-mic (timed fallback). */}
         <p className="text-center text-[11px] leading-snug text-zinc-500">
-          {settings.voiceFollow
-            ? "AI Scroll is on — the prompter follows your voice as you speak."
-            : `Play auto-scrolls at ${settings.wpm} wpm. Turn on AI Scroll to follow your voice.`}
+          {!settings.voiceFollow
+            ? `Play auto-scrolls at ${settings.wpm} wpm. Turn on AI Scroll to follow your voice.`
+            : voiceActive
+              ? "AI Scroll is on — the prompter follows your voice as you speak."
+              : `AI Scroll is on, but this device has no mic — Play auto-scrolls at ${settings.wpm} wpm.`}
         </p>
 
         {/* Scrubber */}
