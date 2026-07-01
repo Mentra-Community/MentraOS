@@ -63,19 +63,26 @@ export class DeveloperOrgInvitationService {
     return result.matchedCount > 0;
   }
 
-  /** Validate + consume a pending invite by its raw token. Null if invalid/expired. */
-  async consume(token: string): Promise<{ orgId: string; email: string; role: InvitationRole } | null> {
+  /** Validate a pending invite by its raw token WITHOUT consuming it. */
+  async peek(
+    token: string,
+  ): Promise<{ invitationId: string; orgId: string; email: string; role: InvitationRole } | null> {
     if (!token) return null;
-    const row = await DeveloperOrgInvitationModel.findOne({ tokenHash: sha256Hex(token), status: "pending" });
+    const row = await DeveloperOrgInvitationModel.findOne({
+      tokenHash: sha256Hex(token),
+      status: "pending",
+    }).lean<{ invitationId: string; orgId: string; email: string; role: string; expiresAt: Date } | null>();
     if (!row) return null;
-    if (row.expiresAt.getTime() < Date.now()) {
-      row.status = "revoked";
-      await row.save();
-      return null;
-    }
-    row.status = "accepted";
-    await row.save();
-    return { orgId: row.orgId, email: row.email, role: row.role as InvitationRole };
+    if (new Date(row.expiresAt).getTime() < Date.now()) return null;
+    return { invitationId: row.invitationId, orgId: row.orgId, email: row.email, role: row.role as InvitationRole };
+  }
+
+  /** Mark a pending invite accepted (call after the membership is created). */
+  async markAccepted(invitationId: string): Promise<void> {
+    await DeveloperOrgInvitationModel.updateOne(
+      { invitationId, status: "pending" },
+      { $set: { status: "accepted" } },
+    );
   }
 }
 

@@ -172,9 +172,12 @@ export class DeveloperOrgService {
   /** Idempotently make a user an owner (used to seed the org creator). */
   async ensureOwner(orgId: string, userId: string): Promise<void> {
     if (!userId) return;
+    // Force owner via $set (not $setOnInsert): a concurrent ensureMembership
+    // could insert a `member` row for the creator first, and we must still end
+    // up with them as owner so the org never has zero owners.
     await DeveloperOrgMembershipModel.updateOne(
       { orgId, userId },
-      { $setOnInsert: { orgId, userId, role: "owner" } },
+      { $set: { role: "owner" }, $setOnInsert: { orgId, userId } },
       { upsert: true },
     );
   }

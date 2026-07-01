@@ -523,17 +523,23 @@ async function postAcceptInvitation(c: AppContext) {
   if (!token) throw new InvalidRequest("token is required");
 
   try {
-    const invite = await invitations.consume(token);
+    const invite = await invitations.peek(token);
     if (!invite) {
       return c.json({ error: "invalid_invitation", error_description: "this invitation is invalid or has expired" }, 404);
     }
-    // The invitee joins the org with the invited role (their real identity, not
-    // necessarily the invited email). If they were already a member, role is kept.
+    // One org per user: block joining a second org (re-accepting the same one is fine).
+    const ownedOrg = await developerOrgs.getPrimaryOrgForUser(authenticatedSession.user);
+    const currentOrgId = ownedOrg?.id ?? (await developerOrgs.getMembershipOrgId(authenticatedSession.user.id));
+    if (currentOrgId && currentOrgId !== invite.orgId) {
+      return c.json({ error: "already_in_org", error_description: "you already belong to an organization" }, 409);
+    }
+    // Join with the invited role (their real identity; role kept if already a member).
     await developerOrgs.ensureMembership(invite.orgId, authenticatedSession.user.id, {
       email: authenticatedSession.user.email,
       name: sessionDisplayName(authenticatedSession),
       roleIfNew: invite.role,
     });
+    await invitations.markAccepted(invite.invitationId);
     return c.json({ ok: true, org: await developerOrgs.getOrgById(invite.orgId) });
   } catch (error) {
     return serviceError(error);
@@ -1027,18 +1033,10 @@ async function resolveDeveloperOrgForSession(
     if (memberOrg) return memberOrg;
   }
 
-  // An org-scoped (SSO) session: WorkOS tells us the org; materialize membership.
-  if (authenticatedSession.organizationId) {
-    const ssoOrg = await developerOrgs.getOrgByWorkosOrgId(authenticatedSession.organizationId);
-    if (ssoOrg) {
-      await developerOrgs.ensureMembership(ssoOrg.id, authenticatedSession.user.id, {
-        email: authenticatedSession.user.email,
-        name: sessionDisplayName(authenticatedSession),
-      });
-      return ssoOrg;
-    }
-  }
-
+  // NOTE: access requires a roster row (or being the creator). We intentionally
+  // do NOT auto-join from a WorkOS org_id here — that would resurrect removed
+  // members (whose vestigial WorkOS membership lingers) and grant access off
+  // stale state. Real SSO provisioning will create a roster row explicitly.
   return null;
 }
 
