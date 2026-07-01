@@ -74,4 +74,8 @@ jobs:
 
       - name: Validate SDK Bun lockfile
         working-directory: sdk
-        run: bun install --frozen-lockfile --ignore-scripts
+        env:
+          BUN_INSTALL_CACHE_DIR: /tmp/bun-sdk-lockfile-cache
+        run: |
+          rm -rf "$BUN_INSTALL_CACHE_DIR"
+          bun install --frozen-lockfile --ignore-scripts
