@@ -60,6 +60,39 @@ enum BleJsonCompact {
     private static var currentSessionResolvedConfigHash: String?
     private static var resolvedConfigByHash: [String: [String: Any]] = [:]
 
+    private static let highRoiMessageTypes: Set<String> = [
+        "photo_status",
+        "stream_status",
+        "wifi_scan_result",
+        "start_stream",
+        "photo_response",
+    ]
+
+    private static let chunkMessageTypes: Set<String> = ["ck", "chunked_msg"]
+
+    static func shouldCompactOutbound(_ messageType: String) -> Bool {
+        highRoiMessageTypes.contains(messageType)
+    }
+
+    static func supportsCompactInbound(_ messageType: String) -> Bool {
+        !messageType.isEmpty
+            && (highRoiMessageTypes.contains(messageType) || chunkMessageTypes.contains(messageType))
+    }
+
+    static func isCompactWireForm(_ json: [String: Any]) -> Bool {
+        json["t"] != nil && json["type"] == nil
+    }
+
+    static func extractMessageType(_ json: [String: Any]) -> String {
+        if let type = stringValue(json["type"]) {
+            return type
+        }
+        if let compactType = stringValue(json["t"]) {
+            return compactType
+        }
+        return ""
+    }
+
     static func resetSession() {
         sessionConnectEpochMs = 0
         resolvedConfigSent = false
@@ -83,6 +116,10 @@ enum BleJsonCompact {
         if isCameraCommandJson(jsonString(json) ?? "") {
             return json
         }
+        let messageType = extractMessageType(json)
+        if !shouldCompactOutbound(messageType) {
+            return json
+        }
         return compactObject(json, topLevel: true)
     }
 
@@ -98,6 +135,20 @@ enum BleJsonCompact {
     static func decode(_ json: [String: Any]) -> [String: Any] {
         if isCameraCommandJson(jsonString(json) ?? "") {
             return json
+        }
+        return expandObject(json, topLevel: true)
+    }
+
+    static func decodeIfSupported(_ json: [String: Any]) -> [String: Any]? {
+        if isCameraCommandJson(jsonString(json) ?? "") {
+            return json
+        }
+        if !isCompactWireForm(json) {
+            return json
+        }
+        let compactType = stringValue(json["t"]) ?? ""
+        if !supportsCompactInbound(compactType) {
+            return nil
         }
         return expandObject(json, topLevel: true)
     }

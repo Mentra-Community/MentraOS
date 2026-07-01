@@ -492,7 +492,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             for (int i = 0; i < chunks.size(); i++) {
                 JSONObject chunk = chunks.get(i);
                 String chunkJson = chunk.toString();
-                byte[] chunkData = BesWireFormat.formatMessageForTransmission(chunkJson);
+                byte[] chunkData =
+                        BesWireFormat.formatMessageForTransmission(chunkJson, uartToBesEndian);
                 long sequence = bleChunkTraceSequence.getAndIncrement();
                 logOutgoingBleChunk(
                         "created", traceInfo, chunk, sequence, chunkData, chunkJson, null, null,
@@ -935,6 +936,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             JSONObject bData = json.optJSONObject("B");
             if (bData != null) {
                 caps = bData.optJSONObject("wire_caps");
+            } else {
+                String bFieldStr = json.optString("B", "");
+                if (!bFieldStr.isEmpty()) {
+                    try {
+                        caps = new JSONObject(bFieldStr).optJSONObject("wire_caps");
+                    } catch (Exception e) {
+                        Log.w(TAG, "Could not parse B field for wire_caps", e);
+                    }
+                }
             }
         }
         if (caps != null && caps.optBoolean("k900_le", false)) {

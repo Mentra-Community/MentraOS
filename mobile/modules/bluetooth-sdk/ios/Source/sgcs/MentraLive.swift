@@ -1217,6 +1217,8 @@ class MentraLive: NSObject, SGCManager {
             incomingChunkReassembler.clear()
             peerWireProtocolVersion = 0
             useBinaryWireProtocol = false
+            peerK900Le = false
+            peerWireCapsBinary = false
             BleJsonCompact.resetSession()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
@@ -1389,6 +1391,11 @@ class MentraLive: NSObject, SGCManager {
     private var isNewVersion = false
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
+    // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to legacy
+    // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
+    // v2 binary handshake succeeds, which implies wire-v2 LE).
+    private var peerK900Le = false
+    private var peerWireCapsBinary = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
 
@@ -2066,8 +2073,13 @@ class MentraLive: NSObject, SGCManager {
             return
         }
 
-        // Payload length is little-endian for all K900 string frames
-        let payloadLength = Int(bytes[3]) | (Int(bytes[4]) << 8)
+        // Auto-detect the length endianness so we parse both legacy big-endian and wire-v2
+        // little-endian frames, and learn the glasses' endianness for future outbound frames.
+        let detected = k900DetectStringLength(bytes)
+        let payloadLength = detected?.length ?? (Int(bytes[3]) | (Int(bytes[4]) << 8))
+        if let detected {
+            peerK900Le = detected.isLe
+        }
 
         // Bridge.log(
         //     "K900 Protocol - Command: 0x\(String(format: "%02X", commandType)), Payload length: \(payloadLength)"
@@ -2101,7 +2113,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func processJsonObject(_ incoming: [String: Any]) {
-        let json = expandCompactWireJson(incoming)
+        guard let json = expandCompactWireJson(incoming) else {
+            Bridge.log("LIVE: Rejected unsupported compact wire form")
+            return
+        }
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
 
@@ -2149,6 +2164,7 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            parsePeerWireCaps(json)
             handleGlassesReady()
 
         case "battery_status":
@@ -2413,6 +2429,7 @@ class MentraLive: NSObject, SGCManager {
                 if let buildNumber = fields["build_number"] as? String {
                     isNewVersion = (Int(buildNumber) ?? 0) >= 5
                     DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
+                    parsePeerWireCaps(json)
                     maybeSendWireHandshake()
                 }
                 if let deviceModel = fields["device_model"] as? String {
@@ -3661,7 +3678,12 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func maybeSendWireHandshake() {
-        guard isNewVersion, peerWireProtocolVersion < BleWireProtocol.protocolV2 else { return }
+        // Only attempt the v2 binary handshake once the glasses have advertised binary support via
+        // wire_caps. Older builds that report new version but lack wire_caps stay on the legacy path.
+        guard isNewVersion,
+              peerWireCapsBinary,
+              peerWireProtocolVersion < BleWireProtocol.protocolV2
+        else { return }
         sendWireHandshake()
     }
 
@@ -3687,6 +3709,8 @@ class MentraLive: NSObject, SGCManager {
     private func handlePeerWireHandshake() {
         peerWireProtocolVersion = BleWireProtocol.protocolV2
         useBinaryWireProtocol = true
+        // A successful v2 binary handshake implies a wire-v2 peer, which uses LE K900 lengths.
+        peerK900Le = true
         BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
         Bridge.log("LIVE: Peer confirmed BLE wire protocol v2")
     }
@@ -3737,9 +3761,9 @@ class MentraLive: NSObject, SGCManager {
         return BleJsonCompact.encode(json)
     }
 
-    private func expandCompactWireJson(_ json: [String: Any]) -> [String: Any] {
+    private func expandCompactWireJson(_ json: [String: Any]) -> [String: Any]? {
         guard useBinaryWireProtocol, isNewVersion else { return json }
-        return BleJsonCompact.decode(json)
+        return BleJsonCompact.decodeIfSupported(json)
     }
 
     private func logWireMetrics(
@@ -4559,6 +4583,8 @@ class MentraLive: NSObject, SGCManager {
         incomingChunkReassembler.clear()
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
+        peerK900Le = false
+        peerWireCapsBinary = false
         BleJsonCompact.resetSession()
 
         // Disconnect BLE
@@ -4619,11 +4645,55 @@ extension MentraLive {
     }
 
     /**
+     * Heuristically detect the K900 STRING length field's endianness for a received frame. Mirrors
+     * the firmware and Android codec: a length is plausible when it is non-zero, within the 512-byte
+     * cap, and the full framed command fits inside the buffer; when both fit, prefer the one landing
+     * on the trailing `$$`, then the smaller. Returns (length, isLittleEndian) or nil.
+     */
+    private func k900DetectStringLength(_ bytes: [UInt8]) -> (length: Int, isLe: Bool)? {
+        guard bytes.count >= 7 else { return nil }
+        let leLen = Int(bytes[3]) | (Int(bytes[4]) << 8)
+        let beLen = (Int(bytes[3]) << 8) | Int(bytes[4])
+
+        let leOk = leLen > 0 && leLen <= 512 && leLen + 7 <= bytes.count
+        let beOk = beLen > 0 && beLen <= 512 && beLen + 7 <= bytes.count
+
+        func endsWithEndCode(_ end: Int) -> Bool {
+            end + 1 < bytes.count && bytes[end] == 0x24 && bytes[end + 1] == 0x24
+        }
+
+        if leOk, beOk {
+            if endsWithEndCode(5 + leLen) { return (leLen, true) }
+            if endsWithEndCode(5 + beLen) { return (beLen, false) }
+            return leLen <= beLen ? (leLen, true) : (beLen, false)
+        }
+        if leOk { return (leLen, true) }
+        if beOk { return (beLen, false) }
+        return nil
+    }
+
+    /**
+     * Parse a `wire_caps` object from a version_info/glasses_ready message and update the negotiated
+     * per-link endianness and binary support. Missing wire_caps leaves the legacy defaults (BE, no
+     * binary) untouched so older glasses keep working.
+     */
+    private func parsePeerWireCaps(_ json: [String: Any]) {
+        guard let caps = json["wire_caps"] as? [String: Any] else { return }
+        if (caps["k900_le"] as? Bool) == true {
+            if !peerK900Le {
+                peerK900Le = true
+                Bridge.log("LIVE: wire_caps negotiated k900 endian=LE")
+            }
+        }
+        peerWireCapsBinary = (caps["binary"] as? Bool) == true
+    }
+
+    /**
      * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication
      * Format: ## + command_type + length(2bytes) + data + $$
      * Uses little-endian byte order for length field
      */
-    private func packDataToK900(_ data: Data?, cmdType: UInt8) -> Data? {
+    private func packDataToK900(_ data: Data?, cmdType: UInt8, littleEndian: Bool = true) -> Data? {
         guard let data else { return nil }
 
         let dataLength = data.count
@@ -4637,9 +4707,14 @@ extension MentraLive {
         // Command type
         result.append(cmdType)
 
-        // Length (2 bytes, little-endian for phone-to-device)
-        result.append(UInt8(dataLength & 0xFF)) // LSB first
-        result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB second
+        // Length (2 bytes, negotiated endianness)
+        if littleEndian {
+            result.append(UInt8(dataLength & 0xFF)) // LSB first
+            result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB second
+        } else {
+            result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB first
+            result.append(UInt8(dataLength & 0xFF)) // LSB second
+        }
 
         // Copy the data
         result.append(data)
@@ -4669,9 +4744,13 @@ extension MentraLive {
             let jsonData = try JSONSerialization.data(withJSONObject: wrapper)
             guard let wrappedJson = String(data: jsonData, encoding: .utf8) else { return nil }
 
-            // Then pack with BES2700 protocol format using little-endian
+            // Then pack with BES2700 protocol format using the negotiated endianness
             let jsonBytes = wrappedJson.data(using: .utf8)!
-            return packDataToK900(jsonBytes, cmdType: K900ProtocolUtils.CMD_TYPE_STRING)
+            return packDataToK900(
+                jsonBytes,
+                cmdType: K900ProtocolUtils.CMD_TYPE_STRING,
+                littleEndian: peerK900Le
+            )
 
         } catch {
             Bridge.log("Error creating JSON wrapper for K900: \(error)")

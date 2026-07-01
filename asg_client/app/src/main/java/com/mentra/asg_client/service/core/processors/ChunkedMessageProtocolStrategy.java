@@ -77,7 +77,12 @@ public class ChunkedMessageProtocolStrategy
             String jsonStr = new String(payload, StandardCharsets.UTF_8);
             JSONObject reassembledJson = new JSONObject(jsonStr);
             if (BesWireFormat.isBinaryProtocolActive()) {
-                reassembledJson = BleJsonCompact.decode(reassembledJson);
+                reassembledJson = BleJsonCompact.decodeIfSupported(reassembledJson);
+                if (reassembledJson == null) {
+                    Log.w(TAG, "Rejected unsupported compact reassembled wire form");
+                    return new CommandProtocolDetector.ProtocolDetectionResult(
+                            CommandProtocolDetector.ProtocolType.UNKNOWN, null, "", -1, false);
+                }
             }
             String commandType = reassembledJson.optString("type", "");
             long messageId = reassembledJson.optLong("mId", -1);

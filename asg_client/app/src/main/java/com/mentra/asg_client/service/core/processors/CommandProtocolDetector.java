@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.processors;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900ProtocolStrategy;
+import com.mentra.asg_client.io.bluetooth.utils.BleJsonCompact;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -173,7 +174,7 @@ public class CommandProtocolDetector {
                 }
             }
             // Standard JSON format (no C field)
-            if (json.has("type") || json.has("mId")) {
+            if (json.has("type") || json.has("t") || json.has("mId")) {
                 // Also reject direct-format chunks
                 String t = json.optString("type", json.optString("t", ""));
                 if ("chunked_msg".equals(t) || "ck".equals(t)) {
@@ -202,6 +203,12 @@ public class CommandProtocolDetector {
                     Log.d(TAG, "📦 Detected standard JSON command format");
                 }
 
+                dataToProcess = BleJsonCompact.decodeIfSupported(dataToProcess);
+                if (dataToProcess == null) {
+                    Log.w(TAG, "Rejected unsupported compact wire form");
+                    return new ProtocolDetectionResult(
+                            ProtocolType.JSON_COMMAND, json, "", -1, false);
+                }
                 commandType = dataToProcess.optString("type", "");
                 messageId = dataToProcess.optLong("mId", -1);
 

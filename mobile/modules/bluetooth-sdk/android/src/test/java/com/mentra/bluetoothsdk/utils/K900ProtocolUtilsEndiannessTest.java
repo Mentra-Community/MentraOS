@@ -45,6 +45,83 @@ public class K900ProtocolUtilsEndiannessTest {
     }
 
     @Test
+    public void packDataCommandBigEndianWritesLengthMsbFirst() {
+        byte[] payload = new byte[0x123];
+        byte[] packed =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        assertEquals(0x01, packed[3] & 0xFF);
+        assertEquals(0x23, packed[4] & 0xFF);
+    }
+
+    @Test
+    public void extractPayloadRoundTripsForBothEndianness() {
+        byte[] payload = "{\"type\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
+
+        byte[] be =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+        byte[] le =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.LE);
+
+        assertArrayEquals(payload, K900ProtocolUtils.extractPayload(be, K900LengthCodec.Endian.BE));
+        assertArrayEquals(payload, K900ProtocolUtils.extractPayload(le, K900LengthCodec.Endian.LE));
+    }
+
+    @Test
+    public void extractPayloadAutoDetectsBigEndianLegacyFrame() {
+        byte[] payload = "{\"type\":\"cs_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] be =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        assertArrayEquals(payload, K900ProtocolUtils.extractPayloadAuto(be));
+    }
+
+    @Test
+    public void extractPayloadAutoDetectsLittleEndianWireV2Frame() {
+        byte[] payload = "{\"type\":\"cs_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] le =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.LE);
+
+        assertArrayEquals(payload, K900ProtocolUtils.extractPayloadAuto(le));
+    }
+
+    @Test
+    public void processReceivedBytesToJsonAutoDetectsBigEndianFrame() throws Exception {
+        String inner = "{\"type\":\"ping\"}";
+        byte[] be =
+                K900ProtocolUtils.packDataCommand(
+                        inner.getBytes(StandardCharsets.UTF_8),
+                        K900ProtocolUtils.CMD_TYPE_STRING,
+                        K900LengthCodec.Endian.BE);
+
+        JSONObject json = K900ProtocolUtils.processReceivedBytesToJson(be);
+
+        assertNotNull(json);
+        assertEquals("ping", json.getString("type"));
+    }
+
+    @Test
+    public void repackStringFrameTranscodesLengthEndiannessOnly() {
+        byte[] payload = "{\"type\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] be =
+                K900ProtocolUtils.packDataCommand(
+                        payload, K900ProtocolUtils.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+
+        byte[] le =
+                K900LengthCodec.repackStringFrame(
+                        be, K900LengthCodec.Endian.BE, K900LengthCodec.Endian.LE);
+
+        assertEquals(payload.length & 0xFF, le[3] & 0xFF);
+        assertEquals((payload.length >> 8) & 0xFF, le[4] & 0xFF);
+        assertArrayEquals(payload, K900ProtocolUtils.extractPayload(le, K900LengthCodec.Endian.LE));
+    }
+
+    @Test
     public void packAndExtractBinaryFragmentRoundTrip() {
         byte[] payload = "v2".getBytes(StandardCharsets.UTF_8);
         byte flags = (byte) (BleWireProtocol.BLE_WIRE_FLAG_HANDSHAKE

@@ -432,7 +432,7 @@ public class BesWireFormat {
      * @return Formatted bytes ready for transmission
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
-        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.LE);
+        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.BE);
     }
 
     /**

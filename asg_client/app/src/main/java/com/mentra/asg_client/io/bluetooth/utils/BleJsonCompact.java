@@ -2,11 +2,14 @@ package com.mentra.asg_client.io.bluetooth.utils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -27,6 +30,21 @@ public final class BleJsonCompact {
     private static final Map<Integer, String> AE_STATE_FROM_INT = new HashMap<>();
 
     public static final String KEY_RESOLVED_CONFIG_HASH = "rch";
+
+    /** ROI 8–10 message types: compact outbound and accept compact inbound. */
+    private static final Set<String> HIGH_ROI_MESSAGE_TYPES =
+            Collections.unmodifiableSet(
+                    new HashSet<>(
+                            Arrays.asList(
+                                    "photo_status",
+                                    "stream_status",
+                                    "wifi_scan_result",
+                                    "start_stream",
+                                    "photo_response")));
+
+    /** Structural chunk envelope (always compact on wire). */
+    private static final Set<String> CHUNK_MESSAGE_TYPES =
+            Collections.unmodifiableSet(new HashSet<>(Arrays.asList("ck", "chunked_msg")));
 
     private static long sessionConnectEpochMs;
     private static boolean resolvedConfigSent;
@@ -96,11 +114,45 @@ public final class BleJsonCompact {
                 || jsonData.contains("\"type\":\"take_photo\"");
     }
 
+    public static boolean shouldCompactOutbound(String messageType) {
+        return messageType != null && HIGH_ROI_MESSAGE_TYPES.contains(messageType);
+    }
+
+    public static boolean supportsCompactInbound(String messageType) {
+        if (messageType == null || messageType.isEmpty()) {
+            return false;
+        }
+        return HIGH_ROI_MESSAGE_TYPES.contains(messageType)
+                || CHUNK_MESSAGE_TYPES.contains(messageType);
+    }
+
+    /** Compact wire form uses short `t` key without verbose `type`. */
+    public static boolean isCompactWireForm(JSONObject json) {
+        return json != null && json.has("t") && !json.has("type");
+    }
+
+    public static String extractMessageType(JSONObject json) {
+        if (json == null) {
+            return "";
+        }
+        if (json.has("type")) {
+            return json.optString("type", "");
+        }
+        if (json.has("t")) {
+            return json.optString("t", "");
+        }
+        return "";
+    }
+
     public static JSONObject encode(JSONObject json) throws JSONException {
         if (json == null) {
             return null;
         }
         if (isCameraCommandJson(json.toString())) {
+            return json;
+        }
+        String messageType = extractMessageType(json);
+        if (!shouldCompactOutbound(messageType)) {
             return json;
         }
         return compactObject(json, true);
@@ -113,6 +165,29 @@ public final class BleJsonCompact {
         return encode(new JSONObject(jsonData));
     }
 
+    /**
+     * Expand compact wire JSON only when the message type is on the ROI allowlist.
+     *
+     * @return expanded JSON, passthrough expanded JSON, or {@code null} if compact form is unsupported
+     */
+    public static JSONObject decodeIfSupported(JSONObject json) throws JSONException {
+        if (json == null) {
+            return null;
+        }
+        if (isCameraCommandJson(json.toString())) {
+            return json;
+        }
+        if (!isCompactWireForm(json)) {
+            return json;
+        }
+        String compactType = json.optString("t", "");
+        if (!supportsCompactInbound(compactType)) {
+            return null;
+        }
+        return expandObject(json, true);
+    }
+
+    /** Unconditional expand for unit tests and chunk reassembly of allowlisted payloads. */
     public static JSONObject decode(JSONObject json) throws JSONException {
         if (json == null) {
             return null;

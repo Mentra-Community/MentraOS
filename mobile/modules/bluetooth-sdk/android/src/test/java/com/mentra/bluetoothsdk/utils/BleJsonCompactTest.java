@@ -110,4 +110,44 @@ public class BleJsonCompactTest {
         assertTrue(encoded.has("type"));
         assertEquals("take_photo", encoded.getString("type"));
     }
+
+    @Test
+    public void lowRoiCommandsStayExpandedOutbound() throws Exception {
+        JSONObject ping = new JSONObject("{\"type\":\"ping\"}");
+        JSONObject transfer = new JSONObject("{\"type\":\"transfer_complete\",\"requestId\":\"1\"}");
+
+        assertTrue(BleJsonCompact.encode(ping).has("type"));
+        assertFalse(BleJsonCompact.encode(ping).has("t"));
+        assertTrue(BleJsonCompact.encode(transfer).has("type"));
+    }
+
+    @Test
+    public void highRoiCommandsCompactOutbound() throws Exception {
+        JSONObject photoResponse = new JSONObject("{\"type\":\"photo_response\",\"status\":\"ok\"}");
+        JSONObject wifiScan = new JSONObject("{\"type\":\"wifi_scan_result\",\"networks\":[]}");
+
+        assertEquals("photo_response", BleJsonCompact.encode(photoResponse).getString("t"));
+        assertEquals("wifi_scan_result", BleJsonCompact.encode(wifiScan).getString("t"));
+    }
+
+    @Test
+    public void decodeIfSupported_rejectsCompactLowRoi() throws Exception {
+        JSONObject compactPing = new JSONObject("{\"t\":\"ping\"}");
+
+        assertEquals(null, BleJsonCompact.decodeIfSupported(compactPing));
+    }
+
+    @Test
+    public void decodeIfSupported_acceptsExpandedLowRoi() throws Exception {
+        JSONObject expandedPing = new JSONObject("{\"type\":\"ping\"}");
+
+        assertEquals("ping", BleJsonCompact.decodeIfSupported(expandedPing).getString("type"));
+    }
+
+    @Test
+    public void decodeIfSupported_acceptsCompactChunkEnvelope() throws Exception {
+        JSONObject chunk = new JSONObject("{\"t\":\"ck\",\"id\":\"1\",\"c\":0,\"n\":2,\"d\":\"x\"}");
+
+        assertEquals("ck", BleJsonCompact.decodeIfSupported(chunk).getString("type"));
+    }
 }

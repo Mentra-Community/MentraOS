@@ -104,4 +104,59 @@ public class BleJsonCompactTest {
         JSONObject encoded = BleJsonCompact.encode(camera);
         assertThat(encoded.toString()).contains("cs_pho");
     }
+
+    @Test
+    public void lowRoiCommandsStayExpandedOutbound() throws Exception {
+        JSONObject ping = new JSONObject("{\"type\":\"ping\"}");
+        JSONObject ack = new JSONObject("{\"type\":\"msg_ack\",\"requestId\":\"1\"}");
+        JSONObject gallery = new JSONObject("{\"type\":\"gallery_status\",\"status\":\"ready\"}");
+
+        assertThat(BleJsonCompact.encode(ping).has("type")).isTrue();
+        assertThat(BleJsonCompact.encode(ping).has("t")).isFalse();
+        assertThat(BleJsonCompact.encode(ack).has("type")).isTrue();
+        assertThat(BleJsonCompact.encode(gallery).has("type")).isTrue();
+    }
+
+    @Test
+    public void highRoiCommandsCompactOutbound() throws Exception {
+        JSONObject photoStatus = new JSONObject("{\"type\":\"photo_status\",\"status\":\"capturing\"}");
+        JSONObject streamStatus = new JSONObject("{\"type\":\"stream_status\",\"status\":\"streaming\"}");
+
+        assertThat(BleJsonCompact.encode(photoStatus).getString("t")).isEqualTo("photo_status");
+        assertThat(BleJsonCompact.encode(streamStatus).getString("t")).isEqualTo("stream_status");
+    }
+
+    @Test
+    public void decodeIfSupported_rejectsCompactLowRoi() throws Exception {
+        JSONObject compactPing = new JSONObject("{\"t\":\"ping\"}");
+
+        assertThat(BleJsonCompact.decodeIfSupported(compactPing)).isNull();
+    }
+
+    @Test
+    public void decodeIfSupported_acceptsExpandedLowRoi() throws Exception {
+        JSONObject expandedPing = new JSONObject("{\"type\":\"ping\"}");
+
+        assertThat(BleJsonCompact.decodeIfSupported(expandedPing).getString("type"))
+                .isEqualTo("ping");
+    }
+
+    @Test
+    public void decodeIfSupported_acceptsCompactChunkEnvelope() throws Exception {
+        JSONObject chunk = new JSONObject("{\"t\":\"ck\",\"id\":\"1\",\"c\":0,\"n\":2,\"d\":\"x\"}");
+
+        assertThat(BleJsonCompact.decodeIfSupported(chunk).getString("type")).isEqualTo("ck");
+    }
+
+    @Test
+    public void takePhotoStaysExpandedOutbound() throws Exception {
+        JSONObject takePhoto =
+                new JSONObject("{\"type\":\"take_photo\",\"requestId\":\"1\",\"webhookUrl\":\"https://x\"}");
+
+        JSONObject encoded = BleJsonCompact.encode(takePhoto);
+
+        assertThat(encoded.has("type")).isTrue();
+        assertThat(encoded.getString("type")).isEqualTo("take_photo");
+        assertThat(encoded.has("t")).isFalse();
+    }
 }
