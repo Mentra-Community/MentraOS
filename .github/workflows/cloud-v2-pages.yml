@@ -55,6 +55,15 @@ jobs:
         with:
           bun-version: "1.3.14"
 
+      # `bunx wrangler` runs Wrangler under the runner's system Node, not Bun.
+      # Current Wrangler enforces a runtime minimum of Node 22, while the
+      # Blacksmith image defaults to Node 20 — which failed the deploy with
+      # "Wrangler requires at least Node.js v22.0.0". Pin Node 22 (LTS) here.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Resolve deployment target
         id: target
         shell: bash
