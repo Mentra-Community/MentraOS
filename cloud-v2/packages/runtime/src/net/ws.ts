@@ -122,13 +122,6 @@ export interface WsData {
    * subscriptions immediately.
    */
   supersededAt?: number;
-  /**
-   * Set while an older socket has been marked superseded but the newer session
-   * has not yet confirmed it can take over (seed succeeded). The socket is held
-   * open — inbound frames are ignored rather than closing it — so a failed
-   * init can restore it. Cleared when the supersede is finalized or restored.
-   */
-  supersedePending?: boolean;
 }
 
 export interface SessionEntry {
@@ -505,10 +498,6 @@ export const wsHandlers: WebSocketHandler<WsData> = {
   message(ws, msg) {
     ws.data.lastInboundAt = Date.now();
     if (ws.data.supersededAt !== undefined) {
-      // A superseded-but-still-pending socket is held open until the newer
-      // session confirms its takeover — ignore its frames without closing so a
-      // failed init can restore it. Once finalized (or never pending), close.
-      if (ws.data.supersedePending) return;
       try {
         ws.close(1012, "superseded by newer session");
       } catch {
@@ -692,12 +681,7 @@ async function handleConnectionInit(
     init.audio?.codec ?? "lc3",
     init.audio?.frameSizeBytes,
   );
-  // Optimistically mark this user's older sockets superseded — this pauses them
-  // and makes them look dead to the takeover check below — but defer their
-  // teardown until the new session has actually seeded. If init fails we restore
-  // them, so a transient seed error on reconnect never leaves the user with no
-  // session at all. See markOlderSessionsSuperseded.
-  const superseded = markOlderSessionsSuperseded(ws.data);
+  supersedeOlderSessionsForUser(ws.data);
 
   // Seed the subscription source-of-truth key atomically with session creation,
   // so audio that starts flowing right after the ack is transcribed against the
@@ -755,10 +739,7 @@ async function handleConnectionInit(
     // Do NOT fall through to connection.ack: without a seeded subscription key
     // the client would stream audio that is transcribed against nothing, with no
     // in-band signal anything is wrong. Surface the failure and close so the
-    // client reconnects and re-runs the handshake cleanly. Restore the older
-    // sessions we only marked (never tore down) so the user keeps a working
-    // session rather than losing both to a transient error.
-    restoreSupersededSessions(ws.data, superseded);
+    // client reconnects and re-runs the handshake cleanly.
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
       "failed to seed subscriptions on connection.init; closing socket",
@@ -771,10 +752,6 @@ async function handleConnectionInit(
     }
     return;
   }
-
-  // The new session is now the subscription authority for this user; it is safe
-  // to tear down the older sockets we paused above.
-  finalizeSupersededSessions(superseded);
 
   ws.send(
     JSON.stringify({
@@ -858,18 +835,7 @@ async function handleWsBinaryAudio(
   }
 }
 
-/**
- * Mark this user's older sockets as superseded WITHOUT tearing them down yet.
- * Setting `supersededAt` pauses their audio processing and makes them look dead
- * to takeover checks (`hasLiveAudioSession`), which the new session needs before
- * it seeds/takes over the subscription key. The destructive teardown (refresh
- * interval, sessionTag unregister, socket close) is deferred to
- * `finalizeSupersededSessions` so that a failed init can instead
- * `restoreSupersededSessions` — a transient seed error on reconnect must not
- * kill the still-working old socket and leave the user with no session.
- */
-function markOlderSessionsSuperseded(current: WsData): SessionEntry[] {
-  const superseded: SessionEntry[] = [];
+function supersedeOlderSessionsForUser(current: WsData): void {
   for (const entry of sessionByTag.values()) {
     const data = entry.data;
     if (data.sessionTag === current.sessionTag) continue;
@@ -877,33 +843,6 @@ function markOlderSessionsSuperseded(current: WsData): SessionEntry[] {
     if (data.mentraUserId !== current.mentraUserId) continue;
 
     data.supersededAt = Date.now();
-    data.supersedePending = true;
-    superseded.push(entry);
-    logger.warn(
-      {
-        mentraUserId: data.mentraUserId,
-        oldSessionTag: data.sessionTag,
-        oldAudioSessionId: data.audioSessionId,
-        oldAuthSessionId: data.authSessionId,
-        newSessionTag: current.sessionTag,
-        newAudioSessionId: current.audioSessionId,
-        newAuthSessionId: current.authSessionId,
-      },
-      "ws session marked superseded by newer socket for same user",
-    );
-  }
-  return superseded;
-}
-
-/**
- * Tear down sockets superseded by a now-established newer session: stop their
- * refresh, drop their sessionTag registration, and close them. Called only once
- * the new session has successfully seeded/taken over its subscription key.
- */
-function finalizeSupersededSessions(entries: SessionEntry[]): void {
-  for (const entry of entries) {
-    const data = entry.data;
-    data.supersedePending = false;
     const interval = refreshIntervals.get(data.sessionTag);
     if (interval) {
       clearInterval(interval);
@@ -915,6 +854,18 @@ function finalizeSupersededSessions(entries: SessionEntry[]): void {
         "sessionTag unregister failed after supersede",
       );
     });
+    logger.warn(
+      {
+        mentraUserId: data.mentraUserId,
+        oldSessionTag: data.sessionTag,
+        oldAudioSessionId: data.audioSessionId,
+        oldAuthSessionId: data.authSessionId,
+        newSessionTag: current.sessionTag,
+        newAudioSessionId: current.audioSessionId,
+        newAuthSessionId: current.authSessionId,
+      },
+      "ws session superseded by newer socket for same user",
+    );
     try {
       entry.ws.close(1012, "superseded by newer session");
     } catch (err) {
@@ -923,33 +874,6 @@ function finalizeSupersededSessions(entries: SessionEntry[]): void {
         "ws close failed after supersede",
       );
     }
-  }
-}
-
-/**
- * Un-pause sessions that were optimistically marked superseded when the newer
- * session failed to initialize. Because they were never torn down, clearing
- * `supersededAt` hands authority back to the still-open old socket so the user
- * keeps a working session instead of being left with none.
- */
-function restoreSupersededSessions(current: WsData, entries: SessionEntry[]): void {
-  // If our own socket was itself superseded by an even newer init while we were
-  // seeding, we lost the reconnect race: that newer init now owns the supersede
-  // lifecycle, so reviving here could bring back a socket it already replaced.
-  // Leave the entries as-is and let the winning init finalize them.
-  if (current.supersededAt !== undefined) return;
-  for (const entry of entries) {
-    if (entry.data.supersededAt === undefined) continue;
-    entry.data.supersededAt = undefined;
-    entry.data.supersedePending = false;
-    logger.warn(
-      {
-        mentraUserId: entry.data.mentraUserId,
-        sessionTag: entry.data.sessionTag,
-        audioSessionId: entry.data.audioSessionId,
-      },
-      "restored superseded session after newer session init failed",
-    );
   }
 }
 
