@@ -3,10 +3,9 @@
  * icon centered on the host's background color. Styled to match AppIcon on
  * the home screen: 128px squircle with memory-disk image caching.
  *
- * Fades + scales in on mount so foregrounding feels like a soft zoom rather
- * than a hard cut. Fades out (opacity 1 → 0) when `isLoaded` flips true so
- * the WebView's first paint isn't preceded by a hard splash unmount + white
- * flash.
+ * Fades in on mount so foregrounding feels soft rather than a hard cut. Fades
+ * out (opacity 1 → 0) when `isLoaded` flips true so the WebView's first paint
+ * isn't preceded by a hard splash unmount + white flash.
  */
 
 import {Image} from "expo-image"
@@ -79,7 +78,7 @@ export default function MiniappSplash({
       pointerEvents="none"
       style={[
         StyleSheet.absoluteFill,
-        {backgroundColor: bgColor, borderRadius: theme.spacing.s12, justifyContent: "center", alignItems: "center"},
+        {backgroundColor: bgColor, justifyContent: "center", alignItems: "center"},
         animatedStyle,
       ]}>
       {(iconUrl || devApp) && (
