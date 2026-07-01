@@ -187,6 +187,16 @@ public class CameraNeoService extends LifecycleService {
 
         /** Warm-up failed (open/configure failure). */
         void onCameraError(String errorMessage);
+
+        /**
+         * The phone-side request this warm-up belongs to, or {@code null} if none. Used to keep at
+         * most one pending {@code stopped} callback per request so a re-armed warm-up doesn't send
+         * the phone duplicate {@code stopped} events. Defaults to {@code null} for callers that
+         * don't track a requestId (those are appended without de-duplication).
+         */
+        default String getRequestId() {
+            return null;
+        }
     }
 
     // Warm-up callbacks. Several camera_warm_up commands can be in flight at once (e.g. two
@@ -704,7 +714,7 @@ public class CameraNeoService extends LifecycleService {
                 // Already configured + idle for these params — just re-arm the keep-alive.
                 Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
                 if (callback != null) {
-                    sInstance.warmStoppedCallbacks.add(callback);
+                    sInstance.addWarmStoppedCallback(callback);
                 }
                 sInstance.cancelKeepAliveTimer();
                 sInstance.startWarmKeepAliveTimer(ttl);
@@ -933,7 +943,9 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             ready = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
-            warmStoppedCallbacks.addAll(ready);
+            for (CameraWarmUpCallback callback : ready) {
+                addWarmStoppedCallback(callback);
+            }
         }
         for (CameraWarmUpCallback callback : ready) {
             callback.onCameraReady();
@@ -950,6 +962,21 @@ public class CameraNeoService extends LifecycleService {
         for (CameraWarmUpCallback callback : failed) {
             callback.onCameraError(errorMessage);
         }
+    }
+
+    /**
+     * Register a callback to be notified when warm-up stops, keeping at most one entry per
+     * requestId. Re-arming an already-warm session (the fast path) or issuing a fresh warm-up for
+     * the same requestId would otherwise append a second callback, so notifyWarmStopped would send
+     * the phone duplicate {@code stopped} events for one request. Callbacks with no requestId can't
+     * be de-duplicated and are appended as-is. Caller must hold {@code SERVICE_LOCK}.
+     */
+    private void addWarmStoppedCallback(CameraWarmUpCallback callback) {
+        String requestId = callback.getRequestId();
+        if (requestId != null) {
+            warmStoppedCallbacks.removeIf(existing -> requestId.equals(existing.getRequestId()));
+        }
+        warmStoppedCallbacks.add(callback);
     }
 
     /** Notify the bound warm-up callback that the camera was closed without capturing. */
