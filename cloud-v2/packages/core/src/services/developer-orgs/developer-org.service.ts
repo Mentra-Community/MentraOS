@@ -24,6 +24,16 @@ export interface DeveloperOrgRecord {
   updatedAt: string | null;
 }
 
+export interface DeveloperOrgMemberRecord {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  role: DeveloperOrgRole;
+  status: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface UpsertDeveloperOrgInput {
   displayName: string;
   packagePrefix: string;
@@ -228,6 +238,62 @@ export class DeveloperOrgService {
   async listMemberRoles(orgId: string): Promise<Map<string, DeveloperOrgRole>> {
     const rows = await DeveloperOrgMembershipModel.find({ orgId }).lean();
     return new Map(rows.map(row => [row.userId, row.role as DeveloperOrgRole]));
+  }
+
+  /**
+   * Ensure a membership row exists for a user and backfill profile fields.
+   * Role is only set on insert, so this never downgrades an existing owner/admin.
+   */
+  async ensureMembership(
+    orgId: string,
+    userId: string,
+    opts: { email?: string | null; name?: string | null; roleIfNew?: DeveloperOrgRole } = {},
+  ): Promise<void> {
+    if (!userId) return;
+    const set: Record<string, unknown> = {};
+    if (opts.email) set.email = opts.email.trim().toLowerCase();
+    if (opts.name) set.name = opts.name;
+    await DeveloperOrgMembershipModel.updateOne(
+      { orgId, userId },
+      {
+        ...(Object.keys(set).length ? { $set: set } : {}),
+        $setOnInsert: { orgId, userId, role: opts.roleIfNew ?? "member" },
+      },
+      { upsert: true },
+    );
+  }
+
+  /** The orgId a user belongs to via a membership row (one org per user). */
+  async getMembershipOrgId(userId: string): Promise<string | null> {
+    if (!userId) return null;
+    const row = await DeveloperOrgMembershipModel.findOne({ userId }).sort({ createdAt: 1 }).lean();
+    return row?.orgId ?? null;
+  }
+
+  /** Full roster of an org, for the member list. */
+  async listMembers(orgId: string): Promise<DeveloperOrgMemberRecord[]> {
+    const rows = await DeveloperOrgMembershipModel.find({ orgId })
+      .sort({ createdAt: 1 })
+      .lean<
+        Array<{
+          userId: string;
+          email?: string | null;
+          name?: string | null;
+          role: string;
+          status?: string | null;
+          createdAt?: Date;
+          updatedAt?: Date;
+        }>
+      >();
+    return rows.map(row => ({
+      userId: row.userId,
+      email: row.email ?? null,
+      name: row.name ?? null,
+      role: row.role as DeveloperOrgRole,
+      status: row.status ?? "active",
+      createdAt: row.createdAt?.toISOString() ?? null,
+      updatedAt: row.updatedAt?.toISOString() ?? null,
+    }));
   }
 }
 

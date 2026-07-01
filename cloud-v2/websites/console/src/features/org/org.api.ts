@@ -74,12 +74,30 @@ export function getOrgAccess(): Promise<{
   );
 }
 
-export function inviteOrgMember(input: { email: string }): Promise<{ invitation: OrgInvitation }> {
-  return apiRequest("/console/org/invitations", z.object({ invitation: orgInvitationSchema }), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
+export function inviteOrgMember(
+  input: { email: string },
+): Promise<{ invitation: OrgInvitation; inviteUrl: string }> {
+  return apiRequest(
+    "/console/org/invitations",
+    z.object({ invitation: orgInvitationSchema, inviteUrl: z.string() }),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function acceptOrgInvitation(token: string): Promise<{ ok: boolean; org: DeveloperOrg | null }> {
+  return apiRequest(
+    "/console/org/invitations/accept",
+    z.object({ ok: z.boolean(), org: developerOrgSchema.nullable() }),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    },
+  );
 }
 
 export function updateOrgMemberRole(input: {

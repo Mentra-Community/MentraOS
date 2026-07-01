@@ -19,6 +19,10 @@ const DeveloperOrgMembershipSchema = new Schema(
     orgId: { type: String, required: true, index: true },
     userId: { type: String, required: true },
     role: { type: String, enum: DEVELOPER_ORG_ROLES, required: true, default: "member" },
+    // Roster display fields, backfilled from the session/invite/WorkOS identity.
+    email: { type: String, default: null },
+    name: { type: String, default: null },
+    status: { type: String, default: "active" },
   },
   { timestamps: true, collection: "developer_org_memberships" },
 );

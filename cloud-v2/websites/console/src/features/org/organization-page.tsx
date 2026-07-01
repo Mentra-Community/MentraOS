@@ -248,7 +248,12 @@ type TeamAccessSectionProps = {
   viewerRole: OrgRole;
   inviteEmail: string;
   setInviteEmail: (value: string) => void;
-  inviteMember: UseMutationResult<{ invitation: OrgInvitation }, Error, { email: string }, unknown>;
+  inviteMember: UseMutationResult<
+    { invitation: OrgInvitation; inviteUrl: string },
+    Error,
+    { email: string },
+    unknown
+  >;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   updateMemberRole: UseMutationResult<
@@ -342,7 +347,12 @@ function TeamAccessSection({
           ) : null}
           {inviteMember.isSuccess ? (
             <div className="rounded-[12px] bg-[#edf8f2] px-4 py-3 text-sm text-[#087d50]">
-              Invitation sent.
+              <div>Invitation sent by email.</div>
+              {inviteMember.data?.inviteUrl ? (
+                <div className="mt-1 break-all text-xs text-[#256953]">
+                  Or share this link: {inviteMember.data.inviteUrl}
+                </div>
+              ) : null}
             </div>
           ) : null}
 

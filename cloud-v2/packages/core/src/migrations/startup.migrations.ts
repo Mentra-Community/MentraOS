@@ -5,6 +5,7 @@
 
 import mongoose from "mongoose";
 import { createLogger } from "@mentra/cloud-shared";
+import { WorkOS } from "@workos-inc/node";
 import { DeveloperOrgModel } from "../models/developer-org.model";
 import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
@@ -40,6 +41,7 @@ export async function runStartupMigrations(): Promise<void> {
   await dedupeDeveloperOrgMemberships();
   await backfillDeveloperOrgOwners();
   await safeCreateMembershipIndexes();
+  await backfillMembersFromWorkos();
 }
 
 async function backfillLegacyUserIdentityFields(): Promise<void> {
@@ -195,6 +197,59 @@ async function dedupeDeveloperOrgMemberships(): Promise<void> {
       { collection: DEVELOPER_ORG_MEMBERSHIPS_COLLECTION, removed },
       "deduped duplicate developer-org membership rows",
     );
+  }
+}
+
+// Membership moved from WorkOS into our DB. Seed the roster once from the
+// existing WorkOS memberships (userId + email/name), preserving any roles we
+// already assigned. Idempotent + skips orgs already backfilled (a member row
+// with an email). Best-effort per org; never fails boot.
+async function backfillMembersFromWorkos(): Promise<void> {
+  const apiKey = process.env.WORKOS_API_KEY;
+  if (!apiKey) return;
+  const workos = new WorkOS(apiKey);
+  const orgs = await DeveloperOrgModel.find(
+    { workosOrgId: { $type: "string" } },
+    { orgId: 1, workosOrgId: 1 },
+  ).lean<Array<{ orgId: string; workosOrgId: string }>>();
+
+  let seeded = 0;
+  for (const org of orgs) {
+    if (await DeveloperOrgMembershipModel.exists({ orgId: org.orgId, email: { $type: "string" } })) {
+      continue; // already migrated
+    }
+    try {
+      const memberships = await workos.userManagement.listOrganizationMemberships({
+        organizationId: org.workosOrgId,
+        statuses: ["active", "inactive"],
+        limit: 100,
+      });
+      for (const membership of memberships.data) {
+        let email: string | null = null;
+        let name: string | null = null;
+        try {
+          const user = await workos.userManagement.getUser(membership.userId);
+          email = user.email ?? null;
+          name = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || null;
+        } catch {
+          // profile fetch is best-effort
+        }
+        await DeveloperOrgMembershipModel.updateOne(
+          { orgId: org.orgId, userId: membership.userId },
+          {
+            $set: { ...(email ? { email } : {}), ...(name ? { name } : {}) },
+            $setOnInsert: { orgId: org.orgId, userId: membership.userId, role: "member" },
+          },
+          { upsert: true },
+        );
+        seeded += 1;
+      }
+    } catch (error) {
+      logger.warn({ orgId: org.orgId, error: (error as Error)?.message }, "member backfill failed for org");
+    }
+  }
+  if (seeded > 0) {
+    logger.info({ seeded }, "backfilled developer-org members from WorkOS");
   }
 }
 

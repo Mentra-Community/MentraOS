@@ -9,6 +9,8 @@ import {
   type DeveloperOrgRecord,
 } from "../../services/developer-orgs/developer-org.service";
 import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
+import { DeveloperOrgInvitationService } from "../../services/developer-orgs/developer-org-invitation.service";
+import { sendOrgInviteEmail } from "../../services/email/email.service";
 import {
   MiniAppService,
   MiniAppServiceError,
@@ -32,6 +34,7 @@ const RETURN_TO_COOKIE = "mentra_console_return_to";
 const ORG_SELECTION_COOKIE = "mentra_console_org_selection";
 const developerOrgs = new DeveloperOrgService();
 const apiKeys = new DeveloperApiKeyService();
+const invitations = new DeveloperOrgInvitationService();
 const miniapps = new MiniAppService();
 const signing = new DeveloperSigningService();
 
@@ -92,6 +95,7 @@ app.get("/org", getOrg);
 app.put("/org", putOrg);
 app.get("/org/access", getOrgAccess);
 app.post("/org/invitations", postOrgInvitation);
+app.post("/org/invitations/accept", postAcceptInvitation);
 app.delete("/org/invitations/:invitationId", deleteOrgInvitation);
 app.delete("/org/members/:membershipId", deleteOrgMember);
 app.patch("/org/members/:membershipId", patchOrgMember);
@@ -380,6 +384,14 @@ async function getMe(c: AppContext) {
     return c.json({ authenticated: false, reason: authenticatedSession.reason }, 401);
   }
   const developerOrg = await resolveDeveloperOrgForSession(authenticatedSession);
+  // Keep the roster fresh: ensure a membership row for the current human user
+  // and backfill their profile fields (skips API-key principals).
+  if (developerOrg && !authenticatedSession.user.id.startsWith("api_key:")) {
+    await developerOrgs.ensureMembership(developerOrg.id, authenticatedSession.user.id, {
+      email: authenticatedSession.user.email,
+      name: sessionDisplayName(authenticatedSession),
+    });
+  }
   const viewerRole = developerOrg ? await resolveOrgRole(authenticatedSession, developerOrg) : null;
 
   return c.json({
@@ -460,15 +472,13 @@ async function getOrgAccess(c: AppContext) {
   if (!developer.ok) return developer.response;
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
     return c.json({
-      org,
-      viewerRole: await resolveOrgRole(developer.auth, org),
-      members: await listWorkosOrgMembers(org),
-      invitations: await listWorkosOrgInvitations(org),
+      org: developer.org,
+      viewerRole: await resolveOrgRole(developer.auth, developer.org),
+      members: await listOrgMembers(developer.org),
+      invitations: await invitations.listPending(developer.org.id),
     });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -485,16 +495,47 @@ async function postOrgInvitation(c: AppContext) {
 
   const email = parsed.data.email.trim().toLowerCase();
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const invitation = await workos().userManagement.sendInvitation({
-      email,
-      organizationId: requireWorkosOrgId(org),
-      inviterUserId: developer.auth.user.id,
+    // Invitees join as `member`; an owner/admin promotes them afterwards.
+    const { record, token } = await invitations.create(developer.org.id, email, "member", developer.auth.user.id);
+    const inviteUrl = `${workosConfig().consoleUrl}/invite/${token}`;
+    // Email is best-effort (Resend); inviteUrl is the copy-link fallback.
+    void sendOrgInviteEmail({
+      to: email,
+      orgName: developer.org.name,
+      inviterName: sessionDisplayName(developer.auth),
+      role: record.role,
+      acceptUrl: inviteUrl,
     });
-    // Invitees join as `member`; an owner/admin assigns a higher role afterwards.
-    return c.json({ invitation: serializeInvitation(invitation) }, 201);
+    return c.json({ invitation: record, inviteUrl }, 201);
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
+    return serviceError(error);
+  }
+}
+
+async function postAcceptInvitation(c: AppContext) {
+  const authenticatedSession = await authenticateConsoleSession(c);
+  if (!authenticatedSession.authenticated) {
+    return c.json({ error: "unauthorized", error_description: "console session required" }, 401);
+  }
+
+  const body = await readJsonBody(c);
+  const token = typeof (body as { token?: unknown })?.token === "string" ? (body as { token: string }).token : "";
+  if (!token) throw new InvalidRequest("token is required");
+
+  try {
+    const invite = await invitations.consume(token);
+    if (!invite) {
+      return c.json({ error: "invalid_invitation", error_description: "this invitation is invalid or has expired" }, 404);
+    }
+    // The invitee joins the org with the invited role (their real identity, not
+    // necessarily the invited email). If they were already a member, role is kept.
+    await developerOrgs.ensureMembership(invite.orgId, authenticatedSession.user.id, {
+      email: authenticatedSession.user.email,
+      name: sessionDisplayName(authenticatedSession),
+      roleIfNew: invite.role,
+    });
+    return c.json({ ok: true, org: await developerOrgs.getOrgById(invite.orgId) });
+  } catch (error) {
     return serviceError(error);
   }
 }
@@ -509,19 +550,11 @@ async function deleteOrgInvitation(c: AppContext) {
   if (!invitationId) throw new InvalidRequest("invitationId is required");
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const invitation = await workos().userManagement.getInvitation(invitationId);
-    if (invitation.organizationId !== org.workosOrgId) {
+    if (!(await invitations.revoke(developer.org.id, invitationId))) {
       return c.json({ error: "not_found", error_description: "invitation was not found" }, 404);
     }
-    await workos().userManagement.revokeInvitation(invitationId);
-    // Intentionally do NOT delete the role row here: the same email can key an
-    // active member's overlay (a stale/duplicate invite would otherwise demote
-    // them). A genuinely-pending row is inert until the invitee joins, and a
-    // re-invite updates it via recordInvitedRole.
     return c.json({ ok: true });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -533,41 +566,35 @@ async function deleteOrgMember(c: AppContext) {
   if (!roleAtLeast(actorRole, "admin")) {
     return c.json({ error: "forbidden", error_description: "only owners and admins can remove members" }, 403);
   }
-  const membershipId = c.req.param("membershipId");
-  if (!membershipId) throw new InvalidRequest("membershipId is required");
+  const targetUserId = c.req.param("membershipId"); // the member's userId
+  if (!targetUserId) throw new InvalidRequest("member id is required");
+  const org = developer.org;
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const membership = await workos().userManagement.getOrganizationMembership(membershipId);
-    if (membership.organizationId !== org.workosOrgId) {
+    const targetRole = await developerOrgs.getMemberRole(org.id, targetUserId);
+    if (targetRole === null) {
       return c.json({ error: "not_found", error_description: "member was not found" }, 404);
     }
     // Removing an owner requires being an owner, and never the last one.
-    const targetRole = await developerOrgs.getMemberRole(org.id, membership.userId);
     if (targetRole === "owner") {
       if (actorRole !== "owner") {
         return c.json({ error: "forbidden", error_description: "only an owner can remove another owner" }, 403);
       }
-      // Race-safe: drops the owner row only if another owner remains.
-      if (!(await developerOrgs.removeOwnerIfNotLast(org.id, membership.userId))) {
+      if (!(await developerOrgs.removeOwnerIfNotLast(org.id, targetUserId))) {
         return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
       }
     }
-    // If we're removing the created-by / WorkOS-bootstrap identity, hand the
-    // pointer to another owner so org lookup + bootstrap keep pointing at a real
-    // owner (and a removed user never retains access via the creator fast-path).
-    if (membership.userId === org.ownerUserId) {
-      const nextOwner = await developerOrgs.findAnotherOwner(org.id, membership.userId);
+    // If we're removing the created-by pointer, hand it to another owner.
+    if (targetUserId === org.ownerUserId) {
+      const nextOwner = await developerOrgs.findAnotherOwner(org.id, targetUserId);
       if (!nextOwner) {
         return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
       }
       await developerOrgs.reassignCreator(org.id, nextOwner);
     }
-    await workos().userManagement.deleteOrganizationMembership(membershipId);
-    await developerOrgs.removeMemberRole(org.id, membership.userId);
+    await developerOrgs.removeMemberRole(org.id, targetUserId);
     return c.json({ ok: true });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -579,37 +606,35 @@ async function patchOrgMember(c: AppContext) {
   if (!roleAtLeast(actorRole, "admin")) {
     return c.json({ error: "forbidden", error_description: "only owners and admins can change member roles" }, 403);
   }
-  const membershipId = c.req.param("membershipId");
-  if (!membershipId) throw new InvalidRequest("membershipId is required");
+  const targetUserId = c.req.param("membershipId"); // the member's userId
+  if (!targetUserId) throw new InvalidRequest("member id is required");
 
   const parsed = updateOrgMemberRoleSchema.safeParse(await readJsonBody(c));
   if (!parsed.success) throw new InvalidRequest(parsed.error.issues[0]?.message ?? "invalid role payload");
+  const org = developer.org;
 
   try {
-    const org = await ensureWorkosOrgLinked(developer.auth, developer.org);
-    const membership = await workos().userManagement.getOrganizationMembership(membershipId);
-    if (membership.organizationId !== org.workosOrgId) {
+    const newRole = parsed.data.role;
+    const targetRole = await developerOrgs.getMemberRole(org.id, targetUserId);
+    if (targetRole === null) {
       return c.json({ error: "not_found", error_description: "member was not found" }, 404);
     }
-    const newRole = parsed.data.role;
-    const targetRole = await developerOrgs.getMemberRole(org.id, membership.userId);
     // Granting or changing the owner role is owner-only (no admin can mint an
     // owner or demote one); admins may only move members between admin/member.
     if ((newRole === "owner" || targetRole === "owner") && actorRole !== "owner") {
       return c.json({ error: "forbidden", error_description: "only an owner can grant or change the owner role" }, 403);
     }
-    // Apply the change. Demoting an owner is race-guarded so two concurrent
-    // requests can't both pass a count check and leave the org with no owner.
+    // Demoting an owner is race-guarded so two concurrent requests can't both
+    // pass a count check and leave the org with no owner.
     if (targetRole === "owner" && newRole !== "owner") {
-      if (!(await developerOrgs.demoteOwner(org.id, membership.userId, newRole))) {
+      if (!(await developerOrgs.demoteOwner(org.id, targetUserId, newRole))) {
         return c.json({ error: "last_owner", error_description: "an organization must keep at least one owner" }, 409);
       }
     } else {
-      await developerOrgs.setMemberRole(org.id, membership.userId, newRole);
+      await developerOrgs.setMemberRole(org.id, targetUserId, newRole);
     }
     return c.json({ ok: true, role: newRole });
   } catch (error) {
-    if (isWorkosRequestError(error)) return teamAccessError(error);
     return serviceError(error);
   }
 }
@@ -821,10 +846,7 @@ async function ensureWorkosOrgLinked(
   authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
   org: DeveloperOrgRecord,
 ): Promise<DeveloperOrgRecord> {
-  if (org.workosOrgId) {
-    await ensureOwnerWorkosMembership(org);
-    return org;
-  }
+  if (org.workosOrgId) return org;
   // Any owner (by role) may bootstrap the WorkOS org, not only the creator.
   if ((await resolveOrgRole(authenticatedSession, org)) !== "owner") {
     throw new DeveloperOrgServiceError(
@@ -834,14 +856,14 @@ async function ensureWorkosOrgLinked(
     );
   }
 
+  // The WorkOS org is kept only as the auth/SSO context (membership lives in our
+  // DB now), created lazily and linked back onto our org.
   const createdOrg = await workos().organizations.createOrganization({
     name: org.name,
     externalId: org.id,
     metadata: workosOrgMetadata(org),
   });
-  const linkedOrg = await developerOrgs.setWorkosOrgId(org.id, createdOrg.id);
-  await ensureOwnerWorkosMembership(linkedOrg);
-  return linkedOrg;
+  return developerOrgs.setWorkosOrgId(org.id, createdOrg.id);
 }
 
 async function syncWorkosOrgName(org: DeveloperOrgRecord): Promise<void> {
@@ -879,97 +901,19 @@ function consoleEnvironmentLabel(): string {
   }
 }
 
-async function ensureOwnerWorkosMembership(org: DeveloperOrgRecord): Promise<void> {
-  const organizationId = requireWorkosOrgId(org);
-  try {
-    await workos().userManagement.createOrganizationMembership({
-      organizationId,
-      userId: org.ownerUserId,
-    });
-  } catch (error) {
-    if (isConflictError(error)) return;
-    throw error;
-  }
-}
-
-async function listWorkosOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrgMember[]> {
-  const organizationId = requireWorkosOrgId(org);
-  const memberships = await workos().userManagement.listOrganizationMemberships({
-    organizationId,
-    statuses: ["active", "inactive"],
-    limit: 100,
-  });
-  const roleOverlay = await developerOrgs.listMemberRoles(org.id);
-
-  const users = new Map<string, ConsoleOrgUser>();
-  await Promise.all(
-    memberships.data.map(async (membership) => {
-      if (users.has(membership.userId)) return;
-      try {
-        const user = await workos().userManagement.getUser(membership.userId);
-        users.set(membership.userId, {
-          id: user.id,
-          email: user.email,
-          name: user.name || [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
-          avatarUrl: user.profilePictureUrl ?? null,
-        });
-      } catch {
-        users.set(membership.userId, {
-          id: membership.userId,
-          email: null,
-          name: null,
-          avatarUrl: null,
-        });
-      }
-    }),
-  );
-
-  return memberships.data.map((membership) => {
-    const user = users.get(membership.userId) ?? {
-      id: membership.userId,
-      email: null,
-      name: null,
-      avatarUrl: null,
-    };
-    return {
-      id: membership.id,
-      userId: membership.userId,
-      email: user.email,
-      name: user.name,
-      avatarUrl: user.avatarUrl,
-      role: roleOverlay.get(membership.userId) ?? "member",
-      status: membership.status,
-      createdAt: membership.createdAt ?? null,
-      updatedAt: membership.updatedAt ?? null,
-    };
-  });
-}
-
-async function listWorkosOrgInvitations(org: DeveloperOrgRecord): Promise<ConsoleOrgInvitation[]> {
-  const invitations = await workos().userManagement.listInvitations({
-    organizationId: requireWorkosOrgId(org),
-    limit: 100,
-  });
-  return invitations.data.map(serializeInvitation);
-}
-
-function serializeInvitation(invitation: WorkosInvitationLike): ConsoleOrgInvitation {
-  return {
-    id: invitation.id,
-    email: invitation.email,
-    state: invitation.state,
-    role: invitation.roleSlug ?? "member",
-    expiresAt: invitation.expiresAt ?? null,
-    createdAt: invitation.createdAt ?? null,
-    updatedAt: invitation.updatedAt ?? null,
-  };
-}
-
-function requireWorkosOrgId(org: DeveloperOrgRecord): string {
-  if (!org.workosOrgId) {
-    throw new DeveloperOrgServiceError("team_access_not_ready", "team access is not ready for this org yet", 409);
-  }
-  return org.workosOrgId;
+async function listOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrgMember[]> {
+  const members = await developerOrgs.listMembers(org.id);
+  return members.map(member => ({
+    id: member.userId,
+    userId: member.userId,
+    email: member.email,
+    name: member.name,
+    avatarUrl: null,
+    role: member.role,
+    status: member.status,
+    createdAt: member.createdAt,
+    updatedAt: member.updatedAt,
+  }));
 }
 
 type OrgRole = "owner" | "admin" | "member";
@@ -994,12 +938,9 @@ function roleAtLeast(role: OrgRole, min: OrgRole): boolean {
   return ORG_ROLE_RANK[role] >= ORG_ROLE_RANK[min];
 }
 
-type ConsoleOrgUser = {
-  id: string;
-  email: string | null;
-  name: string | null;
-  avatarUrl: string | null;
-};
+function sessionDisplayName(auth: Extract<ConsoleAuthResult, { authenticated: true }>): string {
+  return [auth.user.firstName, auth.user.lastName].filter(Boolean).join(" ").trim() || auth.user.email;
+}
 
 type ConsoleOrgMember = {
   id: string;
@@ -1013,26 +954,6 @@ type ConsoleOrgMember = {
   updatedAt: string | null;
 };
 
-type ConsoleOrgInvitation = {
-  id: string;
-  email: string;
-  state: string;
-  role: string;
-  expiresAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-};
-
-type WorkosInvitationLike = {
-  id: string;
-  email: string;
-  state: string;
-  roleSlug?: string | null;
-  expiresAt?: string | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-};
-
 export type ConsoleAuthResult =
   | {
       authenticated: true;
@@ -1043,6 +964,7 @@ export type ConsoleAuthResult =
         lastName?: string | null;
       };
       organizationId?: string | null;
+      developerOrgId?: string | null;
     }
   | { authenticated: false; reason: string };
 
@@ -1088,26 +1010,33 @@ async function requireConsoleOrg(c: AppContext): Promise<
 async function resolveDeveloperOrgForSession(
   authenticatedSession: Extract<ConsoleAuthResult, { authenticated: true }>,
 ): Promise<DeveloperOrgRecord | null> {
+  // API-key principals carry their org directly.
+  if (authenticatedSession.developerOrgId) {
+    const keyOrg = await developerOrgs.getOrgById(authenticatedSession.developerOrgId);
+    if (keyOrg) return keyOrg;
+  }
+
+  // The org this user created.
   const ownedOrg = await developerOrgs.getPrimaryOrgForUser(authenticatedSession.user);
   if (ownedOrg) return ownedOrg;
 
-  if (authenticatedSession.organizationId) {
-    const sessionOrg = await developerOrgs.getOrgByWorkosOrgId(authenticatedSession.organizationId);
-    if (sessionOrg) return sessionOrg;
+  // The org this user is a member of (our roster, no WorkOS lookup).
+  const membershipOrgId = await developerOrgs.getMembershipOrgId(authenticatedSession.user.id);
+  if (membershipOrgId) {
+    const memberOrg = await developerOrgs.getOrgById(membershipOrgId);
+    if (memberOrg) return memberOrg;
   }
 
-  try {
-    const memberships = await workos().userManagement.listOrganizationMemberships({
-      userId: authenticatedSession.user.id,
-      statuses: ["active"],
-      limit: 100,
-    });
-    for (const membership of memberships.data) {
-      const org = await developerOrgs.getOrgByWorkosOrgId(membership.organizationId);
-      if (org) return org;
+  // An org-scoped (SSO) session: WorkOS tells us the org; materialize membership.
+  if (authenticatedSession.organizationId) {
+    const ssoOrg = await developerOrgs.getOrgByWorkosOrgId(authenticatedSession.organizationId);
+    if (ssoOrg) {
+      await developerOrgs.ensureMembership(ssoOrg.id, authenticatedSession.user.id, {
+        email: authenticatedSession.user.email,
+        name: sessionDisplayName(authenticatedSession),
+      });
+      return ssoOrg;
     }
-  } catch {
-    // Fall through to onboardingRequired. Team lookup should not break basic sign-in.
   }
 
   return null;
@@ -1202,12 +1131,6 @@ async function authenticateApiKeyToken(token: string): Promise<ConsoleAuthResult
   try {
     const validated = await apiKeys.validate(token, consoleEnvironmentLabel());
     if (!validated) return { authenticated: false, reason: "invalid_bearer_token" };
-
-    // The runtime auth result still keys orgs by workosOrgId, so map our orgId
-    // to it. (Resolution moves fully to our orgId when membership lands.)
-    const org = await developerOrgs.getOrgById(validated.orgId);
-    if (!org?.workosOrgId) return { authenticated: false, reason: "api_key_missing_org" };
-
     return {
       authenticated: true,
       user: {
@@ -1216,7 +1139,7 @@ async function authenticateApiKeyToken(token: string): Promise<ConsoleAuthResult
         firstName: "API key",
         lastName: null,
       },
-      organizationId: org.workosOrgId,
+      developerOrgId: validated.orgId,
     };
   } catch {
     return { authenticated: false, reason: "invalid_bearer_token" };
