@@ -27,7 +27,18 @@ async function resolveCachedPath(url: string): Promise<string | null> {
         resolvedCache.set(url, fileUri)
         return fileUri
       }
-      return null
+      // Prefetch succeeded but the image isn't on disk. This is the dev-miniapp
+      // case: `mentra dev`'s static server serves the tile icon with
+      // `Cache-Control: no-store`, so expo-image downloads it (prefetch → true)
+      // but never persists it, leaving getCachePathAsync null forever. Returning
+      // null here would (mis)mark the icon as failed and the dev tile would show
+      // its placeholder instead of the real logo. The bytes are valid and already
+      // warm in expo-image's MEMORY cache from the prefetch above, so fall back to
+      // the original URL: <Image> renders it straight from memory. This only
+      // happens after a *successful* prefetch, so it never reintroduces the
+      // failed/slow-remote decode thrash this hook otherwise guards against.
+      resolvedCache.set(url, url)
+      return url
     } finally {
       inflight.delete(url)
     }
