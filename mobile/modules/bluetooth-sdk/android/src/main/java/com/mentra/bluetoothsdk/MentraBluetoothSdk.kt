@@ -1132,7 +1132,7 @@ class MentraBluetoothSdk private constructor(
     private fun resolveOtaVersionUrl(status: GlassesStatus): String {
         val deviceUrl = status.otaVersionUrl.trim()
         if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
-            return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
+            return OtaManifestDefaults.LEGACY_PROD_OTA_VERSION_URL
         }
         // SDK consumers are pinned to the manifest built for their SDK version.
         // A future glasses-advertised URL should not silently change that pairing.
