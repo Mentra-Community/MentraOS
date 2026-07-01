@@ -130,6 +130,12 @@ class MergeController {
 
   stop(): void {
     this.clearDisplayTimer()
+    // Leaving/minimizing the app must not leave a spoken insight playing.
+    try {
+      this.session.speaker.stop()
+    } catch {
+      /* transport may already be closing during disconnect */
+    }
     if (this.transcriptionCleanup) {
       this.transcriptionCleanup()
       this.transcriptionCleanup = null
@@ -165,6 +171,7 @@ class MergeController {
         this.lastError = null
         this.backendStatus = "idle"
         this.session.display.clear()
+        this.session.speaker.stop()
         this.sendSnapshot()
       }),
     )
