@@ -131,6 +131,28 @@ describe("LocalDisplayManager", () => {
       expect(lastLayoutType()).toBe("clear_view")
     })
 
+    // Production wires onMount (from LocalMiniappRuntime.registerApp) but NOT
+    // onCoreAppChange, so coreApp is null. The boot text must still clear on
+    // timeout, or a miniapp that never renders would strand "Starting …".
+    test("boot timeout clears the boot text even when no core app is wired", () => {
+      mgr.onMount("com.app.foo", "Foo")
+      expect(lastText()).toBe("Starting Foo…")
+      displayEventMock.mockClear()
+      advance(1500)
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
+    // The common case: a single foreground display app, onMount only. The boot
+    // message shows, then the app's first render replaces it — no core wiring
+    // needed.
+    test("booting app's first display replaces the boot text with no core app wired", () => {
+      mgr.onMount("com.app.foo", "Foo")
+      expect(lastText()).toBe("Starting Foo…")
+      mgr.request("com.app.foo", {layout: {layoutType: "text_wall", text: "ready"}})
+      expect(lastText()).toBe("ready")
+      expect(mgr._peekForTest().isBooting).toBe(false)
+    })
+
     test("mounting a second app cancels the first boot", () => {
       mgr.onCoreAppChange("com.app.foo")
       mgr.onMount("com.app.foo", "Foo")

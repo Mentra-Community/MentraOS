@@ -424,8 +424,12 @@ class LocalDisplayManager {
 
     // If the booting app itself never queued a display and was just waiting
     // on the timeout, clear the boot text so we don't leave "Starting …"
-    // stuck on the glasses.
-    if (!triggeredByFirstDisplay && queued.length === 0 && bootedPkg === this.coreApp) {
+    // stuck on the glasses. Restricting the clear to the core app avoids
+    // wiping a foreground app's frame when a background app boots — but the
+    // core app isn't wired on the local path yet (coreApp is always null
+    // today), so also clear when there's no core app to protect. Otherwise a
+    // miniapp that never renders (e.g. audio-only) would strand "Starting …".
+    if (!triggeredByFirstDisplay && queued.length === 0 && (this.coreApp === null || bootedPkg === this.coreApp)) {
       this.sendClear()
     }
   }
