@@ -223,6 +223,8 @@ func deviceModelLabel(_ model: DeviceModel) -> String {
         return "Mach1"
     case .z100:
         return "Z100"
+    case .nimo:
+        return "Nimo"
     case .frame:
         return "Frame"
     case .r1:
@@ -1791,7 +1793,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handleMediaUpload(upload)
         case let .streamStatus(status):
             handleStreamStatus(status.status)
-        case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
+        case .otaStartAck, .settingsAck, .rgbLedControlResponse:
             break
         case let .otaStatus(event):
             applyOtaStatus(event)
@@ -1970,7 +1972,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: message)
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothError) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
         append(tag: "TX", text: error.description)
     }
 
