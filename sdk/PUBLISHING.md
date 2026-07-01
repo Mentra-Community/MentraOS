@@ -1,14 +1,21 @@
 # Publishing the Miniapp SDK to npm
 
-The miniapp SDK ships as three npm packages:
+The miniapp SDK + Cloud V2 developer packages ship as five npm packages, all from
+one workflow ([`miniapp-sdk-release.yml`](../.github/workflows/miniapp-sdk-release.yml)):
 
 | Package | Source | What it is |
 | --- | --- | --- |
 | [`@mentra/miniapp`](https://www.npmjs.com/package/@mentra/miniapp) | `mobile/modules/miniapp` | The SDK runtime (`MiniappSession`, modules, `/background`, `/ui`, `/react`). Ships compiled JS + types. |
-| [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli) | `sdk/miniapp-cli` | The `mentra-miniapp` author CLI (`dev` / `release` / `pack` / `manifest`). |
-| [`create-mentra-miniapp`](https://www.npmjs.com/package/create-mentra-miniapp) | `sdk/create-mentra-miniapp` | The `bunx create-mentra-miniapp` scaffolder + template. |
+| [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli) | `sdk/miniapp-cli` | The `mentra-miniapp` author CLI (`dev` / `release` / `pack` / `manifest`). Bun-only. |
+| [`create-mentra-miniapp`](https://www.npmjs.com/package/create-mentra-miniapp) | `sdk/create-mentra-miniapp` | The `bunx create-mentra-miniapp` scaffolder + template. Bun-only. |
+| [`@mentra/auth`](https://www.npmjs.com/package/@mentra/auth) | `cloud-v2/packages/auth` | Cloud V2 auth helper for miniapp backends — verify Local Runtime JWKS tokens. Compiled JS + types (Node-compatible). |
+| [`@mentra/cli`](https://www.npmjs.com/package/@mentra/cli) | `cloud-v2/packages/cli` | The `mentra` developer CLI — build + **publish** to the Cloud V2 console. Wraps `@mentra/miniapp-cli` and adds login/org/miniapps/releases/publish. Bun-only. This is the CLI most developers want. |
 
-None of the three are on npm yet — this doc is how they get there and stay there.
+`@mentra/miniapp`, `@mentra/miniapp-cli`, `create-mentra-miniapp`, and `@mentra/auth`
+are not on npm yet. `@mentra/cli` has a legacy `1.0.3` on the `latest` tag (the
+v1 CLI); the Cloud V2 rewrite here is `2.0.0-alpha.*` and publishes to the `alpha`
+tag, so it does **not** disturb `latest` — see the collision note below. This doc
+is how they get to npm and stay there.
 
 ## Channels (branch → dist-tag)
 
@@ -54,8 +61,16 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
 - **Idempotent:** before publishing it runs `npm view <pkg>@<version>` and skips
   if that exact version already exists. Re-running a workflow is safe.
 - **Ordered:** packages publish sequentially in dependency order
-  (`@mentra/miniapp` → `@mentra/miniapp-cli` → `create-mentra-miniapp`) so the
-  scaffolder's template pins resolve once it lands.
+  (`@mentra/miniapp` → `@mentra/miniapp-cli` → `create-mentra-miniapp` →
+  `@mentra/auth` → `@mentra/cli`) so downstream pins resolve once their base lands
+  (the scaffolder's template pins, and `@mentra/cli`'s dep on `@mentra/miniapp-cli`).
+- **`file:` rewrite:** before packing, [`rewrite-file-deps.mjs`](../.github/scripts/rewrite-file-deps.mjs)
+  rewrites any workspace `file:` dependency to the referenced package's **exact**
+  version. Today only `@mentra/cli` has one (`@mentra/miniapp-cli`), which is a
+  `file:` link in-repo but must be a real version in the published tarball. The
+  rewrite touches only the checkout that gets packed — it is never committed, so
+  local dev keeps the `file:` link. An exact pin is dist-tag-agnostic; the
+  tradeoff is that a base bump needs the wrapper republished to pick it up.
 - **Guardrail:** a plain (non-prerelease) version resolves to the `latest`
   dist-tag — the workflow refuses to publish that from any branch other than
   `main`, so a `-dev` build can never accidentally become what `npm install`
@@ -84,22 +99,42 @@ The workflow's ordering handles this within a run; when you bump the SDK to a
 version the template's caret range can't reach (e.g. a major), update
 `sdk/create-mentra-miniapp/template/package.json` in the same change.
 
-## ⚠️ Decision flag: the two CLIs are Bun-only
+## The CLIs are Bun-only (settled)
 
-`@mentra/miniapp-cli` and `create-mentra-miniapp` ship **raw `.ts` bins with
-`#!/usr/bin/env bun` shebangs** — there is no compile-to-JS step. They run under
-`bunx`, **not** `npx`/Node:
+`@mentra/miniapp-cli`, `create-mentra-miniapp`, and `@mentra/cli` ship **raw
+`.ts` bins with `#!/usr/bin/env bun` shebangs** — there is no compile-to-JS step.
+They run under `bun` / `bunx`, **not** `npx`/Node:
 
 ```bash
 bunx create-mentra-miniapp my-app    # works
 npx create-mentra-miniapp my-app     # fails — no Bun
+
+bun add -g @mentra/cli@alpha         # works
+npm i -g @mentra/cli                  # installs, but `mentra` needs Bun to run
 ```
 
-`@mentra/miniapp` (the runtime) is normal compiled JS and works under Node/any
-bundler — only the two CLIs are Bun-only. This is consistent with the SDK being
-Bun-only today, but it means we should **document `bunx` everywhere** and decide
-whether to add a Node-compatible build (`bun build --compile` or tsc + a `node`
-shebang) before a wide launch. Until then, the published docs must say `bunx`.
+This is a deliberate decision — the SDK/CLI stack is Bun-first, so the CLIs stay
+Bun-only rather than adding a Node-compatible build. `@mentra/cli` declares
+`"engines": { "bun": ">=1.0.0" }` to make the requirement explicit. Only the two
+runtime/library packages are Node-compatible: `@mentra/miniapp` (compiled JS +
+types) and `@mentra/auth` (compiled `dist/`). **Published docs must say `bunx` /
+`bun` for anything that invokes a CLI.**
+
+## ⚠️ `@mentra/cli` version collision (1.x latest vs 2.x alpha)
+
+`@mentra/cli@1.0.3` already sits on the `latest` tag on npm — that's the v1 CLI
+(same maintainers, so we own the name). The Cloud V2 rewrite in
+`cloud-v2/packages/cli` is `2.0.0-alpha.*` and, because of its prerelease label,
+publishes to the **`alpha`** tag. So:
+
+- `npm i @mentra/cli` (or `bun add`) still resolves the old `1.0.3`.
+- `bun add @mentra/cli@alpha` gets the Cloud V2 CLI.
+
+This is intentional during the alpha. **Do not** ship a bare `2.0.0` (no
+prerelease) until the team decides to promote v2 to `latest` — that would replace
+what every plain install resolves. When ready, that promotion is just a version
+bump to `2.0.0` merged to `main` (the workflow's `latest`-only-on-`main` guardrail
+still applies).
 
 ## Manual publishing (fallback)
 
@@ -116,10 +151,22 @@ cd ../../../sdk && bun install
 cd miniapp-cli
 npm publish --tag <latest|beta|dev> --access public
 
-# 3. create-mentra-miniapp  (LAST — after the two above are live)
+# 3. create-mentra-miniapp  (after the two above are live)
 cd ../create-mentra-miniapp
 npm publish --tag <latest|beta|dev> --access public
+
+# 4. @mentra/auth  (independent; compiled dist/)
+cd ../../cloud-v2 && bun install
+cd packages/auth && bun run build
+npm publish --tag <alpha|dev|beta|latest> --access public
+
+# 5. @mentra/cli  (LAST — after @mentra/miniapp-cli is live)
+#    Rewrite its file: dep to the published miniapp-cli version first.
+cd ../cli
+node ../../../.github/scripts/rewrite-file-deps.mjs .
+npm publish --tag alpha --access public   # keep on alpha; do NOT publish a bare 2.0.0
+git checkout -- package.json               # undo the rewrite locally
 ```
 
 You need `npm login` (or `NPM_TOKEN` in `~/.npmrc`) with `@mentra` publish
-rights, and `bun` on PATH (the CLI's `prepare` script runs under Bun).
+rights, and `bun` on PATH (the CLIs' bins run under Bun).

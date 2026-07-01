@@ -1,10 +1,14 @@
 {
   "name": "@mentra/cli",
   "version": "2.0.0-alpha.0",
-  "private": true,
+  "description": "Mentra developer CLI — build, publish, and manage Mentra miniapps (Cloud V2). Bun-only.",
   "type": "module",
   "bin": {
     "mentra": "./src/index.ts"
+  },
+  "files": ["src"],
+  "engines": {
+    "bun": ">=1.0.0"
   },
   "publishConfig": {
     "access": "public",

@@ -18,8 +18,12 @@
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 
-// Ordered: the scaffolder's template pins @mentra/miniapp + @mentra/miniapp-cli,
-// so publish those first.
+// Ordered by dependency so a max-parallel:1 matrix publishes in an order where
+// downstream pins resolve once their base lands:
+//   - the scaffolder's template pins @mentra/miniapp + @mentra/miniapp-cli
+//   - the Cloud V2 CLI (@mentra/cli) has a workspace `file:` dep on
+//     @mentra/miniapp-cli that the publish job rewrites to an exact version
+//     (see .github/scripts/rewrite-file-deps.mjs), so miniapp-cli publishes first.
 const PACKAGES = [
   {
     key: 'miniapp',
@@ -29,7 +33,7 @@ const PACKAGES = [
     buildCmd: 'bun run build',
   },
   {
-    key: 'cli',
+    key: 'miniapp-cli',
     path: 'sdk/miniapp-cli/package.json',
     dir: 'sdk/miniapp-cli',
     installDir: 'sdk',
@@ -40,6 +44,27 @@ const PACKAGES = [
     path: 'sdk/create-mentra-miniapp/package.json',
     dir: 'sdk/create-mentra-miniapp',
     installDir: 'sdk',
+    buildCmd: '',
+  },
+  {
+    // Cloud V2 auth helper for miniapp backends (JWKS token verification).
+    // Leaf package, compiled to dist/ via `tsc -b`, Node-compatible.
+    key: 'auth',
+    path: 'cloud-v2/packages/auth/package.json',
+    dir: 'cloud-v2/packages/auth',
+    installDir: 'cloud-v2',
+    buildCmd: 'bun run build',
+  },
+  {
+    // Cloud V2 developer CLI (`mentra`). Wraps @mentra/miniapp-cli (dev/build/pack)
+    // and adds login / org / miniapps / releases / publish. Bun-only, no build
+    // step (ships raw .ts under a `#!/usr/bin/env bun` shebang). Its `file:` dep
+    // on @mentra/miniapp-cli is rewritten to an exact version before packing, so
+    // it must come after miniapp-cli in this list.
+    key: 'cli',
+    path: 'cloud-v2/packages/cli/package.json',
+    dir: 'cloud-v2/packages/cli',
+    installDir: 'cloud-v2',
     buildCmd: '',
   },
 ];

@@ -1,16 +1,22 @@
 name: Release Miniapp SDK
 
-# Publishes the @mentra/miniapp SDK family to npm.
+# Publishes the @mentra/miniapp SDK family + the Cloud V2 developer packages to
+# npm: @mentra/miniapp, @mentra/miniapp-cli, create-mentra-miniapp, @mentra/auth,
+# and @mentra/cli.
 #
 # Channel = branch -> dist-tag (derived from the package version's prerelease label):
 #   main     -> latest   (X.Y.Z)
 #   staging  -> beta     (X.Y.Z-beta.N)
 #   dev      -> dev      (X.Y.Z-dev.N)
+#   (any other -<label>.N -> <label>, e.g. -alpha.N -> alpha)
 #
 # A package publishes only when the `version` field in its package.json changes
 # on the push (same gate as bluetooth-sdk-release.yml). Bump the version, merge
 # to the channel branch, and CI ships it. Existing versions are skipped, so
 # re-runs are safe.
+#
+# Before packing, workspace `file:` deps are rewritten to exact published versions
+# (rewrite-file-deps.mjs) so wrappers like @mentra/cli install cleanly for users.
 #
 # Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
 # an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
@@ -22,7 +28,10 @@ on:
       - "mobile/modules/miniapp/**"
       - "sdk/miniapp-cli/**"
       - "sdk/create-mentra-miniapp/**"
+      - "cloud-v2/packages/auth/**"
+      - "cloud-v2/packages/cli/**"
       - ".github/scripts/miniapp-sdk-release-info.mjs"
+      - ".github/scripts/rewrite-file-deps.mjs"
       - ".github/workflows/miniapp-sdk-release.yml"
   workflow_dispatch:
     inputs:
@@ -108,6 +117,12 @@ jobs:
         if: matrix.pkg.buildCmd != ''
         working-directory: ${{ matrix.pkg.dir }}
         run: ${{ matrix.pkg.buildCmd }}
+
+      # Rewrite workspace `file:` deps to exact published versions so the tarball
+      # installs for end users (no-op for packages without them). This only
+      # mutates the checkout that gets packed/published — it is never committed.
+      - name: "Rewrite workspace file: deps"
+        run: node .github/scripts/rewrite-file-deps.mjs "${{ matrix.pkg.dir }}"
 
       - name: Check npm registry
         id: registry
