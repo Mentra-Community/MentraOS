@@ -7,6 +7,7 @@ import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900LengthCodec;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
@@ -45,6 +46,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
     private boolean wireV2HandshakeSent = false;
+    private volatile boolean besWireCapsK900Le = false;
+    private volatile boolean besWireCapsBinary = false;
+    private volatile int besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
+
+    // Negotiated K900 STRING length endianness for the ASG<->BES UART link. Defaults to legacy
+    // big-endian so unmodified BES firmware keeps working; upgraded to little-endian only when the
+    // BES advertises wire_caps.k900_le or we detect little-endian frames on receive.
+    private volatile K900LengthCodec.Endian uartToBesEndian = K900LengthCodec.Endian.BE;
 
     // File transfer state management
     private FileTransferSession currentFileTransfer = null;
@@ -208,7 +217,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         if (MessageChunker.needsChunking(wrappedJson)) {
                             return sendChunkedJson(originalData);
                         }
-                        data = BesWireFormat.formatMessageForTransmission(originalData);
+                        data =
+                                BesWireFormat.formatMessageForTransmission(
+                                        originalData, uartToBesEndian);
                     }
 
                     // Log the first 50 bytes of the hex representation
@@ -225,12 +236,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     // Otherwise just apply protocol formatting
                     Log.d(TAG, "📡 📝 Data already C-wrapped or not JSON: " + originalData);
                     Log.d(TAG, "📡 🔧 Formatting data with K900 protocol (adding ##...)");
-                    data = BesWireFormat.packDataCommand(data, BesWireFormat.CMD_TYPE_STRING);
+                    data =
+                            BesWireFormat.packDataCommand(
+                                    data, BesWireFormat.CMD_TYPE_STRING, uartToBesEndian);
                 }
             } catch (Exception e) {
                 // If we can't interpret as string, just apply protocol formatting to raw bytes
                 Log.d(TAG, "📡 🔧 Applying protocol format to raw bytes");
-                data = BesWireFormat.packDataCommand(data, BesWireFormat.CMD_TYPE_STRING);
+                data =
+                        BesWireFormat.packDataCommand(
+                                data, BesWireFormat.CMD_TYPE_STRING, uartToBesEndian);
             }
         } else {
             Log.d(TAG, "📡 ✅ Data already in K900 protocol format");
@@ -257,16 +272,29 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return sent;
     }
 
-    /** Reset wire protocol state on new phone connection. */
-    public void resetWireProtocolState() {
+    /** Reset phone-facing wire protocol state on a new phone connection. */
+    public void resetPhoneWireProtocolState() {
         BesWireFormat.resetBinaryProtocol();
         inboundBinaryReassembler.clear();
         wireV2HandshakeSent = false;
     }
 
+    /** Reset all negotiated wire protocol state when the BES UART link is closed. */
+    public void resetWireProtocolState() {
+        resetPhoneWireProtocolState();
+        besWireCapsK900Le = false;
+        besWireCapsBinary = false;
+        besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
+        uartToBesEndian = K900LengthCodec.Endian.BE;
+    }
+
     /** Send BLE Wire v2 handshake frame (payload "v2"). */
     public boolean sendWireV2Handshake() {
         if (!isSerialOpen) {
+            return false;
+        }
+        if (!besWireCapsBinary) {
+            Log.i(TAG, "📡 Skipping BLE wire v2 handshake; BES has not advertised binary relay");
             return false;
         }
         byte[] frame = BesWireFormat.packV2HandshakeFrame();
@@ -369,6 +397,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (!header.valid) {
             return false;
         }
+        besWireCapsBinary = true;
+        if (besWireCapsProto < BesWireFormat.PROTOCOL_VERSION_V2) {
+            besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V2;
+        }
 
         if ((header.flags & BesWireFormat.FLAG_HANDSHAKE) != 0) {
             if (BesWireFormat.isV2HandshakePayload(header.payload)) {
@@ -409,6 +441,34 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             notifyDataReceived(reassembled);
         }
         return true;
+    }
+
+    /**
+     * Advertise only the wire capabilities that the BES has already proven. Old BES firmware never
+     * reports these caps, so phone SDKs stay on legacy K900 STRING and OTA authorization remains
+     * reachable.
+     */
+    public void addPhoneWireCapsIfSupported(JSONObject response) {
+        if (response == null || (!besWireCapsK900Le && !besWireCapsBinary)) {
+            return;
+        }
+        try {
+            JSONObject caps = new JSONObject();
+            if (besWireCapsK900Le) {
+                caps.put("k900_le", true);
+            }
+            if (besWireCapsBinary) {
+                caps.put("binary", true);
+                caps.put("proto", Math.max(besWireCapsProto, BesWireFormat.PROTOCOL_VERSION_V2));
+            }
+            response.put("wire_caps", caps);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to attach phone wire capabilities", e);
+        }
+    }
+
+    public boolean isBesBinaryRelaySupported() {
+        return besWireCapsBinary;
     }
 
     /** Queues an internal command without broadcasting it as a phone-facing command response. */
@@ -841,6 +901,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             Log.i(TAG, "📋 Handling sr_syvr response directly in K900BluetoothManager");
 
+            // Negotiate UART length endianness from the BES's advertised wire_caps.
+            applyBesWireCaps(json);
+
             // Parse the B field: prefer "version" (matches factory / hs_syvr) then "dpj"
             String bFieldStr = json.optString("B", "");
             if (bFieldStr.isEmpty()) {
@@ -855,6 +918,36 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_syvr response", e);
             return false; // Let it fall through to normal processing
+        }
+    }
+
+    /**
+     * Inspect a message from the BES for a {@code wire_caps} object and upgrade the UART link to
+     * little-endian K900 STRING lengths when the firmware advertises it. {@code wire_caps} may sit
+     * at the top level or inside the {@code B} body.
+     */
+    private void applyBesWireCaps(JSONObject json) {
+        if (json == null) {
+            return;
+        }
+        JSONObject caps = json.optJSONObject("wire_caps");
+        if (caps == null) {
+            JSONObject bData = json.optJSONObject("B");
+            if (bData != null) {
+                caps = bData.optJSONObject("wire_caps");
+            }
+        }
+        if (caps != null && caps.optBoolean("k900_le", false)) {
+            besWireCapsK900Le = true;
+            if (uartToBesEndian != K900LengthCodec.Endian.LE) {
+                uartToBesEndian = K900LengthCodec.Endian.LE;
+                Log.i(TAG, "🔤 UART K900 endian negotiated to LE via wire_caps");
+            }
+        }
+        if (caps != null && caps.optBoolean("binary", false)) {
+            besWireCapsBinary = true;
+            besWireCapsProto = caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2);
+            Log.i(TAG, "📡 BES wire_caps advertised binary relay proto=" + besWireCapsProto);
         }
     }
 
@@ -985,11 +1078,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         if (BesWireFormat.isBinaryWireFrame(message)) {
                             handleInboundBinaryFrame(message);
                         } else if (BesWireFormat.isK900ProtocolFormat(message)) {
-                            // Try to extract payload (big-endian first, then little-endian)
-                            byte[] payload = BesWireFormat.extractPayload(message);
-                            if (payload == null) {
-                                payload = BesWireFormat.extractPayloadFromK900(message);
+                            // Auto-detect the length endianness so we parse frames from both legacy
+                            // big-endian and wire-v2 little-endian BES firmware (fixes the
+                            // "Extracted length=9472" misframe against old firmware).
+                            K900LengthCodec.Detected detected =
+                                    K900LengthCodec.detectLength(message);
+                            if (detected != null) {
+                                uartToBesEndian = detected.endian;
                             }
+                            byte[] payload = BesWireFormat.extractPayloadAuto(message);
 
                             if (payload != null && payload.length > 0) {
                                 // Notify listeners with the clean payload (JSON data without
