@@ -278,6 +278,10 @@ public class BesWireFormat {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonCommand(String jsonData) {
+        return packJsonCommand(jsonData, K900LengthCodec.Endian.LE);
+    }
+
+    public static byte[] packJsonCommand(String jsonData, K900LengthCodec.Endian endian) {
         if (jsonData == null) {
             return null;
         }
@@ -292,7 +296,7 @@ public class BesWireFormat {
 
             // Then pack with BES2700 protocol format
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataCommand(jsonBytes, CMD_TYPE_STRING);
+            return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
             Log.e("BesWireFormat", "Error creating JSON wrapper", e);
@@ -469,7 +473,7 @@ public class BesWireFormat {
         } catch (JSONException e) {
             Log.e("BesWireFormat", "❌ Error in formatMessageForTransmission", e);
             // Fallback: if json is invalid, still try to pack it without validation
-            return packJsonCommand(jsonData);
+            return packJsonCommand(jsonData, endian);
         }
     }
 

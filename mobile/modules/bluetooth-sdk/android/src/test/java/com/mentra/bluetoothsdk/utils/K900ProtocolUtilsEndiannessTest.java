@@ -7,9 +7,14 @@ import static org.junit.Assert.assertTrue;
 
 import org.json.JSONObject;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import java.nio.charset.StandardCharsets;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
 public class K900ProtocolUtilsEndiannessTest {
 
     @Test
@@ -22,10 +27,20 @@ public class K900ProtocolUtilsEndiannessTest {
     }
 
     @Test
-    public void extractPayloadUsesBigEndianLengthByDefault() {
+    public void extractPayloadExplicitBigEndianRoundTripsLegacyFrame() {
         byte[] payload = "{\"t\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
         byte[] packed = K900ProtocolUtils.packDataToK900(payload, K900ProtocolUtils.CMD_TYPE_STRING);
         byte[] extracted = K900ProtocolUtils.extractPayload(packed, K900LengthCodec.Endian.BE);
+
+        assertNotNull(extracted);
+        assertArrayEquals(payload, extracted);
+    }
+
+    @Test
+    public void extractPayloadNoArgUsesBigEndianLengthByDefault() {
+        byte[] payload = "{\"t\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] packed = K900ProtocolUtils.packDataToK900(payload, K900ProtocolUtils.CMD_TYPE_STRING);
+        byte[] extracted = K900ProtocolUtils.extractPayload(packed);
 
         assertNotNull(extracted);
         assertArrayEquals(payload, extracted);

@@ -1217,6 +1217,7 @@ class MentraLive: NSObject, SGCManager {
             incomingChunkReassembler.clear()
             peerWireProtocolVersion = 0
             useBinaryWireProtocol = false
+            wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
             BleJsonCompact.resetSession()
@@ -1391,6 +1392,7 @@ class MentraLive: NSObject, SGCManager {
     private var isNewVersion = false
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
+    private var wireHandshakeQueued = false
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to legacy
     // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
     // v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -3682,6 +3684,7 @@ class MentraLive: NSObject, SGCManager {
         // wire_caps. Older builds that report new version but lack wire_caps stay on the legacy path.
         guard isNewVersion,
               peerWireCapsBinary,
+              !wireHandshakeQueued,
               peerWireProtocolVersion < BleWireProtocol.protocolV2
         else { return }
         sendWireHandshake()
@@ -3703,12 +3706,14 @@ class MentraLive: NSObject, SGCManager {
             return
         }
         Bridge.log("LIVE: Sending BLE wire v2 handshake")
+        wireHandshakeQueued = true
         queueSend(packed, id: "-1")
     }
 
     private func activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.protocolV2
         useBinaryWireProtocol = true
+        wireHandshakeQueued = false
         peerK900Le = true
         BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
         Bridge.log(logMessage)
@@ -4584,6 +4589,7 @@ class MentraLive: NSObject, SGCManager {
         incomingChunkReassembler.clear()
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
+        wireHandshakeQueued = false
         peerK900Le = false
         peerWireCapsBinary = false
         BleJsonCompact.resetSession()

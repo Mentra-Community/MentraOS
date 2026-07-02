@@ -314,7 +314,7 @@ public class K900ProtocolUtils {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayload(byte[] protocolData) {
-        return extractPayload(protocolData, K900LengthCodec.Endian.LE);
+        return extractPayload(protocolData, K900LengthCodec.Endian.BE);
     }
 
     /**

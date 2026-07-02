@@ -345,6 +345,10 @@ public class ChunkReassembler {
         boolean addFragment(int fragIdx, int fragCount, byte[] payload) {
             int payloadLen = payload != null ? payload.length : 0;
             if (fragIdx == 0) {
+                if (receivedCount > 0) {
+                    Log.w(TAG, "Duplicate first binary fragment for msgId=" + msgId);
+                    return true;
+                }
                 receivedCount = 0;
                 writeOffset = 0;
             } else if (fragIdx != receivedCount) {

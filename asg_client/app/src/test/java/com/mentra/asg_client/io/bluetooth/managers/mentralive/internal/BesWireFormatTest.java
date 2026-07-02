@@ -162,6 +162,17 @@ public class BesWireFormatTest {
     }
 
     @Test
+    public void formatMessageForTransmission_fallbackKeepsNegotiatedEndian() {
+        byte[] packed =
+                BesWireFormat.formatMessageForTransmission("{bad", K900LengthCodec.Endian.BE);
+        int length = K900LengthCodec.readLength(packed, 3, K900LengthCodec.Endian.BE);
+
+        assertThat(packed[2]).isEqualTo(BesWireFormat.CMD_TYPE_STRING);
+        assertThat(packed[3]).isEqualTo((byte) ((length >> 8) & 0xFF));
+        assertThat(packed[4]).isEqualTo((byte) (length & 0xFF));
+    }
+
+    @Test
     public void otaAuthorizationRequest_usesLegacyBigEndianStringFrameBeforeWireCaps()
             throws Exception {
         String authRequest =

@@ -205,6 +205,7 @@ class MentraLive : SGCManager() {
     private var buildNumberInt = 0 // Build number as integer for version checks
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
+    private var wireHandshakeQueued = false
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to
     // legacy big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -765,6 +766,7 @@ class MentraLive : SGCManager() {
                 incomingChunkReassembler.clear()
                 peerWireProtocolVersion = 0
                 useBinaryWireProtocol = false
+                wireHandshakeQueued = false
                 peerK900Le = false
                 peerWireCapsBinary = false
                 BleJsonCompact.resetSession()
@@ -798,6 +800,7 @@ class MentraLive : SGCManager() {
             incomingChunkReassembler.clear()
             peerWireProtocolVersion = 0
             useBinaryWireProtocol = false
+            wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
             BleJsonCompact.resetSession()
@@ -7114,6 +7117,7 @@ class MentraLive : SGCManager() {
         // wire_caps. Older builds that report build>=5 but lack wire_caps stay on the legacy path.
         if (buildNumberInt < 5 ||
                         !peerWireCapsBinary ||
+                        wireHandshakeQueued ||
                         peerWireProtocolVersion >= BleWireProtocol.PROTOCOL_V2
         ) {
             return
@@ -7139,6 +7143,7 @@ class MentraLive : SGCManager() {
                             payload
                     )
             Bridge.log("LIVE: Sending BLE wire v2 handshake")
+            wireHandshakeQueued = true
             queueData(packed, null)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send wire handshake", e)
@@ -7148,6 +7153,7 @@ class MentraLive : SGCManager() {
     private fun activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
         useBinaryWireProtocol = true
+        wireHandshakeQueued = false
         peerK900Le = true
         BleJsonCompact.markSessionConnected(System.currentTimeMillis())
         Bridge.log(logMessage)

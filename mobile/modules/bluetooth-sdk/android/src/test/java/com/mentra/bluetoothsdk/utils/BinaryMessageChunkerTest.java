@@ -6,10 +6,15 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
 public class BinaryMessageChunkerTest {
 
     @Test
