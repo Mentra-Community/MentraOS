@@ -156,7 +156,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         maskElement={
           <LinearGradient
             colors={["black", "transparent"]}
-            locations={linGradientOnly ? [0.2, 20] : [0.4, 1]}
+            locations={[0.4, 1]}
             start={{x: 0, y: 1}}
             end={{x: 0, y: 0}}
             style={{
