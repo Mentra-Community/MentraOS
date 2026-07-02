@@ -1,12 +1,13 @@
 import * as NavigationBar from "expo-navigation-bar"
 import {StatusBar} from "expo-status-bar"
 import {useState, useEffect, useRef} from "react"
-import {Alert, BackHandler, Platform, Animated} from "react-native"
+import {Alert, BackHandler, Linking, Platform, Animated} from "react-native"
 
 import {Icon, IconTypes} from "@/components/ignite"
 import BasicDialog from "@/components/ui/BasicDialog"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 
 import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
 
@@ -491,6 +492,23 @@ const showPermissionsAlert = (title: string, message: string, options?: Connecti
 }
 
 /**
+ * Shows a "you are leaving the app" confirmation before opening an external URL
+ * in the system browser. Use this anywhere we hand the user off to an outside
+ * link (privacy policy, docs, etc.) so the copy and behavior stay consistent.
+ */
+const showLeaveAppAlert = (url: string) => {
+  showAlert(translate("settings:leaveAppTitle"), translate("settings:leaveAppMessage"), [
+    {text: translate("common:cancel"), style: "cancel"},
+    {
+      text: translate("common:continue"),
+      onPress: () => {
+        Linking.openURL(url).catch((error) => console.error("Failed to open external URL:", url, error))
+      },
+    },
+  ])
+}
+
+/**
  * Shows a destructive action alert with proper styling
  * Uses the new modal system with BasicDialog for consistent design
  */
@@ -516,6 +534,7 @@ export {
   showLocationServicesAlert,
   showPermissionsAlert,
   showDestructiveAlert,
+  showLeaveAppAlert,
 }
 
 export default showAlert

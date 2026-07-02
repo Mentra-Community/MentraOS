@@ -1316,12 +1316,10 @@ class G2 : SGCManager() {
     private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
-    // Live hardware truth: is the firmware mic actually streaming right now. DISTINCT from the
-    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user/cloud want the mic
-    // on). The mic only exists inside a live EvenHub page, so whenever the page dies (systemExit
-    // / abnormalExit / shutdown cmd 9·10 / dashboard takes focus) the firmware kills the mic and
-    // we set this false — WITHOUT touching the intent flag, so recovery can re-arm iff intent says
-    // the mic should be on. See the iOS G2.swift counterpart.
+    // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
+    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
+    // Cleared on every page teardown WITHOUT touching intent, so recovery can re-arm iff intent
+    // still says the mic should be on. See the iOS G2.swift counterpart.
     private var evenHubMicActive: Boolean = false
     private var currentTextContent: String = ""
     private var textContainerID: Int = 1
@@ -1354,12 +1352,13 @@ class G2 : SGCManager() {
     private var rightAuthenticated: Boolean = false
     private var currentBitmapBase64: String = ""
     private var dashboardShowing = 0
-    // Recovery throttle — see iOS G2.swift. The firmware spams systemExit + dashboard-close
-    // (08011A00) ~1×/sec on its own; each used to fire a full rebuildState() that the firmware
-    // tore down again → rebuild→exit→rebuild storm that churns the display so captions never
-    // render. We coalesce: at most one recovery rebuild in flight, no more than one every
-    // RECOVERY_DEBOUNCE_MS, and skip entirely when the page is already alive and the mic matches
-    // intent (phantom event).
+    // The 08011A00 gesture_ctrl event is ambiguous: the firmware sends it BOTH when the dashboard
+    // opens (shuts our page down to take the screen) and when it closes. showDashboard() sets this
+    // latch; the next 08011A00 is the OPEN confirm — consume it WITHOUT recovering (else we rebuild
+    // and snatch the screen back). The following 08011A00 is the real CLOSE → recover. See iOS.
+    private var dashboardOpening = false
+    // Recovery throttle (see iOS G2.swift): the firmware spams systemExit + dashboard-close
+    // ~1×/sec. Coalesce so recovery can't storm — one rebuild in flight, one per RECOVERY_DEBOUNCE_MS.
     private var recoveryInFlight = false
     private var lastRecoveryRebuildMs: Long = 0
     private val RECOVERY_DEBOUNCE_MS: Long = 1500
@@ -1526,13 +1525,36 @@ class G2 : SGCManager() {
         }
 
     @Suppress("deprecation")
+    // BGCAP diagnostic: Android G2's text path is already direct (single packet -> writeOnePacket),
+    // so the iOS root cause (the canSend gate) does NOT exist here. This measures whether
+    // writeCharacteristic is being REJECTED (returns false = Android GATT stack busy/throttled, the
+    // packet is dropped) in the background — the suspected Android accumulation/loss point. The
+    // current code discards the return value. Rate-limited; "BGCAP:" prefix; remove after the
+    // Android repro pins the mechanism.
+    private var bgcapWriteOk = 0
+    private var bgcapWriteFail = 0
+    private var bgcapWriteLogAt = 0L
+
+    private fun bgcapNoteWriteResult(ok: Boolean) {
+        if (ok) bgcapWriteOk++ else bgcapWriteFail++
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - bgcapWriteLogAt >= 1000) {
+            if (bgcapWriteOk > 0 || bgcapWriteFail > 0) {
+                Bridge.log("BGCAP: g2 writeCharacteristic ok=$bgcapWriteOk fail=$bgcapWriteFail in ${now - bgcapWriteLogAt}ms (fail = stack busy/dropped)")
+            }
+            bgcapWriteOk = 0
+            bgcapWriteFail = 0
+            bgcapWriteLogAt = now
+        }
+    }
+
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
         if (right) {
             rightWriteChar?.let { char ->
                 rightGatt?.let { gatt ->
                     char.value = packet
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    gatt.writeCharacteristic(char)
+                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
                 }
             }
         }
@@ -1541,7 +1563,7 @@ class G2 : SGCManager() {
                 leftGatt?.let { gatt ->
                     char.value = packet
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    gatt.writeCharacteristic(char)
+                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
                 }
             }
         }
@@ -2091,25 +2113,29 @@ class G2 : SGCManager() {
 
     override fun clearDisplay() {
         Bridge.log("G2: clearDisplay()")
-        displayScope.launch {
-            // reset the content of all text containers to empty:
-            for (i in textContainers.indices) {
-                textContainers[i].content = " "
-                // The rebuild below re-embeds this blank content via createPageWithContainers, so no
-                // separate updateText send is needed — drop any scheduled sends.
-                textContainers[i].pendingSends = 0
-            }
-            for (i in imageContainers.indices) {
-                // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
+        // Clear the text in place — do NOT shut down + rebuild the EvenHub page. Tearing the page
+        // down (rebuildPage) kills audio streaming AND triggers a firmware systemExit /
+        // dashboard-close → recovery → another rebuild. The cloud sends clearDisplay in bursts
+        // (caption gaps → clear → new caption), and when each clear tore down + rebuilt the page
+        // those bursts became a rebuild storm that churned the display and dropped audio for
+        // several seconds (incident 8164175a). Just blank the text + clear images; the reconcile
+        // loop pushes the blanked text on a live page, and a dead page is only resurrected for
+        // meaningful (non-blank) content, so a clear can't churn it back up.
+        for (i in textContainers.indices) {
+            textContainers[i].content = " "
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+        }
+        for (i in imageContainers.indices) {
+            // The firmware still shows this container's image; emptying bmpData locally never reaches
+            // it (#3232 dropped the teardown that used to drop empty containers on rebuild). Empty +
+            // dirty tells the reconcile loop to push an all-black frame that overwrites the image
+            // on-glass — the page stays up, so no audio/mic churn. Skip already-empty containers.
+            if (imageContainers[i].bmpData.isNotEmpty()) {
                 imageContainers[i].bmpData = ByteArray(0)
-                imageContainers[i].dirty = false
-            }
-            // shutdown the page and then recreate the containers without the content.
-            displayScope.launch {
-                rebuildPage()
-                rebuildState()
+                imageContainers[i].dirty = true
             }
         }
+        signalDisplayDirty()
     }
 
     /**
@@ -2295,17 +2321,16 @@ class G2 : SGCManager() {
     }
 
     /**
-     * Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never stack
-     * rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this guard each one
-     * triggered a rebuild that was torn down again → rebuild→exit→rebuild storm. Skips entirely
-     * when the page is already alive and the mic matches intent (phantom event); otherwise at most
-     * one rebuild in flight and at most one per RECOVERY_DEBOUNCE_MS. See iOS G2.swift.
+     * Single coalesced recovery: rebuild the page + re-arm the mic from intent, never stacking
+     * rebuilds (the firmware spams systemExit/dashboard-close ~1×/sec). Skips when the page is
+     * already alive and the mic matches intent; otherwise one rebuild in flight, one per
+     * RECOVERY_DEBOUNCE_MS. See iOS G2.swift.
      */
     private fun recoverPageAndMic(reason: String) {
         val now = System.currentTimeMillis()
+        // Page alive and mic matches intent → phantom firmware event, nothing to recover.
         val micIntent = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
         if (pageCreated && evenHubMicActive == micIntent) {
-            // Bridge.log("G2: recover($reason) skipped — page alive, mic matches intent")
             return
         }
         if (recoveryInFlight) {
@@ -2342,7 +2367,10 @@ class G2 : SGCManager() {
         // dashboard owns the screen.
         if (!pageCreated) {
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
-            val hasPendingText = textContainers.any { it.pendingSends > 0 }
+            // Only resurrect a dead page for MEANINGFUL content. A clearDisplay (blank " ") on an
+            // already-dead page has nothing to show, so don't rebuild just to render blankness —
+            // that would let a clear burst churn the page back up pointlessly.
+            val hasPendingText = textContainers.any { it.pendingSends > 0 && it.content.isNotBlank() }
             val hasPendingImage = imageContainers.any { it.dirty && it.bmpData.isNotEmpty() }
             if ((hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0)) {
                 Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
@@ -2375,10 +2403,21 @@ class G2 : SGCManager() {
             guardCount += 1
             val container = imageContainers[i]
             val sentBytes = container.bmpData
-            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
-            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            // Empty + dirty means "just cleared": the firmware still shows the old image, so push an
+            // all-black frame sized to the container to overwrite it on-glass (the page stays up — no
+            // teardown, no mic churn). A container only reaches here when dirty, and clearDisplay is
+            // the sole source of an empty-but-dirty container, so this fires exactly on a clear.
             if (sentBytes.isEmpty()) {
-                imageContainers[i].dirty = false
+                val blank = blankBmp(container.width, container.height)
+                if (blank != null) {
+                    sendImageData(container.id, container.name, blank)
+                }
+                // Only settle the flag if it's still empty — a displayBitmap during the await would
+                // have set new bytes, so leave it dirty for the next pass to send the real image.
+                val jj = imageContainers.indexOfFirst { it.id == container.id }
+                if (jj >= 0 && imageContainers[jj].bmpData.isEmpty()) {
+                    imageContainers[jj].dirty = false
+                }
                 continue
             }
             sendImageData(container.id, container.name, sentBytes)
@@ -2490,10 +2529,10 @@ class G2 : SGCManager() {
     /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
         Bridge.log("G2: showDashboard()")
-        // Dashboard is open: a simple on/off flag, not an accumulating depth. The old `+= 2`
-        // could climb without bound when opens interleaved with dropped close events, stranding
-        // the counter >0 and wedging the mic (the dashboardShowing>0 guard in restartMic).
+        // Dashboard is open: a 0/1 flag (the old +=2/-=1 depth dance drifted >0 and wedged the
+        // mic). dashboardOpening latches so the open-confirm 08011A00 doesn't trigger recovery.
         dashboardShowing = 1
+        dashboardOpening = true
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -2780,6 +2819,17 @@ class G2 : SGCManager() {
         return build4BitBmp(grayscalePixels, containerWidth, containerHeight)
     }
 
+    /**
+     * Build an all-black BMP sized to a container. Sent to overwrite (and thus visually clear) an
+     * image container without tearing the page down — on the green monochrome display, pixel 0 is
+     * unlit, so an all-zero frame reads as blank. Used by the reconcile loop to clear a bitmap.
+     */
+    private fun blankBmp(width: Int, height: Int): ByteArray? {
+        if (width <= 0 || height <= 0) return null
+        val zeros = ByteArray(width * height)  // all-zero 8-bit grayscale = black
+        return build4BitBmp(zeros, width, height)
+    }
+
     private fun build4BitBmp(grayscalePixels: ByteArray, width: Int, height: Int): ByteArray? {
         // 4-bit: 2 pixels per byte, rows padded to 4-byte boundary
         val bytesPerRow4bit = (width + 1) / 2
@@ -3025,6 +3075,7 @@ class G2 : SGCManager() {
         imageContainers.clear()
         textContainers.clear()
         dashboardShowing = 0
+        dashboardOpening = false
         heartbeatCounter = 0
         currentBitmapBase64 = ""
         menuAppIdToPackageName.clear()
@@ -3577,6 +3628,7 @@ class G2 : SGCManager() {
                         startupPageCreated = false
                         pageCreated = false
                         dashboardShowing = 0
+                        dashboardOpening = false
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
 
@@ -4126,23 +4178,12 @@ class G2 : SGCManager() {
                 }
             }
 
-            // System exit: glasses killed our EvenHub page (the firmware's "End this feature?"
-            // screen, or another app — like the native dashboard — taking focus). The page is
-            // gone and the firmware has also killed the mic.
-            //
-            // We ONLY mark state dead here; we do NOT rebuild. systemExit fires together with the
-            // dashboard-close (08011A00) event for the same firmware transition, and a bare
-            // sendText/clearDisplay also follows. If this handler rebuilt the page, the
-            // dashboard-close handler would rebuild it a *second* time, the firmware would tear the
-            // fresh page down (another systemExit), and we'd loop rebuild→exit→rebuild ~1×/sec
-            // forever — the page never settles and captions never render. Recovery is owned by
-            // exactly one place: the dashboard-close handler (08011A00) and the reconcile loop's
-            // "page down with pending content → rebuild once" path. Both run after this and both
-            // re-arm the mic from intent.
-            //
-            // We mark evenHubMicActive=false (live hardware truth) but DELIBERATELY do NOT touch
-            // glasses/micEnabled: that flag is the user/cloud *intent*, and recovery reads it to
-            // decide whether to re-arm. Clobbering it stranded the mic after a dashboard round-trip.
+            // System exit: the firmware killed our page (and the mic). ONLY mark state dead; do
+            // NOT rebuild here. systemExit is fired alongside the dashboard-close (08011A00) event
+            // for the same transition — if both rebuilt, the fresh page gets torn down again →
+            // rebuild→exit→rebuild loop. Recovery is owned by one place: the dashboard-close
+            // handler (and the reconcile page-down path). Don't touch micEnabled (user intent) —
+            // recovery reads it to re-arm; clobbering it strands the mic.
             if (eventType == OsEventType.SYSTEM_EXIT || eventType == OsEventType.ABNORMAL_EXIT) {
                 pageCreated = false
                 evenHubMicActive = false // firmware killed the mic with the page
@@ -4313,20 +4354,18 @@ class G2 : SGCManager() {
         }
         lastGestureCtrlTimestamp = timestamp
 
-        // Dashboard close detection: 08011A00 means dashboard closed
+        // 08011A00 is the dashboard open/close toggle — it fires on BOTH transitions. Use the
+        // dashboardOpening latch (set by showDashboard) to tell them apart:
+        //   • First event after showDashboard → OPEN confirm. Consume it, keep the dashboard up,
+        //     do NOT recover (recovering rebuilds our page and snatches the screen back — the
+        //     "double-tap flickers captions but never opens the dashboard" bug).
+        //   • Next event → real CLOSE. Reset state and recover our page + mic.
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
-            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
-            // A dashboard-close event unambiguously means the dashboard is gone, so always reset
-            // to 0 and recover. We deliberately do NOT keep a residual depth count (the old
-            // +=2 / -=1 "decrement dance"): that counter drifts when a close frame is dropped by
-            // the 500ms gesture_ctrl dedup or when systemExits interleave with opens, and once it
-            // strands >0 the dashboardShowing>0 guard in restartMic wedges the mic permanently
-            // (cloud keeps calling setMicEnabled(true) but it never arms). Self-heal: clear the
-            // count and recover. recoverPageAndMic() rebuilds the page and re-arms the mic from
-            // intent (rebuildState → restartMicIfAlreadyEnabled), and is debounced so the
-            // firmware's ~1×/sec systemExit+close spam can't storm rebuilds. If the page is
-            // already alive (a phantom close while our page is healthy), the guard makes this a
-            // cheap no-op.
+            Bridge.log("G2: dashboard toggle - dashboardShowing=$dashboardShowing opening=$dashboardOpening")
+            if (dashboardOpening) {
+                dashboardOpening = false // open confirmed; dashboard now owns the screen
+                return
+            }
             dashboardShowing = 0
             recoverPageAndMic("dashboard-close")
             return

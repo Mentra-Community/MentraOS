@@ -9,6 +9,7 @@ on:
       - "Run Cloud Tests ☁️"
       - "🧪 Test SDK build"
       - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
       - "MentraOS ASG Client Build"
       - "Mobile App Android Build"
     types: [completed]
@@ -357,11 +358,16 @@ jobs:
     name: Fix
     needs: [resolve-context, plan, aggregate]
     if: |
+      always() &&
+      needs.resolve-context.result == 'success' &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
       needs.aggregate.outputs.should_handoff != 'true' &&
       needs.aggregate.outputs.should_fix == 'true' &&
       needs.resolve-context.outputs.pr_is_fork != 'true' &&
       needs.plan.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:

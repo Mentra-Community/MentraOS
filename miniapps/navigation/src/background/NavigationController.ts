@@ -14,6 +14,7 @@ import type {
   NavUpdate,
   Pivot,
   StartNavigationOptions,
+  TravelMode,
   UIModule,
 } from "@mentra/miniapp/background"
 
@@ -65,6 +66,31 @@ export class NavigationController {
   // the final position still lands after the burst settles.
   private lastMinimapAt = 0
   private minimapTrailingTimer: ReturnType<typeof setTimeout> | null = null
+  // Minimap refresh watchdog. In the field (and esp. in demos) the stream of
+  // GPS fixes that drives refreshMinimap() can go quiet — the phone stops
+  // emitting fixes, the route settles, or the G2 swallows a send. When that
+  // happens the last bitmap is the most recent thing on the glasses, but if the
+  // page was torn down it may be blank. So: a recurring timer checks whether a
+  // minimap has been pushed within MINIMAP_WATCHDOG_IDLE_MS; if not, it forces a
+  // fresh re-render (bypassing the unchanged-png dedup) so the map keeps
+  // refreshing indefinitely while a trip is running. Runs every
+  // MINIMAP_WATCHDOG_INTERVAL_MS; started on trip start, stopped on dispose.
+  private minimapWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  // Timestamp of the last time a bitmap was ACTUALLY pushed to the glasses
+  // (showBitmap), as opposed to lastMinimapAt which is set on every render
+  // ATTEMPT (even ones the png-dedup then drops). The watchdog keys off this so
+  // it correctly detects "the glasses haven't received a new bitmap in a while"
+  // even while the HUD pump keeps calling refreshMinimap() with unchanged maps.
+  private lastMinimapPushAt = 0
+  // How long the minimap can go without a push before the watchdog forces one.
+  private readonly MINIMAP_WATCHDOG_IDLE_MS = 2000
+  // How often the watchdog checks for staleness (and the steady re-push cadence
+  // once updates have gone quiet).
+  private readonly MINIMAP_WATCHDOG_INTERVAL_MS = 2000
+  // Set true for the duration of a watchdog-forced refresh so refreshMinimap()
+  // bypasses its png-unchanged dedup (line ~1544) — otherwise a quiet,
+  // unchanged map would never actually re-reach the glasses.
+  private forceMinimapPush = false
   // Watchdog for a stuck "Starting…" HUD. The HUD leaves "Starting…" when a
   // maneuver event (or a live pivot) arrives — but in the field the maneuver
   // event sometimes never fires (the G2 tears down the EvenHub page mid-start,
@@ -221,6 +247,7 @@ export class NavigationController {
     this.wireSensorSubscriptions()
     this.wireRpcHandlers()
     this.wireUIBroadcasts()
+    this.registerActions()
     this.wireHUDPump()
     this.wireTouchGestures()
     this.primeNavigationPermission()
@@ -516,6 +543,224 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("storage:add-recent", (p) => this.storage.addRecentSearch(p)))
   }
 
+  // ── Trip start (shared by the UI's nav:start and the start_navigation action) ──
+
+  /**
+   * Begin a turn-by-turn trip. Drives both the UI's `nav:start` broadcast and
+   * the `start_navigation` action so they share one path: optimistic trip
+   * state, glasses HUD repaint, then `navigation.start()`, rolling back to idle
+   * if the native start fails. Resolves `{ok, error?}` for the action; the UI
+   * listener ignores the return.
+   */
+  private async beginTrip(opts: StartNavigationOptions & {destinationName?: string}): Promise<{ok: boolean; error?: string}> {
+    // Re-entrancy guard: ignore a second start while one is already in flight
+    // (the duplicate's start() would stop() the session the first just created
+    // and freeze the puck).
+    if (this.starting) {
+      this.appendLog("START ignored — already starting")
+      return {ok: false, error: "A navigation start is already in progress"}
+    }
+    this.starting = true
+    const {destinationName, ...startOpts} = opts
+    // Clear the previous trip's route polyline immediately so the
+    // off-route threshold check doesn't run against a stale route
+    // between nav:start and the new onRoute event landing. Without
+    // this, the user can be e.g. 500m from the prior route's
+    // polyline at start, instantly trigger the >30m bucket, flip
+    // status to "rerouting", and fire a redundant auto-rebuild.
+    this.trip = {
+      ...this.trip,
+      status: "navigating",
+      running: true,
+      activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
+      activeDestinationName: destinationName ?? null,
+      maneuver: null,
+      routePoints: null,
+      routeSteps: null,
+      offRouteAt: null,
+      arrivalSide: null,
+    }
+    // Snapshot the trip-start context so an auto-rebuild can re-
+    // fire start() with the same shape, and so we can gate
+    // rebuilds on "user has actually moved away from start".
+    this.lastStartOpts = opts
+    this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    // Reset the movement-vector heading so this trip's "you" arrow measures
+    // direction of travel fresh (anchor re-seeds on the next fix).
+    this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    this.moveBearingDeg = null
+    this.lastAutoRebuildAt = 0
+    this.lastOffRouteBucket = 0
+    this.offRouteAdvisory = false
+    this.offRouteAdvisoryDistanceM = null
+    // Clear any pivots left over from a previous trip. Without this, a new
+    // start with stale activePivot/upcomingPivot would make refreshHUD take
+    // a pivot branch and show the OLD trip's instruction instead of
+    // "Starting…" — the HUD must read "Starting…" until THIS trip's first
+    // real maneuver/pivot lands.
+    this.activePivot = null
+    this.upcomingPivot = null
+    // Cancel any in-flight delayed rebuild — a fresh start
+    // supersedes the old "are we still off-route?" timer.
+    this.cancelPendingRebuild()
+    this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
+    this.ui.send("nav:trip-state", this.trip)
+    // Repaint the glasses HUD immediately so the left text flips from the
+    // idle "Welcome to Mentra Maps!" frame to "Starting…" the instant the
+    // user starts — instead of the welcome frame lingering until the next
+    // GPS tick / HUD pump (~1s). running is already true above, so refreshHUD
+    // takes the "Starting…" branch and showManeuver overwrites the welcome
+    // text in place.
+    this.refreshHUD()
+    try {
+      // start() resolves `{ok:false}` (it never throws) for
+      // permission, GPS, REST, or native failures — on those the
+      // native trip never began and no synthetic onRoute will land,
+      // so we must roll the optimistic "navigating" state set above
+      // back to idle. Inspecting only `catch` left the UI stuck on a
+      // routeless trip with no recovery but a manual stop.
+      const res = await this.navigation.start(withPivotDefaults(startOpts))
+      if (!res.ok) {
+        this.appendLog(`START failed: ${res.error ?? "unknown"}`)
+        this.rollbackTripToIdle()
+      }
+      return res
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      this.appendLog(`START error: ${error}`)
+      this.rollbackTripToIdle()
+      return {ok: false, error}
+    } finally {
+      this.starting = false
+    }
+  }
+
+  /**
+   * Roll the optimistic "navigating" trip state back to idle after a failed
+   * start. Clears the destination and route fields too — otherwise the phone
+   * map keeps a pin on a destination we never actually started routing to.
+   */
+  private rollbackTripToIdle(): void {
+    this.trip = {
+      ...this.trip,
+      status: "idle",
+      running: false,
+      activeDestination: null,
+      activeDestinationName: null,
+      maneuver: null,
+      routePoints: null,
+      routeSteps: null,
+    }
+    this.ui.send("nav:trip-state", this.trip)
+    this.refreshHUD()
+  }
+
+  // ── Actions (cross-miniapp / AI) ─────────────────────────────────────
+
+  /**
+   * Declared in miniapp.json. A system miniapp (e.g. Mentra AI) invokes
+   * start_navigation to "navigate to X" — the host headless-wakes us if we're
+   * stopped, then delivers the call once start() registers the handler. The
+   * destination may be a place query (looked up via Places, biased to the
+   * current location) or explicit coordinates.
+   */
+  private registerActions(): void {
+    try {
+      this.unsubs.push(
+        this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)),
+      )
+    } catch (err) {
+      // actions module unavailable on this host, or already registered — the
+      // miniapp still runs, it just can't be started via the action.
+      this.appendLog(`actions register failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  private async startNavigationAction(
+    params: Record<string, unknown>,
+  ): Promise<{ok: boolean; error?: string; destination?: {lat: number; lng: number; name?: string}}> {
+    if (!this.navigation.hasPermission) {
+      return {ok: false, error: "Location permission is required for navigation."}
+    }
+
+    const mode = MODES.has(params.travel_mode as TravelMode) ? (params.travel_mode as TravelMode) : "walking"
+    const explicitName = typeof params.destination_name === "string" ? params.destination_name.trim() : ""
+
+    // Resolve the destination. A full coordinate pair wins; otherwise fall back
+    // to the place query (so a query still works even when a stray/partial
+    // coordinate is also present); a lone coordinate with no query is an error.
+    const hasLat = typeof params.latitude === "number"
+    const hasLng = typeof params.longitude === "number"
+    const query = typeof params.query === "string" && params.query.trim() ? params.query.trim() : null
+
+    let dest: {lat: number; lng: number; name?: string} | null = null
+    if (hasLat && hasLng) {
+      // Validate as finite, in-range coordinates — `typeof NaN === "number"`, so
+      // a bare typeof check would let NaN/Infinity flow into the native start.
+      const latitude = params.latitude as number
+      const longitude = params.longitude as number
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        Math.abs(latitude) > 90 ||
+        Math.abs(longitude) > 180
+      ) {
+        return {ok: false, error: "latitude and longitude must be finite coordinates (|lat| ≤ 90, |lng| ≤ 180)."}
+      }
+      dest = {lat: latitude, lng: longitude, name: explicitName || undefined}
+    } else if (query) {
+      dest = await this.resolveDestination(query)
+      if (!dest) return {ok: false, error: `Couldn't find a place matching "${query}".`}
+    } else if (hasLat || hasLng) {
+      return {ok: false, error: "Provide both latitude and longitude, or a destination query."}
+    } else {
+      return {ok: false, error: "Provide a destination query, or latitude and longitude."}
+    }
+
+    const res = await this.beginTrip({
+      stops: [{lat: dest.lat, lng: dest.lng}],
+      mode,
+      destinationName: explicitName || dest.name,
+    })
+    if (!res.ok) return {ok: false, error: res.error ?? "Failed to start navigation."}
+    return {ok: true, destination: dest}
+  }
+
+  /**
+   * Geocode a place name/address to coordinates via the Places facade, biased
+   * to the user's current location. Mirrors the UI's autocomplete → details
+   * pick. Returns null when there's no match or the lookup fails.
+   */
+  private async resolveDestination(query: string): Promise<{lat: number; lng: number; name?: string} | null> {
+    try {
+      let near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
+      // A headless start_navigation invoke can be dispatched before the initial
+      // GPS fix lands (seedInitialFix runs later in start()). Grab a one-shot fix
+      // so place search is biased to the wearer, per the action contract — and
+      // seed this.coords so beginTrip has a start position too.
+      if (!near) {
+        try {
+          const d = await this.location.getOnce()
+          near = {lat: d.lat, lng: d.lng}
+          if (!this.coords) {
+            this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+            this.lastCoordsAt = Date.now()
+            this.ui.send("nav:coords", this.coords)
+          }
+        } catch {
+          /* no fix yet — fall back to an unbiased search */
+        }
+      }
+      const suggestions = await this.places.autocomplete(query, near)
+      if (!suggestions.length) return null
+      const details = await this.places.details(suggestions[0].placeId)
+      return {lat: details.lat, lng: details.lng, name: details.name}
+    } catch (err) {
+      this.appendLog(`resolveDestination failed: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
+  }
+
   // ── UI broadcast listeners ───────────────────────────────────────────
 
   private wireUIBroadcasts(): void {
@@ -552,6 +797,8 @@ export class NavigationController {
         // fire start() with the same shape, and so we can gate
         // rebuilds on "user has actually moved away from start".
         this.lastStartOpts = opts
+        // Keep the minimap refreshing even if the live update stream goes quiet.
+        this.startMinimapWatchdog()
         this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
         // Reset the movement-vector heading so this trip's "you" arrow measures
         // direction of travel fresh (anchor re-seeds on the next fix).
@@ -634,6 +881,7 @@ export class NavigationController {
           arrivalSide: null,
         }
         this.hasCompletedTrip = true
+        this.stopMinimapWatchdog()
         // If the swipe-up large map is showing, drop out of it so the trip's
         // end actually clears the glasses — otherwise refreshHUD() early-
         // returns (it won't paint over the large map) and the big map lingers
@@ -967,13 +1215,10 @@ export class NavigationController {
   private wireTouchGestures(): void {
     this.unsubs.push(
       this.session.input.onTouch((data) => {
-        // The miniapp `TouchData.kind` field arrives undefined on G2 — the native
-        // side labels the gesture under a different key. Log the WHOLE payload so
-        // we can see the real field name, and read the gesture from whichever of
-        // the likely keys is populated.
+        // `data.kind` carries the gesture (single_tap / double_tap / swipe_up /
+        // swipe_down / ...); gestureName is a fallback for older host builds.
         const d = data as unknown as Record<string, unknown>
-        const gesture = String(d.kind ?? d.gestureName ?? d.gesture ?? d.type ?? "")
-        console.log(`[TOUCH] payload=${JSON.stringify(data)} → gesture="${gesture}"`)
+        const gesture = String(d.kind ?? d.gestureName ?? "")
 
         // system_exit = the glasses tore down our EvenHub page (dashboard etc).
         // Do NOT touch largeMapShown here — it fires constantly and would
@@ -987,12 +1232,7 @@ export class NavigationController {
           return
         }
 
-        // G2 swipe-up arrives as scroll_top / swipe_up (native mapping varies).
-        const isSwipe =
-          gesture === "scroll_top" ||
-          gesture === "swipe_up" ||
-          gesture === "scroll_bottom" ||
-          gesture === "swipe_down"
+        const isSwipe = gesture === "swipe_up" || gesture === "swipe_down"
         if (!isSwipe) return
 
         // Large map is a dev-gated WIP feature, OFF by default. When disabled,
@@ -1434,9 +1674,17 @@ export class NavigationController {
     // position after a burst of rapid GPS fixes still reaches the glasses. (A
     // trailing render already pending is left as-is; it re-reads the latest
     // coords/heading when it fires.)
+    // A watchdog-forced refresh must render+push synchronously here and now —
+    // it must NOT go down the throttle's trailing-timer path. That path defers
+    // the render to a setTimeout that fires AFTER the watchdog's `finally` has
+    // already reset forceMinimapPush=false, so the deferred render gets dedup'd
+    // and the bitmap never reaches the glasses (the "since last push" counter
+    // then climbs forever). Skipping the throttle keeps the force flag live
+    // through the actual push below. The watchdog only fires after ≥2s idle, so
+    // there's no real throttle to honor anyway.
     const now = Date.now()
     const sinceLast = now - this.lastMinimapAt
-    if (sinceLast < this.MINIMAP_MIN_INTERVAL_MS) {
+    if (!this.forceMinimapPush && sinceLast < this.MINIMAP_MIN_INTERVAL_MS) {
       if (this.minimapTrailingTimer == null) {
         this.minimapTrailingTimer = setTimeout(() => {
           this.minimapTrailingTimer = null
@@ -1541,9 +1789,62 @@ export class NavigationController {
       }
     }
 
-    if (!png || png === this.lastMinimapPng) return
+    // Normally we dedup on the rendered bytes — but a watchdog-forced refresh
+    // (no live updates for a while) must re-push even when the map is unchanged,
+    // to recover from a torn-down G2 page that may have dropped the last send.
+    if (!png || (png === this.lastMinimapPng && !this.forceMinimapPush)) {
+      console.log(`[MINIMAP] skip push (png ${png ? "unchanged" : "null"}, force=${this.forceMinimapPush})`)
+      return
+    }
     this.lastMinimapPng = png
+    this.lastMinimapPushAt = Date.now()
+    console.log(`[MINIMAP] push bitmap (${png.length} b64 chars, force=${this.forceMinimapPush})`)
     this.display.showBitmap(png)
+  }
+
+  /**
+   * Watchdog tick: if no minimap has been pushed within MINIMAP_WATCHDOG_IDLE_MS
+   * while a trip is running (and the large map isn't owning the screen), force a
+   * fresh re-render so the glasses keep getting an updated bitmap even when the
+   * live GPS/update stream has gone quiet. Idempotent + cheap when updates are
+   * flowing (the idle check short-circuits).
+   */
+  private minimapWatchdogTick(): void {
+    if (this.largeMapShown || !this.showMinimap) {
+      console.log(`[MINIMAP-WATCHDOG] tick skipped (largeMap=${this.largeMapShown} showMinimap=${this.showMinimap})`)
+      return
+    }
+    if (!this.trip.running || !this.coords) {
+      console.log(`[MINIMAP-WATCHDOG] tick skipped (running=${this.trip.running} coords=${!!this.coords})`)
+      return
+    }
+    const idle = Date.now() - this.lastMinimapPushAt
+    console.log(`[MINIMAP-WATCHDOG] tick: ${idle}ms since last push (threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`)
+    if (idle < this.MINIMAP_WATCHDOG_IDLE_MS) return
+    console.log(`[MINIMAP-WATCHDOG] no push for ${idle}ms — forcing refresh`)
+    this.forceMinimapPush = true
+    try {
+      this.refreshMinimap()
+    } finally {
+      this.forceMinimapPush = false
+    }
+  }
+
+  /** Start the recurring minimap watchdog (no-op if already running). */
+  private startMinimapWatchdog(): void {
+    if (this.minimapWatchdogTimer != null) return
+    console.log(`[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`)
+    this.minimapWatchdogTimer = setInterval(
+      () => this.minimapWatchdogTick(),
+      this.MINIMAP_WATCHDOG_INTERVAL_MS,
+    )
+  }
+
+  /** Stop the minimap watchdog (no-op if not running). */
+  private stopMinimapWatchdog(): void {
+    if (this.minimapWatchdogTimer == null) return
+    clearInterval(this.minimapWatchdogTimer)
+    this.minimapWatchdogTimer = null
   }
 
   // ── Permission + initial fix priming ─────────────────────────────────
@@ -1915,6 +2216,7 @@ export class NavigationController {
 
   private dispose(): void {
     this.cancelPendingRebuild()
+    this.stopMinimapWatchdog()
     if (this.minimapTrailingTimer != null) {
       clearTimeout(this.minimapTrailingTimer)
       this.minimapTrailingTimer = null
@@ -1977,6 +2279,9 @@ function arrowFor(maneuver: string | null | undefined, direction: "left" | "righ
  * (block length ≈ 80m). Set as a single static value because the SDK
  * has no runtime radius setter — same value used for enter and exit.
  */
+/** Valid travel modes for the start_navigation action (mirrors TravelMode). */
+const MODES = new Set<TravelMode>(["walking", "driving", "cycling", "two_wheeler"])
+
 const PIVOT_RADIUS_M_WALKING = 14
 
 // Distance at which the HUD's directional arrow flips from ↑

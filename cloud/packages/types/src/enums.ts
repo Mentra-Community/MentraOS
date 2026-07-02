@@ -36,6 +36,7 @@ export enum DeviceTypes {
   Z100 = "Vuzix Z100",
   NEX = "Mentra Display",
   FRAME = "Brilliant Frame",
+  NIMO = "NIMO",
 }
 
 export enum ControllerTypes {

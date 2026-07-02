@@ -918,6 +918,12 @@ export interface DevAppRecord {
    * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
    */
   sourcePackageName?: string
+  /**
+   * Short-lived Core-verifiable proof emitted by `mentra dev`. This lets the
+   * single `com.dev` slot request auto-auth for the real package without
+   * letting arbitrary dev URLs claim any package name.
+   */
+  devAttestation?: string
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
@@ -990,10 +996,12 @@ export const DEV_APP_NAME = "Dev"
  * is the single source of truth for the dev slot — callers must not write the
  * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
  *
- * Callers pass the manifest's REAL packageName/name; this function overwrites
- * both (packageName → {@link DEV_APP_PACKAGE_NAME}, name → {@link DEV_APP_NAME})
- * so the home tile and launch chain key on the single dev slot, while the real
- * package survives in `sourcePackageName` for clearDevArtifacts.
+ * Callers pass the manifest's REAL packageName/name. Only the packageName is
+ * forced to {@link DEV_APP_PACKAGE_NAME} so the home tile and launch chain key
+ * on the single dev slot (the real package survives in `sourcePackageName` for
+ * clearDevArtifacts). The name + icon are kept as-is so the home tile reflects
+ * the actual dev miniapp — marked as dev by the {@link DevMiniappBadge} dot
+ * rather than renamed to a generic "Dev" tile.
  */
 export function registerDevApp(record: DevAppRecord): void {
   const devRecord: DevAppRecord = {
@@ -1003,7 +1011,9 @@ export function registerDevApp(record: DevAppRecord): void {
     // actually targets the dev slot.
     sourcePackageName: record.sourcePackageName ?? record.packageName,
     packageName: DEV_APP_PACKAGE_NAME,
-    name: DEV_APP_NAME,
+    // Keep the manifest's real name + icon (display-only; routing keys on
+    // packageName). Fall back to DEV_APP_NAME only if a caller omitted the name.
+    name: record.name || DEV_APP_NAME,
     iconUrl: record.iconUrl,
   }
   storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
@@ -1056,6 +1066,17 @@ export function getDevAppSourcePackage(): string | null {
   try {
     const rec = JSON.parse(res.value) as DevAppRecord
     return rec.sourcePackageName ?? null
+  } catch {
+    return null
+  }
+}
+
+export function getDevAppAttestation(): string | null {
+  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    const rec = JSON.parse(res.value) as DevAppRecord
+    return rec.devAttestation ?? null
   } catch {
     return null
   }

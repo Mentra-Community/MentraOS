@@ -1,0 +1,36 @@
+version: v2
+name: merge-prod
+
+envGroups:
+  - merge-prod-doppler
+
+build:
+  method: docker
+  context: ./
+  dockerfile: ./miniapps/merge/docker/Dockerfile
+
+services:
+  - name: backend
+    type: web
+    run: bun backend/src/index.ts
+    port: 3130
+    instances: 1
+    cpuCores: 0.25
+    ramMegabytes: 512
+    domains:
+      - name: merge3.mentraglass.com
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    terminationGracePeriodSeconds: 10

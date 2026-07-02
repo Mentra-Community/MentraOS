@@ -105,7 +105,7 @@ function getClient(): SonioxNodeClient {
   const apiKey = process.env.SONIOX_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "SONIOX_API_KEY is not set — required to use the soniox provider. Set AUDIO_PROVIDER=mock to use the mock instead.",
+      "SONIOX_API_KEY is not set — required to use the soniox provider. Run Cloud V2 through Doppler with access to the cloud-v2/dev config.",
     );
   }
   sharedClient = new SonioxNodeClient({ api_key: apiKey });

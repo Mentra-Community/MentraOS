@@ -11,7 +11,7 @@ envGroups:
 # Single image, multiple services running different entry points.
 build:
   method: docker
-  context: ./
+  context: ../
   dockerfile: ./docker/Dockerfile
 
 services:

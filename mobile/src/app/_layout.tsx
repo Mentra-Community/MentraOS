@@ -6,6 +6,7 @@ import {useFonts} from "expo-font"
 import {useNavigationContainerRef} from "expo-router"
 import * as SplashScreen from "expo-splash-screen"
 import {useEffect, useState} from "react"
+import {Platform} from "react-native"
 
 import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"
@@ -25,9 +26,10 @@ useSettingsStore.getState().loadAllSettings()
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync()
+// Android: hard cut from the OS splash to the app (no fade). iOS keeps the fade.
 SplashScreen.setOptions({
-  duration: 1000,
-  fade: true,
+  duration: Platform.OS === "android" ? 0 : 1000,
+  fade: Platform.OS !== "android",
 })
 
 function Root() {

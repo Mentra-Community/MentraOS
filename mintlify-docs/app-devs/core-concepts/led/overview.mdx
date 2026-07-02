@@ -1,145 +1,76 @@
 ---
 title: "LED"
-description: "Control the RGB LED on connected glasses."
+description: "Drive the indicator LED on glasses that have one."
+icon: "lightbulb"
 ---
 
-The LED manager lets your app control the RGB LED on supported smart glasses. Use it for notification flashes, status indicators, or privacy signals during camera use.
+`session.led` controls the indicator LED on supported glasses. You give it a
+color and a blink pattern, and it tells the LED to turn on or off.
 
-Only some devices have LEDs. Check `session.capabilities?.hasLight` before calling any LED method.
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
 
-## Quick Example
-
-```typescript
-import { MiniAppServer, type MentraSession } from "@mentra/sdk";
-
-const app = new MiniAppServer({
-  packageName: "com.example.led-demo",
-  apiKey: process.env.API_KEY!,
-  port: 3000,
-});
-
-app.onSession((session: MentraSession) => {
-  // Green LED for 2 seconds
-  session.led.setColor("green", 2000);
-});
-
-await app.start();
-```
-
-## API
-
-### `session.led.setColor(color)`
-
-Turn on the LED with the given color. Uses a default duration of 1000ms.
-
-```typescript
-session.led.setColor("blue");
-```
-
-### `session.led.setColor(color, durationMs)`
-
-Turn on the LED for a specific duration in milliseconds.
-
-```typescript
-session.led.setColor("red", 3000);
-```
-
-### `session.led.setColor(color, options)`
-
-Blink the LED in a pattern. The options object accepts three fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `onTime` | `number` | Milliseconds the LED stays on per blink |
-| `offTime` | `number` | Milliseconds the LED stays off between blinks |
-| `count` | `number` | Number of times to blink |
-
-```typescript
-session.led.setColor("orange", { onTime: 400, offTime: 400, count: 3 });
-```
-
-### `session.led.off()`
-
-Turn off the LED immediately.
-
-```typescript
-session.led.off();
-```
-
-### Available Colors
-
-`"red"`, `"green"`, `"blue"`, `"orange"`, `"white"`
-
-## Common Patterns
-
-### Notification Flash
-
-A quick double-blink to signal an event without being too distracting.
-
-```typescript
-app.onSession((session: MentraSession) => {
-  session.led.setColor("blue", { onTime: 200, offTime: 200, count: 2 });
+registerMiniapp((session) => {
+  session.transcription.on(async () => {
+    // Blink green twice when speech comes in.
+    await session.led.blink("green", 200, 200, 2);
+  });
 });
 ```
 
-### Status Indicator
+The LED needs glasses with a `LIGHT` hardware capability. Declare it in your
+[manifest](/app-devs/core-concepts/miniapp-manifest) so the miniapp only installs
+on glasses that have an LED. There's no runtime permission to request.
 
-Hold a solid color while a long-running task is in progress, then turn it off.
-
-```typescript
-app.onSession(async (session: MentraSession) => {
-  session.led.setColor("orange", 30000);
-
-  await doSomeWork();
-
-  session.led.off();
-});
-```
-
-### Error Signal
-
-Three red blinks to indicate something went wrong.
+## Methods
 
 ```typescript
-session.led.setColor("red", { onTime: 300, offTime: 300, count: 3 });
+// Turn the LED on with an explicit pattern.
+await session.led.turnOn({ color: "blue", ontime: 500, offtime: 500, count: 3 });
+
+// Blink: color, on-ms, off-ms, repeat count.
+await session.led.blink("red", 200, 200, 4);
+
+// Solid: hold one color for a duration in ms.
+await session.led.solid("white", 2000);
+
+// Off.
+await session.led.turnOff();
 ```
 
-### Privacy Indicator
+| Method | Signature | What it does |
+|---|---|---|
+| `turnOn` | `turnOn(options?: LedControlOptions)` | Turns the LED on with the given color and pattern. |
+| `turnOff` | `turnOff()` | Turns all LEDs off. |
+| `blink` | `blink(color, ontime, offtime, count)` | Repeats an on/off cycle `count` times. Wraps `turnOn`. |
+| `solid` | `solid(color, duration)` | Holds one color for `duration` ms (one cycle, no off time). Wraps `turnOn`. |
 
-Use the LED as a visible status indicator for long-running work.
+`LedControlOptions` is the shape `turnOn` accepts:
 
-```typescript
-app.onSession(async (session: MentraSession) => {
-  session.led.setColor("white", 60000);
-  await doLongRunningWork();
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `color` | `LedColor` | `"red"` | Which color to light. |
+| `ontime` | `number` | `1000` | On duration per cycle, in ms. |
+| `offtime` | `number` | `0` | Off duration per cycle, in ms. |
+| `count` | `number` | `1` | How many on/off cycles to run. |
 
-  // Later, when work is complete
-  session.led.off();
-});
-```
+## Colors
 
-### Capability Check with Fallback
+`LedColor` is a fixed set of names. The phone maps each name to the per-device LED
+index, so the same name can light different physical LEDs across glasses.
 
-Not every device has an LED. Check before calling, and fall back to another feedback method if needed.
+| Value |
+|---|
+| `"red"` |
+| `"green"` |
+| `"blue"` |
+| `"orange"` |
+| `"white"` |
 
-```typescript
-app.onSession((session: MentraSession) => {
-  if (session.capabilities?.hasLight) {
-    session.led.setColor("green", 1000);
-  } else {
-    session.logger.info("No LED available on this device");
-  }
-});
-```
-
-## Device Compatibility
-
-| Device | LED Support | Colors |
-|--------|-------------|--------|
-| Mentra Live | Yes | All (red, green, blue, orange, white) |
-| Even Realities G1 | No | N/A |
-| Vuzix Z100 | No | N/A |
-
-<Info>
-LED commands resolve after the connected glasses acknowledge the RGB command. If the device does not support RGB LEDs or rejects the command, the promise rejects so your app can fall back to a display or audio cue.
-</Info>
+<Note>
+Every method returns a `Promise` that resolves once the command is dispatched to
+the glasses, not when the blink pattern finishes playing. A `blink("red", 200,
+200, 4)` call resolves right after the command goes out, well before the LED has
+run all four cycles. Don't `await` the call as a way to wait for the LED to go
+dark; if you need timing, track it yourself.
+</Note>

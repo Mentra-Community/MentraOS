@@ -115,8 +115,23 @@ validates the public Maven artifact dependency shape.
 
 ## Naming Conventions
 
-- User-facing names: CamelCase ("MentraOS App", "MentraOS Store", "MentraOS Manager")
 - Code follows language-specific conventions (Java, TypeScript, Swift)
+
+### Product & terminology (user-facing copy, docs, marketing)
+
+- **`miniapp`** is always one word, lowercase, in running text.
+- **Products take a capital `M`**: "Mentra Miniapp SDK", "Mentra Miniapp Store".
+  When you write "miniapp SDK" capitalize it as "**Miniapp SDK**"; the full
+  product name is "**Mentra Miniapp SDK**" (not "MentraOS miniapp SDK").
+- The **iOS/Android mobile app** is the "**Mentra App**" (not "MentraOS app",
+  not "Mentra app").
+- **Miniapps in general** (apps that run on the Mentra platform) are "**Mentra
+  miniapp**" / "**Mentra miniapps**" (not "MentraOS apps").
+- The store is the "**Mentra Miniapp Store**".
+- "**MentraOS**" stays as-is when it names the operating system / platform /
+  repo (e.g. "MentraOS is the operating system for smart glasses"). Don't swap
+  it for "Mentra" in those cases.
+- The package identifier `@mentra/miniapp` is code; leave it in code formatting.
 
 ## Testing Guidelines
 

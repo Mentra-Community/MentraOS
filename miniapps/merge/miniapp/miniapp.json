@@ -1,8 +1,8 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.local-merge",
-  "version": "0.1.24",
-  "name": "New Merge",
+  "version": "0.1.25",
+  "name": "Local Merge",
   "description": "Local Merge proactive AI assistant. Listens to conversations and surfaces concise contextual insights through a backend that keeps AI secrets off-device.",
   "type": "background",
   "sdkVersion": "0.3.0",
@@ -23,6 +23,16 @@
       "type": "MICROPHONE",
       "level": "REQUIRED",
       "description": "Captures speech for transcription"
+    },
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows insights on the glasses display when one is available"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Speaks insights aloud on glasses without a display (e.g. Mentra Live)"
     }
   ],
   "icon": "icon.png"

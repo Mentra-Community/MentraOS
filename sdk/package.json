@@ -1,7 +1,9 @@
 {
   "private": true,
   "workspaces": [
-    "*",
+    "create-mentra-miniapp",
+    "example-oem-app",
+    "miniapp-cli",
     "../cloud-v2/packages/*",
     "../mobile/modules/miniapp",
     "../mobile/modules/island",

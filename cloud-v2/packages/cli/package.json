@@ -1,0 +1,30 @@
+{
+  "name": "@mentra/cli",
+  "version": "2.0.0-dev.0",
+  "description": "Mentra developer CLI — build, publish, and manage Mentra miniapps (Cloud V2). Bun-only.",
+  "type": "module",
+  "bin": {
+    "mentra": "./src/index.ts"
+  },
+  "files": ["src"],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
+  "scripts": {
+    "dev": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
+    "commander": "^14.0.2",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/qrcode": "^1.5.5"
+  }
+}

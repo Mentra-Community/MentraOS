@@ -1,214 +1,130 @@
 ---
 title: "Phone"
-description: "Phone notifications and calendar events from the companion app."
+description: "Phone notifications, calendar events, and phone battery."
+icon: "mobile"
 ---
 
-Use `session.phone` to receive phone notifications and calendar events from the user's companion app. It exposes two sub-managers: `session.phone.notifications` and `session.phone.calendar`.
+`session.phone` reports state from the user's phone: notifications as they post,
+calendar events, and the phone's own battery. Each concern is its own sub-module.
+Register a handler and the events start arriving.
 
-## Quick Example
-
-```typescript
-import { MiniAppServer, type MentraSession } from "@mentra/sdk";
-
-const app = new MiniAppServer({
-  packageName: "com.example.phone-reader",
-  apiKey: process.env.API_KEY!,
-  port: 3000,
+```typescript src/background/index.ts
+session.phone.notifications.on((data) => {
+  session.display.showTextWall(`${data.app}: ${data.title}`);
 });
-
-app.onSession((session: MentraSession) => {
-  session.phone.notifications.on((notification) => {
-    session.display.showTextWall(`${notification.app}: ${notification.title}`);
-  });
-
-  session.phone.calendar.on((event) => {
-    session.display.showTextWall(`Upcoming: ${event.title}`);
-  });
-});
-
-await app.start();
 ```
+
+Notifications need the `READ_NOTIFICATIONS` permission and calendar events need
+the `CALENDAR` permission, both declared in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). Phone battery needs no
+permission.
 
 ## Notifications
 
-### Listening for notifications
-
-Subscribe to incoming phone notifications with `session.phone.notifications.on()`. The handler fires each time a new notification arrives on the user's phone.
+`session.phone.notifications.on()` fires when a notification posts on the phone.
 
 ```typescript
-app.onSession((session: MentraSession) => {
-  const cleanup = session.phone.notifications.on((notification) => {
-    session.logger.info("Notification from:", notification.app);
-    session.display.showTextWall(`${notification.title}\n${notification.content}`);
-  });
-
-  // Stop listening when done
-  session.onStopped(() => {
-    cleanup();
-  });
+session.phone.notifications.on((data) => {
+  // data: PhoneNotificationData
 });
 ```
 
-The callback receives a notification object with these fields:
+Each event is a `PhoneNotificationData`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `app` | `string` | Name of the app that sent the notification |
-| `title` | `string` | Notification title |
-| `content` | `string` | Notification body text |
+| Field | Type | Notes |
+|---|---|---|
+| `notificationId` | `string` | Stable id from the phone's notification listener. |
+| `app` | `string` | Human app name (e.g. `"Messages"`). |
+| `title` | `string` | The notification title. |
+| `content` | `string` | The notification body. |
+| `priority` | `string` | Android priority string; empty on iOS. |
+| `timestamp` | `number` | Unix ms timestamp. |
+| `packageName` | `string` | Reverse-DNS package/bundle id of the originating app. |
 
-### Listening for dismissed notifications
+### Dismissals
 
-Subscribe to notifications the user dismisses on their phone:
+`session.phone.notifications.onDismissed()` fires when the user swipes away or
+clears a notification.
 
 ```typescript
-const cleanup = session.phone.notifications.onDismissed((notification) => {
-  session.logger.info("Dismissed:", notification.title);
+session.phone.notifications.onDismissed((data) => {
+  // data: NotificationDismissedData
 });
 ```
 
-### Permission check
+Each event is a `NotificationDismissedData`:
 
-Reading notifications requires the **READ_NOTIFICATIONS** permission. You can check at runtime:
+| Field | Type | Notes |
+|---|---|---|
+| `notificationId` | `string` | Same id as the matching post event from `notifications.on(...)`. |
+| `notificationKey` | `string?` | Android NotificationKey. More stable than `notificationId` across reposts. |
+| `packageName` | `string?` | Reverse-DNS package/bundle id of the originating app. |
+| `timestamp` | `number` | Unix ms timestamp of the dismissal. |
 
-```typescript
-if (session.phone.notifications.hasPermission) {
-  session.phone.notifications.on((notification) => {
-    session.display.showTextWall(notification.title);
-  });
-} else {
-  session.logger.warn("No notification permission");
-}
-```
+<Note>
+`onDismissed` is **Android only**. iOS does not expose dismiss callbacks to apps
+(an Apple privacy restriction), so subscribing on iOS succeeds but no events ever
+fire. The matching `notifications.on()` post-event works on both platforms.
+</Note>
 
 ## Calendar
 
-### Listening for calendar events
-
-Subscribe to calendar events from the user's phone:
+`session.phone.calendar.on()` fires for calendar events from the phone.
 
 ```typescript
-app.onSession((session: MentraSession) => {
-  const cleanup = session.phone.calendar.on((event) => {
-    session.display.showTextWall(`${event.title} at ${event.dtStart}`);
-  });
-
-  session.onStopped(() => {
-    cleanup();
-  });
+session.phone.calendar.on((data) => {
+  // data: CalendarEventData
 });
 ```
 
-### Permission check
+Each event is a `CalendarEventData`:
 
-Calendar events require the **CALENDAR** permission:
+| Field | Type | Notes |
+|---|---|---|
+| `eventId` | `string` | The calendar event id. |
+| `title` | `string` | The event title. |
+| `dtStart` | `string` | ISO 8601 start time. |
+| `dtEnd` | `string` | ISO 8601 end time. |
+| `timezone` | `string` | The event's timezone. |
+| `allDay` | `boolean` | Whether it's an all-day event. |
+| `location` | `string` | The event location. |
+| `notes` | `string` | The event notes. |
+| `calendarId` | `string` | Id of the calendar the event belongs to. |
 
-```typescript
-if (session.phone.calendar.hasPermission) {
-  session.phone.calendar.on((event) => {
-    session.display.showTextWall(event.title);
-  });
-} else {
-  session.logger.warn("No calendar permission");
-}
-```
+## Phone battery
 
-## API Reference
-
-### phone.notifications
-
-| Member | Type | Description |
-|--------|------|-------------|
-| `on(handler)` | `(handler: (data) => void) => () => void` | Subscribe to incoming notifications. Returns a cleanup function. |
-| `onDismissed(handler)` | `(handler: (data) => void) => () => void` | Subscribe to dismissed notifications. Returns a cleanup function. |
-| `hasPermission` | `boolean` | Whether the app has READ_NOTIFICATIONS permission. |
-
-### phone.calendar
-
-| Member | Type | Description |
-|--------|------|-------------|
-| `on(handler)` | `(handler: (data) => void) => () => void` | Subscribe to calendar events. Returns a cleanup function. |
-| `hasPermission` | `boolean` | Whether the app has CALENDAR permission. |
-
-## Common Patterns
-
-### Filter notifications by app
+`session.phone.onBattery()` reports the phone's battery. It stays flat (not
+sub-namespaced) because it's a single event.
 
 ```typescript
-app.onSession((session: MentraSession) => {
-  session.phone.notifications.on((notification) => {
-    // Only show Slack notifications
-    if (notification.app.toLowerCase().includes("slack")) {
-      session.display.showTextWall(`Slack: ${notification.title}\n${notification.content}`);
-    }
-  });
+session.phone.onBattery((data) => {
+  // data: BatteryData
 });
 ```
 
-### Show upcoming calendar events on session start
+Each event is a `BatteryData`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `level` | `number` | Battery level. |
+| `charging` | `boolean` | Whether the phone is charging. |
+
+## Cleaning up
+
+Every subscription returns an unsubscribe function. The `notifications` and
+`calendar` sub-modules each also have a `stop()` that tears down every
+subscription that sub-module owns at once.
 
 ```typescript
-app.onSession((session: MentraSession) => {
-  if (!session.phone.calendar.hasPermission) {
-    session.display.showTextWall("Calendar permission required.");
-    return;
-  }
+const off = session.phone.notifications.on(handler);
+off();                              // drop this one
 
-  session.phone.calendar.on((event) => {
-    session.display.showTextWall(`Next: ${event.title}`);
-  });
-});
+session.phone.notifications.stop(); // drop all notification subscriptions
+session.phone.calendar.stop();      // drop all calendar subscriptions
 ```
 
-### Combine notifications and transcription
-
-```typescript
-app.onSession((session: MentraSession) => {
-  // Show notifications briefly
-  session.phone.notifications.on((notification) => {
-    session.display.showTextWall(`[${notification.app}] ${notification.title}`);
-  });
-
-  // Default to showing transcription
-  session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
-  });
-});
-```
-
-### Guard both permissions at once
-
-```typescript
-app.onSession((session: MentraSession) => {
-  const hasNotifs = session.phone.notifications.hasPermission;
-  const hasCal = session.phone.calendar.hasPermission;
-
-  if (hasNotifs) {
-    session.phone.notifications.on((notification) => {
-      session.display.showTextWall(notification.title);
-    });
-  }
-
-  if (hasCal) {
-    session.phone.calendar.on((event) => {
-      session.display.showTextWall(event.title);
-    });
-  }
-
-  if (!hasNotifs && !hasCal) {
-    session.display.showTextWall("No phone permissions granted.");
-  }
-});
-```
-
-## Permissions
-
-Your app must declare the appropriate permissions in the [Developer Console](https://console.mentra.glass/apps):
-
-| Feature | Required Permission |
-|---------|-------------------|
-| `phone.notifications.on()` | READ_NOTIFICATIONS |
-| `phone.notifications.onDismissed()` | READ_NOTIFICATIONS |
-| `phone.calendar.on()` | CALENDAR |
-
-Without the required permission, `hasPermission` returns `false` and event handlers will not fire. See [Permissions](/app-devs/core-concepts/permissions) for details on declaring and managing permissions.
+`session.phone.notifications.hasPermission` tells you whether `READ_NOTIFICATIONS`
+is declared in your manifest, and `session.phone.calendar.hasPermission` tells you
+whether `CALENDAR` is declared. Neither tells you whether the user granted the OS
+prompt: if they denied it, your handler simply never fires. See
+[Permissions](/app-devs/core-concepts/permissions).

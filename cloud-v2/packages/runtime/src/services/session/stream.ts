@@ -276,7 +276,7 @@ export const SESSION_TAG_REFRESH_INTERVAL_MS = 20_000;
 
 export interface SessionTagRecord {
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   audioSessionId: string;
   authSessionId: string;
   /** Which pod's WebSocket owns this session. Used by dispatch later. */

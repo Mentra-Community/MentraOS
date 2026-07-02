@@ -1,6 +1,13 @@
 package com.mentra.bluetoothsdk
 
 import org.json.JSONObject
+import java.util.UUID
+
+internal fun generatedCameraRequestId(prefix: String): String =
+    "$prefix-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
+
+internal fun nonBlankRequestId(requestId: String?): String? =
+    requestId?.trim()?.takeIf { it.isNotEmpty() }
 
 enum class PhotoSize(val value: String) {
     LOW("low"),
@@ -161,8 +168,7 @@ data class CameraFovResult(
 }
 
 data class PhotoRequest @JvmOverloads constructor(
-    val requestId: String,
-    val appId: String,
+    val requestId: String = generatedCameraRequestId("photo"),
     val size: PhotoSize,
     val webhookUrl: String,
     val authToken: String? = null,
@@ -211,8 +217,8 @@ data class PhotoRequest @JvmOverloads constructor(
             val ispAnalogGain = stringValue(values, "ispAnalogGain")
 
             return PhotoRequest(
-                requestId = stringValue(values, "requestId", "request_id").orEmpty(),
-                appId = stringValue(values, "appId", "app_id").orEmpty(),
+                requestId = nonBlankRequestId(stringValue(values, "requestId", "request_id"))
+                    ?: generatedCameraRequestId("photo"),
                 size = PhotoSize.fromValue(stringValue(values, "size") ?: "medium"),
                 webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
@@ -436,6 +442,16 @@ data class PhotoStatusEvent(
     val requestedCaptureConfig: Map<String, Any>? get() = stringMapValue(values["requestedCaptureConfig"])
     val meteredPreview: Map<String, Any>? get() = stringMapValue(values["meteredPreview"])
     val captureMetadata: Map<String, Any>? get() = stringMapValue(values["captureMetadata"])
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+}
+
+data class CameraStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val state: String get() = stringValue(values, "state").orEmpty()
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
     val errorCode: String? get() = stringValue(values, "errorCode")
     val errorMessage: String? get() = stringValue(values, "errorMessage")
 }

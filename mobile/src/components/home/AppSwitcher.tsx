@@ -598,10 +598,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       useAppStatusStore.getState().stop(packageName)
       // }, 100)
 
-      // auto-close if there are no more apps left:
-      if (apps.length === 1) {
-        handleClose()
-      }
+      // Auto-close is handled by the drained-list effect (near handleClose)
+      // rather than a guard here: `stop()` updates the store async, and rapid
+      // multi-swipes fire several dismiss callbacks that all close over the
+      // same stale `apps.length`, so an `apps.length === 1` check here never
+      // matches and the switcher gets stuck open on an empty (blurred) screen.
     },
     [apps.length, translateX.value, apps],
   )
@@ -689,6 +690,15 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       // goToIndex(apps.length - 1, true)
     }, 250)
   }, [apps.length])
+
+  // Edge-triggered close when the open switcher's app list has actually drained
+  // to empty. Driven off the real rendered `apps` list (the source of truth),
+  // so it fires exactly once no matter how many cards were flung at once.
+  useEffect(() => {
+    if (isOpen && apps.length === 0) {
+      handleClose()
+    }
+  }, [isOpen, apps.length, handleClose])
 
   // Android: the hardware/native back gesture should dismiss the switcher. It's an
   // overlay (not a route), so navigation never sees it — register a BackHandler

@@ -15,8 +15,6 @@ Photo upload sends a JPEG from supported glasses to a webhook URL. In the starte
 
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
-  requestId: `photo-${Date.now()}`,
-  appId: 'com.example.app',
   size: 'medium',
   webhookUrl: 'https://api.example.com/mentra/photo',
   authToken: 'optional-token',
@@ -34,8 +32,6 @@ console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl);
 ```kotlin
 val photo = sdk.requestPhoto(
     PhotoRequest(
-        requestId = "photo-${System.currentTimeMillis()}",
-        appId = "com.example.app",
         size = PhotoSize.MEDIUM,
         webhookUrl = "https://api.example.com/mentra/photo",
         authToken = "optional-token",
@@ -54,8 +50,6 @@ println("photo delivered: ${photo.requestId}")
 ```swift
 let photo = try await sdk.requestPhoto(
     PhotoRequest(
-        requestId: "photo-\(Date().timeIntervalSince1970)",
-        appId: "com.example.app",
         size: .medium,
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
@@ -73,7 +67,7 @@ print("photo delivered: \(photo.requestId)")
 
 `requestPhoto(...)` resolves when the full photo action reaches terminal success: capture completed and the JPEG was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. It rejects or throws when the glasses report a terminal `photo_response` error, when phone-side fallback upload fails, when the SDK cannot send the command, or when no terminal response arrives before the command timeout. Use `photo_status` for intermediate progress such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_response` is the final success/error result. The returned success includes `uploadUrl`, and may include webhook-returned metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`.
 
-The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The capture light is always enabled for photo, video, and stream capture as a privacy indicator.
+The webhook should accept multipart form data with a `photo` file and `requestId`. The SDK generates a unique photo `requestId` when you omit one; pass your own only when your app needs to know it before the terminal response, such as when polling a predictable `/uploads/<requestId>.json` endpoint. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The capture light is always enabled for photo, video, and stream capture as a privacy indicator.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
@@ -83,8 +77,7 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 
 | Parameter | Applies to | Behavior |
 | --- | --- | --- |
-| `requestId` | React Native, Android, iOS | Required caller-generated ID used to correlate status and final response events. |
-| `appId` | React Native, Android, iOS | Required app/package identifier for the request. |
+| `requestId` | React Native, Android, iOS | Optional ID used to correlate status and final response events. The SDK generates one when omitted or blank. |
 | `size` | React Native, Android, iOS | JPEG size tier: `low`, `medium`, `high`, or `max`. |
 | `webhookUrl` | React Native, Android, iOS | Upload URL that receives the multipart `photo` file and `requestId`. |
 | `authToken` | React Native, Android, iOS | Optional bearer token for the upload request. Omit it or pass `null` / `nil` to send no `Authorization` header. |
@@ -130,6 +123,54 @@ useBluetoothEvent('photo_status', (event) => {
 | `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
 
 Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
+
+## Camera Warm-Up
+
+Use `warmUpCamera(...)` when your UI is about to offer photo capture and you want the next same-configuration `requestPhoto(...)` to skip most of the camera open/configure latency. A warm-up opens and configures the Mentra Live camera with the same size and optional manual exposure path as a photo request, starts preview/AE settling, and holds that session warm for a short TTL without taking a photo or uploading media. Because warm-up does not capture or transmit media, it does not pulse the capture light; photo, video, and stream capture still enable the light as the privacy indicator.
+
+In foreground camera UI, call warm-up when the screen or tab becomes active, then refresh it before the TTL expires. The starter apps use a `30_000ms` warm-up and refresh about every `20_000ms` while the Camera tab is foreground.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.warmUpCamera({
+  size: 'medium',
+  exposureTimeNs: null,
+  durationMs: 30_000,
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.warmUpCamera(
+    size = PhotoSize.MEDIUM,
+    exposureTimeNs = null,
+    durationMs = 30_000,
+)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.warmUpCamera(
+    size: .medium,
+    exposureTimeNs: nil,
+    durationMs: 30_000
+)
+```
+
+  </Tab>
+</Tabs>
+
+`warmUpCamera(...)` returns the matching `camera_status` `ready` event. It throws or rejects when the glasses send `camera_status` `error`, when the command cannot be sent, or when the response times out. Listen for `camera_status` if you want progress events: `warming` means the warm-up was accepted, `ready` means the camera is open/configured for reuse, `stopped` means the warm lease expired or the camera closed, and `error` includes `errorCode` / `errorMessage` when available.
+
+The `stopped` event is not a promise settlement; it is the lifecycle end for a warm lease that already reached `ready`. If multiple callers warmed or refreshed the same camera session and received `ready`, each request ID receives its own `stopped` event when that lease expires or the camera service tears down. If the camera service tears down before a warm-up reaches `ready`, the pending warm-up rejects with `error` instead.
+
+Warm-up reuse is configuration-sensitive: the next photo should use the same `size` and `exposureTimeNs` value. A different size or manual-exposure setting may force the camera to reconfigure. If video recording or streaming already owns the camera, warm-up reports `ready` immediately because the camera is already active. If a photo capture, Bluetooth transfer, camera restart, or another warm-up is in flight, the glasses may report a retryable `camera_busy`, `photo_capture_in_progress`, `ble_transfer_in_progress`, or `camera_restart_cooldown` error; retry on the next foreground refresh rather than blocking capture UI. If a `requestPhoto(...)` arrives while warm-up is opening the session, the glasses finish parking the warm session first, then dispatch the queued photo on that same warm camera configuration.
 
 ## Video Recording
 
@@ -381,8 +422,6 @@ const uploadSubscription = MentraPhotoReceiver.addListener('photoUpload', (event
 
 try {
   const photo = await BluetoothSdk.requestPhoto({
-    requestId: `photo-${Date.now()}`,
-    appId: 'com.example.app',
     size: 'medium',
     webhookUrl: receiver.uploadUrl,
     authToken: null,

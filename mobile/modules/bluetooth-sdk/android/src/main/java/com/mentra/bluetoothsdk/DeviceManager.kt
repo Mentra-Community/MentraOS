@@ -19,6 +19,7 @@ import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
+import com.mentra.bluetoothsdk.sgcs.Nimo
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -270,32 +271,9 @@ class DeviceManager {
         // setupPermissionMonitoring()
         setupBluetoothStateMonitoring()
         phoneMic = PhoneMic.getInstance()
-        // Initialize local STT transcriber
-        try {
-            val context = Bridge.getContext()
-            transcriber = SherpaOnnxTranscriber(context)
-            transcriber?.setTranscriptListener(
-                object : SherpaOnnxTranscriber.TranscriptListener {
-                    override fun onPartialResult(text: String, language: String) {
-                        Bridge.log("STT: Partial result: $text")
-                        Bridge.sendLocalTranscription(text, false, language)
-                    }
-
-                    override fun onFinalResult(text: String, language: String) {
-                        Bridge.log("STT: Final result: $text")
-                        Bridge.sendLocalTranscription(text, true, language)
-                    }
-                }
-            )
-            transcriber?.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
-        } catch (e: Exception) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-        } catch (e: LinkageError) {
-            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
-            transcriber = null
-        }
+        // Sherpa is intentionally lazy. Initializing it during app startup
+        // competes with Cloud V2 captions even when cloud transcription is
+        // healthy; start it only when offline/local transcription is requested.
 
         // Initialize LC3 encoder/decoder for unified audio encoding
         try {
@@ -712,6 +690,15 @@ class DeviceManager {
     }
 
     /**
+     * Marks glasses-mic audio as alive for the 10s reinit watchdog. SGCs that decode
+     * audio themselves and feed [handlePcm] directly (e.g. Nimo's Opus path) must call
+     * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
+     */
+    fun reportGlassesAudioActivity() {
+        lastLc3Event = System.currentTimeMillis()
+    }
+
+    /**
      * Handle raw LC3 audio data from glasses. Decodes the glasses LC3, then passes to handlePcm for
      * canonical LC3 encoding. Note: frameSize here is for glasses→phone decoding, NOT for
      * phone→cloud encoding.
@@ -754,7 +741,9 @@ class DeviceManager {
         // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
         if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
-            transcriber?.acceptAudio(pcmData)
+            if (ensureTranscriberInitialized()) {
+                transcriber?.acceptAudio(pcmData)
+            }
         }
     }
 
@@ -1131,6 +1120,8 @@ class DeviceManager {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
+        } else if (wearable.contains(DeviceTypes.NIMO)) {
+            sgc = Nimo()
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
@@ -1171,7 +1162,49 @@ class DeviceManager {
 
     fun restartTranscriber() {
         Bridge.log("MAN: Restarting transcriber via command")
-        transcriber?.restart()
+        if (ensureTranscriberInitialized()) {
+            transcriber?.restart()
+        }
+    }
+
+    private fun ensureTranscriberInitialized(): Boolean {
+        if (transcriber != null) return true
+
+        return try {
+            val context = Bridge.getContext()
+            val nextTranscriber = SherpaOnnxTranscriber(context)
+            nextTranscriber.setTranscriptListener(
+                object : SherpaOnnxTranscriber.TranscriptListener {
+                    override fun onPartialResult(text: String, language: String) {
+                        Bridge.log("STT: Partial result: $text")
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, false, language)
+                    }
+
+                    override fun onFinalResult(text: String, language: String) {
+                        Bridge.log("STT: Final result: $text")
+                        // The Sherpa model emits all-caps text; lowercase English
+                        // output to match the rest of the pipeline (parity with iOS).
+                        val formatted = if (language == "en-US") text.lowercase() else text
+                        Bridge.sendLocalTranscription(formatted, true, language)
+                    }
+                }
+            )
+            nextTranscriber.initialize()
+            transcriber = nextTranscriber
+            Bridge.log("SherpaOnnxTranscriber fully initialized")
+            true
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
+            false
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
+            false
+        }
     }
 
     // MARK: - connection state management
@@ -1518,6 +1551,23 @@ class DeviceManager {
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
     }
 
+    fun warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        // Fail fast like other camera commands so the SDK promise rejects immediately instead of
+        // hanging until the request timeout with no camera_status.
+        val live =
+            sgc as? MentraLive
+                ?: throw BluetoothSdkException(
+                    "unsupported_device",
+                    "This command requires Mentra Live glasses.",
+                )
+        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+    }
+
     /**
      * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
@@ -1647,7 +1697,7 @@ class DeviceManager {
                 iso = manualIso,
             )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {

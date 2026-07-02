@@ -7,6 +7,7 @@ import {ScriptView} from "./components/ScriptView"
 import {SettingsView} from "./components/SettingsView"
 import {useDeveloperMode} from "./hooks/useDeveloperMode"
 import {useTeleprompter} from "./hooks/useTeleprompter"
+import {HEADER_FROM, HEADER_TO} from "./lib/theme"
 
 /**
  * App — the WebView root for the teleprompter miniapp.
@@ -25,7 +26,7 @@ export function App() {
     <div
       className="w-screen h-screen flex overflow-hidden font-sans"
       style={{
-        backgroundColor: "#15803D",
+        backgroundImage: `linear-gradient(90deg, ${HEADER_FROM}, ${HEADER_TO})`,
         paddingTop: insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
@@ -45,7 +46,6 @@ export function App() {
               onSetWpm={tp.setWpm}
               onSetLines={tp.setLines}
               onSetWidth={tp.setWidth}
-              onSetVoiceFollow={tp.setVoiceFollow}
               onSetAutoRestart={tp.setAutoRestart}
               onSetShowTimecode={tp.setShowTimecode}
             />
@@ -59,6 +59,7 @@ export function App() {
               onRestart={tp.restart}
               onSeek={tp.seek}
               onNudge={tp.nudge}
+              onSetVoiceFollow={tp.setVoiceFollow}
             />
           )}
         </div>

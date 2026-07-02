@@ -23,6 +23,7 @@ enum class DeviceModel(val deviceType: String) {
     MACH1(DeviceTypes.MACH1),
     Z100(DeviceTypes.Z100),
     FRAME(DeviceTypes.FRAME),
+    NIMO(DeviceTypes.NIMO),
     SIMULATED(DeviceTypes.SIMULATED),
     R1(ControllerTypes.R1);
 
