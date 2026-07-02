@@ -4292,13 +4292,10 @@ public class MediaCaptureService {
                         requestId, status, "requestedCaptureConfig", requestedCaptureConfig);
             }
             if (meteredPreview != null) {
-                logFullPhotoStatusMetadata(requestId, status, "meteredPreview", meteredPreview);
+                json.put("meteredPreview", meteredPreview);
             }
             if (captureMetadata != null) {
                 logFullPhotoStatusMetadata(requestId, status, "captureMetadata", captureMetadata);
-            }
-            if (meteredPreview != null) {
-                json.put("meteredPreview", meteredPreview);
             }
             if (errorCode != null && !errorCode.isEmpty()) {
                 json.put("errorCode", errorCode);
