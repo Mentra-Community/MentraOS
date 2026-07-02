@@ -45,7 +45,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 }
 
-export function createS3StorageProvider(): S3StorageProvider {
+export function createS3StorageProvider(provider: "r2" | "s3" = "r2"): S3StorageProvider {
   const endpoint = env(
     "CLOUD_STORAGE_S3_ENDPOINT",
     "CLOUD_CORE_STORAGE_S3_ENDPOINT",
@@ -70,8 +70,20 @@ export function createS3StorageProvider(): S3StorageProvider {
     "CLOUD_CORE_R2_SECRET_ACCESS_KEY",
     "R2_SECRET_ACCESS_KEY",
   );
-  const region =
-    env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION") ?? "auto";
+  // R2 accepts the sentinel "auto" region, but real AWS S3 requires a valid
+  // region name, so fall back to a standard AWS region when one is not set.
+  // For provider "s3" the R2-only region vars are intentionally ignored: an
+  // R2_REGION=auto would otherwise sign AWS requests with an invalid region.
+  const defaultRegion = provider === "s3" ? "us-east-1" : "auto";
+  const resolvedRegion =
+    (provider === "s3"
+      ? env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION")
+      : env("CLOUD_STORAGE_S3_REGION", "CLOUD_CORE_STORAGE_S3_REGION", "CLOUD_CORE_R2_REGION", "R2_REGION")) ??
+    defaultRegion;
+  // "auto" is an R2-only sentinel and is invalid for real AWS S3 signing; never
+  // let it through for provider "s3", even if it was set explicitly in a generic
+  // S3 region var.
+  const region = provider === "s3" && resolvedRegion === "auto" ? "us-east-1" : resolvedRegion;
 
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     throw new Error(

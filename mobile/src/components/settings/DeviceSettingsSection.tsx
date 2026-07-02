@@ -121,8 +121,10 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* Dashboard — glasses with a display only */}
-      {defaultWearable && features?.hasDisplay && (
+      {/* Dashboard — glasses with a MentraOS-managed display dashboard only.
+          Devices with a native firmware dashboard (e.g. G2) manage it on-device,
+          so our dashboard settings don't apply. */}
+      {defaultWearable && features?.hasDisplay && !features?.hasNativeDashboard && (
         <RouteButton
           icon={<Icon name="layout-dashboard" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:dashboardSettings")}

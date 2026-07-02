@@ -150,14 +150,14 @@
     },
     "../cloud-v2/packages/auth": {
       "name": "@mentra/auth",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "jose": "^5.9.6",
       },
     },
     "../cloud-v2/packages/cli": {
       "name": "@mentra/cli",
-      "version": "2.0.0-alpha.0",
+      "version": "2.0.0-dev.0",
       "bin": {
         "mentra": "./src/index.ts",
       },
@@ -230,7 +230,7 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "0.1.14",
+      "version": "0.1.17",
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
       },
@@ -319,7 +319,7 @@
     },
     "modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "0.3.0",
+      "version": "0.3.0-dev.0",
       "dependencies": {
         "@mentra/types": "1.0.0-beta.2",
         "eventemitter3": "^5.0.1",

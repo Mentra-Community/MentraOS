@@ -81,6 +81,9 @@ import {DEV_APP_PACKAGE_NAME, getDevAppSourcePackage} from "./AppRegistry"
 // =============================================================================
 
 export interface InstalledMiniappManifest {
+  /** Human-facing app name (from miniapp.json `name`). Shown in the "Starting
+   * <name>…" boot message; falls back to the package name when absent. */
+  name?: string
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
 }
@@ -95,6 +98,18 @@ interface ConnectedMiniapp {
   bgcapLastPingSentAt?: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
+  /**
+   * Backoff timer for re-attempting the INITIAL miniapp-token mint after it
+   * failed (distinct from `authRefreshTimerId`, which renews an already-issued
+   * token near expiry). Null when no retry is queued.
+   */
+  authRetryTimerId: number | null
+  /**
+   * True once this app has received a miniapp auth token (in CONNECT_ACK or a
+   * follow-up AUTH_UPDATE). Gates the initial-mint retry loop and the
+   * on-reconnect re-drive so we stop hammering once auth has landed.
+   */
+  authDelivered: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /**
@@ -158,6 +173,13 @@ const SYSTEM_MINIAPP_PACKAGES = new Set([
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
+// Backoff bounds for re-minting the INITIAL miniapp token after a failed mint
+// (e.g. the cloud client had not finished its first-boot Core token exchange
+// when the miniapp connected). Exponential from base, capped, so a transient
+// not-yet-connected client self-heals within seconds instead of needing a full
+// manual Cloud V2 reconnect.
+const MINIAPP_AUTH_RETRY_BASE_MS = 1_000
+const MINIAPP_AUTH_RETRY_MAX_MS = 15_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // Unregister after this many missed pongs. Generous on purpose: a busy
@@ -623,6 +645,10 @@ class LocalMiniappRuntime {
         BgTimer.clearTimeout(existing.authRefreshTimerId)
         existing.authRefreshTimerId = null
       }
+      if (existing.authRetryTimerId !== null) {
+        BgTimer.clearTimeout(existing.authRetryTimerId)
+        existing.authRetryTimerId = null
+      }
       for (const stream of existing.subscriptions) {
         const subs = this.streamSubscribers.get(stream)
         if (subs) {
@@ -639,6 +665,8 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       installedManifest,
       authRefreshTimerId: null,
+      authRetryTimerId: null,
+      authDelivered: false,
       speakerState: "idle",
       requestedLocationRate: null,
     })
@@ -648,6 +676,13 @@ class LocalMiniappRuntime {
     this.recomputeLocationTier()
     this.ensureCloudStatusWired()
     this.ensurePingLoop()
+
+    // Show the system boot message ("Starting <name>…") on the glasses for the
+    // bounded boot window, mirroring the cloud DisplayManager boot screen. The
+    // window ends early once this app pushes its first display (see
+    // LocalDisplayManager.request), or after ~1.5s. Fires once per spawn —
+    // including a crash-respawn, since each spawn is a fresh "app is starting".
+    localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
   }
 
   /**
@@ -750,6 +785,7 @@ class LocalMiniappRuntime {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
+    this.clearMiniappAuthDeliveryRetry(packageName)
     // Drop the handshake flag and fail any in-flight waitForConnect() callers
     // (e.g. a wake that's mid-handshake when the app is torn down). Done before
     // the early-return so it runs even if the connectedApps entry is already gone.
@@ -1082,6 +1118,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
         break
+      case MiniappRequestType.CAMERA_WARM_UP:
+        void this.handleCameraWarmUp(packageName, payload, requestId)
+        break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
         break
@@ -1168,10 +1207,18 @@ class LocalMiniappRuntime {
     // to false; this is manifest-declaration tracking only — OS-grant state
     // is intentionally not modeled here.
     const declaredPermissions = computeDeclaredPermissionRecord(existing.installedManifest)
+    // Fresh handshake → clear any auth state from a prior context so a stale
+    // retry timer can't fire against this new connection and so the retry loop
+    // below re-arms from scratch.
+    existing.authDelivered = false
+    this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
     const initialAuth = await withTimeout(authPromise, 1_500)
     const userId = initialAuth?.mentraUserId ?? ""
-    if (initialAuth) this.scheduleMiniappAuthRefresh(packageName, initialAuth)
+    if (initialAuth) {
+      existing.authDelivered = true
+      this.scheduleMiniappAuthRefresh(packageName, initialAuth)
+    }
 
     this.sendToMiniapp(
       packageName,
@@ -1186,18 +1233,14 @@ class LocalMiniappRuntime {
       requestId,
     )
     if (!initialAuth) {
-      authPromise
-        .then((auth) => {
-          if (!auth) return
-          this.scheduleMiniappAuthRefresh(packageName, auth)
-          this.sendToMiniapp(packageName, {
-            type: MiniappResponseType.AUTH_UPDATE,
-            auth,
-          })
-        })
-        .catch((err) => {
-          console.warn(`${LOG_TAG}: miniapp auth unavailable for ${packageName}: ${(err as Error)?.message ?? err}`)
-        })
+      // The mint timed out or (more importantly) REJECTED — the latter happens
+      // when the cloud client hasn't finished its first-boot Core token exchange
+      // yet, which is exactly the case when a dev miniapp is scanned/launched
+      // right after app start. CONNECT_ACK already went out without auth; keep
+      // trying to mint (and re-drive on cloud-connect) so the app authenticates
+      // to its backend on its own, instead of staying dead until a full manual
+      // Cloud V2 reconnect re-runs the whole handshake.
+      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
     }
     this.sendCloudStatusToMiniapp(packageName)
 
@@ -1275,6 +1318,82 @@ class LocalMiniappRuntime {
     const timerId = app.authRefreshTimerId
     BgTimer.clearTimeout(timerId)
     app.authRefreshTimerId = null
+  }
+
+  /**
+   * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
+   * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
+   * window. `inFlight` lets attempt 0 reuse the mint the handshake already
+   * started (avoids a redundant duplicate request); later attempts mint fresh.
+   *
+   * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
+   * — permanent, so we do NOT retry. A REJECTION means a transient failure
+   * (typically the cloud client isn't connection-ready yet) — retry with backoff.
+   * Either way we bail if the app has since disconnected or already got a token
+   * (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
+   */
+  private deliverInitialMiniappAuth(
+    packageName: string,
+    inFlight: Promise<MiniappAuthToken | null> | undefined,
+    attempt: number,
+  ): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authDelivered) return
+    const mint = inFlight ?? this.requestMiniappAuth(packageName)
+    void mint
+      .then((auth) => {
+        const current = this.connectedApps.get(packageName)
+        if (!current || current.authDelivered) return
+        if (!auth) return // no auth hook — permanent, don't spin
+        current.authDelivered = true
+        this.clearMiniappAuthDeliveryRetry(packageName)
+        this.scheduleMiniappAuthRefresh(packageName, auth)
+        this.sendToMiniapp(packageName, {type: MiniappResponseType.AUTH_UPDATE, auth})
+      })
+      .catch((err) => {
+        console.warn(
+          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${(err as Error)?.message ?? err}`,
+        )
+        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+      })
+  }
+
+  private scheduleInitialMiniappAuthRetry(packageName: string, attempt: number): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authDelivered) return
+    this.clearMiniappAuthDeliveryRetry(packageName)
+    const delay = Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt)
+    app.authRetryTimerId = BgTimer.setTimeout(() => {
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      current.authRetryTimerId = null
+      this.deliverInitialMiniappAuth(packageName, undefined, attempt + 1)
+    }, delay)
+  }
+
+  private clearMiniappAuthDeliveryRetry(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authRetryTimerId === null) return
+    BgTimer.clearTimeout(app.authRetryTimerId)
+    app.authRetryTimerId = null
+  }
+
+  /**
+   * When the cloud client (re)connects, immediately re-attempt the initial mint
+   * for any handshook app still missing its token, instead of waiting out the
+   * backoff. This is what turns "scan a dev app before the cloud is ready" from
+   * "dead until you manually reconnect Cloud V2" into "authenticates on its own
+   * the instant the connection comes up".
+   */
+  private redriveMiniappAuthDelivery(): void {
+    for (const [packageName, app] of this.connectedApps) {
+      if (app.authDelivered) continue
+      // Only apps that finished their CONNECT handshake are in the mint-retry
+      // state; skip anything still mid-handshake (handleConnect owns that).
+      if (!this.handshookApps.has(packageName)) continue
+      this.clearMiniappAuthDeliveryRetry(packageName)
+      this.deliverInitialMiniappAuth(packageName, undefined, 0)
+    }
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -2399,6 +2518,42 @@ class LocalMiniappRuntime {
     }
   }
 
+  private async handleCameraWarmUp(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    // Manifest CAMERA permission gate (same as photo).
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to warm up the camera", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.CAMERA_WARM_UP,
+      })
+      return
+    }
+
+    try {
+      await phonePhotoCoordinator.warmUpCamera(packageName, {
+        size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        durationMs: payload.durationMs as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Camera warm-up failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
+      })
+    }
+  }
+
   private async handleVideoRecordingStart(
     packageName: string,
     payload: Record<string, unknown>,
@@ -2842,6 +2997,10 @@ class LocalMiniappRuntime {
     cloudClientService.onStatusChanged((status) => {
       if (status.status === "connected") {
         this.updateCloudSubscriptions()
+        // A miniapp that connected before the cloud client was ready never got
+        // its auth token; now that we're connected, mint it without waiting for
+        // the retry backoff (or a full manual reconnect).
+        this.redriveMiniappAuthDelivery()
       }
       this.broadcastCloudStatus()
     })

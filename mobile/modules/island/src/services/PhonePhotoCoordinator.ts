@@ -6,7 +6,7 @@
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
  *            ├── cloudClientService.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
- *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, compress, sound)
+ *            ├── BluetoothSdk.requestPhoto(requestId, size, uploadUrl, compress, sound)
  *            └── race:
  *                  - cloudClientService.awaitManagedPhotoReady(requestId) resolves on photo.ready push
  *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
@@ -178,7 +178,6 @@ export class PhonePhotoCoordinator {
     try {
       void BluetoothSdk.requestPhoto({
         requestId,
-        appId: packageName,
         size: normalizePhotoSize(opts.size ?? "medium"),
         webhookUrl: uploadUrl,
         authToken: null,
@@ -223,6 +222,34 @@ export class PhonePhotoCoordinator {
       }
     } finally {
       this.activeRequests.delete(requestId)
+    }
+  }
+
+  /**
+   * Pre-warm the glasses camera so the next takePhoto() is near-instant.
+   *
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The SDK mints the
+   * requestId, sends the warm-up command, and resolves when the camera reports
+   * ready (the native promise resolves on the ready status event).
+   */
+  async warmUpCamera(
+    packageName: string,
+    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+  ): Promise<void> {
+    // Pre-check: if glasses aren't connected, the BLE warm-up command would be
+    // sent into the void. Fail fast with a typed error.
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
+    }
+
+    try {
+      await BluetoothSdk.warmUpCamera({
+        size: normalizePhotoSize(opts.size ?? "medium"),
+        exposureTimeNs: opts.exposureTimeNs ?? null,
+        durationMs: opts.durationMs ?? 15000,
+      })
+    } catch (err) {
+      throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
     }
   }
 

@@ -10,6 +10,7 @@ export const consoleSessionSchema = z.object({
     lastName: z.string().nullable().optional(),
   }),
   onboardingRequired: z.boolean(),
+  viewerRole: z.enum(["owner", "admin", "member"]).nullable().optional(),
   organizationId: z.string().nullable().optional(),
   packagePrefix: z.string().nullable(),
   packagePrefixStatus: z.enum(["unverified", "verified", "rejected"]).nullable(),

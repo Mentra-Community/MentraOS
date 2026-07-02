@@ -130,6 +130,12 @@ class MergeController {
 
   stop(): void {
     this.clearDisplayTimer()
+    // Leaving/minimizing the app must not leave a spoken insight playing.
+    try {
+      this.session.speaker.stop()
+    } catch {
+      /* transport may already be closing during disconnect */
+    }
     if (this.transcriptionCleanup) {
       this.transcriptionCleanup()
       this.transcriptionCleanup = null
@@ -165,6 +171,7 @@ class MergeController {
         this.lastError = null
         this.backendStatus = "idle"
         this.session.display.clear()
+        this.session.speaker.stop()
         this.sendSnapshot()
       }),
     )
@@ -532,11 +539,29 @@ class MergeController {
   private showInsight(insight: MergeInsight): void {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
-    this.session.display.showTextWall(`// Merge\n${insight.text}`, {
-      durationMs: DISPLAY_DURATION_MS,
-      breakMode: "word",
-    })
+    if (capabilityHasDisplay(this.session.capabilities)) {
+      this.session.display.showTextWall(`// Merge\n${insight.text}`, {
+        durationMs: DISPLAY_DURATION_MS,
+        breakMode: "word",
+      })
+    } else {
+      // No display (e.g. Mentra Live): speak the insight so the app is still
+      // useful on audio-only glasses. Fire-and-forget — speak() only resolves
+      // when playback finishes, but display pacing stays on the
+      // DISPLAY_DURATION_MS window driven by scheduleNextQueuedDisplay().
+      void this.speakInsight(insight)
+    }
     this.scheduleNextQueuedDisplay()
+  }
+
+  private async speakInsight(insight: MergeInsight): Promise<void> {
+    try {
+      // stopOtherAudio mirrors "replace" display semantics for audio: a newer
+      // insight cuts off one that is still being spoken instead of overlapping.
+      await this.session.speaker.speak(insight.text, {stopOtherAudio: true})
+    } catch (err) {
+      console.log("LocalMerge: failed to speak insight", err)
+    }
   }
 
   private clearDisplayTimer(): void {
@@ -661,6 +686,22 @@ function chooseDisplayAction(
   if (Date.now() >= activeDisplayUntil) return insight.displayAction ?? "show"
   if (insight.displayAction === "replace" || insight.urgency === "high") return "replace"
   return "queue"
+}
+
+function capabilityHasDisplay(caps: unknown): boolean {
+  // Capability shapes vary across host versions; accept the common flags.
+  // Default to display output when the shape is unreadable so we never surprise
+  // a display-equipped user with unexpected audio.
+  if (!caps || typeof caps !== "object") return true
+  const record = caps as Record<string, unknown>
+  if (typeof record.hasDisplay === "boolean") return record.hasDisplay
+  const display = record.display
+  if (typeof display === "boolean") return display
+  if (display === null) return false
+  if (display && typeof display === "object") {
+    return (display as {present?: boolean}).present !== false
+  }
+  return true
 }
 
 function userTimezone(): string {

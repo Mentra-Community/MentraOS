@@ -24,6 +24,7 @@ import {
   toolkit,
   phoneLocationService,
   localMiniappRuntime,
+  miniappLauncher,
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
@@ -290,6 +291,14 @@ class MantleManager {
     // lets Core move users to newer bundled miniapp releases without shipping a
     // new mobile binary.
     await preinstalledMiniappSync.sync()
+
+    // Re-spawn local miniapps that were running when the app was last killed.
+    // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
+    // miniapps have no server to bring them back, so the launcher restarts them
+    // here from the persisted running flags. Runs last so newly installed/
+    // upgraded bundles are on disk first. Best-effort — never block miniapp
+    // init on it.
+    miniappLauncher.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
   }
 
   /**

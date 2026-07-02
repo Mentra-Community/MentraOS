@@ -158,7 +158,7 @@ asg_client/
 
 ### Architecture
 
-- **Dependency Injection**: Manual factories under `io/*/core/*Factory.java` and `service/utils/DeviceProfile`. No Dagger/Hilt today (`/di` only has `AppModule.java`).
+- **Dependency Injection**: Hilt is used for the service layer (`AsgClientService` and the `di/hilt/` modules). Manual factories remain under `io/*/core/*Factory.java` and `service/utils/DeviceProfile` for device-detection paths.
 - **Error Reporting**: Use Sentry via reporting package
 - **Logging**: Use Android Logcat with appropriate tags
 - **Services**: Follow Android foreground service best practices

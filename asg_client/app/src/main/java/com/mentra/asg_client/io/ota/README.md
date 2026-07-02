@@ -252,8 +252,9 @@ if (success) {
 ### **OTA Helper Operations**
 
 ```java
-// Create OTA helper
-OtaHelper otaHelper = new OtaHelper(context);
+// OtaHelper is Hilt-injected; obtain the instance via @Inject or AsgClientEntryPoint.
+// For testing or non-Hilt contexts use the two-arg constructor:
+//   OtaHelper otaHelper = new OtaHelper(context, new BesOtaRegistry());
 
 // Start version check
 boolean checkStarted = otaHelper.startVersionCheck(context);

@@ -1,8 +1,8 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
-import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.nio.charset.StandardCharsets;
@@ -128,16 +128,14 @@ public class RgbLedCommandHandler implements ICommandHandler {
 
         try {
             // Extract parameters with defaults
-            int led = data.optInt("led", K900RgbLedController.RGB_LED_RED);
+            int led = data.optInt("led", RgbLedConstants.LED_RED);
             int ontime = data.optInt("ontime", 1000);
             int offtime = data.optInt("offtime", 1000);
             int count = data.optInt("count", 1);
-            int brightness =
-                    data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+            int brightness = data.optInt("brightness", RgbLedConstants.DEFAULT_BRIGHTNESS);
 
             // Validate parameters
-            if (led < K900RgbLedController.RGB_LED_RED
-                    || led > K900RgbLedController.RGB_LED_WHITE) {
+            if (led < RgbLedConstants.LED_RED || led > RgbLedConstants.LED_WHITE) {
                 Log.e(TAG, "❌ Invalid RGB LED index: " + led + " (must be 0-4)");
                 sendErrorResponse("Invalid RGB LED index: " + led);
                 return false;
@@ -216,8 +214,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
         try {
             // Extract flash duration and brightness with defaults
             int duration = data.optInt("duration", 5000); // Default 5 sec flash
-            int brightness =
-                    data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+            int brightness = data.optInt("brightness", RgbLedConstants.DEFAULT_BRIGHTNESS);
 
             // Validate brightness
             if (brightness < 0 || brightness > 255) {
@@ -257,8 +254,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
 
         try {
             // Extract brightness with default
-            int brightness =
-                    data.optInt("brightness", K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+            int brightness = data.optInt("brightness", RgbLedConstants.DEFAULT_BRIGHTNESS);
 
             // Validate brightness
             if (brightness < 0 || brightness > 255) {

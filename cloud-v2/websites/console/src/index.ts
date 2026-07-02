@@ -8,6 +8,9 @@ async function proxyCoreRequest(req: Request) {
   const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, coreUrl);
   const headers = new Headers(req.headers);
   headers.delete("host");
+  // Match the deployed Pages proxy so local /api/* auth redirects target the
+  // correct origin instead of falling back to CORE_URL.
+  headers.set("x-mentra-public-origin", sourceUrl.origin);
 
   return fetch(upstreamUrl, {
     method: req.method,

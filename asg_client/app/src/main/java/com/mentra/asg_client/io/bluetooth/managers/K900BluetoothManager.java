@@ -1202,6 +1202,37 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    // ========================================
+    // ICompanionTransport transport-level hooks
+    // ========================================
+
+    @Override
+    public void onMtuNegotiated(int mtu) {
+        BesWireFormat.setFilePackSizeFromMtu(mtu);
+        Log.i(
+                TAG,
+                "📦 MTU negotiated ("
+                        + mtu
+                        + ") - file pack size now "
+                        + BesWireFormat.getFilePackSize());
+    }
+
+    @Override
+    public void onTransportReset() {
+        BesWireFormat.resetFilePackSize();
+        Log.i(TAG, "📦 Transport reset - file pack size restored to default");
+    }
+
+    @Override
+    public void onFileTransferConfirmation(String fileName, boolean success) {
+        handlePhoneConfirmation(fileName, success);
+    }
+
+    @Override
+    public void onFileTransferAck(int state, int index) {
+        handleFileTransferAck(state, index);
+    }
+
     /**
      * Handle file transfer acknowledgment Made public so K900CommandHandler can call it when ACK is
      * received as JSON

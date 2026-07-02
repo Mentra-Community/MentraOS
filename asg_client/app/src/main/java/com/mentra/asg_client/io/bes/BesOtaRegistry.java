@@ -1,26 +1,33 @@
 package com.mentra.asg_client.io.bes;
 
+import androidx.annotation.Nullable;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
-/** Holds the live {@link BesOtaManager} after K900 UART transport is ready. */
+/** Holds the live {@link IBesOtaController} after K900 UART transport is ready. */
 @Singleton
-public class BesOtaRegistry {
+public class BesOtaRegistry implements IBesOtaRegistry {
 
-    private volatile BesOtaManager instance;
+    private volatile IBesOtaController instance;
 
     @Inject
     public BesOtaRegistry() {}
 
-    public void setInstance(BesOtaManager manager) {
-        this.instance = manager;
+    @Override
+    public void setInstance(IBesOtaController controller) {
+        this.instance = controller;
     }
 
+    @Override
     public void clear() {
         this.instance = null;
     }
 
-    public BesOtaManager getInstance() {
+    @Override
+    @Nullable
+    public IBesOtaController getInstance() {
         return instance;
     }
 }

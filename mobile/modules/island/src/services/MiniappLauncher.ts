@@ -27,7 +27,7 @@ import {File} from "expo-file-system"
 
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {storage} from "../utils/storage/storage"
-import appRegistry from "./AppRegistry"
+import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
@@ -120,6 +120,7 @@ class MiniappLauncher {
         .map((p) => (typeof p === "string" ? p : p?.type))
         .filter((t): t is string => typeof t === "string")
       const installedManifest: InstalledMiniappManifest = {
+        name: manifest.name,
         permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
       }
@@ -151,6 +152,7 @@ class MiniappLauncher {
     if (!entryPaths?.background) return null
 
     const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+      name?: string
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
     } | null
@@ -158,7 +160,7 @@ class MiniappLauncher {
       .map((p) => p.type)
       .filter((t): t is string => typeof t === "string")
     const installedManifest: InstalledMiniappManifest | undefined = manifest
-      ? {permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
+      ? {name: manifest.name, permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
       : undefined
 
     let bgSource: string
@@ -246,6 +248,48 @@ class MiniappLauncher {
     }
 
     return {uiUri: resolved.uiUri, uiBaseDir: resolved.uiBaseDir}
+  }
+
+  /**
+   * Re-spawn local miniapps that were running when the app was last killed.
+   *
+   * Cloud apps run on a remote server: the cloud persists which ones are
+   * running and resurrects them when the phone reconnects, so a host-app
+   * restart brings them back on its own. Local (phone-hosted) miniapps run in
+   * the phone's own JS engine — a host-process kill tears down their JSContext
+   * and there is no server to resurrect them, so without this they silently
+   * stay stopped on the next launch even though the user left them running.
+   *
+   * Each local miniapp persists its running flag to disk on start/stop
+   * (`saveLocalAppRunningState`, via the applet's `onStart`/`onStop`). We read
+   * those flags back and re-spawn the background context headlessly (no
+   * foreground, no navigation) — the spawn registers the package so the home
+   * tray/switcher project it as running, exactly as a normal start would. The
+   * WebView, if any, re-attaches lazily when the user opens the app.
+   *
+   * Idempotent and best-effort: skips already-spawned contexts, and clears the
+   * persisted flag for any app whose bundle can no longer be resolved
+   * (uninstalled, or dev server gone) so a dead entry doesn't retry every boot.
+   * Not compatibility-gated: a previously-running background app shouldn't be
+   * dropped just because glasses are momentarily disconnected at boot — it
+   * resumes when they reconnect, same as mid-session.
+   */
+  async autostartLocalMiniapps(): Promise<void> {
+    const apps = await appRegistry.getInstalledMiniapps()
+    for (const app of apps) {
+      // Only phone-hosted miniapps have a JSContext to re-spawn. Offline
+      // built-ins (`local:false, offline:true`) restore their native running
+      // state elsewhere and have no bundle to launch.
+      if (!app.local) continue
+      if (!getLocalAppRunningState(app.packageName)) continue
+      if (this.isRunning(app.packageName)) continue
+      try {
+        await this.ensureRunning(app.packageName)
+      } catch (e) {
+        console.warn(`MiniappLauncher: autostart failed for ${app.packageName} — clearing stale running flag`, e)
+        saveLocalAppRunningState(app.packageName, false)
+      }
+    }
   }
 
   /**

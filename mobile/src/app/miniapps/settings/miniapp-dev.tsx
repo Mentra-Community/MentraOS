@@ -1,4 +1,4 @@
-import {Linking, ScrollView, View} from "react-native"
+import {ScrollView, View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
@@ -8,6 +8,7 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {showLeaveAppAlert} from "@/utils/AlertUtils"
 
 const DOCS_URL = "https://docs.mentraglass.com"
 
@@ -26,7 +27,7 @@ export default function MiniappDeveloperSettingsScreen() {
             <Text className="text-[13px] leading-[18px] text-textDim" tx="miniappDevSettings:body" />
             <Button
               tx="miniappDevSettings:readDocs"
-              onPress={() => Linking.openURL(DOCS_URL)}
+              onPress={() => showLeaveAppAlert(DOCS_URL)}
               preset="alternate"
               flexContainer={false}
             />

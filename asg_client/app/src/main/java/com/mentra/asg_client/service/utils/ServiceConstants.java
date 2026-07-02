@@ -45,6 +45,7 @@ public final class ServiceConstants {
     public static final String COMMAND_PHONE_READY = "phone_ready";
     public static final String COMMAND_AUTH_TOKEN = "auth_token";
     public static final String COMMAND_TAKE_PHOTO = "take_photo";
+    public static final String COMMAND_CAMERA_WARM_UP = "camera_warm_up";
     public static final String COMMAND_START_VIDEO_RECORDING = "start_video_recording";
     public static final String COMMAND_STOP_VIDEO_RECORDING = "stop_video_recording";
     public static final String COMMAND_GET_VIDEO_RECORDING_STATUS = "get_video_recording_status";

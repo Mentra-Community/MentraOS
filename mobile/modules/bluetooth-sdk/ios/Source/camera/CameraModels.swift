@@ -1,5 +1,15 @@
 import Foundation
 
+func generatedCameraRequestId(_ prefix: String) -> String {
+    "\(prefix)-\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(8))"
+}
+
+func nonBlankRequestId(_ requestId: String?) -> String? {
+    guard let requestId else { return nil }
+    let trimmed = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 public enum PhotoSize: String {
     case low
     case medium
@@ -223,7 +233,6 @@ public struct CameraFovResult: CustomStringConvertible {
 
 public struct PhotoRequest {
     public let requestId: String
-    public let appId: String
     public let size: PhotoSize
     public let webhookUrl: String?
     public let authToken: String?
@@ -244,8 +253,7 @@ public struct PhotoRequest {
     public let ispAnalogGain: String?
 
     public init(
-        requestId: String,
-        appId: String,
+        requestId: String? = nil,
         size: PhotoSize,
         webhookUrl: String? = nil,
         authToken: String? = nil,
@@ -263,8 +271,7 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil
     ) {
-        self.requestId = requestId
-        self.appId = appId
+        self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
         self.webhookUrl = webhookUrl
         self.authToken = authToken
@@ -331,8 +338,7 @@ public struct PhotoRequest {
         }
 
         return PhotoRequest(
-            requestId: params["requestId"] as? String ?? "",
-            appId: params["appId"] as? String ?? "",
+            requestId: params["requestId"] as? String,
             size: PhotoSize(normalizedRawValue: sizeRaw),
             webhookUrl: params["webhookUrl"] as? String,
             authToken: (params["authToken"] as? String)?.nilIfBlank,
@@ -377,6 +383,28 @@ public struct PhotoRequest {
         if let ispAnalogGain {
             json["ispAnalogGain"] = ispAnalogGain
         }
+    }
+
+    func withRequestId(_ requestId: String) -> PhotoRequest {
+        PhotoRequest(
+            requestId: requestId,
+            size: size,
+            webhookUrl: webhookUrl,
+            authToken: authToken,
+            compress: compress,
+            save: save,
+            sound: sound,
+            exposureTimeNs: exposureTimeNs,
+            iso: iso,
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            noiseReduction: noiseReduction,
+            edgeEnhancement: edgeEnhancement,
+            mfnr: mfnr,
+            zsl: zsl,
+            ispDigitalGain: ispDigitalGain,
+            ispAnalogGain: ispAnalogGain
+        )
     }
 }
 
@@ -719,6 +747,44 @@ public struct PhotoStatusEvent: CustomStringConvertible {
 
     public var description: String {
         "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
+    }
+}
+
+public struct CameraStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "camera_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var state: String {
+        stringValue(values, "state") ?? ""
+    }
+
+    public var timestamp: Int64 {
+        if let value = values["timestamp"] as? Int64 { return value }
+        if let value = values["timestamp"] as? Int { return Int64(value) }
+        if let value = values["timestamp"] as? Double { return Int64(value) }
+        if let value = values["timestamp"] as? NSNumber { return value.int64Value }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "CameraStatusEvent(requestId: \(requestId), state: \(state))"
     }
 }
 

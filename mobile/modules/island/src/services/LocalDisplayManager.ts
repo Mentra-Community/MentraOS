@@ -53,6 +53,10 @@ interface BootingApp {
   displayName: string
   startedAt: number
   timerId: number
+  /** Whatever was on the glasses when this boot started, so a boot that times
+   * out without the app rendering can restore it instead of blanking a frame
+   * another (e.g. foreground) app owns. Null if the glasses were empty. */
+  preBoot: ActiveDisplay | null
 }
 
 interface BackgroundLock {
@@ -119,6 +123,12 @@ class LocalDisplayManager {
     // Cancel any in-flight boot for a prior app.
     this.cancelBoot()
 
+    // Snapshot whatever's on the glasses BEFORE the boot text overwrites it.
+    // registerApp fires onMount for every spawn — including a background app or
+    // a crash-respawn while another app is foreground — so a boot that times out
+    // without rendering must put the prior frame back rather than blank it.
+    const preBoot = this.currentDisplay
+
     // Send the boot message directly (bypass throttle + arbitration — this is
     // a system display).
     const bootEvent: Record<string, unknown> = {
@@ -136,6 +146,7 @@ class LocalDisplayManager {
       displayName,
       startedAt: this.now(),
       timerId,
+      preBoot,
     }
     this.bootQueue.clear()
   }
@@ -406,7 +417,7 @@ class LocalDisplayManager {
 
   private endBoot(triggeredByFirstDisplay: boolean): void {
     if (!this.bootingApp) return
-    const bootedPkg = this.bootingApp.packageName
+    const preBoot = this.bootingApp.preBoot
     BgTimer.clearTimeout(this.bootingApp.timerId)
     this.bootingApp = null
 
@@ -424,12 +435,36 @@ class LocalDisplayManager {
       this.arbitrateAndSend(pkg, payload)
     }
 
-    // If the booting app itself never queued a display and was just waiting
-    // on the timeout, clear the boot text so we don't leave "Starting …"
-    // stuck on the glasses.
-    if (!triggeredByFirstDisplay && queued.length === 0 && bootedPkg === this.coreApp) {
-      this.sendClear()
+    // Boot ended on the timeout with nothing queued and no first display — the
+    // app just never rendered. Restore whatever was on the glasses before the
+    // boot text so a background app or crash-respawn can't blank a foreground
+    // app's frame (registerApp fires onMount for every spawn, and the core app
+    // isn't wired on the local path yet). If the glasses were empty before,
+    // clear the lingering "Starting …" instead — otherwise a miniapp that never
+    // renders (e.g. audio-only) would strand it.
+    if (!triggeredByFirstDisplay && queued.length === 0) {
+      // Only restore a frame that's still valid — one whose duration elapsed
+      // during the boot window should clear, not come back.
+      if (preBoot && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+        this.restoreDisplay(preBoot)
+      } else {
+        this.sendClear()
+      }
     }
+  }
+
+  /**
+   * Re-push a previously-captured on-glasses frame (e.g. the display a boot
+   * window overwrote). Mirrors tryRestoreCoreDisplay: the saved event is already
+   * processed, and any remaining duration is recomputed from its expiry.
+   */
+  private restoreDisplay(saved: ActiveDisplay): void {
+    const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
+    this.sendNow(saved.packageName, {
+      view: "main",
+      layout: saved.processedEvent.layout as DisplayPayload["layout"],
+      durationMs: remaining,
+    })
   }
 
   // ===========================================================================
