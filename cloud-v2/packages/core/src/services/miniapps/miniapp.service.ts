@@ -1,9 +1,12 @@
+import { createLogger } from "@mentra/cloud-shared";
 import { ulid } from "ulid";
 import { MiniAppAssetModel } from "../../models/miniapp-asset.model";
 import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { createStorageService, sha256Hex } from "../storage/storage.service";
 import type { SignedBundleMetadata } from "./developer-signing.service";
+
+const logger = createLogger("core").child({ service: "miniapp.service" });
 
 export interface DeveloperIdentity {
   developerId: string;
@@ -235,8 +238,11 @@ export class MiniAppService {
     });
 
     // Store the bundle and link it to the release. If any step fails, roll back
-    // the freshly created release row so a retry with the same package/version
-    // is not permanently blocked by the `release_exists` check above.
+    // everything created here (release row, asset row, and stored blob) so a
+    // retry with the same package/version is not permanently blocked by the
+    // `release_exists` check above and no orphaned storage is left behind.
+    let storedKey: string | undefined;
+    let assetId: string | undefined;
     try {
       const storageKey = [
         "miniapps",
@@ -250,6 +256,7 @@ export class MiniAppService {
         body: input.bundle,
         contentType: "application/zip",
       });
+      storedKey = storageKey;
       const expectedSha = sha256Hex(input.bundle);
       if (stored.sha256 !== expectedSha) {
         throw new MiniAppServiceError("hash_mismatch", "stored bundle hash mismatch", 500);
@@ -267,6 +274,7 @@ export class MiniAppService {
         sha256: stored.sha256,
         createdBy: developer.developerId,
       });
+      assetId = asset._id.toString();
 
       release.releaseBundleAssetId = asset._id.toString();
       release.bundleSha256 = stored.sha256;
@@ -275,7 +283,22 @@ export class MiniAppService {
 
       return serializeRelease(release.toObject());
     } catch (error) {
-      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch(() => {});
+      const releaseId = release._id.toString();
+      // Best-effort compensation. Log each failure with context so blocked
+      // retries or orphaned artifacts stay diagnosable rather than silent.
+      await MiniAppReleaseModel.deleteOne({ _id: release._id }).catch(cleanupError => {
+        logger.error({ cleanupError, releaseId, packageName, version: input.version }, "failed to roll back release row after createRelease failure");
+      });
+      if (assetId) {
+        await MiniAppAssetModel.deleteOne({ _id: assetId }).catch(cleanupError => {
+          logger.error({ cleanupError, releaseId, assetId }, "failed to roll back asset row after createRelease failure");
+        });
+      }
+      if (storedKey) {
+        await storage.deleteObject(storedKey).catch(cleanupError => {
+          logger.error({ cleanupError, releaseId, storageKey: storedKey }, "failed to delete stored bundle after createRelease failure");
+        });
+      }
       throw error;
     }
   }

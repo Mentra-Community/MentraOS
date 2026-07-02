@@ -54,7 +54,7 @@ function metroUrl(port: number): string | undefined {
  *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
  *      changing networks;
  *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
- *   3. Cloud Debug — the default shared backend for team testing.
+ *   3. Cloud Dev — the default shared backend for team testing.
  * Read via the settings store's `getState()` accessor (not a hook) so this
  * service stays React-free.
  */

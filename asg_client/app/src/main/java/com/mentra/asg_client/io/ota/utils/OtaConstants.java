@@ -7,8 +7,10 @@ public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
     // URLs
-    // Production OTA version JSON URL
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
+    // Production OTA version JSON URL for ASG client 39+.
+    // The previous production manifest intentionally remains the legacy rescue
+    // manifest for older clients that may be stuck on a corrupted artifact cache.
+    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
 
     // Test URLs (uncomment to use for testing)
     // public static final String VERSION_JSON_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/live_version_test_non_production.json";
@@ -27,6 +29,10 @@ public class OtaConstants {
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
     public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
     public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
+    // Copy of the currently installed ASG APK, staged here so the OEM SystemUI installer can
+    // read it during a factory reset (it cannot reliably read /data/app/... paths).
+    public static final String FACTORY_RESET_APK_FILENAME = "asg_client_factory_reset.apk";
+    public static final String FACTORY_RESET_APK_PATH = BASE_DIR + "/" + FACTORY_RESET_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";

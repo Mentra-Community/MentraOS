@@ -1,6 +1,6 @@
 import CrustModule from "@mentra/crust"
 import {useEffect, useState} from "react"
-import {AppState, Linking, Platform, ScrollView} from "react-native"
+import {AppState, Platform, ScrollView} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import PermissionButton from "@/components/settings/PermButton"
@@ -9,7 +9,7 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import showAlert from "@/utils/AlertUtils"
+import {showLeaveAppAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
@@ -123,17 +123,7 @@ export default function PrivacySettingsScreen() {
   }, []) // subscribe only once
 
   const handleOpenPrivacyPolicy = () => {
-    showAlert(translate("settings:leaveAppTitle"), translate("settings:leaveAppMessage"), [
-      {text: translate("common:cancel"), style: "cancel"},
-      {
-        text: translate("common:continue"),
-        onPress: () => {
-          Linking.openURL(PRIVACY_POLICY_URL).catch((error) =>
-            console.error("Failed to open privacy policy URL:", error),
-          )
-        },
-      },
-    ])
+    showLeaveAppAlert(PRIVACY_POLICY_URL)
   }
 
   const handleToggleNotifications = async () => {

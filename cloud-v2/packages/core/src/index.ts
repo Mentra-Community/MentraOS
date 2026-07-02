@@ -52,7 +52,11 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   try {
     await runStartupMigrations();
   } catch (error) {
-    await disconnectMongo();
+    // Disconnect best-effort: a secondary disconnect failure must not mask the
+    // original migration error, which is what we rethrow.
+    await disconnectMongo().catch(disconnectError => {
+      logger.warn({ disconnectError }, "failed to disconnect mongo after migration failure");
+    });
     throw error;
   }
 
