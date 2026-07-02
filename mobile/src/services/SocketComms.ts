@@ -178,18 +178,6 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendVideoStreamResponse(appId: string, streamUrl: string) {
-    const event = {
-      type: "video_stream_response",
-      appId: appId,
-      streamUrl: streamUrl,
-      timestamp: Date.now(),
-    }
-
-    const jsonString = JSON.stringify(event)
-    ws.sendText(jsonString)
-  }
-
   public sendTouchEvent(event: TouchEvent) {
     const payload = {
       type: "touch_event",
@@ -207,11 +195,6 @@ class SocketComms {
       timestamp,
     }
     ws.sendText(JSON.stringify(payload))
-  }
-
-  /** Send an arbitrary message over the phone↔cloud WebSocket. */
-  public sendMessage(msg: object) {
-    ws.sendText(JSON.stringify(msg))
   }
 
   public sendSwitchStatus(switchType: number, switchValue: number, timestamp: number) {
@@ -249,20 +232,6 @@ class SocketComms {
 
     const jsonString = JSON.stringify(event)
     ws.sendText(jsonString)
-  }
-
-  /**
-   * @deprecated Local transcripts no longer roundtrip to the cloud. They
-   * flow directly to subscribed local miniapps via LocalMiniappRuntime.
-   * Retained as a no-op only so external callers (if any) don't crash.
-   * Remove call sites and then delete this in a follow-up.
-   */
-  public sendLocalTranscription(_transcription: any) {
-    return
-  }
-
-  private handle_app_state_change(msg: any) {
-    console.log("SOCKET: ignoring legacy cloud-v1 app_state_change", msg)
   }
 
   private handle_connection_error(msg: any) {
@@ -312,18 +281,6 @@ class SocketComms {
     }
     console.log("SOCKET: request_single_location()", accuracy, correlationId)
     mantle.requestSingleLocation(accuracy, correlationId)
-  }
-
-  private handle_app_started(msg: any) {
-    const packageName = msg.packageName
-    if (!packageName) {
-      console.log("SOCKET: No package name provided")
-      return
-    }
-    console.log(`SOCKET: ignoring legacy cloud-v1 app_started message for package: ${msg.packageName}`)
-  }
-  private handle_app_stopped(msg: any) {
-    console.log(`SOCKET: ignoring legacy cloud-v1 app_stopped message for package: ${msg.packageName}`)
   }
 
   private handle_photo_request(msg: any) {
@@ -520,11 +477,10 @@ class SocketComms {
         break
 
       case "connection_ack":
-        // Legacy cloud-v1 audio handshake has been removed.
-        break
-
       case "app_state_change":
-        this.handle_app_state_change(msg)
+      case "app_started":
+      case "app_stopped":
+        // Legacy cloud-v1 message types — ignored.
         break
 
       case "connection_error":
@@ -545,14 +501,6 @@ class SocketComms {
 
       case "request_single_location":
         this.handle_request_single_location(msg)
-        break
-
-      case "app_started":
-        this.handle_app_started(msg)
-        break
-
-      case "app_stopped":
-        this.handle_app_stopped(msg)
         break
 
       case "photo_request":

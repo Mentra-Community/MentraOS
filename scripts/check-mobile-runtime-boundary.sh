@@ -47,3 +47,29 @@ if [[ -s "$TMP_NEW" ]]; then
 fi
 
 echo "mobile runtime boundary check passed ($(wc -l <"$TMP_ACTUAL" | tr -d ' ') allowlisted files)"
+
+# ---------------------------------------------------------------------------
+# Report-only patterns (next boundary campaigns; see
+# cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D/§F).
+# These do NOT fail the check yet — they measure the burn-down surface. Turn
+# each into a failing pattern above once its migration completes.
+# ---------------------------------------------------------------------------
+report_count() {
+  local label="$1" pattern="$2"
+  local count
+  count="$(rg -l "$pattern" mobile/src \
+    -g '*.ts' -g '*.tsx' \
+    --glob '!**/__tests__/**' \
+    --glob '!**/*.test.ts' \
+    --glob '!**/*.test.tsx' \
+    --glob '!**/test-utils/**' \
+    2>/dev/null | wc -l | tr -d ' ')"
+  echo "  [report-only] ${label}: ${count} files"
+}
+
+echo "boundary burn-down (informational):"
+report_count "raw island stores (settings/core/display/connection/cloudClientStatus/appStatus)" \
+  'useSettingsStore|useCoreStore|useDisplayStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore'
+report_count "toolkit.stores escape hatch" 'toolkit\.stores\.'
+report_count "bluetooth-sdk internal surface in host" '@mentra/bluetooth-sdk-internal|@mentra/bluetooth-sdk/internal'
+report_count "flat island OTA helpers in host" 'checkBesUpdate|findMatchingMtkPatch|fetchVersionInfo|getAsgOtaVersionUrl'

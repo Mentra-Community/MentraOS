@@ -79,7 +79,6 @@ jest.mock("@/services/SocketComms", () => ({
     sendTouchEvent: jest.fn(),
     sendButtonPress: jest.fn(),
     sendHeadPosition: jest.fn(),
-    sendLocalTranscription: jest.fn(),
     sendSwipeVolumeStatus: jest.fn(),
     sendSwitchStatus: jest.fn(),
     sendRgbLedControlResponse: jest.fn(),
@@ -241,19 +240,14 @@ describe("MantleManager", () => {
       timestamp: 999,
     })
 
-    // Local transcripts no longer roundtrip through the cloud. With no
-    // local-miniapp subscription and the offline-captions flag off, the
-    // transcript is dropped — `sendLocalTranscription` must not fire.
-    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
+    // Local transcripts no longer roundtrip through the cloud (SocketComms has
+    // no transcription send anymore). With no local-miniapp subscription and
+    // the offline-captions flag off, the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
       transcribeLanguage: "en-US",
     })
-    await waitFor(() => {
-      expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
-    })
-
     emitBluetoothSdkEvent("head_up", {up: true})
     expect(socketComms.sendHeadPosition).toHaveBeenCalledWith(true)
     await waitFor(() => {
