@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -172,20 +173,30 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
         mainHandler.postDelayed(this::performReset, INSTALL_DELAY_MS);
     }
 
+    /**
+     * How long to wait after dispatching a local install broadcast before assuming the OEM installer
+     * silently dropped it and clearing the guard so future cs_fcrst events can retry.  The process
+     * normally dies within a second of the broadcast; 30 s is a conservative safety margin.
+     */
+    private static final long INSTALL_WATCHDOG_MS = 30_000L;
+
     private void performReset() {
-        if (installCurrentlyInstalledApk()) {
-            Log.i(TAG, "🏭 Factory reset: reinstall of currently installed APK kicked off");
-            // Guard stays set — installer will kill this process.
+        boolean localKicked = installCurrentlyInstalledApk() || installLocalApk();
+        if (localKicked) {
+            Log.i(TAG, "🏭 Factory reset: local APK install kicked off; scheduling install watchdog");
+            // If the process survives INSTALL_WATCHDOG_MS the OEM installer silently rejected
+            // or dropped the broadcast.  Clear the guard so a subsequent cs_fcrst can retry.
+            mainHandler.postDelayed(() -> {
+                if (resetInProgress.compareAndSet(true, false)) {
+                    Log.w(TAG, "🏭 Install watchdog: process still alive after install broadcast;"
+                            + " guard cleared for retry");
+                }
+            }, INSTALL_WATCHDOG_MS);
             return;
         }
-        if (installLocalApk()) {
-            Log.i(TAG, "🏭 Factory reset: local APK install kicked off");
-            // Guard stays set — installer will kill this process.
-            return;
-        }
-        // Download path: if the background thread starts successfully the thread itself is
-        // responsible for clearing resetInProgress (only on failure; on success the installer
-        // kills us). If we can't start the thread at all, clear here.
+        // Download path: the background thread handles resetInProgress on failure.
+        // The watchdog is not applied here — download duration is variable and the
+        // thread already clears the guard on any download or install failure.
         boolean downloadStarted = downloadAndInstallApk();
         if (!downloadStarted) {
             resetInProgress.set(false);
@@ -324,8 +335,13 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             return false;
         }
         Log.i(TAG, "🏭 Factory reset: fetching recovery APK from OTA manifest");
-        recoveryDownloader.download(ctx, otaHelper);
-        return true;
+        try {
+            recoveryDownloader.download(ctx, otaHelper);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "🏭 Failed to start recovery downloader; clearing guard", e);
+            return false;
+        }
     }
 
     private void downloadRecoveryApkOnThread(Context ctx) {
@@ -338,8 +354,14 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             conn.connect();
             String manifestJson;
             try (InputStream in = conn.getInputStream()) {
-                byte[] buf = in.readAllBytes();
-                manifestJson = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+                // readAllBytes() is API 33+; use ByteArrayOutputStream for API 28+ compat.
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] tmp = new byte[4096];
+                int read;
+                while ((read = in.read(tmp)) > 0) {
+                    baos.write(tmp, 0, read);
+                }
+                manifestJson = baos.toString("UTF-8");
             }
 
             // 2. Parse the ASG client entry and find the recovery APK URL.
