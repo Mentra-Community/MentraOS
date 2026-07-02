@@ -18,6 +18,13 @@ export const ConnectDeviceButton = () => {
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const isSearching = useCoreStore((state) => state.searching)
+  // Same busy source as home's DeviceStatus: an active scan OR the native link
+  // layer mid connect/bond — either way a tap must cancel, not start a second
+  // connect.
+  const pairingReadiness = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  )
+  const busy = isSearching || pairingReadiness.nativeLinkBusy
 
   if (glassesConnected) {
     return null
@@ -46,7 +53,7 @@ export const ConnectDeviceButton = () => {
 
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
-    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy: isSearching})
+    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy})
     if (action === "cancel") {
       await toolkit.glasses.disconnect()
     } else {
@@ -68,7 +75,7 @@ export const ConnectDeviceButton = () => {
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 
-  if (isSearching) {
+  if (busy) {
     return (
       <View style={{flexDirection: "row", gap: theme.spacing.s2}}>
         {/* <Button compactIcon preset="alternate" onPress={handleConnectOrDisconnect}>
@@ -87,13 +94,7 @@ export const ConnectDeviceButton = () => {
 
   if (!glassesConnected) {
     return (
-      <Button
-        compact
-        preset="primary"
-        onPress={handleConnectOrDisconnect}
-        tx="home:connectGlasses"
-        disabled={isSearching}
-      />
+      <Button compact preset="primary" onPress={handleConnectOrDisconnect} tx="home:connectGlasses" disabled={busy} />
     )
   }
 

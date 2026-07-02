@@ -94,6 +94,17 @@ export default function OtaProgressScreen() {
     sawReconnectEdgeRef.current = sawReconnectEdge
   }, [sawReconnectEdge])
 
+  // True once this session reported an APK step. After an APK install the ASG
+  // process restarts with a new build number, so the exit handlers must clear
+  // the stale one before check-for-updates re-checks (see
+  // toolkit.ota.clearBuildNumberForNextCheck; mirrors the legacy screen).
+  const apkStepSeenRef = useRef(false)
+  useEffect(() => {
+    if (otaStatus?.stepType === "apk") {
+      apkStepSeenRef.current = true
+    }
+  }, [otaStatus])
+
   const prevConnectedRef = useRef(connected)
 
   // Timer handles
@@ -618,6 +629,9 @@ export default function OtaProgressScreen() {
 
   const handleContinue = () => {
     toolkit.ota.clearUpdateAvailable()
+    if (apkStepSeenRef.current) {
+      toolkit.ota.clearBuildNumberForNextCheck()
+    }
     replace("/ota/check-for-updates")
   }
 
@@ -637,6 +651,9 @@ export default function OtaProgressScreen() {
 
   const handleDone = () => {
     toolkit.ota.clearUpdateAvailable()
+    if (apkStepSeenRef.current) {
+      toolkit.ota.clearBuildNumberForNextCheck()
+    }
     replace("/ota/check-for-updates")
   }
 

@@ -142,6 +142,12 @@ export default function OtaCheckForUpdatesScreen() {
         const elapsed = Date.now() - startTime
         const remainingDelay = Math.max(0, MIN_DISPLAY_TIME_MS - elapsed)
         await new Promise((resolve) => setTimeout(resolve, remainingDelay))
+        // Same stale-run guard as the success path: a superseded check (retry/
+        // refocus bumped the generation, or the effect was cleaned up) must not
+        // flip the current run into "error" or mark it completed.
+        if (cancelled || myGen !== performCheckGenerationRef.current) {
+          return
+        }
         checkCompletedRef.current = true
         setCheckState("error")
       }

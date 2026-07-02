@@ -62,7 +62,8 @@ function projectInfo() {
     btMac: s.bluetoothMacAddress,
     leftMac: s.leftMacAddress,
     rightMac: s.rightMacAddress,
-    wifi: s.wifi,
+    // Copy: the snapshot must not hand callers a mutable reference into the store.
+    wifi: {...s.wifi},
   }
 }
 

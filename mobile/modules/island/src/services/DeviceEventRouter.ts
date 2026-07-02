@@ -90,9 +90,10 @@ export function startDeviceEventRouter(): void {
       const password = enabled ? event.password : ""
       const localIp = enabled ? event.localIp : ""
       useGlassesStore.getState().setHotspotInfo(enabled, ssid, password, localIp)
-      if (localIp) {
-        asgCameraApi.setServer(localIp, 8089)
-      }
+      // Always retarget the ASG camera client: on disable (or an event with no
+      // IP) fall back to the localhost default so later calls fail fast instead
+      // of hitting the previous network's stale glasses IP.
+      asgCameraApi.setServer(localIp || "localhost", 8089)
       GlobalEventEmitter.emit("hotspot_status_change", {enabled, ssid, password, local_ip: localIp})
     }),
   )

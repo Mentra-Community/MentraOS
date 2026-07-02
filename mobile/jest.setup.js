@@ -469,16 +469,21 @@ jest.mock("@mentra/island", () => {
           }
         }),
         onReadiness: jest.fn((cb) => {
-          let last = JSON.stringify(realGlasses.useGlassesStore.getState())
-          return realGlasses.useGlassesStore.subscribe(() => {
+          const projectReadiness = () => {
             const glassesState = realGlasses.useGlassesStore.getState()
-            const readiness = {
+            return {
               state: glassesState.connection.state,
               connected: realGlasses.isGlassesConnected(glassesState.connection),
               fullyBooted: realGlasses.isGlassesReady(glassesState.connection),
               bluetoothClassicConnected: glassesState.bluetoothClassicConnected,
               nativeLinkBusy: realGlasses.isGlassesLinkLayerBusy(glassesState.connection),
             }
+          }
+          // Baseline from the readiness projection (not the full store state) so
+          // the first unrelated store update doesn't fire a phantom change.
+          let last = JSON.stringify(projectReadiness())
+          return realGlasses.useGlassesStore.subscribe(() => {
+            const readiness = projectReadiness()
             const next = JSON.stringify(readiness)
             if (next === last) return
             last = next
@@ -495,9 +500,22 @@ jest.mock("@mentra/island", () => {
         onGlassesNotReady: subscribeVia("glasses_not_ready"),
         waitForReady: jest.fn(() => Promise.resolve(false)),
         waitForBluetoothClassic: jest.fn(({timeoutMs} = {}) => {
-          const connected = realGlasses.useGlassesStore.getState().bluetoothClassicConnected
-          if (connected) return Promise.resolve(true)
-          return new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs ?? 1000))
+          // Mirror the real facade: resolve true as soon as Classic connects
+          // during the wait window, false on timeout.
+          if (realGlasses.useGlassesStore.getState().bluetoothClassicConnected) return Promise.resolve(true)
+          return new Promise((resolve) => {
+            const unsubscribe = realGlasses.useGlassesStore.subscribe(() => {
+              if (realGlasses.useGlassesStore.getState().bluetoothClassicConnected) {
+                clearTimeout(timer)
+                unsubscribe()
+                resolve(true)
+              }
+            })
+            const timer = setTimeout(() => {
+              unsubscribe()
+              resolve(false)
+            }, timeoutMs ?? 1000)
+          })
         }),
       },
       miniapps: {

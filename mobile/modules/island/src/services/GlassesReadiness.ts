@@ -19,7 +19,7 @@ import {
   isConnectedGlassesConnectionStatus,
   isReadyGlassesConnectionStatus,
   type GlassesConnectionStatus,
-} from "@mentra/bluetooth-sdk"
+} from "@mentra/bluetooth-sdk/types"
 
 import {BgTimer} from "../utils/timers"
 

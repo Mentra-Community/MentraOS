@@ -347,6 +347,18 @@ export async function checkCurrentGlassesForUpdate(
     filteredUpdates = filteredUpdates.filter((update) => update !== "mtk")
   }
 
+  // Pre-migration parity: an update is only surfaced when the manifest also
+  // carries APK version metadata. A firmware-only manifest (mtk_patches /
+  // bes_firmware with no APK entry) is therefore dropped here — same as the
+  // legacy host check. Loud-log it so the case is visible in the field;
+  // surfacing firmware-only updates is a deliberate behavior change to make
+  // separately, not silently inside the boundary migration.
+  if (filteredUpdates.length > 0 && !result.latestVersionInfo) {
+    console.warn(
+      `OTA: manifest lists updates [${filteredUpdates.join(", ")}] but has no APK version metadata - ` +
+        "reporting no update (legacy behavior)",
+    )
+  }
   const updateAvailable = filteredUpdates.length > 0 && !!result.latestVersionInfo
   const updateInfo = updateAvailable
     ? {

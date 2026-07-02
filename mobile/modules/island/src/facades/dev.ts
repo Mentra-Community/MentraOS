@@ -67,7 +67,8 @@ function projectRuntimeStatus() {
   const cloudClient = useCloudClientStatusStore.getState()
   return {
     searching: core.searching,
-    micRanking: core.micRanking,
+    // Copy: the snapshot must not hand callers a mutable reference into the store.
+    micRanking: [...core.micRanking],
     currentMic: core.currentMic,
     systemMicUnavailable: core.systemMicUnavailable,
     glassesConnected: glasses.connection.state === "connected",
