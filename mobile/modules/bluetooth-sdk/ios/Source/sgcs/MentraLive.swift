@@ -1134,9 +1134,13 @@ extension MentraLive: CBPeripheralDelegate {
 
     nonisolated func peripheral(_: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
         let errorDescription = error?.localizedDescription
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             if let errorDescription {
                 Bridge.log("LIVE: Error writing characteristic: \(errorDescription)")
+                self?.logBleWriteTrace("write_callback", self?.pending?.trace, extra: [
+                    "success": false,
+                    "errorMessage": errorDescription,
+                ])
             } else {
                 Bridge.log("LIVE: Characteristic write successful")
             }
@@ -1358,6 +1362,8 @@ class MentraLive: NSObject, SGCManager {
     private let SIGNAL_STRENGTH_READ_INTERVAL_MS: TimeInterval = 10.0
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
     private let READINESS_CHECK_INTERVAL_MS: TimeInterval = 2.5 // 2.5 seconds
+    private let SIGNIFICANT_BLE_TRACE_DELAY_MS: TimeInterval = 250
+    private let SIGNIFICANT_BLE_TRACE_QUEUE_SIZE = 5
 
     /// Device Settings Keys
     private let PREFS_DEVICE_NAME = "MentraLiveLastConnectedDeviceName"
@@ -1385,6 +1391,7 @@ class MentraLive: NSObject, SGCManager {
     private var isNewVersion = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
+    private var bleWriteTraceSequence = 0
 
     private var fullyBooted: Bool {
         get { DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
@@ -1741,15 +1748,40 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Command Queue
 
     class PendingMessage {
-        init(data: Data, id: String, retries: Int) {
+        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil) {
             self.data = data
             self.id = id
             self.retries = retries
+            self.trace = trace
         }
 
         let data: Data
         let retries: Int
         let id: String
+        let trace: BleWriteTrace?
+    }
+
+    struct OutgoingBleCommandTraceInfo {
+        let commandType: String
+        let requestId: String?
+        let appId: String?
+        let messageId: Int64?
+    }
+
+    struct BleWriteTrace {
+        let sequence: Int
+        let commandType: String
+        let requestId: String?
+        let appId: String?
+        let messageId: Int64?
+        let chunkId: String?
+        let chunkIndex: Int?
+        let totalChunks: Int?
+        let payloadBytes: Int?
+        let packedBytes: Int
+        let wakeup: Bool
+        let chunked: Bool
+        let queuedAtMs: TimeInterval
     }
 
     private var pending: PendingMessage?
@@ -1758,12 +1790,14 @@ class MentraLive: NSObject, SGCManager {
     actor CommandQueue {
         private var commands: [PendingMessage] = []
 
-        func enqueue(_ command: PendingMessage) {
+        func enqueue(_ command: PendingMessage) -> Int {
             commands.append(command)
+            return commands.count
         }
 
-        func pushToFront(_ command: PendingMessage) {
+        func pushToFront(_ command: PendingMessage) -> Int {
             commands.insert(command, at: 0)
+            return commands.count
         }
 
         func dequeue() -> PendingMessage? {
@@ -1791,18 +1825,28 @@ class MentraLive: NSObject, SGCManager {
         guard let peripheral = connectedPeripheral,
               let txChar = txCharacteristic
         else {
+            logBleWriteTrace("write_dropped", message.trace, extra: [
+                "errorMessage": "missing peripheral or TX characteristic",
+            ])
             return
         }
 
         // Enforce rate limiting
         let currentTime = Date().timeIntervalSince1970 * 1000
         let timeSinceLastSend = currentTime - lastSendTimeMs
+        let queueDelayMs = message.trace.map { currentTime - $0.queuedAtMs }
 
         try? await Task.sleep(nanoseconds: UInt64(1_000_000))
         lastSendTimeMs = Date().timeIntervalSince1970 * 1000
 
         // Send the data
         peripheral.writeValue(message.data, for: txChar, type: .withResponse)
+        logBleWriteTrace("write_requested", message.trace, extra: [
+            "queueDelayMs": queueDelayMs,
+            "timeSinceLastSendMs": timeSinceLastSend,
+            "currentMtu": currentMtu,
+            "writeType": "withResponse",
+        ])
 
         // don't do the retry system on the old glasses versions
         if !isNewVersion {
@@ -1844,12 +1888,19 @@ class MentraLive: NSObject, SGCManager {
             let retryMessage = PendingMessage(
                 data: pendingMessage.data,
                 id: pendingMessage.id,
-                retries: pendingMessage.retries + 1
+                retries: pendingMessage.retries + 1,
+                trace: pendingMessage.trace
             )
 
             // Push to front of queue for immediate retry
             Task {
-                await self.commandQueue.pushToFront(retryMessage)
+                let queueSize = await self.commandQueue.pushToFront(retryMessage)
+                await MainActor.run {
+                    self.logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
+                        "retryDelayMs": 0,
+                        "queueSizeAfterAdd": queueSize,
+                    ])
+                }
             }
 
             Bridge.log(
@@ -2102,6 +2153,7 @@ class MentraLive: NSObject, SGCManager {
     private func processJsonObject(_ json: [String: Any]) {
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
+        BleTraceLogger.logJson(direction: "glasses_to_phone", layer: "sdk_ble_event", payload: json)
 
         if MessageChunker.isChunkedMessage(json) {
             processChunkedJsonObject(json)
@@ -3651,8 +3703,211 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Sending Data
 
     func queueSend(_ data: Data, id: String) {
+        queueSend(data, id: id, trace: nil)
+    }
+
+    func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
+        let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         Task {
-            await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0))
+            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace))
+            guard trace != nil, queueSize >= significantQueueSize else {
+                return
+            }
+            await MainActor.run {
+                self.logBleChunkTrace("queued", trace, extra: [
+                    "queueSizeAfterAdd": queueSize,
+                ])
+            }
+        }
+    }
+
+    private func outgoingBleCommandTraceInfo(_ json: [String: Any]) -> OutgoingBleCommandTraceInfo {
+        OutgoingBleCommandTraceInfo(
+            commandType: nonBlankString(json["type"]) ?? "unknown",
+            requestId: nonBlankString(json["requestId"]),
+            appId: nonBlankString(json["appId"]),
+            messageId: traceInt64(json["mId"])
+        )
+    }
+
+    private func createBleWriteTrace(
+        commandInfo: OutgoingBleCommandTraceInfo,
+        chunkId: String?,
+        chunkIndex: Int?,
+        totalChunks: Int?,
+        payloadBytes: Int?,
+        packedBytes: Int,
+        wakeup: Bool,
+        chunked: Bool
+    ) -> BleWriteTrace {
+        let sequence = bleWriteTraceSequence
+        bleWriteTraceSequence += 1
+        return BleWriteTrace(
+            sequence: sequence,
+            commandType: commandInfo.commandType,
+            requestId: commandInfo.requestId,
+            appId: commandInfo.appId,
+            messageId: commandInfo.messageId,
+            chunkId: chunkId,
+            chunkIndex: chunkIndex,
+            totalChunks: totalChunks,
+            payloadBytes: payloadBytes,
+            packedBytes: packedBytes,
+            wakeup: wakeup,
+            chunked: chunked,
+            queuedAtMs: Date().timeIntervalSince1970 * 1000
+        )
+    }
+
+    private func logBleChunkTrace(
+        _ stage: String,
+        _ trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        logBleTrace(layer: "sdk_ble_chunk", stage: stage, trace: trace, extra: extra)
+    }
+
+    private func logBleWriteTrace(
+        _ stage: String,
+        _ trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        logBleTrace(layer: "sdk_ble_write", stage: stage, trace: trace, extra: extra)
+    }
+
+    private func logBleTrace(
+        layer: String,
+        stage: String,
+        trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        guard let trace,
+              let warningReason = bleTraceWarningReason(stage: stage, extra: extra)
+        else {
+            return
+        }
+
+        var payload: [String: Any] = [
+            "level": "warning",
+            "warningReason": warningReason,
+            "stage": stage,
+            "sequence": trace.sequence,
+            "commandType": trace.commandType,
+            "packedBytes": trace.packedBytes,
+            "wakeup": trace.wakeup,
+            "chunked": trace.chunked,
+            "queuedAtMs": trace.queuedAtMs,
+        ]
+        if let requestId = trace.requestId { payload["requestId"] = requestId }
+        if let appId = trace.appId { payload["appId"] = appId }
+        if let messageId = trace.messageId { payload["messageId"] = messageId }
+        if let chunkId = trace.chunkId { payload["chunkId"] = chunkId }
+        if let chunkIndex = trace.chunkIndex {
+            payload["chunkIndex"] = chunkIndex
+            payload["chunkNumber"] = chunkIndex + 1
+        }
+        if let totalChunks = trace.totalChunks { payload["totalChunks"] = totalChunks }
+        if let payloadBytes = trace.payloadBytes { payload["payloadBytes"] = payloadBytes }
+        for (key, value) in extra {
+            if let value {
+                payload[key] = value
+            }
+        }
+
+        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload)
+    }
+
+    private func bleTraceWarningReason(stage: String, extra: [String: Any?]) -> String? {
+        if extraValue(extra, "errorClass") != nil || extraValue(extra, "errorMessage") != nil {
+            return "ble_write_error"
+        }
+        if let success = extraValue(extra, "success") as? Bool, !success {
+            return "ble_write_failed"
+        }
+        if let writeAccepted = extraValue(extra, "writeAccepted") as? Bool, !writeAccepted {
+            return "ble_write_rejected"
+        }
+        if traceDouble(extraValue(extra, "queueDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "queue_delay"
+        }
+        if traceDouble(extraValue(extra, "callbackDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "write_callback_delay"
+        }
+        if traceDouble(extraValue(extra, "remainingDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "rate_limit_delay"
+        }
+        if traceDouble(extraValue(extra, "nextProcessDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "next_process_delay"
+        }
+        if extraValue(extra, "retryDelayMs") != nil {
+            return "write_retry"
+        }
+        if stage == "queued",
+           traceInt(extraValue(extra, "queueSizeAfterAdd")).map({ $0 >= SIGNIFICANT_BLE_TRACE_QUEUE_SIZE }) == true
+        {
+            return "queue_depth"
+        }
+        return nil
+    }
+
+    private func extraValue(_ extra: [String: Any?], _ key: String) -> Any? {
+        extra[key] ?? nil
+    }
+
+    private func nonBlankString(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        let string: String
+        if let value = value as? String {
+            string = value
+        } else {
+            string = String(describing: value)
+        }
+        return string.isEmpty ? nil : string
+    }
+
+    private func traceInt64(_ value: Any?) -> Int64? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Int64:
+            return value
+        case let value as Int:
+            return Int64(value)
+        case let value as NSNumber:
+            return value.int64Value
+        case let value as String:
+            return Int64(value)
+        default:
+            return nil
+        }
+    }
+
+    private func traceInt(_ value: Any?) -> Int? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Int:
+            return value
+        case let value as NSNumber:
+            return value.intValue
+        case let value as String:
+            return Int(value)
+        default:
+            return nil
+        }
+    }
+
+    private func traceDouble(_ value: Any?) -> Double? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Double:
+            return value
+        case let value as Int:
+            return Double(value)
+        case let value as NSNumber:
+            return value.doubleValue
+        case let value as String:
+            return Double(value)
+        default:
+            return nil
         }
     }
 
@@ -3671,6 +3926,14 @@ class MentraLive: NSObject, SGCManager {
 
             let jsonData = try JSONSerialization.data(withJSONObject: json)
             if let jsonString = String(data: jsonData, encoding: .utf8) {
+                let commandInfo = outgoingBleCommandTraceInfo(json)
+                BleTraceLogger.logJson(
+                    direction: "phone_to_glasses",
+                    layer: "sdk_ble_command",
+                    payload: json,
+                    bytes: jsonData.count
+                )
+
                 // First check if the message needs chunking
                 // Create a test C-wrapped version to check size
                 var testWrapper: [String: Any] = [K900ProtocolUtils.FIELD_C: jsonString]
@@ -3707,7 +3970,21 @@ class MentraLive: NSObject, SGCManager {
                             // All other chunks get "-1" (no ACK tracking)
                             let isFinalChunk = (index == chunks.count - 1)
                             let chunkTrackingId = (requireAck && isFinalChunk) ? trackingId : "-1"
-                            queueSend(packedData, id: chunkTrackingId)
+                            let trace = createBleWriteTrace(
+                                commandInfo: commandInfo,
+                                chunkId: chunk["id"] as? String,
+                                chunkIndex: index,
+                                totalChunks: chunks.count,
+                                payloadBytes: chunkStr.data(using: .utf8)?.count,
+                                packedBytes: packedData.count,
+                                wakeup: wakeUp && index == 0,
+                                chunked: true
+                            )
+                            logBleChunkTrace("created", trace, extra: [
+                                "chunkJsonBytes": chunkStr.data(using: .utf8)?.count,
+                                "messageBytes": jsonData.count,
+                            ])
+                            queueSend(packedData, id: chunkTrackingId, trace: trace)
 
                             // Add small delay between chunks to avoid overwhelming the connection
                             if index < chunks.count - 1 {
@@ -3724,7 +4001,20 @@ class MentraLive: NSObject, SGCManager {
                     }
                     Bridge.log("LIVE: Sending data to glasses: \(jsonString)")
                     let packedData = packJson(jsonString, wakeUp: wakeUp) ?? Data()
-                    queueSend(packedData, id: trackingId)
+                    let trace = createBleWriteTrace(
+                        commandInfo: commandInfo,
+                        chunkId: nil,
+                        chunkIndex: nil,
+                        totalChunks: nil,
+                        payloadBytes: jsonData.count,
+                        packedBytes: packedData.count,
+                        wakeup: wakeUp,
+                        chunked: false
+                    )
+                    logBleChunkTrace("created", trace, extra: [
+                        "messageBytes": jsonData.count,
+                    ])
+                    queueSend(packedData, id: trackingId, trace: trace)
                 }
             }
         } catch {
