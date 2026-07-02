@@ -86,6 +86,48 @@ together.
 | Account deletion request/confirm | keep-until-V2-port | already fronted by `toolkit.session.account` |
 | `/api/client/goodbye` | keep-until-V2-port | courtesy |
 
+## Reachability analysis (2026-07-02): what "keep-until-V2-port" actually protects
+
+Traced from every phone-side entry point (routes, deeplinks, store flows, app
+store/registry):
+
+- **No phone UI can reach a Cloud V1 app anymore.** The island apps store
+  rejects cloud-v1 entries (`stores/apps.ts:290`), `getInstalledMiniapps()`
+  returns only local/offline apps, and every `/applet/*` navigation requires
+  the app to exist in that store. Deeplinks included. A V1 app object cannot
+  exist at runtime.
+- **Every remaining SocketComms handler is server-push-only** — reachable only
+  if the V1 cloud pushes into the still-open websocket. Local miniapps do NOT
+  ride this path (they get events via `localMiniappRuntime.forwardEvent`), so
+  deleting the bridge breaks only V1 server-side apps.
+- `stream_status` / `keep_alive_ack` relays already filter to non-phone-owned
+  streams — pure V1 leftovers once no V1 app can start a stream.
+- **Dead code found:** `mobile/src/services/Livekit.ts` is imported by nothing;
+  `RestComms.getLivekitUrlAndToken` and the `livekit=true` WS param serve only
+  it.
+- **Correction to keep in mind:** `/api/client/min-version` is NOT part of the
+  V1-app bridge — it gates app launch (3 live call sites) and stays.
+- The applet-webview cluster (webview tokens, `/appsettings/*`, uninstall,
+  health check) is unreachable for V1 apps; before deleting, confirm no
+  planned flow re-introduces server-hosted apps through `/applet/webview`.
+
+### Ordered delete list once "no Cloud V1 apps exist" is declared
+
+1. Now, no product decision needed (dead code): `services/Livekit.ts`,
+   `RestComms.getLivekitUrlAndToken`, `livekit=true` WS param.
+2. Push-only V1 stream plumbing: `handle_stop_stream`,
+   `handle_keep_stream_alive`, `sendStreamStatus`, `sendKeepAliveAck`, and the
+   phone-owned-stream filters in MantleManager.
+3. Remaining push handlers (`display_event`, `photo_request`, video recording,
+   `rgb_led_control`, `camera_fov_set`, `show_wifi_setup`, location commands)
+   + the device→cloud relays (touch/button/swipe/switch/head/ws_text/
+   location_update) + `sendPhotoResponse`.
+4. The applet-webview cluster and V1 app catalog endpoints (after the
+   product confirmation above).
+5. Last, as one retirement: `SocketComms` + `WebSocketManager` + core_token
+   exchange, once settings/calendar/notifications have V2 endpoints
+   (`RestComms` shrinks to those until then).
+
 ## Rules going forward
 
 1. No new callers of SocketComms/WebSocketManager/RestComms — new features use
