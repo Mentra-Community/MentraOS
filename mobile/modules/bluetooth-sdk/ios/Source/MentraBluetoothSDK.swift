@@ -1195,7 +1195,7 @@ public final class MentraBluetoothSDK {
     private func resolveOtaVersionUrl(status: GlassesStatus) throws -> String {
         let deviceUrl = status.otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if isLegacyAsgOtaStartBuild(status.buildNumber) {
-            return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
+            return OtaManifestDefaults.legacyProdOtaVersionUrl
         }
         // SDK consumers are pinned to the manifest built for their SDK version.
         // A future glasses-advertised URL should not silently change that pairing.

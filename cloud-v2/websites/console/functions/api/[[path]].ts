@@ -51,7 +51,21 @@ const FORWARDING_AND_HOP_BY_HOP_HEADERS = [
 ];
 
 function stripForwardingAndHopByHopHeaders(headers: Headers): void {
-  for (const name of FORWARDING_AND_HOP_BY_HOP_HEADERS) {
+  // Per RFC 7230 §6.1 the inbound `Connection` header may name additional
+  // hop-by-hop headers (e.g. `Connection: X-Foo, close`); strip those too so
+  // client-controlled proxy metadata never reaches CORE_URL. Read it before the
+  // static loop deletes `connection` itself. Tokens are client-controlled, so
+  // keep only valid HTTP field-names (RFC 7230 token) — Headers.delete throws on
+  // a malformed name, which would otherwise turn this proxy into a 500.
+  const isValidHeaderName = (name: string) => /^[!#$%&'*+\-.^_`|~0-9a-z]+$/.test(name);
+  const connectionTokens =
+    headers
+      .get("connection")
+      ?.split(",")
+      .map(token => token.trim().toLowerCase())
+      .filter(token => token.length > 0 && isValidHeaderName(token)) ?? [];
+
+  for (const name of [...FORWARDING_AND_HOP_BY_HOP_HEADERS, ...connectionTokens]) {
     headers.delete(name);
   }
 }

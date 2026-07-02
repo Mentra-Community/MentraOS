@@ -1,10 +1,11 @@
 {
   "name": "create-mentra-miniapp",
-  "version": "0.1.0",
+  "version": "0.1.0-dev.0",
   "description": "Scaffold a new MentraOS miniapp project",
   "type": "module",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "dev"
   },
   "bin": {
     "create-mentra-miniapp": "./bin/index.ts"

@@ -1,7 +1,7 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import android.util.Log;
-import com.mentra.asg_client.io.bes.BesOtaManager;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.events.BesOtaAuthEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -9,11 +9,12 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 
 /**
  * Reacts to {@link BesOtaAuthEvent}s by forwarding the authorization result to the {@link
- * BesOtaManager}. Moved verbatim from {@code K900CommandHandler.handleBesOtaAuthorizationResponse}.
+ * IBesOtaController}. Moved verbatim from {@code
+ * K900CommandHandler.handleBesOtaAuthorizationResponse}.
  *
- * <p>The {@link BesOtaManager} is fetched lazily from {@link AsgClientServiceManager} at event time
- * because it is created later in the service lifecycle (during {@code initializeBluetoothManager}),
- * after subscribers are wired.
+ * <p>The {@link IBesOtaController} is fetched lazily from {@link AsgClientServiceManager} at event
+ * time because it is created later in the service lifecycle (during {@code
+ * initializeBluetoothManager}), after subscribers are wired.
  */
 public final class BesOtaAuthEventSubscriber implements IPeripheralBus.McuEventListener {
 
@@ -35,16 +36,19 @@ public final class BesOtaAuthEventSubscriber implements IPeripheralBus.McuEventL
         Log.i(TAG, "🔧 Received BES OTA authorization response");
         Log.d(TAG, "🔧 BES OTA authorization: " + (authorized ? "GRANTED" : "DENIED"));
 
-        // Notify BesOtaManager of authorization result
-        BesOtaManager manager = serviceManager != null ? serviceManager.getBesOtaManager() : null;
-        if (manager != null) {
+        // Notify the BES OTA controller of the authorization result
+        IBesOtaController controller =
+                serviceManager != null ? serviceManager.getBesOtaManager() : null;
+        if (controller != null) {
             if (authorized) {
-                manager.onAuthorizationGranted();
+                controller.onAuthorizationGranted();
             } else {
-                manager.onAuthorizationDenied();
+                controller.onAuthorizationDenied();
             }
         } else {
-            Log.e(TAG, "❌ BesOtaManager not available - cannot process authorization response");
+            Log.e(
+                    TAG,
+                    "❌ BES OTA controller not available - cannot process authorization response");
         }
     }
 }

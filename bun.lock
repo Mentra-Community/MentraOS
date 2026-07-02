@@ -29,23 +29,25 @@
     },
     "cloud-v2/packages/auth": {
       "name": "@mentra/auth",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "jose": "^5.9.6",
       },
     },
     "cloud-v2/packages/cli": {
       "name": "@mentra/cli",
-      "version": "2.0.0-alpha.0",
+      "version": "2.0.0-dev.0",
       "bin": {
         "mentra": "./src/index.ts",
       },
       "dependencies": {
         "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
         "commander": "^14.0.2",
+        "qrcode": "^1.5.4",
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/qrcode": "^1.5.5",
       },
     },
     "cloud-v2/packages/cloud-client": {
@@ -317,7 +319,7 @@
     },
     "mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "0.3.0",
+      "version": "0.3.0-dev.0",
       "dependencies": {
         "@mentra/types": "1.0.0-beta.2",
         "eventemitter3": "^5.0.1",
@@ -336,7 +338,7 @@
     },
     "sdk/miniapp-cli": {
       "name": "@mentra/miniapp-cli",
-      "version": "0.1.0",
+      "version": "0.1.0-dev.0",
       "bin": {
         "mentra-miniapp": "./src/index.ts",
       },

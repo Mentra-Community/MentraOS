@@ -26,7 +26,7 @@ export function AppsPage() {
               <div className="flex min-h-[260px] flex-col items-center justify-center p-6 text-center text-sm text-[#747780] sm:min-h-[320px] sm:p-8">
                 Loading miniapps…
               </div>
-            ) : apps.isError ? (
+            ) : apps.isError && !apps.data ? (
               <div className="flex min-h-[260px] flex-col items-center justify-center p-6 text-center sm:min-h-[320px] sm:p-8">
                 <h2 className="font-display text-[21px] font-bold">Couldn’t load miniapps</h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-[#747780]">

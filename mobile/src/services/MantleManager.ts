@@ -39,6 +39,8 @@ import {
   getDevAppAttestation,
   getDevAppSourcePackage,
   BgTimer,
+  saveLocalAppRunningState,
+  storage,
   useAppStatusStore,
 } from "@mentra/island"
 import {useDisplayStore} from "@/stores/display"
@@ -492,6 +494,13 @@ class MantleManager {
     // lets Core move users to newer bundled miniapp releases without shipping a
     // new mobile binary.
     await preinstalledMiniappSync.sync()
+
+    // Re-spawn local miniapps that were running when the app was last killed.
+    // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
+    // miniapps have no server to bring them back, so the host restarts them here
+    // from the persisted running flags. Runs last so newly installed/upgraded
+    // bundles are on disk first. Best-effort — never block miniapp init on it.
+    miniappCatalog.autostartLocalMiniapps().catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
   }
 
   /**
@@ -511,6 +520,14 @@ class MantleManager {
     for (const [oldPackageName, newPackageName] of Object.entries(RENAMED_BUNDLED_MINIAPPS)) {
       try {
         if (appRegistry.getInstalledVersions(oldPackageName).length === 0) continue
+        // Carry the persisted running flag over to the new packageName so
+        // autostartLocalMiniapps (which runs after the renamed bundle installs)
+        // resumes the miniapp the user left running under the old name.
+        const wasRunning = storage.load<boolean>(`${oldPackageName}_running`)
+        if (wasRunning.is_ok() && wasRunning.value) {
+          saveLocalAppRunningState(newPackageName, true)
+          saveLocalAppRunningState(oldPackageName, false)
+        }
         const res = await appRegistry.uninstall(oldPackageName)
         if (res.is_error()) {
           console.error(`MANTLE: failed to remove renamed miniapp ${oldPackageName}:`, res.error)

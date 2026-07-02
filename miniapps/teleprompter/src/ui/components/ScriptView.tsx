@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from "react"
-import {ChevronDown, ChevronUp, Gauge, Mic, Pause, Play, RotateCcw} from "lucide-react"
+import {ChevronDown, ChevronUp, Mic, Pause, Play, RotateCcw} from "lucide-react"
 
 import type {PlaybackStatus, TeleprompterSettings} from "../../shared/types"
 import {fmtClock, fmtWords} from "../lib/format"
@@ -15,6 +15,7 @@ interface ScriptViewProps {
   onRestart: () => void
   onSeek: (percent: number) => void
   onNudge: (lines: number) => void
+  onSetVoiceFollow: (enabled: boolean) => void
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -33,6 +34,7 @@ export function ScriptView({
   onRestart,
   onSeek,
   onNudge,
+  onSetVoiceFollow,
 }: ScriptViewProps) {
   const [draft, setDraft] = useState(settings.script)
   const focusedRef = useRef(false)
@@ -87,7 +89,10 @@ export function ScriptView({
 
   const totalWords = status?.totalWords ?? 0
   const playing = status?.state === "playing"
-  const voiceMode = status?.voiceMode ?? settings.voiceFollow
+  // Whether voice is the ACTUAL scroll driver — false when AI Scroll is on but
+  // the device has no mic (the engine falls back to timed scroll), so the
+  // caption doesn't promise voice-follow that isn't happening.
+  const voiceActive = status?.voiceMode ?? settings.voiceFollow
   const progress = drag ?? status?.progress ?? 0
   const totalSec = status?.estimatedTotalSec ?? 0
   const remainingSec = status?.remainingSec ?? totalSec
@@ -102,22 +107,25 @@ export function ScriptView({
       <div className="shrink-0 bg-white border-b border-zinc-200 px-4 pt-3 pb-4 space-y-3 shadow-sm">
         <GlassesPreview status={status} />
 
-        {/* State + mode */}
+        {/* State + AI Scroll toggle. Play auto-scrolls at the set speed; AI Scroll
+            is the explicit opt-in that makes scrolling follow the speaker's voice. */}
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold text-zinc-800">{stateLabel}</span>
-          <span
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-            style={{backgroundColor: voiceMode ? "#DCFCE7" : "#F4F4F5", color: voiceMode ? "#15803D" : "#3F3F46"}}>
-            {voiceMode ? (
-              <>
-                <Mic className="w-3.5 h-3.5" aria-hidden="true" /> Voice-follow
-              </>
-            ) : (
-              <>
-                <Gauge className="w-3.5 h-3.5" aria-hidden="true" /> {settings.wpm} wpm
-              </>
-            )}
-          </span>
+          <button
+            type="button"
+            aria-label="AI Scroll — follow my voice"
+            aria-pressed={settings.voiceFollow}
+            onClick={() => onSetVoiceFollow(!settings.voiceFollow)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors active:scale-95"
+            style={
+              settings.voiceFollow
+                ? {backgroundColor: ACCENT, color: ACCENT_FG}
+                : {backgroundColor: "#F4F4F5", color: "#3F3F46"}
+            }>
+            <Mic className="w-3.5 h-3.5" aria-hidden="true" />
+            AI Scroll
+            <span className="opacity-80">{settings.voiceFollow ? "On" : "Off"}</span>
+          </button>
         </div>
 
         {/* Transport */}
@@ -160,6 +168,16 @@ export function ScriptView({
             </button>
           </div>
         </div>
+
+        {/* What Play does right now — defuses the "why isn't it moving?" confusion.
+            Three states: off, on-with-voice, and on-but-no-mic (timed fallback). */}
+        <p className="text-center text-[11px] leading-snug text-zinc-500">
+          {!settings.voiceFollow
+            ? `Play auto-scrolls at ${settings.wpm} wpm. Turn on AI Scroll to follow your voice.`
+            : voiceActive
+              ? "AI Scroll is on — the prompter follows your voice as you speak."
+              : `AI Scroll is on, but this device has no mic — Play auto-scrolls at ${settings.wpm} wpm.`}
+        </p>
 
         {/* Scrubber */}
         <div className="space-y-1.5">

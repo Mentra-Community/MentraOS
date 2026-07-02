@@ -149,6 +149,13 @@ export interface Capabilities {
 
   // WiFi capability
   hasWifi: boolean;
+
+  // Native dashboard capability
+  // True when the device renders its own dashboard in firmware (e.g. Even
+  // Realities' built-in dashboard on G2). MentraOS does not manage or expose
+  // dashboard settings for these devices. Absent/false means MentraOS owns the
+  // dashboard.
+  hasNativeDashboard?: boolean;
 }
 
 /**
