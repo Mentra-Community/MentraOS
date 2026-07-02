@@ -7,6 +7,7 @@ import com.mentra.asg_client.io.peripheral.events.BesOtaAuthEvent;
 import com.mentra.asg_client.io.peripheral.events.BesVersionEvent;
 import com.mentra.asg_client.io.peripheral.events.BtMacEvent;
 import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
+import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -76,6 +77,11 @@ public class McuEventParserTest {
     @Test
     public void csShut_mapsToShutdownEvent() throws Exception {
         assertThat(McuEventParser.parse(cmd("cs_shut"))).isInstanceOf(ShutdownEvent.class);
+    }
+
+    @Test
+    public void csFcrst_mapsToFactoryResetEvent() throws Exception {
+        assertThat(McuEventParser.parse(cmd("cs_fcrst"))).isInstanceOf(FactoryResetEvent.class);
     }
 
     @Test

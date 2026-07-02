@@ -1498,8 +1498,7 @@ public class OtaHelper {
 
             // Install the backup APK
             Log.i(TAG, "Installing backup APK version: " + info.getLongVersionCode());
-            installApk(context, backupPath);
-            return true;
+            return installApk(context, backupPath);
         } catch (Exception e) {
             Log.e(TAG, "Failed to reinstall backup APK: " + e.getMessage(), e);
             return false;

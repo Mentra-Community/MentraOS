@@ -39,7 +39,7 @@ product implied by the domain (no version segment; a future break would take
 ### Core access token
 
 Ed25519 JWT, signed with the **access-token key**. Claims: `sub = mentraUserId`,
-`oemId`, `sessionId`, `jti`, `aud = "cloud-core"`, `iss`, `exp` (1h). The
+`tenantId`, `sessionId`, `jti`, `aud = "cloud-core"`, `iss`, `exp` (1h). The
 device's credential to Core-owned APIs. Held by the cloud-client, **never** given
 to a miniapp.
 
@@ -54,7 +54,7 @@ contract is tracked in issue 007.
 ### Miniapp-scoped token
 
 Ed25519 JWT, signed with a **separate miniapp-token key**. Claims:
-`sub = mentraUserId`, `oemId`, `aud = <packageName>`, `iss = "cloud-core"`,
+`sub = mentraUserId`, `tenantId`, `aud = <packageName>`, `iss = "cloud-core"`,
 `iat`, `exp` (configurable, default 1h), `jti`. Audience-pinned to one miniapp;
 only ever valid against that miniapp's developer backend, which verifies it via
 JWKS. This is the only token a miniapp ever holds.
@@ -66,13 +66,13 @@ JWKS. This is the only token a miniapp ever holds.
 RFC 8693 token exchange. The mobile client presents a subject token and gets back
 Core-backed tokens. `subject_token_type` selects the verification path:
 
-| subject token | verified with | `oemId` | `oemUserId` |
+| subject token | verified with | `tenantId` | `tenantUserId` |
 | --- | --- | --- | --- |
 | OEM-signed JWT | the OEM's registered public key | `iss` | `sub` |
 | Mentra core token (transition) | shared `AUGMENTOS_AUTH_JWT_SECRET` (HS256) | `"mentra"` | core token `sub` (the Supabase sub) |
 | Mentra Supabase session (end state) | `SUPABASE_JWT_SECRET` | `"mentra"` | `sub` |
 
-Maps `(oemId, oemUserId)` to the user's `_id` (the `mentraUserId`), creating the
+Maps `(tenantId, tenantUserId)` to the user's `_id` (the `mentraUserId`), creating the
 record on first sight. Returns `{ access_token, refresh_token, token_type,
 expires_in }`, where `access_token` is the Core access token unless a future
 response explicitly asks for a runtime token. Verification details, supported
@@ -91,7 +91,7 @@ Authorization: Bearer <cloud-core token>
 ->  { "token": "<ed25519 jwt>", "expiresAt": <unix seconds> }
 ```
 
-Verifies the Core token, reads `mentraUserId` + `oemId`, and mints the
+Verifies the Core token, reads `mentraUserId` + `tenantId`, and mints the
 miniapp-scoped token with `aud = packageName`. **No install or entitlement
 check**: a valid Core token plus the requested packageName is sufficient, and
 the on-device Runtime enforces that a bundle can only request its own packageName.
@@ -105,7 +105,7 @@ Authorization: Bearer <cloud-core token>
 ->  { "access_token": "<cloud-runtime jwt>", "token_type": "Bearer", "expires_in": 900 }
 ```
 
-Verifies the Core token, reads `mentraUserId` + `oemId`, and mints a short-lived
+Verifies the Core token, reads `mentraUserId` + `tenantId`, and mints a short-lived
 Runtime token with `aud = "cloud-runtime"`. Hosted-Core CloudClient mode uses
 this endpoint explicitly via `auth.runtime = { source: "core" }`. Runtime
 Services verify the token locally against their configured issuer/JWKS list.

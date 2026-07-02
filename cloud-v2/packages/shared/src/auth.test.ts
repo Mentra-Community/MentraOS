@@ -37,6 +37,35 @@ describe("runtime token verification", () => {
         issuer: "test-runtime",
         publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
         userIdClaim: "sub",
+        tenantIdClaim: "tenant_id",
+      },
+    ]);
+
+    const token = await signRuntimeToken({
+      privateKey: keypair.privateKey,
+      issuer: "test-runtime",
+      subject: "user-1",
+      tenantId: "oem-1",
+      jti: "runtime-jti",
+      expiresInSeconds: 60,
+    });
+
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
+      mentraUserId: "user-1",
+      tenantId: "oem-1",
+      sessionId: "runtime_runtime-jti",
+      jti: "runtime-jti",
+    });
+  });
+
+  test("accepts legacy issuer tenant config while preferring tenant_id tokens", async () => {
+    const keypair = createEd25519Keypair();
+    process.env.TEST_RUNTIME_PUBLIC_KEY = keypair.publicKey;
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {
+        issuer: "test-runtime",
+        publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
+        userIdClaim: "sub",
         oemIdClaim: "oem_id",
       },
     ]);
@@ -45,14 +74,43 @@ describe("runtime token verification", () => {
       privateKey: keypair.privateKey,
       issuer: "test-runtime",
       subject: "user-1",
-      oemId: "oem-1",
+      tenantId: "tenant-1",
       jti: "runtime-jti",
       expiresInSeconds: 60,
     });
 
     await expect(verifyRuntimeToken(token)).resolves.toEqual({
       mentraUserId: "user-1",
-      oemId: "oem-1",
+      tenantId: "tenant-1",
+      sessionId: "runtime_runtime-jti",
+      jti: "runtime-jti",
+    });
+  });
+
+  test("accepts legacy fixed OEM config as fixed tenant config", async () => {
+    const keypair = createEd25519Keypair();
+    process.env.TEST_RUNTIME_PUBLIC_KEY = keypair.publicKey;
+    process.env.CLOUD_RUNTIME_AUTH_ISSUERS = JSON.stringify([
+      {
+        issuer: "test-runtime",
+        publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
+        userIdClaim: "sub",
+        fixedOemId: "tenant-legacy",
+      },
+    ]);
+
+    const token = await signRuntimeToken({
+      privateKey: keypair.privateKey,
+      issuer: "test-runtime",
+      subject: "user-1",
+      tenantId: "tenant-token",
+      jti: "runtime-jti",
+      expiresInSeconds: 60,
+    });
+
+    await expect(verifyRuntimeToken(token)).resolves.toEqual({
+      mentraUserId: "user-1",
+      tenantId: "tenant-legacy",
       sessionId: "runtime_runtime-jti",
       jti: "runtime-jti",
     });
@@ -66,7 +124,7 @@ describe("runtime token verification", () => {
         issuer: "test-runtime",
         publicKeyEnv: "TEST_RUNTIME_PUBLIC_KEY",
         userIdClaim: "sub",
-        fixedOemId: "oem-1",
+        fixedTenantId: "oem-1",
       },
     ]);
 
@@ -75,7 +133,7 @@ describe("runtime token verification", () => {
       issuer: "test-runtime",
       audience: "cloud-core",
       subject: "user-1",
-      oemId: "oem-1",
+      tenantId: "oem-1",
       expiresInSeconds: 60,
     });
 

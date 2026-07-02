@@ -21,7 +21,7 @@ export type OemPublicKeyMode = (typeof OEM_PUBLIC_KEY_MODES)[number];
 const OemSchema = new Schema(
   {
     /** Stable external identifier. Used as the `iss` claim on OEM-signed JWTs. */
-    oemId: { type: String, required: true, unique: true },
+    tenantId: { type: String, required: true, unique: true },
 
     /** Human-readable name for portal display. */
     displayName: { type: String, required: true },

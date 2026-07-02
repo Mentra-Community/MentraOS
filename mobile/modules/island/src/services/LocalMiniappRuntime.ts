@@ -37,6 +37,8 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import {BlobStore} from "./BlobStore"
+import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
@@ -65,6 +67,9 @@ import type {ClientApp} from "../types/applet"
 // =============================================================================
 
 export interface InstalledMiniappManifest {
+  /** Human-facing app name (from miniapp.json `name`). Shown in the "Starting
+   * <name>…" boot message; falls back to the package name when absent. */
+  name?: string
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
 }
@@ -75,8 +80,22 @@ interface ConnectedMiniapp {
   subscriptions: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
+  /** BGCAP diagnostic: wall-clock of the most recent PING send, for PONG RTT. */
+  bgcapLastPingSentAt?: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
+  /**
+   * Backoff timer for re-attempting the INITIAL miniapp-token mint after it
+   * failed (distinct from `authRefreshTimerId`, which renews an already-issued
+   * token near expiry). Null when no retry is queued.
+   */
+  authRetryTimerId: number | null
+  /**
+   * True once this app has received a miniapp auth token (in CONNECT_ACK or a
+   * follow-up AUTH_UPDATE). Gates the initial-mint retry loop and the
+   * on-reconnect re-drive so we stop hammering once auth has landed.
+   */
+  authDelivered: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
   /**
@@ -128,6 +147,13 @@ const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
+// Backoff bounds for re-minting the INITIAL miniapp token after a failed mint
+// (e.g. the cloud client had not finished its first-boot Core token exchange
+// when the miniapp connected). Exponential from base, capped, so a transient
+// not-yet-connected client self-heals within seconds instead of needing a full
+// manual Cloud V2 reconnect.
+const MINIAPP_AUTH_RETRY_BASE_MS = 1_000
+const MINIAPP_AUTH_RETRY_MAX_MS = 15_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -136,6 +162,73 @@ const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // respawn path wired (MentraJSRouter.start), a genuinely dead context still
 // comes back automatically — this threshold only bounds how long that takes.
 const PING_TIMEOUT_THRESHOLD = 6 // ~30s
+
+// ===========================================================================
+// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove after the
+// "captions fall behind then flood in waves" investigation lands a fix).
+//
+// Captions now run as a local miniapp inside the per-context JS engine
+// (Crust: QuickJS on Android / JSC on iOS), driven off a single serial
+// queue/executor with NO background awareness. The hypothesis is that the OS
+// starves/freezes that queue when the screen is off (iOS app suspension /
+// Android Doze), so inbound transcript deliveries pile up and drain in a burst
+// on resume. These logs measure exactly that. All lines are prefixed "BGCAP:"
+// so they're trivial to grep in incident logs and to delete. Cross-platform —
+// host-side only, no native changes.
+// ===========================================================================
+const BGCAP_TELEMETRY = false
+const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
+let bgcapHbTimer: ReturnType<typeof setInterval> | null = null
+let bgcapHbLast = 0
+let bgcapTxCount = 0
+let bgcapTxLastFinalAt = 0
+let bgcapTxLastLogAt = 0
+
+function bgcapStartHeartbeat(): void {
+  if (!BGCAP_TELEMETRY || bgcapHbTimer !== null) return
+  bgcapHbLast = Date.now()
+  // PLAIN setInterval (NOT BgTimer): a plain JS timer only fires when the RN
+  // JS thread is actually executing. A gap >> 1s between ticks therefore proves
+  // the JS thread was suspended/throttled (iOS suspend / Android Doze) for that
+  // long — the smoking gun for the freeze. Silent when healthy; logs the stall
+  // duration when it happens. Pair with the "App state changed to:" lines.
+  bgcapHbTimer = setInterval(() => {
+    const now = Date.now()
+    const gap = now - bgcapHbLast
+    bgcapHbLast = now
+    if (gap > 2000) {
+      console.log(`BGCAP: host-js stall — no tick for ${gap}ms (RN JS thread frozen/throttled)`)
+    }
+  }, 1000)
+}
+
+function bgcapStopHeartbeat(): void {
+  if (bgcapHbTimer !== null) {
+    clearInterval(bgcapHbTimer)
+    bgcapHbTimer = null
+  }
+}
+
+// Rate-limited (1/s) summary of transcripts being FORWARDED to miniapps. Shows
+// whether transcripts keep arriving + being handed to the captions miniapp
+// during background. Compare its rate against the native "MAN: displayEvent"
+// (render) rate: fwd keeps flowing but render lags => miniapp executor is
+// starved; fwd itself stops => upstream (cloud delivery / RN thread) is the gap.
+function bgcapNoteTranscriptForward(isFinal: boolean): void {
+  if (!BGCAP_TELEMETRY) return
+  bgcapTxCount++
+  if (isFinal) bgcapTxLastFinalAt = Date.now()
+  const now = Date.now()
+  if (now - bgcapTxLastLogAt >= 1000) {
+    console.log(
+      `BGCAP: tx forwarded=${bgcapTxCount} in last ${now - bgcapTxLastLogAt}ms (lastFinal ${
+        bgcapTxLastFinalAt ? now - bgcapTxLastFinalAt : -1
+      }ms ago)`,
+    )
+    bgcapTxCount = 0
+    bgcapTxLastLogAt = now
+  }
+}
 
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
@@ -290,6 +383,7 @@ class LocalMiniappRuntime {
   /** Guards one-time wiring of the cloud transcript/translation fan-out. */
   private cloudResultsWired = false
   private cloudStatusWired = false
+  private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -544,6 +638,10 @@ class LocalMiniappRuntime {
         BgTimer.clearTimeout(existing.authRefreshTimerId)
         existing.authRefreshTimerId = null
       }
+      if (existing.authRetryTimerId !== null) {
+        BgTimer.clearTimeout(existing.authRetryTimerId)
+        existing.authRetryTimerId = null
+      }
       for (const stream of existing.subscriptions) {
         const subs = this.streamSubscribers.get(stream)
         if (subs) {
@@ -560,6 +658,8 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       installedManifest,
       authRefreshTimerId: null,
+      authRetryTimerId: null,
+      authDelivered: false,
       speakerState: "idle",
       requestedLocationRate: null,
     })
@@ -569,6 +669,13 @@ class LocalMiniappRuntime {
     this.recomputeLocationTier()
     this.ensureCloudStatusWired()
     this.ensurePingLoop()
+
+    // Show the system boot message ("Starting <name>…") on the glasses for the
+    // bounded boot window, mirroring the cloud DisplayManager boot screen. The
+    // window ends early once this app pushes its first display (see
+    // LocalDisplayManager.request), or after ~1.5s. Fires once per spawn —
+    // including a crash-respawn, since each spawn is a fresh "app is starting".
+    localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
   }
 
   /**
@@ -671,6 +778,7 @@ class LocalMiniappRuntime {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
+    this.clearMiniappAuthDeliveryRetry(packageName)
     // Drop the handshake flag and fail any in-flight waitForConnect() callers
     // (e.g. a wake that's mid-handshake when the app is torn down). Done before
     // the early-return so it runs even if the connectedApps entry is already gone.
@@ -695,6 +803,10 @@ class LocalMiniappRuntime {
 
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
+
+    // Tear down this app's blob state: abort in-flight uploads + close readers
+    // so a crashed/closed miniapp doesn't leak partial files or file handles.
+    this.blobStore.onAppGone(packageName)
 
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
@@ -916,10 +1028,28 @@ class LocalMiniappRuntime {
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
         break
-      case MiniappResponseType.PONG:
+      case MiniappResponseType.PONG: {
         // Liveness already touched above for every inbound message; the
         // PONG carries no other action.
+        // BGCAP: measure PING→PONG round-trip ONLY here (a real pong), not in
+        // handlePong (which fires for every inbound envelope). RTT = how long
+        // the miniapp's own JS engine (Crust serial queue) took to answer — a
+        // large value means that queue was starved (the transcript→display
+        // layer). bgcapLastPingSentAt holds the OLDEST outstanding ping (see
+        // doPingRound), so a multi-round background stall reports its full
+        // duration on the first pong after resume.
+        if (BGCAP_TELEMETRY) {
+          const app = this.connectedApps.get(packageName)
+          if (app?.bgcapLastPingSentAt != null) {
+            const rtt = Date.now() - app.bgcapLastPingSentAt
+            if (rtt > 1500) {
+              console.log(`BGCAP: ${packageName} pong rtt=${rtt}ms (miniapp JS engine was starved)`)
+            }
+            app.bgcapLastPingSentAt = undefined
+          }
+        }
         break
+      }
 
       case MiniappRequestType.SHARE:
         this.handleShare(packageName, payload, requestId)
@@ -934,9 +1064,59 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
+      // Persistent binary blob storage (session.blob)
+      case MiniappRequestType.BLOB_CREATE:
+        this.blobStore.handleCreate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_WRITE:
+        this.blobStore.handleWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_COMMIT:
+        this.blobStore.handleCommit(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_ABORT:
+        this.blobStore.handleAbort(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SET_FROM_URL:
+        void this.blobStore.handleSetFromUrl(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_IMPORT:
+        void this.blobStore.handleImport(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_GET:
+        this.blobStore.handleGet(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_LIST:
+        this.blobStore.handleList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_USAGE:
+        this.blobStore.handleUsage(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_DELETE:
+        this.blobStore.handleDelete(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLEAR:
+        this.blobStore.handleClear(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_OPEN_READ:
+        this.blobStore.handleOpenRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_READ:
+        this.blobStore.handleRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_CLOSE_READ:
+        this.blobStore.handleCloseRead(packageName, payload, requestId)
+        break
+      case MiniappRequestType.BLOB_SHARE:
+        void this.blobStore.handleShare(packageName, payload, requestId)
+        break
+
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         void this.handlePhoto(packageName, payload, requestId)
+        break
+      case MiniappRequestType.CAMERA_WARM_UP:
+        void this.handleCameraWarmUp(packageName, payload, requestId)
         break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
@@ -955,6 +1135,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.REQUEST_WIFI_SETUP:
+        void this.handleRequestWifiSetup(packageName, payload, requestId)
         break
 
       // Inter-miniapp interop (SYSTEM apps only)
@@ -992,7 +1175,11 @@ class LocalMiniappRuntime {
   // Request handlers
   // ===========================================================================
 
-  private async handleConnect(packageName: string, _payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleConnect(
+    packageName: string,
+    _payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
     // Register if not already
@@ -1015,10 +1202,18 @@ class LocalMiniappRuntime {
     // to false; this is manifest-declaration tracking only — OS-grant state
     // is intentionally not modeled here.
     const declaredPermissions = computeDeclaredPermissionRecord(existing.installedManifest)
+    // Fresh handshake → clear any auth state from a prior context so a stale
+    // retry timer can't fire against this new connection and so the retry loop
+    // below re-arms from scratch.
+    existing.authDelivered = false
+    this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
     const initialAuth = await withTimeout(authPromise, 1_500)
     const userId = initialAuth?.mentraUserId ?? ""
-    if (initialAuth) this.scheduleMiniappAuthRefresh(packageName, initialAuth)
+    if (initialAuth) {
+      existing.authDelivered = true
+      this.scheduleMiniappAuthRefresh(packageName, initialAuth)
+    }
 
     this.sendToMiniapp(
       packageName,
@@ -1033,18 +1228,14 @@ class LocalMiniappRuntime {
       requestId,
     )
     if (!initialAuth) {
-      authPromise
-        .then((auth) => {
-          if (!auth) return
-          this.scheduleMiniappAuthRefresh(packageName, auth)
-          this.sendToMiniapp(packageName, {
-            type: MiniappResponseType.AUTH_UPDATE,
-            auth,
-          })
-        })
-        .catch((err) => {
-          console.warn(`${LOG_TAG}: miniapp auth unavailable for ${packageName}: ${(err as Error)?.message ?? err}`)
-        })
+      // The mint timed out or (more importantly) REJECTED — the latter happens
+      // when the cloud client hasn't finished its first-boot Core token exchange
+      // yet, which is exactly the case when a dev miniapp is scanned/launched
+      // right after app start. CONNECT_ACK already went out without auth; keep
+      // trying to mint (and re-drive on cloud-connect) so the app authenticates
+      // to its backend on its own, instead of staying dead until a full manual
+      // Cloud V2 reconnect re-runs the whole handshake.
+      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
     }
     this.sendCloudStatusToMiniapp(packageName)
 
@@ -1059,7 +1250,11 @@ class LocalMiniappRuntime {
     return auth.getToken(packageName, opts)
   }
 
-  private async handleAuthRefresh(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleAuthRefresh(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       const auth = await this.refreshMiniappAuth(packageName, this.authRefreshOptions(payload))
       if (!auth) {
@@ -1118,6 +1313,82 @@ class LocalMiniappRuntime {
     const timerId = app.authRefreshTimerId
     BgTimer.clearTimeout(timerId)
     app.authRefreshTimerId = null
+  }
+
+  /**
+   * Deliver the miniapp's FIRST auth token, retrying until it lands. Called from
+   * {@link handleConnect} when the initial mint didn't resolve in the CONNECT_ACK
+   * window. `inFlight` lets attempt 0 reuse the mint the handshake already
+   * started (avoids a redundant duplicate request); later attempts mint fresh.
+   *
+   * A `null` result means auth is fundamentally unavailable (no miniappAuth hook)
+   * — permanent, so we do NOT retry. A REJECTION means a transient failure
+   * (typically the cloud client isn't connection-ready yet) — retry with backoff.
+   * Either way we bail if the app has since disconnected or already got a token
+   * (e.g. via {@link redriveMiniappAuthDelivery} on cloud-connect).
+   */
+  private deliverInitialMiniappAuth(
+    packageName: string,
+    inFlight: Promise<MiniappAuthToken | null> | undefined,
+    attempt: number,
+  ): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authDelivered) return
+    const mint = inFlight ?? this.requestMiniappAuth(packageName)
+    void mint
+      .then((auth) => {
+        const current = this.connectedApps.get(packageName)
+        if (!current || current.authDelivered) return
+        if (!auth) return // no auth hook — permanent, don't spin
+        current.authDelivered = true
+        this.clearMiniappAuthDeliveryRetry(packageName)
+        this.scheduleMiniappAuthRefresh(packageName, auth)
+        this.sendToMiniapp(packageName, {type: MiniappResponseType.AUTH_UPDATE, auth})
+      })
+      .catch((err) => {
+        console.warn(
+          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${(err as Error)?.message ?? err}`,
+        )
+        this.scheduleInitialMiniappAuthRetry(packageName, attempt)
+      })
+  }
+
+  private scheduleInitialMiniappAuthRetry(packageName: string, attempt: number): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authDelivered) return
+    this.clearMiniappAuthDeliveryRetry(packageName)
+    const delay = Math.min(MINIAPP_AUTH_RETRY_MAX_MS, MINIAPP_AUTH_RETRY_BASE_MS * 2 ** attempt)
+    app.authRetryTimerId = BgTimer.setTimeout(() => {
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      current.authRetryTimerId = null
+      this.deliverInitialMiniappAuth(packageName, undefined, attempt + 1)
+    }, delay)
+  }
+
+  private clearMiniappAuthDeliveryRetry(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app || app.authRetryTimerId === null) return
+    BgTimer.clearTimeout(app.authRetryTimerId)
+    app.authRetryTimerId = null
+  }
+
+  /**
+   * When the cloud client (re)connects, immediately re-attempt the initial mint
+   * for any handshook app still missing its token, instead of waiting out the
+   * backoff. This is what turns "scan a dev app before the cloud is ready" from
+   * "dead until you manually reconnect Cloud V2" into "authenticates on its own
+   * the instant the connection comes up".
+   */
+  private redriveMiniappAuthDelivery(): void {
+    for (const [packageName, app] of this.connectedApps) {
+      if (app.authDelivered) continue
+      // Only apps that finished their CONNECT handshake are in the mint-retry
+      // state; skip anything still mid-handshake (handleConnect owns that).
+      if (!this.handshookApps.has(packageName)) continue
+      this.clearMiniappAuthDeliveryRetry(packageName)
+      this.deliverInitialMiniappAuth(packageName, undefined, 0)
+    }
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -1256,6 +1527,25 @@ class LocalMiniappRuntime {
           type: MiniappResponseType.EVENT,
           streamType: "glasses_connection",
           data: glassesState,
+        })
+      } else if (stream === "glasses_wifi") {
+        // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
+        // Read the canonical nested `wifi: {state, ssid}` (NOT the legacy flat
+        // wifiConnected). Effective connectivity requires the glasses connected
+        // AND on Wi-Fi — mirrors the host's store-derived forward, so an
+        // already-disconnected device reports `connected: false` rather than
+        // silently emitting nothing. Always emits so onWifi gets an initial value.
+        const wifi = (glassesState as {wifi?: {state?: string; ssid?: string; localIp?: string}}).wifi
+        const connected = glassesState.connected === true && wifi?.state === "connected"
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: "glasses_wifi",
+          data: {
+            connected,
+            ssid: connected ? wifi?.ssid : undefined,
+            localIp: connected ? wifi?.localIp : undefined,
+            timestamp: Date.now(),
+          },
         })
       } else if (stream === "head_position") {
         const headUp = (glassesState as {headUp?: boolean}).headUp
@@ -1490,9 +1780,7 @@ class LocalMiniappRuntime {
 
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
-        !voiceExplicit ||
-        voice === "default" ||
-        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+        !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
       const cloud = hooks.cloud
@@ -1716,6 +2004,18 @@ class LocalMiniappRuntime {
     (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
     (packageName, requestId, ok, result, error) => this.sendResult(packageName, requestId, ok, result, error),
   )
+
+  /**
+   * `session.blob` — persistent, per-app binary storage. Like NavigationHandlers,
+   * the BLOB_* dispatcher cases delegate here. It's a generic byte store; audio
+   * recording lives entirely in the miniapp (mic.onAudioChunk → chunked
+   * BLOB_WRITE), so nothing audio-specific runs in the host.
+   */
+  private readonly blobStore = new BlobStore({
+    sendResult: (packageName, requestId, ok, result, error) =>
+      this.sendResult(packageName, requestId, ok, result, error),
+    getUserId: () => getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous",
+  })
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -2223,15 +2523,7 @@ class LocalMiniappRuntime {
 
     try {
       const result = await photo.takePhoto(packageName, {
-        size: payload.size as
-          | "low"
-          | "medium"
-          | "high"
-          | "max"
-          | "small"
-          | "large"
-          | "full"
-          | undefined,
+        size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
@@ -2242,6 +2534,51 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
+      })
+    }
+  }
+
+  private async handleCameraWarmUp(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    // Manifest CAMERA permission gate (same as photo).
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to warm up the camera", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.CAMERA_WARM_UP,
+      })
+      return
+    }
+
+    const photo = getRuntimeHooks().photo
+    if (!photo) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Camera warm-up is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      await photo.warmUp(packageName, {
+        size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        durationMs: payload.durationMs as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Camera warm-up failed",
         stage: (err as {stage?: string}).stage,
         transport: (err as {transport?: string}).transport,
       })
@@ -2308,7 +2645,10 @@ class LocalMiniappRuntime {
     }
 
     try {
-      await video.stopRecording(packageName, payload.recordingId as string | undefined)
+      await video.stopRecording(packageName, payload.recordingId as string | undefined, {
+        uploadUrl: payload.uploadUrl as string | undefined,
+        uploadAuthToken: payload.uploadAuthToken as string | undefined,
+      })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2417,6 +2757,35 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  /**
+   * session.glasses.requestWifiSetup — open the phone's glasses Wi-Fi setup
+   * flow. The host owns the actual UI via the `wifiSetup` runtime hook; this
+   * just forwards the request and reports success/failure.
+   */
+  private async handleRequestWifiSetup(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const wifiSetup = getRuntimeHooks().wifiSetup
+    if (!wifiSetup) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Wi-Fi setup is not configured on this host",
+      })
+      return
+    }
+    try {
+      await wifiSetup.requestSetup(payload.reason as string | undefined)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Wi-Fi setup failed",
+      })
+    }
   }
 
   /**
@@ -2548,13 +2917,21 @@ class LocalMiniappRuntime {
     if (cloud) {
       this.ensureCloudResultsWired(cloud)
       const subs = this.buildCloudAudioSubscriptions(cloudStreams)
-      console.log(
-        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
-      )
-      cloud.setSubscriptions(subs).catch((err) => {
-        // Best-effort: the cloud may not be connected yet. Logging is enough.
-        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
-      })
+      const nextKey = this.audioSubscriptionKey(subs)
+      if (!this.cloudAudioSubscriptionSync.begin(nextKey)) return
+      console.log(`${LOG_TAG}: updateCloudSubscriptions cloudSubs=${subs.length}`)
+      cloud
+        .setSubscriptions(subs)
+        .then(() => {
+          this.cloudAudioSubscriptionSync.succeeded(nextKey)
+        })
+        .catch((err) => {
+          // Best-effort: the cloud may not be connected yet. Keep failed writes
+          // retryable; otherwise a reconnect that recomputes the same desired
+          // transcription set gets deduped and local captions never recover.
+          this.cloudAudioSubscriptionSync.failed(nextKey)
+          console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+        })
     }
   }
 
@@ -2591,6 +2968,26 @@ class LocalMiniappRuntime {
     return subs
   }
 
+  private audioSubscriptionKey(subs: AudioSubscription[]): string {
+    return JSON.stringify(
+      subs
+        .map((sub) => {
+          if (sub.kind === "transcription") {
+            return {
+              kind: sub.kind,
+              language: sub.language,
+            }
+          }
+          return {
+            kind: sub.kind,
+            source: sub.source,
+            target: sub.target,
+          }
+        })
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    )
+  }
+
   /**
    * Wire the cloud's transcription/translation results into the existing
    * miniapp fan-out exactly once. Maps each cloud result back to the
@@ -2603,6 +3000,12 @@ class LocalMiniappRuntime {
     this.cloudResultsWired = true
 
     cloud.onTranscript((d: TranscriptionData) => {
+      const receivedAt = Date.now()
+      if (TRANSCRIPT_TIMING_TELEMETRY) {
+        console.log(
+          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${d.resolvedLanguage} text="${d.text.slice(0, 48)}"`,
+        )
+      }
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
         type: "transcription",
         text: d.text,
@@ -2616,6 +3019,7 @@ class LocalMiniappRuntime {
         duration: d.durationMs,
         provider: d.provider,
         confidence: d.confidence,
+        __hostReceivedAt: receivedAt,
       })
     })
 
@@ -2646,6 +3050,10 @@ class LocalMiniappRuntime {
     getRuntimeHooks().cloud?.onStatusChanged((status) => {
       if (status.status === "connected") {
         this.updateCloudSubscriptions()
+        // A miniapp that connected before the cloud client was ready never got
+        // its auth token; now that we're connected, mint it without waiting for
+        // the retry backoff (or a full manual reconnect).
+        this.redriveMiniappAuthDelivery()
       }
       this.broadcastCloudStatus()
     })
@@ -2742,14 +3150,21 @@ class LocalMiniappRuntime {
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
-    // exact streamType, so per-gesture subscribers (`touch_event:click`,
+    // exact streamType, so per-gesture subscribers (`touch_event:single_tap`,
     // etc.) need their own EVENT envelope with the gesture-tagged streamType.
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
+    let outboundData = data
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
-      const kind = (data as {kind?: string} | null)?.kind
-      if (typeof kind === "string" && kind.length > 0) {
-        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${kind}`
+      // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
+      // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it
+      // to miniapps as `TouchData.kind` and tag a per-gesture stream so
+      // onTouch("single_tap", ...) routes correctly.
+      const touch = data as {gestureName?: string; kind?: string} | null
+      const gesture = touch?.gestureName ?? touch?.kind
+      if (typeof gesture === "string" && gesture.length > 0) {
+        outboundData = {...(touch as object), kind: gesture}
+        perGestureStream = `${MiniappStreamType.TOUCH_EVENT}:${gesture}`
       }
     }
 
@@ -2762,7 +3177,25 @@ class LocalMiniappRuntime {
 
     if (matchedSubs.size === 0 && !perGestureStream) return
 
+    // BGCAP: count transcripts only once we know they're actually being handed
+    // to a subscriber. If the captions miniapp is unregistered/respawning (or
+    // hasn't subscribed yet) the cloud may still push transcripts that match no
+    // one — counting those would falsely show "forwarded" during the exact gap
+    // the diagnostic is meant to expose.
+    if (BGCAP_TELEMETRY && normalizedStream.startsWith("transcription:")) {
+      bgcapNoteTranscriptForward(!!(data as {isFinal?: boolean} | null)?.isFinal)
+    }
+
     for (const packageName of matchedSubs) {
+      if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
+        const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
+        const now = Date.now()
+        console.log(
+          `${LOG_TAG}: transcript fanout t=${now} app=${packageName} final=${!!transcript?.isFinal} hostDelta=${
+            transcript?.__hostReceivedAt ? now - transcript.__hostReceivedAt : -1
+          }ms text="${(transcript?.text ?? "").slice(0, 48)}"`,
+        )
+      }
       // While a nav trip is active the Nav SDK's road-snapped fixes are
       // already being forwarded via addLocationListener (see NAV_START handler).
       // Suppress the raw background-GPS forward for that miniapp so the two
@@ -2774,7 +3207,7 @@ class LocalMiniappRuntime {
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
-        data,
+        data: outboundData,
       })
     }
 
@@ -2787,7 +3220,7 @@ class LocalMiniappRuntime {
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,
             streamType: perGestureStream,
-            data,
+            data: outboundData,
           })
         }
       }
@@ -3302,6 +3735,7 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   private ensurePingLoop(): void {
+    bgcapStartHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) return
 
     this.pingIntervalId = BgTimer.setInterval(() => {
@@ -3310,6 +3744,7 @@ class LocalMiniappRuntime {
   }
 
   private stopPingLoop(): void {
+    bgcapStopHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) {
       BgTimer.clearInterval(this.pingIntervalId)
       this.pingIntervalId = null
@@ -3330,6 +3765,10 @@ class LocalMiniappRuntime {
       }
 
       // Send PING — SDK auto-replies with PONG
+      // BGCAP: stamp the OLDEST outstanding ping only — don't overwrite, or a
+      // background stall (pings keep firing on the native BgTimer while the
+      // miniapp engine is frozen) would reset the clock and hide its duration.
+      if (BGCAP_TELEMETRY && app.bgcapLastPingSentAt == null) app.bgcapLastPingSentAt = now
       this.sendToMiniapp(packageName, {
         type: MiniappRequestType.PING,
       })

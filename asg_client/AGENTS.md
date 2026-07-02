@@ -2,6 +2,10 @@
 
 Android application that runs on Android-based smart glasses like Mentra Live. Primary transport is BLE to the paired phone (the phone forwards to MentraOS Cloud). Manages hardware interfaces (camera, microphone, LED control, sensors).
 
+## Required Mentra Live Reference
+
+Before working on any code, docs, tests, or behavior under `asg_client`, read and apply [`docs/mentra-live-spec.md`](docs/mentra-live-spec.md). That spec is the standing product/platform reference for what Mentra Live is, its supported features, and how the glasses are expected to work. Keep it updated when product-level Mentra Live behavior changes.
+
 ## Compatible Devices
 
 **Officially Supported:**

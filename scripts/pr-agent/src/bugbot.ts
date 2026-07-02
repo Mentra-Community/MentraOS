@@ -1,6 +1,12 @@
 import type { Octokit } from '@octokit/rest';
+import { listAllIssueComments } from './state.js';
 
 const BUGBOT_CHECK_NAME = 'Cursor Bugbot';
+
+// Minimum gap before we post another "bugbot run" trigger. Prevents the
+// workflow_run completion event from looping: Bugbot finishes → workflow_run
+// triggers orchestrator → orchestrator re-triggers Bugbot → repeat.
+const BUGBOT_RETRIGGER_COOLDOWN_MS = 5 * 60 * 1_000; // 5 minutes
 
 export async function triggerBugbot(
   octokit: Octokit,
@@ -8,6 +14,20 @@ export async function triggerBugbot(
   repo: string,
   issueNumber: number,
 ): Promise<void> {
+  // Check if a "bugbot run" comment was posted recently to avoid re-triggering
+  // Bugbot when the orchestrator is itself started by a Bugbot workflow_run event.
+  const comments = await listAllIssueComments(octokit, owner, repo, issueNumber);
+  const lastTrigger = [...comments]
+    .reverse()
+    .find((c) => c.body?.trim() === 'bugbot run');
+  if (lastTrigger?.created_at) {
+    const age = Date.now() - new Date(lastTrigger.created_at).getTime();
+    if (age < BUGBOT_RETRIGGER_COOLDOWN_MS) {
+      console.log(`Skipping Bugbot trigger — last trigger was ${Math.round(age / 1000)}s ago`);
+      return;
+    }
+  }
+
   await octokit.issues.createComment({
     owner,
     repo,

@@ -63,6 +63,15 @@ class LogRingBuffer {
       /socket-0 binding/,
       /socket-0 bound to/,
       /Error while flushing PostHog/,
+      /backTitleFontFamily prop is not available on Android/,
+      /disableBackButtonMenu prop is not available on Android/,
+      /backTitleVisible prop is not available on Android/,
+      /topInsetEnabled prop is not available on Android/,
+      /largeTitleHideShadow prop is not available on Android/,
+      /largeTitleFontWeight prop is not available on Android/,
+      /userInterfaceStyle prop is not available on Android/,
+      /largeTitleFontFamily prop is not available on Android/,
+      /Points are coincident/,
     ]
 
     LogBox.ignoreLogs(IGNORED_LOGS)

@@ -785,7 +785,52 @@ class G1: NSObject, SGCManager {
         await sendTextWall(text)
     }
 
+    // G1-specific display throttle (300ms, last-wins). G1 firmware can't absorb rapid text-wall
+    // updates; coalesce to the latest within a 300ms window. This used to live in the cloud
+    // DisplayManager (which fronted G1 before captions moved on-device); it belongs in the G1 SGC
+    // because it's a G1 hardware quirk — G2 deliberately does NOT throttle (it must show every
+    // caption). The trailing flush always sends the most recent text, so the final caption is never
+    // dropped — only intermediate frames within a window are coalesced.
+    private var g1TextThrottlePending: String?
+    private var g1TextThrottleLastSent: Date = .distantPast
+    private var g1TextThrottleScheduled = false
+    private let g1TextThrottleWindow: TimeInterval = 0.3
+
+    /// Drop any pending throttled text-wall flush so it can't later overwrite a newer, non-text
+    /// display write (a clear, double-text-wall, or bitmap). The scheduled flush no-ops when
+    /// `g1TextThrottlePending` is nil. Called from every G1 display path that bypasses the throttle.
+    private func cancelPendingThrottledText() {
+        g1TextThrottlePending = nil
+    }
+
     func sendTextWall(_ text: String) async {
+        let now = Date()
+        let sinceLast = now.timeIntervalSince(g1TextThrottleLastSent)
+        if sinceLast >= g1TextThrottleWindow {
+            // Past the window — send now.
+            g1TextThrottleLastSent = now
+            g1TextThrottlePending = nil
+            await flushTextWall(text)
+        } else {
+            // Inside the window — keep only the latest and schedule one trailing flush.
+            g1TextThrottlePending = text
+            if !g1TextThrottleScheduled {
+                g1TextThrottleScheduled = true
+                let wait = g1TextThrottleWindow - sinceLast
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    guard let self = self else { return }
+                    self.g1TextThrottleScheduled = false
+                    guard let pending = self.g1TextThrottlePending else { return }
+                    self.g1TextThrottlePending = nil
+                    self.g1TextThrottleLastSent = Date()
+                    await self.flushTextWall(pending)
+                }
+            }
+        }
+    }
+
+    private func flushTextWall(_ text: String) async {
         let chunks = textHelper.createTextWallChunks(text)
         queueChunks(chunks, sleepAfterMs: 10)
     }
@@ -799,6 +844,7 @@ class G1: NSObject, SGCManager {
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
+        cancelPendingThrottledText() // a newer layout supersedes any pending caption text
         let chunks = textHelper.createDoubleTextWallChunks(textTop: top, textBottom: bottom)
         queueChunks(chunks, sleepAfterMs: 10)
 
@@ -1871,6 +1917,7 @@ extension G1 {
     // MARK: - Enhanced BMP Display Methods
 
     func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
+        cancelPendingThrottledText() // a bitmap supersedes any pending caption text
         guard let bmpData = Data(base64Encoded: base64ImageData) else {
             Bridge.log("G1: Failed to decode base64 image data")
             return false
@@ -1885,7 +1932,10 @@ extension G1 {
 
     func clearDisplay() {
         Bridge.log("G1: clearDisplay() - Using space")
-        Task { await sendTextWall(" ") }
+        // Bypass the throttle (a clear must always land) and drop any pending caption so it can't
+        // overwrite the clear after the fact.
+        cancelPendingThrottledText()
+        Task { await flushTextWall(" ") }
     }
 
     /// Create a simple test BMP pattern in hex format

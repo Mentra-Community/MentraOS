@@ -95,7 +95,7 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
   await Promise.all([
     OemModel.syncIndexes(),
@@ -135,7 +135,7 @@ beforeEach(async () => {
     if (keys.length > 0) await redis.del(...keys);
   }
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -173,7 +173,7 @@ describe.skipIf(!RUN)("audio e2e (real Soniox over the wire)", () => {
  * realtime, and return the longest transcript/translation text seen.
  */
 async function runAudio(
-  oemUserId: string,
+  tenantUserId: string,
   pcm: Int16Array,
   sub: AudioSubscription,
 ): Promise<string> {
@@ -183,7 +183,7 @@ async function runAudio(
     testOemUrl: testOemHandle.url,
     coreUrl: coreHandle.url,
     audioWsUrl: audioHandle.wsUrl,
-    oemUserId,
+    tenantUserId,
     codec: "pcm",
   });
   // Seed the subscription into connection.init (applied before audio flows).

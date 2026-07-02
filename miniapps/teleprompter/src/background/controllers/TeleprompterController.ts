@@ -35,9 +35,9 @@ type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels
 const DEFAULT_SCRIPT = [
   "Welcome to your teleprompter.",
   "",
-  "Paste or type your script here, put on your glasses, and press play. The words appear in front of you, line by line.",
+  "Paste or type your script here, put on your glasses, and press play. The words scroll by on their own at the speed you set, line by line.",
   "",
-  "Leave voice-follow on and the prompter listens — it advances as you speak, and waits when you pause. Turn it off to scroll at a steady pace you set in words per minute.",
+  "Want it to keep pace with you instead? Turn on AI Scroll and the prompter listens — it advances as you speak, and waits when you pause.",
   "",
   "That's it. Look up, speak naturally, and never lose your place.",
 ].join("\n")
@@ -47,7 +47,10 @@ const DEFAULT_SETTINGS: TeleprompterSettings = {
   wpm: 130,
   numberOfLines: 4,
   lineWidth: 2,
-  voiceFollow: true,
+  // Default to timed auto-scroll: pressing Play advances the script on its own.
+  // Voice-follow ("AI Scroll") is an explicit opt-in via the cockpit toggle —
+  // otherwise Play silently waits for speech and reads as "it doesn't work".
+  voiceFollow: false,
   autoRestart: false,
   showTimecode: false,
 }
@@ -182,6 +185,7 @@ export class TeleprompterController {
     }
 
     this.registerUiHandlers()
+    this.registerActions()
 
     // Show the opening lines as a ready-to-read preview on the glasses.
     this.render()
@@ -226,6 +230,68 @@ export class TeleprompterController {
     this.unsubs.push(this.ui.on("tp:restart", () => this.restart()))
     this.unsubs.push(this.ui.on("tp:seek", ({percent}) => this.seek(percent)))
     this.unsubs.push(this.ui.on("tp:nudge", ({lines}) => this.nudge(lines)))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Actions (cross-miniapp / AI)
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Declared in miniapp.json. A system miniapp (e.g. Mentra AI) invokes this to
+   * "open the teleprompter with this text" — the host headless-wakes us if we're
+   * stopped, then delivers the call once start() registers the handler. We load
+   * the script and render it to the glasses; the caller gets back a small
+   * summary so the AI can confirm what landed.
+   */
+  private registerActions(): void {
+    try {
+      this.unsubs.push(
+        this.session.actions.handle("load_script", (params) => {
+          // `script` is required and must be a string. Reject malformed calls
+          // here (the handler is the last line of defense for action params) —
+          // coercing a missing/non-string value to "" would wipe the user's
+          // saved script. The thrown error is returned to the caller.
+          if (typeof params.script !== "string") {
+            throw new Error("load_script: 'script' is required and must be a string")
+          }
+          // Default on: opening the teleprompter with text should start reading.
+          const autostart = params.autostart !== false
+          return this.loadScript(params.script, autostart)
+        }),
+      )
+    } catch (err) {
+      // actions module unavailable on this host, or already registered — the
+      // miniapp still runs, it just can't be opened via the action.
+      console.log("Teleprompter: failed to register actions", err)
+    }
+  }
+
+  /**
+   * Replace the script and surface it on the glasses, ready to read. Unlike the
+   * UI's tp:set-script (which no-ops on an unchanged script to avoid disturbing
+   * the editor), this always resets to the top and re-renders — an explicit
+   * "open with this text" should land deterministically. Optionally autostarts.
+   */
+  async loadScript(script: string, autostart: boolean): Promise<{words: number; lines: number; started: boolean}> {
+    const next = script ?? ""
+    this.settings.script = next
+    this.engine.setScript(next)
+    // Reset to the top, stop any in-progress read, then show the opening lines.
+    this.toIdle()
+    // Force the push even if the opening window matches what we last sent:
+    // another app may have overwritten the glasses while we were backgrounded,
+    // so an explicit "open with this text" must land on-screen rather than be
+    // deduped away by render()'s lastRenderedText cache.
+    this.lastRenderedText = ""
+    this.render()
+    this.broadcastSettings()
+    this.broadcastStatus()
+    await this.persist(STORAGE_KEYS.script, next)
+
+    const started = autostart && this.engine.totalWords > 0
+    if (started) this.play()
+
+    return {words: this.engine.totalWords, lines: this.engine.totalLines, started}
   }
 
   private sendSnapshot(): void {

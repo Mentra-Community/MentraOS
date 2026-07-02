@@ -20,7 +20,7 @@ const CORE_AUDIENCE = "cloud-core";
 
 export interface VerifiedAccessToken {
   mentraUserId: string;
-  oemId: string;
+  tenantId: string;
   sessionId: string;
   jti: string;
 }
@@ -47,8 +47,9 @@ interface RuntimeIssuerConfig {
   publicKey?: string;
   publicKeyEnv?: string;
   userIdClaim?: string;
-  oemIdClaim?: string;
-  fixedOemId?: string;
+  tenantIdClaim?: string;
+  legacyTenantIdClaim?: string;
+  fixedTenantId?: string;
   algorithms?: string[];
 }
 
@@ -98,16 +99,22 @@ export async function verifyAccessTokenSignature(
   }
 
   const sub = typeof payload.sub === "string" ? payload.sub : null;
-  const oemId = typeof payload.oem_id === "string" ? payload.oem_id : null;
+  const tenantId = typeof payload.tenant_id === "string" ? payload.tenant_id : null;
   const sessionId =
     typeof payload.session_id === "string" ? payload.session_id : null;
   const jti = typeof payload.jti === "string" ? payload.jti : null;
 
-  if (!sub || !oemId || !sessionId || !jti) {
-    throw new AccessTokenError("access_token missing required claims");
+  const missingClaims = [
+    !sub ? "sub" : null,
+    !tenantId ? "tenant_id" : null,
+    !sessionId ? "session_id" : null,
+    !jti ? "jti" : null,
+  ].filter((claim): claim is string => Boolean(claim));
+  if (missingClaims.length > 0) {
+    throw new AccessTokenError(`access_token missing required claims: ${missingClaims.join(", ")}`);
   }
 
-  return { mentraUserId: sub, oemId, sessionId, jti };
+  return { mentraUserId: sub!, tenantId: tenantId!, sessionId: sessionId!, jti: jti! };
 }
 
 export async function verifyRuntimeToken(
@@ -149,15 +156,20 @@ export async function verifyRuntimeToken(
 
   const userIdClaim = issuer.userIdClaim ?? "sub";
   const userId = stringClaim(payload[userIdClaim]);
-  const oemId = issuer.fixedOemId ?? stringClaim(payload[issuer.oemIdClaim ?? "oem_id"]);
+  const tenantId =
+    issuer.fixedTenantId ??
+    stringClaim(payload[issuer.tenantIdClaim ?? "tenant_id"]) ??
+    (issuer.legacyTenantIdClaim
+      ? stringClaim(payload[issuer.legacyTenantIdClaim])
+      : undefined);
   const jti = stringClaim(payload.jti) ?? cryptoRandomId();
   const sessionId = stringClaim(payload.session_id) ?? `runtime_${jti}`;
 
-  if (!userId || !oemId) {
+  if (!userId || !tenantId) {
     throw new AccessTokenError("runtime_token missing required identity claims");
   }
 
-  return { mentraUserId: userId, oemId, sessionId, jti };
+  return { mentraUserId: userId, tenantId, sessionId, jti };
 }
 
 export async function signRuntimeToken(args: {
@@ -165,7 +177,7 @@ export async function signRuntimeToken(args: {
   issuer: string;
   audience?: string;
   subject: string;
-  oemId: string;
+  tenantId: string;
   sessionId?: string;
   jti?: string;
   expiresInSeconds: number;
@@ -177,7 +189,7 @@ export async function signRuntimeToken(args: {
     { extractable: false },
   );
   const claims: jose.JWTPayload = {
-    oem_id: args.oemId,
+    tenant_id: args.tenantId,
   };
   if (args.sessionId) claims.session_id = args.sessionId;
   const jwt = new jose.SignJWT(claims)
@@ -199,7 +211,14 @@ export function resetRuntimeAuthCache(): void {
 export function assertRuntimeAuthConfigured(): void {
   const issuers = configuredRuntimeIssuers();
   if (issuers.length === 0) {
-    throw new AccessTokenError("CLOUD_RUNTIME_AUTH_ISSUERS must configure at least one issuer");
+    throw new AccessTokenError(
+      [
+        "CLOUD_RUNTIME_AUTH_ISSUERS must configure at least one issuer.",
+        "For local Cloud V2 development, run `bun run dev` from cloud-v2.",
+        "That command starts the integrated dev stack and generates matching local Core/Runtime auth keys.",
+        "Use `bun run dev:runtime` only when intentionally running Runtime in isolation with CLOUD_RUNTIME_AUTH_ISSUERS set yourself.",
+      ].join(" "),
+    );
   }
 }
 
@@ -225,13 +244,15 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
   const issuer = stringClaim(obj.issuer);
   if (!issuer) throw new Error("issuer config missing issuer");
 
-  const oemIdClaim = stringClaim(obj.oemIdClaim);
-  const fixedOemId = stringClaim(obj.fixedOemId);
-  if (!oemIdClaim && !fixedOemId) {
-    throw new Error(`issuer ${issuer} must set oemIdClaim or fixedOemId`);
+  const legacyTenantIdClaim = stringClaim(obj.oemIdClaim);
+  const legacyFixedTenantId = stringClaim(obj.fixedOemId);
+  const tenantIdClaim = stringClaim(obj.tenantIdClaim) ?? (legacyTenantIdClaim ? "tenant_id" : undefined);
+  const fixedTenantId = stringClaim(obj.fixedTenantId) ?? legacyFixedTenantId;
+  if (!tenantIdClaim && !fixedTenantId) {
+    throw new Error(`issuer ${issuer} must set tenantIdClaim or fixedTenantId`);
   }
-  if (oemIdClaim && fixedOemId) {
-    throw new Error(`issuer ${issuer} cannot set both oemIdClaim and fixedOemId`);
+  if (tenantIdClaim && fixedTenantId) {
+    throw new Error(`issuer ${issuer} cannot set both tenantIdClaim and fixedTenantId`);
   }
 
   const algorithms = Array.isArray(obj.algorithms)
@@ -244,8 +265,9 @@ function parseRuntimeIssuerConfig(value: unknown): RuntimeIssuerConfig {
     publicKey: stringClaim(obj.publicKey),
     publicKeyEnv: stringClaim(obj.publicKeyEnv),
     userIdClaim: stringClaim(obj.userIdClaim),
-    oemIdClaim,
-    fixedOemId,
+    tenantIdClaim,
+    legacyTenantIdClaim,
+    fixedTenantId,
     algorithms,
   };
 }

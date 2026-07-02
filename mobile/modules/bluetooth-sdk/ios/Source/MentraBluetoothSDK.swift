@@ -170,6 +170,7 @@ public final class MentraBluetoothSDK {
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
     private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
+    private var pendingCameraStatusRequests: [String: PendingResponse<CameraStatusEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
@@ -595,6 +596,20 @@ public final class MentraBluetoothSDK {
         return result
     }
 
+    public func setCameraTuningConfig(anrOn: Bool, gainOn: Bool) async throws -> SettingsAckEvent {
+        return try await performSettingsCommand(
+            setting: "camera_tuning",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendCameraTuningConfig(
+                    requestId: requestId,
+                    anrOn: anrOn,
+                    gainOn: gainOn
+                )
+            }
+        )
+    }
+
     public func setMicState(
         enabled: Bool,
         useGlassesMic: Bool = true,
@@ -761,18 +776,46 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent {
+        let routedRequest = nonBlankRequestId(request.requestId).map { request.withRequestId($0) }
+            ?? request.withRequestId(generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId) appId=\(request.appId)"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
         )
-        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(request.requestId)")
-        pendingPhotoRequests[request.requestId] = pending
-        DeviceManager.shared.requestPhoto(request)
+        let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)")
+        pendingPhotoRequests[routedRequest.requestId] = pending
+        DeviceManager.shared.requestPhoto(routedRequest)
         do {
             let event = try await pending.wait()
-            pendingPhotoRequests.removeValue(forKey: request.requestId)
+            pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {
-            pendingPhotoRequests.removeValue(forKey: request.requestId)
+            pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
+            throw error
+        }
+    }
+
+    public func warmUpCamera(
+        requestId: String? = nil,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) async throws -> CameraStatusEvent {
+        let effectiveRequestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("warm")
+        let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)")
+        pendingCameraStatusRequests[effectiveRequestId] = pending
+        do {
+            // Inside the catch so an unsupported-device throw also clears the pending entry.
+            try DeviceManager.shared.warmUpCamera(
+                requestId: effectiveRequestId,
+                size: size,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: durationMs
+            )
+            let event = try await pending.wait()
+            pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
+            return event
+        } catch {
+            pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
             throw error
         }
     }
@@ -1152,7 +1195,7 @@ public final class MentraBluetoothSDK {
     private func resolveOtaVersionUrl(status: GlassesStatus) throws -> String {
         let deviceUrl = status.otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if isLegacyAsgOtaStartBuild(status.buildNumber) {
-            return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
+            return OtaManifestDefaults.legacyProdOtaVersionUrl
         }
         // SDK consumers are pinned to the manifest built for their SDK version.
         // A future glasses-advertised URL should not silently change that pairing.
@@ -1164,7 +1207,7 @@ public final class MentraBluetoothSDK {
 
     private func isLegacyAsgOtaStartBuild(_ buildNumber: String) -> Bool {
         guard let parsed = Int(buildNumber) else { return false }
-        return parsed < 100_000
+        return parsed < 39
     }
 
     func sendShutdown() {
@@ -1446,6 +1489,24 @@ public final class MentraBluetoothSDK {
                     message: errorMessage
                 )
             )
+        }
+    }
+
+    private func handleCameraStatusForRequests(_ event: CameraStatusEvent) {
+        guard let pending = pendingCameraStatusRequests[event.requestId] else { return }
+        switch event.state.lowercased() {
+        case "ready":
+            pending.resolve(event)
+        case "error":
+            pending.reject(
+                BluetoothSdkError(
+                    code: event.errorCode ?? "camera_warm_up_failed",
+                    message: event.errorMessage ?? "Camera warm-up failed."
+                )
+            )
+        default:
+            // "warming"/"stopped" are progress updates; leave the pending promise alone.
+            break
         }
     }
 
@@ -1745,6 +1806,10 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(event))
         case "photo_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
+        case "camera_status":
+            let event = CameraStatusEvent(values: data)
+            handleCameraStatusForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .cameraStatus(event))
         case "video_recording_status":
             let event = VideoRecordingStatusEvent(values: data)
             handleVideoRecordingStatusForRequests(event)

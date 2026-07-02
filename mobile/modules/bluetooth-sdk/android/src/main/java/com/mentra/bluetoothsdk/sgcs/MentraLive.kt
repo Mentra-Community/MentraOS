@@ -32,6 +32,7 @@ import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
@@ -157,6 +158,8 @@ class MentraLive : SGCManager() {
 
         // Rate limiting - minimum delay between BLE characteristic writes
         private const val MIN_SEND_DELAY_MS = 160L // 160ms minimum delay (increased from 100ms)
+        private const val SIGNIFICANT_BLE_TRACE_DELAY_MS = 250L
+        private const val SIGNIFICANT_BLE_TRACE_QUEUE_SIZE = 5
 
         // File transfer management
         private const val FILE_SAVE_DIR = "MentraLive_Images"
@@ -237,7 +240,35 @@ class MentraLive : SGCManager() {
     private var a2dpProfile: BluetoothA2dp? = null
     private var isA2dpProxyRegistered = false
 
-    private var sendQueue = ConcurrentLinkedQueue<ByteArray>()
+    private data class OutgoingBleCommandTraceInfo(
+            val commandType: String,
+            val requestId: String?,
+            val appId: String?,
+            val messageId: Long?
+    )
+
+    private data class BleWriteTrace(
+            val sequence: Long,
+            val commandType: String,
+            val requestId: String?,
+            val appId: String?,
+            val messageId: Long?,
+            val chunkId: String?,
+            val chunkIndex: Int?,
+            val totalChunks: Int?,
+            val payloadBytes: Int?,
+            val packedBytes: Int,
+            val wakeup: Boolean,
+            val chunked: Boolean,
+            val queuedAtMs: Long
+    )
+
+    private data class QueuedBleWrite(val data: ByteArray, val trace: BleWriteTrace?)
+
+    private var sendQueue = ConcurrentLinkedQueue<QueuedBleWrite>()
+    private val bleWriteTraceSequence = AtomicLong(1)
+    private var inFlightBleWriteTrace: BleWriteTrace? = null
+    private var inFlightBleWriteStartedAtMs = 0L
     // Queue for serializing BLE descriptor writes (only one GATT operation at a time)
     private val pendingDescriptorWrites = ConcurrentLinkedQueue<BluetoothGattDescriptor>()
     private var isDescriptorWriteInProgress = false
@@ -1671,11 +1702,20 @@ class MentraLive : SGCManager() {
                         characteristic: BluetoothGattCharacteristic,
                         status: Int
                 ) {
+                    val trace = inFlightBleWriteTrace
+                    val callbackAtMs = System.currentTimeMillis()
+                    val callbackDelayMs =
+                            if (inFlightBleWriteStartedAtMs > 0L)
+                                    callbackAtMs - inFlightBleWriteStartedAtMs
+                            else null
+                    inFlightBleWriteTrace = null
+                    inFlightBleWriteStartedAtMs = 0L
+
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         // Bridge.log("LIVE: Characteristic write successful");
 
                         // Calculate time since last send to enforce rate limiting
-                        val currentTimeMs = System.currentTimeMillis()
+                        val currentTimeMs = callbackAtMs
                         val timeSinceLastSendMs = currentTimeMs - lastSendTimeMs
                         val nextProcessDelayMs: Long
 
@@ -1690,9 +1730,34 @@ class MentraLive : SGCManager() {
                         }
 
                         // Schedule the next queue processing with appropriate delay
+                        logBleWriteTrace(
+                                "write_callback",
+                                trace,
+                                mapOf(
+                                        "status" to status,
+                                        "success" to true,
+                                        "callbackDelayMs" to callbackDelayMs,
+                                        "timeSinceLastSendMs" to timeSinceLastSendMs,
+                                        "nextProcessDelayMs" to nextProcessDelayMs,
+                                        "queueSize" to sendQueue.size,
+                                        "characteristicUuid" to characteristic.uuid.toString()
+                                )
+                        )
                         handler.postDelayed(processSendQueueRunnable!!, nextProcessDelayMs)
                     } else {
                         Log.e(TAG, "Characteristic write failed with status: " + status)
+                        logBleWriteTrace(
+                                "write_callback",
+                                trace,
+                                mapOf(
+                                        "status" to status,
+                                        "success" to false,
+                                        "callbackDelayMs" to callbackDelayMs,
+                                        "retryDelayMs" to 500L,
+                                        "queueSize" to sendQueue.size,
+                                        "characteristicUuid" to characteristic.uuid.toString()
+                                )
+                        )
                         // If write fails, try again with a longer delay
                         handler.postDelayed(processSendQueueRunnable!!, 500L)
                     }
@@ -2100,13 +2165,22 @@ class MentraLive : SGCManager() {
             Bridge.log(
                     "LIVE: Rate limiting: Waiting " + remainingDelayMs + "ms before next BLE send"
             )
+            logBleWriteTrace(
+                    "rate_limited",
+                    sendQueue.peek()?.trace,
+                    mapOf(
+                            "remainingDelayMs" to remainingDelayMs,
+                            "timeSinceLastSendMs" to timeSinceLastSendMs,
+                            "queueSize" to sendQueue.size
+                    )
+            )
             handler.postDelayed(processSendQueueRunnable!!, remainingDelayMs)
             return
         }
 
         // Send the next item from the queue
-        val data = sendQueue.poll()
-        if (data != null) {
+        val queuedWrite = sendQueue.poll()
+        if (queuedWrite != null) {
             // Update last send time before sending
             lastSendTimeMs = currentTimeMs
             Bridge.log(
@@ -2116,28 +2190,78 @@ class MentraLive : SGCManager() {
                             timeSinceLastSendMs +
                             "ms"
             )
-            sendDataInternal(data)
+            logBleWriteTrace(
+                    "dequeued",
+                    queuedWrite.trace,
+                    mapOf(
+                            "queueDelayMs" to
+                                    (queuedWrite.trace?.let { currentTimeMs - it.queuedAtMs }),
+                            "timeSinceLastSendMs" to timeSinceLastSendMs,
+                            "queueSizeAfterPoll" to sendQueue.size
+                    )
+            )
+            sendDataInternal(queuedWrite)
         }
     }
 
     /** Send data through BLE */
-    private fun sendDataInternal(data: ByteArray?) {
-        if (!isConnected || bluetoothGatt == null || txCharacteristic == null || data == null) {
+    private fun sendDataInternal(write: QueuedBleWrite?) {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null || write == null) {
             return
         }
 
         try {
-            txCharacteristic!!.value = data
-            bluetoothGatt!!.writeCharacteristic(txCharacteristic)
+            val writeStartedAtMs = System.currentTimeMillis()
+            txCharacteristic!!.value = write.data
+            inFlightBleWriteTrace = write.trace
+            inFlightBleWriteStartedAtMs = writeStartedAtMs
+            val writeAccepted = bluetoothGatt!!.writeCharacteristic(txCharacteristic)
+            logBleWriteTrace(
+                    "write_call",
+                    write.trace,
+                    mapOf(
+                            "writeAccepted" to writeAccepted,
+                            "currentMtu" to currentMtu,
+                            "writeType" to txCharacteristic!!.writeType,
+                            "queueSize" to sendQueue.size,
+                            "characteristicUuid" to txCharacteristic!!.uuid.toString()
+                    )
+            )
+            if (!writeAccepted) {
+                inFlightBleWriteTrace = null
+                inFlightBleWriteStartedAtMs = 0L
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending data via BLE", e)
+            logBleWriteTrace(
+                    "write_exception",
+                    write.trace,
+                    mapOf(
+                            "errorClass" to e.javaClass.simpleName,
+                            "errorMessage" to (e.message ?: "unknown")
+                    )
+            )
+            inFlightBleWriteTrace = null
+            inFlightBleWriteStartedAtMs = 0L
         }
     }
 
     /** Queue data to be sent */
-    private fun queueData(data: ByteArray?) {
+    private fun queueData(data: ByteArray?, trace: BleWriteTrace? = null) {
         if (data != null) {
-            sendQueue.add(data)
+            val queuedTrace =
+                    trace?.copy(
+                            queuedAtMs =
+                                    if (trace.queuedAtMs > 0L)
+                                            trace.queuedAtMs
+                                    else System.currentTimeMillis()
+                    )
+            sendQueue.add(QueuedBleWrite(data, queuedTrace))
+            logBleChunkTrace(
+                    "queued",
+                    queuedTrace,
+                    mapOf("queueSizeAfterAdd" to sendQueue.size)
+            )
             // Bridge.log("LIVE: 📋 Added " + data.length + " to send queue - New queue size: " +
             // sendQueue.size());
 
@@ -2834,6 +2958,12 @@ class MentraLive : SGCManager() {
                         Bridge.sendPhotoStatus(jsonObjectToMap(json))
                     } catch (e: JSONException) {
                         Log.e(TAG, "Error converting photo status to Map", e)
+                    }
+            "camera_status" ->
+                    try {
+                        Bridge.sendCameraStatus(jsonObjectToMap(json))
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error converting camera status to Map", e)
                     }
             "stream_status" -> {
                 // Process streaming status update from ASG client
@@ -5148,7 +5278,6 @@ class MentraLive : SGCManager() {
 
     override fun requestPhoto(request: PhotoRequest) {
         val requestId = request.requestId
-        val appId = request.appId
         val size = request.size.value
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
@@ -5161,8 +5290,6 @@ class MentraLive : SGCManager() {
         Bridge.log(
                 "LIVE: Requesting photo: " +
                         requestId +
-                        " for app: " +
-                        appId +
                         " with size: " +
                         size +
                         ", webhookUrl: " +
@@ -5186,16 +5313,13 @@ class MentraLive : SGCManager() {
         )
         Bridge.log(
                 "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" +
-                        requestId +
-                        ", appId=" +
-                        appId
+                        requestId
         )
 
         try {
             val json = JSONObject()
             json.put("type", "take_photo")
             json.put("requestId", requestId)
-            json.put("appId", appId)
             if (webhookUrl != null && !webhookUrl.isEmpty()) {
                 json.put("webhookUrl", webhookUrl)
             }
@@ -5254,6 +5378,37 @@ class MentraLive : SGCManager() {
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating photo request JSON", e)
+        }
+    }
+
+    fun warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ) {
+        Bridge.log(
+                "LIVE: warmUpCamera() entry — requestId=" +
+                        requestId +
+                        ", size=" +
+                        size.value +
+                        ", durationMs=" +
+                        durationMs
+        )
+
+        try {
+            val json = JSONObject()
+            json.put("type", "camera_warm_up")
+            json.put("requestId", requestId)
+            val sizeValue = size.value
+            json.put("size", if (sizeValue.isNotEmpty()) sizeValue else "medium")
+            if (exposureTimeNs != null && exposureTimeNs > 0L) {
+                json.put("exposureTimeNs", exposureTimeNs)
+            }
+            json.put("durationMs", if (durationMs > 0) durationMs else 15000)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating camera warm up JSON", e)
         }
     }
 
@@ -6899,6 +7054,7 @@ class MentraLive : SGCManager() {
 
         try {
             val outgoingSummary = summarizeOutgoingMessage(data)
+            val commandTraceInfo = parseOutgoingBleCommandTraceInfo(data)
             val isPhotoRequest = outgoingSummary.contains("type=take_photo")
             if (isPhotoRequest) {
                 Bridge.log(
@@ -6956,11 +7112,34 @@ class MentraLive : SGCManager() {
                     val packedData =
                             K900ProtocolUtils.packJsonToK900(
                                     chunkStr,
-                                    wakeup && i == 0
-                            ) // Only wakeup on first chunk
+                                            wakeup && i == 0
+                                    ) // Only wakeup on first chunk
+
+                    val trace =
+                            createBleWriteTrace(
+                                    commandTraceInfo,
+                                    chunk.optString("id", "").takeIf { it.isNotBlank() },
+                                    chunk.optInt("c", i),
+                                    chunk.optInt("n", chunks.size),
+                                    chunk.optString("d", "")
+                                            .toByteArray(StandardCharsets.UTF_8)
+                                            .size,
+                                    packedData.size,
+                                    wakeup && i == 0,
+                                    true
+                            )
+                    logBleChunkTrace(
+                            "created",
+                            trace,
+                            mapOf(
+                                    "chunkJsonBytes" to
+                                            chunkStr.toByteArray(StandardCharsets.UTF_8).size,
+                                    "messageBytes" to data.toByteArray(StandardCharsets.UTF_8).size
+                            )
+                    )
 
                     // Queue the chunk for sending
-                    queueData(packedData)
+                    queueData(packedData, trace)
 
                     // Add small delay between chunks to avoid overwhelming the connection
                     if (i < chunks.size - 1) {
@@ -6982,9 +7161,25 @@ class MentraLive : SGCManager() {
 
                 // Pack the data using the centralized utility
                 val packedData = K900ProtocolUtils.packJsonToK900(data, wakeup)
+                val trace =
+                        createBleWriteTrace(
+                                commandTraceInfo,
+                                null,
+                                null,
+                                null,
+                                data.toByteArray(StandardCharsets.UTF_8).size,
+                                packedData.size,
+                                wakeup,
+                                false
+                        )
+                logBleChunkTrace(
+                        "created",
+                        trace,
+                        mapOf("messageBytes" to data.toByteArray(StandardCharsets.UTF_8).size)
+                )
 
                 // Queue the data for sending
-                queueData(packedData)
+                queueData(packedData, trace)
                 if (isPhotoRequest) {
                     Bridge.log(
                             "LIVE: PHOTO PIPELINE BLE handoff — packedLen=" +
@@ -6995,6 +7190,179 @@ class MentraLive : SGCManager() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error creating data JSON", e)
+        }
+    }
+
+    private fun parseOutgoingBleCommandTraceInfo(payload: String): OutgoingBleCommandTraceInfo {
+        return try {
+            val obj = JSONObject(payload)
+            OutgoingBleCommandTraceInfo(
+                    commandType = obj.optString("type", "unknown"),
+                    requestId = optNonBlankString(obj, "requestId"),
+                    appId = optNonBlankString(obj, "appId"),
+                    messageId = if (obj.has("mId")) obj.optLong("mId") else null
+            )
+        } catch (_: Exception) {
+            OutgoingBleCommandTraceInfo(
+                    commandType = "unknown",
+                    requestId = null,
+                    appId = null,
+                    messageId = null
+            )
+        }
+    }
+
+    private fun createBleWriteTrace(
+            commandInfo: OutgoingBleCommandTraceInfo,
+            chunkId: String?,
+            chunkIndex: Int?,
+            totalChunks: Int?,
+            payloadBytes: Int?,
+            packedBytes: Int,
+            wakeup: Boolean,
+            chunked: Boolean
+    ): BleWriteTrace {
+        return BleWriteTrace(
+                sequence = bleWriteTraceSequence.getAndIncrement(),
+                commandType = commandInfo.commandType,
+                requestId = commandInfo.requestId,
+                appId = commandInfo.appId,
+                messageId = commandInfo.messageId,
+                chunkId = chunkId,
+                chunkIndex = chunkIndex,
+                totalChunks = totalChunks,
+                payloadBytes = payloadBytes,
+                packedBytes = packedBytes,
+                wakeup = wakeup,
+                chunked = chunked,
+                queuedAtMs = System.currentTimeMillis()
+        )
+    }
+
+    private fun optNonBlankString(obj: JSONObject, key: String): String? {
+        return obj.optString(key, "").takeIf { it.isNotBlank() }
+    }
+
+    private fun logBleChunkTrace(
+            stage: String,
+            trace: BleWriteTrace?,
+            extra: Map<String, Any?> = emptyMap()
+    ) {
+        logBleTrace("sdk_ble_chunk", stage, trace, extra)
+    }
+
+    private fun logBleWriteTrace(
+            stage: String,
+            trace: BleWriteTrace?,
+            extra: Map<String, Any?> = emptyMap()
+    ) {
+        logBleTrace("sdk_ble_write", stage, trace, extra)
+    }
+
+    private fun logBleTrace(
+            layer: String,
+            stage: String,
+            trace: BleWriteTrace?,
+            extra: Map<String, Any?> = emptyMap()
+    ) {
+        if (trace == null) {
+            return
+        }
+
+        val warningReason = bleTraceWarningReason(stage, extra)
+        if (warningReason == null) {
+            return
+        }
+
+        try {
+            val payload = mutableMapOf<String, Any>(
+                    "level" to "warning",
+                    "warningReason" to warningReason,
+                    "stage" to stage,
+                    "sequence" to trace.sequence,
+                    "commandType" to trace.commandType,
+                    "packedBytes" to trace.packedBytes,
+                    "wakeup" to trace.wakeup,
+                    "chunked" to trace.chunked,
+                    "queuedAtMs" to trace.queuedAtMs
+            )
+            trace.requestId?.let { payload["requestId"] = it }
+            trace.appId?.let { payload["appId"] = it }
+            trace.messageId?.let { payload["messageId"] = it }
+            trace.chunkId?.let { payload["chunkId"] = it }
+            trace.chunkIndex?.let {
+                payload["chunkIndex"] = it
+                payload["chunkNumber"] = it + 1
+            }
+            trace.totalChunks?.let { payload["totalChunks"] = it }
+            trace.payloadBytes?.let { payload["payloadBytes"] = it }
+            extra.forEach { (key, value) ->
+                if (value != null) {
+                    payload[key] = value
+                }
+            }
+
+            BleTraceLogger.logMap("phone_to_glasses", layer, trace.commandType, payload)
+        } catch (e: Exception) {
+            Log.d(TAG, "BLE trace logging failed for $layer/$stage", e)
+        }
+    }
+
+    private fun bleTraceWarningReason(stage: String, extra: Map<String, Any?>): String? {
+        if (extra["errorClass"] != null || extra["errorMessage"] != null) {
+            return "ble_write_error"
+        }
+        if (extra["success"] == false) {
+            return "ble_write_failed"
+        }
+        if (extra["writeAccepted"] == false) {
+            return "ble_write_rejected"
+        }
+
+        if (traceLongAtLeast(extra["queueDelayMs"], SIGNIFICANT_BLE_TRACE_DELAY_MS)) {
+            return "queue_delay"
+        }
+        if (traceLongAtLeast(extra["callbackDelayMs"], SIGNIFICANT_BLE_TRACE_DELAY_MS)) {
+            return "write_callback_delay"
+        }
+        if (traceLongAtLeast(extra["remainingDelayMs"], SIGNIFICANT_BLE_TRACE_DELAY_MS)) {
+            return "rate_limit_delay"
+        }
+        if (traceLongAtLeast(extra["nextProcessDelayMs"], SIGNIFICANT_BLE_TRACE_DELAY_MS)) {
+            return "next_process_delay"
+        }
+        if (extra["retryDelayMs"].asTraceLong() != null) {
+            return "write_retry"
+        }
+        if (stage == "queued" &&
+                        traceIntAtLeast(extra["queueSizeAfterAdd"], SIGNIFICANT_BLE_TRACE_QUEUE_SIZE)
+        ) {
+            return "queue_depth"
+        }
+        return null
+    }
+
+    private fun traceLongAtLeast(value: Any?, threshold: Long): Boolean {
+        return (value.asTraceLong() ?: Long.MIN_VALUE) >= threshold
+    }
+
+    private fun traceIntAtLeast(value: Any?, threshold: Int): Boolean {
+        return (value.asTraceInt() ?: Int.MIN_VALUE) >= threshold
+    }
+
+    private fun Any?.asTraceLong(): Long? {
+        return when (this) {
+            is Number -> this.toLong()
+            is String -> this.toLongOrNull()
+            else -> null
+        }
+    }
+
+    private fun Any?.asTraceInt(): Int? {
+        return when (this) {
+            is Number -> this.toInt()
+            is String -> this.toIntOrNull()
+            else -> null
         }
     }
 
@@ -8105,6 +8473,36 @@ class MentraLive : SGCManager() {
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera FOV setting message", e)
+        }
+    }
+
+    /**
+     * Send camera tuning config (ANR / gain) to the glasses via the {@code camera_tuning_config}
+     * command. The ASG client relays this as a {@code camconfig} broadcast to the camera HAL.
+     *
+     * @param requestId optional request ID echoed in the settings_ack response
+     * @param anrOn     {@code true} = ANR enabled, {@code false} = ANR disabled
+     * @param gainOn    {@code true} = stock gain params, {@code false} = pixsmart gain-off params
+     */
+    fun sendCameraTuningConfig(requestId: String?, anrOn: Boolean, gainOn: Boolean) {
+        Bridge.log("LIVE: Sending camera tuning config: anr=$anrOn, gain=$gainOn")
+
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send camera tuning config - not connected")
+            return
+        }
+
+        try {
+            val json = JSONObject()
+            json.put("type", "camera_tuning_config")
+            if (!requestId.isNullOrEmpty()) {
+                json.put("request_id", requestId)
+            }
+            json.put("anr", anrOn)
+            json.put("gain", gainOn)
+            sendJson(json, true)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating camera tuning config message", e)
         }
     }
 

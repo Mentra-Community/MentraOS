@@ -46,7 +46,7 @@ const RELAY_PORT = 13042;
       issuer: "cloud-core",
       publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
       userIdClaim: "sub",
-      oemIdClaim: "oem_id",
+      tenantIdClaim: "tenant_id",
     },
   ]);
   const miniapp = crypto.generateKeyPairSync("ed25519");
@@ -103,14 +103,21 @@ beforeAll(async () => {
   resetMentraKeyCache();
   resetSigningKeyCache();
 
-  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, oemId: TEST_OEM_ID });
+  testOemHandle = await startTestOem({ port: TEST_OEM_PORT, tenantId: TEST_OEM_ID });
   coreHandle = await startCore({ port: CORE_PORT });
   await Promise.all([
-    OemModel.syncIndexes(),
-    UserModel.syncIndexes(),
-    RefreshTokenModel.syncIndexes(),
-    SeenJtiModel.syncIndexes(),
-    RevokedJtiModel.syncIndexes(),
+    OemModel.createCollection(),
+    UserModel.createCollection(),
+    RefreshTokenModel.createCollection(),
+    SeenJtiModel.createCollection(),
+    RevokedJtiModel.createCollection(),
+  ]);
+  await Promise.all([
+    syncIndexesIfCollectionExists(OemModel),
+    syncIndexesIfCollectionExists(UserModel),
+    syncIndexesIfCollectionExists(RefreshTokenModel),
+    syncIndexesIfCollectionExists(SeenJtiModel),
+    syncIndexesIfCollectionExists(RevokedJtiModel),
   ]);
   audioHandle = await startAudio({
     httpPort: AUDIO_HTTP_PORT,
@@ -149,7 +156,7 @@ beforeEach(async () => {
     if (keys.length > 0) await redis.del(...keys);
   }
   await OemModel.create({
-    oemId: TEST_OEM_ID,
+    tenantId: TEST_OEM_ID,
     displayName: "Test OEM",
     publicKeyMode: "static",
     publicKey: `-----BEGIN PUBLIC KEY-----\n${testOemHandle.keypair.publicKeyBody}\n-----END PUBLIC KEY-----`,
@@ -204,11 +211,22 @@ describe("cloud.runtime reconnect (real core + audio, relayed socket)", () => {
 
 // === Helpers ===
 
-async function newCloud(oemUserId: string): Promise<CloudClient> {
+async function syncIndexesIfCollectionExists(model: { syncIndexes(): Promise<unknown> }) {
+  try {
+    await model.syncIndexes();
+  } catch (err) {
+    if (typeof err === "object" && err !== null && "code" in err && err.code === 26) {
+      return;
+    }
+    throw err;
+  }
+}
+
+async function newCloud(tenantUserId: string): Promise<CloudClient> {
   const mintRes = await fetch(`${testOemHandle.url}/test-oem/mint-jwt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ oemUserId }),
+    body: JSON.stringify({ tenantUserId }),
   });
   if (!mintRes.ok) throw new Error(`mint-jwt failed: ${mintRes.status}`);
   const { jwt } = (await mintRes.json()) as { jwt: string };

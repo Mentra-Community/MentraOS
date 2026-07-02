@@ -6,7 +6,7 @@ envGroups:
 
 build:
   method: docker
-  context: ./
+  context: ../
   dockerfile: ./docker/Dockerfile
 
 services:

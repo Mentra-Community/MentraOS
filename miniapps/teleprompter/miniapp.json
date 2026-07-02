@@ -30,5 +30,25 @@
       "level": "OPTIONAL",
       "description": "Captures speech so scrolling can follow your voice; timed scrolling works without it"
     }
+  ],
+  "actions": [
+    {
+      "id": "load_script",
+      "description": "Load text into the teleprompter and start reading it on the glasses. Use when the user wants to put a speech, talking points, lines, or any notes up on their glasses — e.g. 'put my toast on the teleprompter' or 'teleprompt this'. Replaces the current script and resets to the top. By default it begins scrolling immediately at the user's saved speed (or following their voice if they've turned on AI Scroll); set autostart false to just show the opening lines so the user can start when ready.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The full script to display. Use blank lines to separate paragraphs; the teleprompter wraps each line to fit the glasses."
+          },
+          "autostart": {
+            "type": "boolean",
+            "description": "Defaults to true — start scrolling from the top right away. Set false to load the script and show the opening lines without scrolling, so the user can start when ready."
+          }
+        },
+        "required": ["script"]
+      }
+    }
   ]
 }

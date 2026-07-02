@@ -1,12 +1,17 @@
 {
   "name": "@mentra/miniapp-cli",
-  "version": "0.1.0",
+  "version": "0.1.0-dev.0",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
   "bin": {
     "mentra-miniapp": "./src/index.ts"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
   "exports": {
+    ".": "./src/api.ts",
     "./build-helpers": "./src/build-helpers.ts",
     "./package.json": "./package.json"
   },
@@ -17,10 +22,10 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "jszip": "^3.10.1",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@types/qrcode-terminal": "^0.12.0",
+    "@types/qrcode": "^1.5.5",
     "bun-types": "^1.3.14",
     "typescript": "^5.0.0"
   },

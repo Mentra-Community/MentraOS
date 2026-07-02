@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -12,6 +13,9 @@ import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
+
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -22,7 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import org.json.JSONObject;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -53,7 +57,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final int MAX_BACKOFF_MS = 1000; // Cap exponential backoff at 1 second
     private static final int PACING_DELAY_MS =
             75; // Delay between successful packets - BES2700 needs time to drain BLE TX
+    private static final long SIGNIFICANT_CHUNK_TRACE_DURATION_MS = 250;
+    private static final long SIGNIFICANT_CHUNK_SEND_DURATION_MS = 250;
+    private static final long SIGNIFICANT_CHUNK_SPACING_MS = PACING_DELAY_MS + 150;
     private int consecutiveFailures = 0;
+    private final AtomicLong bleChunkTraceSequence = new AtomicLong(1);
 
     // Inner class to track file transfer state
     private static class FileTransferSession {
@@ -178,7 +186,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (originalData.startsWith("{") && !BesWireFormat.isCWrappedJson(originalData)) {
                     Log.d(
                             TAG,
-                            "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
+                            "📡 🔧 JSON data detected, applying C-wrapping and protocol"
+                                    + " formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
                     String wrappedJson = BesWireFormat.createTransmissionWrapperJson(originalData);
                     if (MessageChunker.needsChunking(wrappedJson)) {
@@ -233,31 +242,32 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return sent;
     }
 
-    /**
-     * Sends an internal command directly to the glasses transport without broadcasting it as a
-     * phone-facing command response.
-     */
+    /** Queues an internal command without broadcasting it as a phone-facing command response. */
     public boolean sendCommandToGlasses(byte[] data) {
-        return sendMessageInternal(data);
+        return sendInternalCommand(data);
     }
 
     private boolean sendChunkedJson(String originalJson) {
         try {
-            long messageId = -1;
-            try {
-                JSONObject original = new JSONObject(originalJson);
-                messageId = original.optLong("mId", -1);
-            } catch (Exception ignored) {
-                // Chunking also supports non-ACK messages.
-            }
+            OutgoingJsonTraceInfo traceInfo = parseOutgoingJsonTraceInfo(originalJson);
 
-            List<JSONObject> chunks = MessageChunker.createChunks(originalJson, messageId);
+            List<JSONObject> chunks =
+                    MessageChunker.createChunks(originalJson, traceInfo.messageId);
             Log.d(TAG, "📡 🧩 Sending chunked JSON as " + chunks.size() + " chunks");
 
             boolean allSent = true;
+            long previousSendAtMs = -1;
+            long chunkedSendStartedAtMs = System.currentTimeMillis();
+            long maxChunkSendDurationMs = 0;
+            long maxChunkSpacingMs = 0;
             for (int i = 0; i < chunks.size(); i++) {
-                byte[] chunkData =
-                        BesWireFormat.formatMessageForTransmission(chunks.get(i).toString());
+                JSONObject chunk = chunks.get(i);
+                String chunkJson = chunk.toString();
+                byte[] chunkData = BesWireFormat.formatMessageForTransmission(chunkJson);
+                long sequence = bleChunkTraceSequence.getAndIncrement();
+                logOutgoingBleChunk(
+                        "created", traceInfo, chunk, sequence, chunkData, chunkJson, null, null,
+                        null, null);
                 Log.d(
                         TAG,
                         "📡 🧩 Sending chunk "
@@ -267,7 +277,29 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + " ("
                                 + chunkData.length
                                 + " bytes packed)");
+                long sendStartedAtMs = System.currentTimeMillis();
                 boolean sent = comManager.send(chunkData);
+                long sendFinishedAtMs = System.currentTimeMillis();
+                long sendDurationMs = sendFinishedAtMs - sendStartedAtMs;
+                maxChunkSendDurationMs = Math.max(maxChunkSendDurationMs, sendDurationMs);
+                Long timeSincePreviousChunkSendMs =
+                        previousSendAtMs >= 0 ? sendStartedAtMs - previousSendAtMs : null;
+                if (timeSincePreviousChunkSendMs != null) {
+                    maxChunkSpacingMs =
+                            Math.max(maxChunkSpacingMs, timeSincePreviousChunkSendMs.longValue());
+                }
+                previousSendAtMs = sendStartedAtMs;
+                logOutgoingBleChunk(
+                        "send_result",
+                        traceInfo,
+                        chunk,
+                        sequence,
+                        chunkData,
+                        chunkJson,
+                        sent,
+                        sendDurationMs,
+                        timeSincePreviousChunkSendMs,
+                        i < chunks.size() - 1 ? PACING_DELAY_MS : null);
                 allSent = allSent && sent;
                 if (!sent) {
                     Log.w(
@@ -290,10 +322,246 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 }
             }
 
+            logOutgoingBleChunkSummary(
+                    traceInfo,
+                    chunks.size(),
+                    System.currentTimeMillis() - chunkedSendStartedAtMs,
+                    maxChunkSendDurationMs,
+                    maxChunkSpacingMs,
+                    allSent);
             return allSent;
         } catch (Exception e) {
             Log.e(TAG, "Error chunking JSON for K900 transmission", e);
             return false;
+        }
+    }
+
+    private OutgoingJsonTraceInfo parseOutgoingJsonTraceInfo(String originalJson) {
+        int messageBytes = utf8ByteCount(originalJson);
+        try {
+            JSONObject original = new JSONObject(originalJson);
+            return new OutgoingJsonTraceInfo(
+                    nonEmptyString(original, "type"),
+                    nonEmptyString(original, "requestId"),
+                    nonEmptyString(original, "appId"),
+                    original.optLong("mId", -1),
+                    messageBytes);
+        } catch (Exception ignored) {
+            // Chunking also supports non-JSON/ACK-less messages; keep trace logging best-effort.
+            return new OutgoingJsonTraceInfo(null, null, null, -1, messageBytes);
+        }
+    }
+
+    private void logOutgoingBleChunk(
+            String stage,
+            OutgoingJsonTraceInfo traceInfo,
+            JSONObject chunk,
+            long sequence,
+            byte[] packedData,
+            String chunkJson,
+            Boolean success,
+            Long sendDurationMs,
+            Long timeSincePreviousChunkSendMs,
+            Integer pacingDelayMs) {
+        String warningReason =
+                outgoingChunkWarningReason(success, sendDurationMs, timeSincePreviousChunkSendMs);
+        if (warningReason == null) {
+            return;
+        }
+
+        JSONObject payload = new JSONObject();
+        try {
+            int chunkIndex = optIntFallback(chunk, "chunk", "c", -1);
+            int totalChunks = optIntFallback(chunk, "total", "n", -1);
+            String chunkData = optStringFallback(chunk, "data", "d");
+            String chunkId = optStringFallback(chunk, "chunkId", "id");
+
+            payload.put("level", "warning");
+            payload.put("warningReason", warningReason);
+            payload.put("stage", stage);
+            payload.put("sequence", sequence);
+            payload.put("chunked", true);
+            putIfPresent(payload, "commandType", traceInfo.commandType);
+            putIfPresent(payload, "requestId", traceInfo.requestId);
+            putIfPresent(payload, "appId", traceInfo.appId);
+            if (traceInfo.messageId != -1) {
+                payload.put("messageId", traceInfo.messageId);
+            }
+            putIfPresent(payload, "chunkId", chunkId);
+            if (chunkIndex >= 0) {
+                payload.put("chunkIndex", chunkIndex);
+                payload.put("chunkNumber", chunkIndex + 1);
+            }
+            if (totalChunks > 0) {
+                payload.put("totalChunks", totalChunks);
+            }
+            payload.put("packedBytes", packedData != null ? packedData.length : 0);
+            payload.put("payloadBytes", utf8ByteCount(chunkData));
+            payload.put("chunkJsonBytes", utf8ByteCount(chunkJson));
+            payload.put("messageBytes", traceInfo.messageBytes);
+            if (success != null) {
+                payload.put("success", success.booleanValue());
+            }
+            if (sendDurationMs != null) {
+                payload.put("sendDurationMs", sendDurationMs.longValue());
+            }
+            if (timeSincePreviousChunkSendMs != null) {
+                payload.put(
+                        "timeSincePreviousChunkSendMs", timeSincePreviousChunkSendMs.longValue());
+            }
+            if (pacingDelayMs != null) {
+                payload.put("pacingDelayMs", pacingDelayMs.intValue());
+            }
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+
+        BleTraceLogger.logEvent(
+                "glasses_to_phone",
+                "sdk_ble_chunk",
+                traceInfo.commandType != null ? traceInfo.commandType : "chunked",
+                payload);
+    }
+
+    private void logOutgoingBleChunkSummary(
+            OutgoingJsonTraceInfo traceInfo,
+            int totalChunks,
+            long durationMs,
+            long maxChunkSendDurationMs,
+            long maxChunkSpacingMs,
+            boolean success) {
+        String warningReason =
+                outgoingChunkSummaryWarningReason(
+                        success, durationMs, maxChunkSendDurationMs, maxChunkSpacingMs);
+        if (warningReason == null) {
+            return;
+        }
+
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("level", "warning");
+            payload.put("warningReason", warningReason);
+            payload.put("stage", "summary");
+            payload.put("sequence", bleChunkTraceSequence.getAndIncrement());
+            payload.put("chunked", true);
+            putIfPresent(payload, "commandType", traceInfo.commandType);
+            putIfPresent(payload, "requestId", traceInfo.requestId);
+            putIfPresent(payload, "appId", traceInfo.appId);
+            if (traceInfo.messageId != -1) {
+                payload.put("messageId", traceInfo.messageId);
+            }
+            payload.put("totalChunks", totalChunks);
+            payload.put("messageBytes", traceInfo.messageBytes);
+            payload.put("durationMs", durationMs);
+            payload.put("maxChunkSendDurationMs", maxChunkSendDurationMs);
+            payload.put("maxChunkSpacingMs", maxChunkSpacingMs);
+            payload.put("pacingDelayMs", PACING_DELAY_MS);
+            payload.put("success", success);
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+
+        BleTraceLogger.logEvent(
+                "glasses_to_phone",
+                "sdk_ble_chunk",
+                traceInfo.commandType != null ? traceInfo.commandType : "chunked",
+                payload);
+    }
+
+    private static String outgoingChunkWarningReason(
+            Boolean success, Long sendDurationMs, Long timeSincePreviousChunkSendMs) {
+        if (Boolean.FALSE.equals(success)) {
+            return "chunk_send_failed";
+        }
+        if (sendDurationMs != null && sendDurationMs >= SIGNIFICANT_CHUNK_SEND_DURATION_MS) {
+            return "chunk_send_duration";
+        }
+        if (timeSincePreviousChunkSendMs != null
+                && timeSincePreviousChunkSendMs >= SIGNIFICANT_CHUNK_SPACING_MS) {
+            return "chunk_spacing";
+        }
+        return null;
+    }
+
+    private static String outgoingChunkSummaryWarningReason(
+            boolean success, long durationMs, long maxChunkSendDurationMs, long maxChunkSpacingMs) {
+        if (!success) {
+            return "chunked_message_failed";
+        }
+        if (durationMs >= SIGNIFICANT_CHUNK_TRACE_DURATION_MS) {
+            return "chunked_message_duration";
+        }
+        if (maxChunkSendDurationMs >= SIGNIFICANT_CHUNK_SEND_DURATION_MS) {
+            return "chunk_send_duration";
+        }
+        if (maxChunkSpacingMs >= SIGNIFICANT_CHUNK_SPACING_MS) {
+            return "chunk_spacing";
+        }
+        return null;
+    }
+
+    private static String optStringFallback(JSONObject json, String fullKey, String compactKey) {
+        if (json == null) {
+            return null;
+        }
+        if (json.has(fullKey)) {
+            return json.optString(fullKey, null);
+        }
+        if (json.has(compactKey)) {
+            return json.optString(compactKey, null);
+        }
+        return null;
+    }
+
+    private static int optIntFallback(
+            JSONObject json, String fullKey, String compactKey, int defaultValue) {
+        if (json == null) {
+            return defaultValue;
+        }
+        if (json.has(fullKey)) {
+            return json.optInt(fullKey, defaultValue);
+        }
+        return json.optInt(compactKey, defaultValue);
+    }
+
+    private static String nonEmptyString(JSONObject json, String key) {
+        String value = json.optString(key, "");
+        return value.isEmpty() ? null : value;
+    }
+
+    private static void putIfPresent(JSONObject payload, String key, String value) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        try {
+            payload.put(key, value);
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+    }
+
+    private static int utf8ByteCount(String value) {
+        return value != null ? value.getBytes(StandardCharsets.UTF_8).length : 0;
+    }
+
+    private static class OutgoingJsonTraceInfo {
+        final String commandType;
+        final String requestId;
+        final String appId;
+        final long messageId;
+        final int messageBytes;
+
+        OutgoingJsonTraceInfo(
+                String commandType,
+                String requestId,
+                String appId,
+                long messageId,
+                int messageBytes) {
+            this.commandType = commandType;
+            this.requestId = requestId;
+            this.appId = appId;
+            this.messageId = messageId;
+            this.messageBytes = messageBytes;
         }
     }
 
@@ -466,7 +734,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         if (svc != null) {
                             Log.i(
                                     TAG,
-                                    "📋 BES version updated from UART — re-sending version info to phone");
+                                    "📋 BES version updated from UART — re-sending version info to"
+                                            + " phone");
                             svc.sendVersionInfo();
                         }
                     });
@@ -658,7 +927,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @return true if transfer started successfully
      */
     @Override
-    public boolean sendFile(String filePath) {
+    protected boolean sendFileInternal(String filePath) {
         if (!isSerialOpen) {
             Log.e(TAG, "Cannot send file - serial port not open");
 

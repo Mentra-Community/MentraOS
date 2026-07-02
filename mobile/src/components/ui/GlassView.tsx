@@ -9,6 +9,13 @@ interface NewGlassViewProps extends ViewProps {
   transparent?: boolean
   disableOnAndroid?: boolean
   androidShadowSize?: AndroidShadowSize
+  /**
+   * Optional solid tint for the Android surface — sets the view's
+   * backgroundColor, overriding the default glass translucency. Use for surfaces
+   * that need to stand out more (e.g. the home action buttons). No effect on iOS
+   * liquid glass, which keeps its native transparent effect.
+   */
+  tintColor?: string
 }
 
 type AndroidShadowSize = "sm" | "md" | "lg"
@@ -21,6 +28,7 @@ const GlassView = ({
   transparent = true,
   disableOnAndroid = false,
   androidShadowSize = "lg",
+  tintColor,
   ...props
 }: GlassViewProps & NewGlassViewProps) => {
   const [iosGlassEffect] = useSetting(SETTINGS.ios_glass_effect.key)
@@ -67,6 +75,8 @@ const GlassView = ({
     // 55% transparent theme.colors.primary_foreground
     let backgroundColor = theme.colors.primary_foreground + "C9"
     backgroundColor = flatStyle.backgroundColor?.toString() ?? backgroundColor
+    // An explicit tintColor wins over both the default and any style background.
+    backgroundColor = tintColor ?? backgroundColor
 
     // boxShadowStyle = "4px 4px 16px 0px rgba(0, 0, 0, 0.10)"
     if (androidShadowSize === "sm") {

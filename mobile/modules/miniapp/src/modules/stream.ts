@@ -2,6 +2,10 @@
  * @fileoverview StreamModule -- video streaming from glasses.
  *
  * Wires to cloud streaming extensions via the __phone__ subscriber path.
+ *
+ * One entry point: `startStream`. By default it provisions a Mentra-hosted
+ * stream and returns playback URLs (managed). Pass `direct` to publish straight
+ * to your own ingest URL with no relay.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -39,14 +43,6 @@ export interface StreamResolvedConfig {
   }
 }
 
-export interface StartUnmanagedOptions {
-  streamUrl: string
-  video?: StreamVideoConfig
-  audio?: StreamAudioConfig
-  /** Play glasses-side stream start/stop sounds. Defaults to true. */
-  sound?: boolean
-}
-
 /**
  * Restream destination. The full stream key is part of the URL (e.g.
  * `rtmp://yt.com/live/STREAM-KEY`). `name` is a human label that surfaces
@@ -57,37 +53,48 @@ export interface RestreamDestination {
   name?: string
 }
 
-export interface StartManagedOptions {
-  /** Bare URL strings or {url, name?} objects; mix freely. */
-  restreamDestinations?: Array<string | RestreamDestination>
+export interface StartStreamOptions {
+  /**
+   * Publish straight to your own ingest URL (rtmp/rtmps/srt/whip). The glasses
+   * connect to it directly with no Mentra relay, so no playback URLs come back.
+   * Omit this to use the managed relay (the default, best for most apps).
+   */
+  direct?: string
+  /**
+   * Restream destinations the managed relay fans out to (YouTube, Twitch, …).
+   * Bare URL strings or `{url, name?}` objects; mix freely. Managed streams
+   * only — ignored when `direct` is set.
+   */
+  destinations?: Array<string | RestreamDestination>
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
   /** Play glasses-side stream start/stop sounds. Defaults to true. */
   sound?: boolean
   /**
-   * Ingest protocol — a latency/durability trade:
-   *   - "srt" (default): ~10-20s latency via LL-HLS playback, with shareable
-   *     HLS/DASH URLs and automatic recording.
-   *   - "whip": sub-second WebRTC playback (use `webrtcUrl`/WHEP), but NO
-   *     HLS/DASH and NO recording (provider limitation).
+   * Managed ingest protocol, a latency/durability trade. Ignored when `direct`
+   * is set.
+   *   - "srt" (default): ~10-20s latency via LL-HLS, shareable HLS/DASH URLs,
+   *     and automatic recording.
+   *   - "whip": sub-second WebRTC playback (use `webrtcUrl`/WHEP), but no
+   *     HLS/DASH and no recording.
    */
   ingest?: "srt" | "whip"
 }
 
-export interface StreamPublisherStartResult {
+export interface StreamResult {
   streamId: string
   status: string
   resolvedConfig?: StreamResolvedConfig
-}
-
-export interface ManagedStreamResult extends StreamPublisherStartResult {
-  /** Cloudflare live input UID — useful for building hosted-player URLs. */
-  liveInputId: string
-  /** Playback mode this stream supports: "hls" (use hlsUrl/dashUrl) or
-   *  "webrtc" (use webrtcUrl via WHEP; hlsUrl will never serve content). */
-  mode: "hls" | "webrtc"
-  hlsUrl: string
-  dashUrl: string
+  /** Managed streams only: the live-input UID for building hosted-player URLs. */
+  liveInputId?: string
+  /** Managed streams only: which playback this stream serves. In "webrtc" mode
+   *  `hlsUrl` never serves content. */
+  mode?: "hls" | "webrtc"
+  /** Managed streams only: HLS playback URL. */
+  hlsUrl?: string
+  /** Managed streams only: DASH playback URL. */
+  dashUrl?: string
+  /** Managed streams only: WHEP playback URL (present in "webrtc" mode). */
   webrtcUrl?: string
 }
 
@@ -100,20 +107,29 @@ export interface StreamStatus {
 export class StreamModule {
   constructor(private readonly session: MiniappSession) {}
 
-  async startUnmanaged(options: StartUnmanagedOptions): Promise<StreamPublisherStartResult> {
-    return this.session.sendRequest<StreamPublisherStartResult>({
-      type: MiniappRequestType.STREAM_START,
-      streamUrl: options.streamUrl,
-      video: options.video,
-      audio: options.audio,
-      sound: options.sound ?? true,
-    })
-  }
-
-  async startManaged(options: StartManagedOptions = {}): Promise<ManagedStreamResult> {
-    return this.session.sendRequest<ManagedStreamResult>({
+  /**
+   * Start a live video stream from the glasses camera.
+   *
+   * Managed (default) -- Mentra hosts the stream and the result carries
+   * `hlsUrl`/`dashUrl`/`webrtcUrl` for playback. Optionally fan out to your own
+   * `destinations`.
+   *
+   * Direct -- pass `direct` with your own ingest URL; the glasses publish to it
+   * and no playback URLs are returned.
+   */
+  async startStream(options: StartStreamOptions = {}): Promise<StreamResult> {
+    if (options.direct !== undefined) {
+      return this.session.sendRequest<StreamResult>({
+        type: MiniappRequestType.STREAM_START,
+        streamUrl: options.direct,
+        video: options.video,
+        audio: options.audio,
+        sound: options.sound ?? true,
+      })
+    }
+    return this.session.sendRequest<StreamResult>({
       type: MiniappRequestType.MANAGED_STREAM_START,
-      restreamDestinations: options.restreamDestinations,
+      restreamDestinations: options.destinations,
       video: options.video,
       audio: options.audio,
       sound: options.sound ?? true,
@@ -121,6 +137,7 @@ export class StreamModule {
     })
   }
 
+  /** Stop the active stream, or a specific one by `streamId`. */
   async stop(streamId?: string): Promise<void> {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.STREAM_STOP,

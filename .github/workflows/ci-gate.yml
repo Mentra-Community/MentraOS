@@ -55,6 +55,7 @@ on:
       - "Mobile App Android Build"
       - "MentraOS ASG Client Build"
       - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
       - "🧪 Test Cloud build"
       - "🧪 Test SDK build"
       - "🧪 Test Console build"
@@ -84,9 +85,12 @@ permissions:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    # Slightly above the 30-min poll ceiling in the script so the loop, not the
-    # runner, decides when to give up.
-    timeout-minutes: 32
+    # Must stay ABOVE the poll ceiling (MAX_MS, currently 120 min) so the script's
+    # loop — not GitHub's job timeout — decides when to give up. If this is lower
+    # than the poll ceiling, a legitimately-pending gate (builders queued behind a
+    # backed-up Mac runner pool) gets hard-killed mid-wait and the gate never
+    # settles. Keep a small margin above MAX_MS for poll/post overhead.
+    timeout-minutes: 130
     steps:
       - name: Evaluate gated workflows and post ci-gate-dev status
         uses: actions/github-script@v7
@@ -104,6 +108,7 @@ jobs:
               "Mobile App Android Build",
               "MentraOS ASG Client Build",
               "Mobile App Quality Checks",
+              "Bun Lockfile Checks",
               "🧪 Test Cloud build",
               "🧪 Test SDK build",
               "🧪 Test Console build",
@@ -229,7 +234,14 @@ jobs:
             // for every builder completion (those only fire once ci-gate.yml is on
             // the base branch, and can race even then). We post intermediate
             // pending statuses so the required check reflects live progress.
-            const MAX_MS = 30 * 60 * 1000;   // 30 min ceiling
+            // Poll ceiling. Must cover the WORST-CASE wall time for a gated
+            // builder to go from "PR opened" to "completed", INCLUDING time spent
+            // queued behind a saturated self-hosted Mac runner pool. When all mac
+            // runners are busy, a mobile build can sit queued 30–60 min before it
+            // even starts, then build for ~10–15 min. 60 min was too tight and the
+            // gate timed out on legitimately-slow runs; 120 min covers the backlog
+            // case. The job's timeout-minutes MUST stay above this.
+            const MAX_MS = 120 * 60 * 1000;  // 120 min ceiling
             const INTERVAL_MS = 20 * 1000;   // poll every 20s
             // Minimum time before we'll declare success, so a path-matched builder
             // that is slow to register a run (e.g. queued behind Mac runners) is

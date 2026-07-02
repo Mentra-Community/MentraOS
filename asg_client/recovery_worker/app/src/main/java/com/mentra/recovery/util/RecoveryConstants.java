@@ -71,7 +71,7 @@ public final class RecoveryConstants {
   // --- Remediation (self-contained ASG force-install path) ---
 
   /** OTA manifest fetched directly by the recovery worker (independent of ASG's OTA cache). */
-  public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
+  public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
   /** Fresh-download target; always overwritten so the ASG OTA cache is bypassed implicitly. */
   public static final String REMEDIATION_APK_PATH =
       "/storage/emulated/0/asg/recovery_remediation.apk";

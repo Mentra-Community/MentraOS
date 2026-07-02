@@ -3,9 +3,9 @@
  *
  * Identity-only record. No PII (no email, no display name, no avatar). The
  * sole purpose is to give Mentra a stable internal identifier for an
- * (oemId, oemUserId) pair.
+ * (tenantId, tenantUserId) pair.
  *
- * Created on first sight during token exchange: if the (oemId, oemUserId)
+ * Created on first sight during token exchange: if the (tenantId, tenantUserId)
  * pair has no existing record, generate a new ULID-prefixed `mentraUserId`
  * and insert. Subsequent exchanges for the same pair reuse the existing row.
  *
@@ -22,18 +22,18 @@ const UserSchema = new Schema(
      */
     mentraUserId: { type: String, required: true, unique: true },
 
-    /** Attesting OEM. Matches `oems.oemId`. */
-    oemId: { type: String, required: true },
+    /** Attesting OEM. Matches `oems.tenantId`. */
+    tenantId: { type: String, required: true },
 
     /** The OEM's own user identifier (their `sub` claim). */
-    oemUserId: { type: String, required: true },
+    tenantUserId: { type: String, required: true },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: "users" },
 );
 
-// Compound uniqueness: one user record per (oemId, oemUserId) pair. Lookup
+// Compound uniqueness: one user record per (tenantId, tenantUserId) pair. Lookup
 // during token exchange to find existing or create on first sight.
-UserSchema.index({ oemId: 1, oemUserId: 1 }, { unique: true });
+UserSchema.index({ tenantId: 1, tenantUserId: 1 }, { unique: true });
 
 export type User = InferSchemaType<typeof UserSchema>;
 export const UserModel = model("User", UserSchema);

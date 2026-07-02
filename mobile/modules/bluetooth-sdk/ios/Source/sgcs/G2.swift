@@ -1455,6 +1455,17 @@ class G2: NSObject, SGCManager {
     private var pairingTimeoutTimer: DispatchWorkItem?
     private var useEvenDashboard = true
     private var dashboardShowing = 0
+    // The 08011A00 gesture_ctrl event is ambiguous: the firmware sends it BOTH when the dashboard
+    // opens (it shuts our page down to take the screen) and when it closes (returns to us). When
+    // showDashboard() runs we set this latch; the next 08011A00 is the OPEN confirm — consume it
+    // WITHOUT recovering (else we rebuild our page and snatch the screen back from the dashboard).
+    // The following 08011A00 is the real CLOSE → recover.
+    private var dashboardOpening = false
+    // Recovery throttle: the firmware spams systemExit + dashboard-close ~1×/sec on its own.
+    // Coalesce so recovery can't storm — one rebuild in flight, one per RECOVERY_DEBOUNCE_MS.
+    private var recoveryInFlight = false
+    private var lastRecoveryRebuildMs: Int64 = 0
+    private let RECOVERY_DEBOUNCE_MS: Int64 = 1500
 
     /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
@@ -1509,6 +1520,11 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
+    // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
+    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
+    // Cleared on every page teardown (the firmware kills the mic with the page) WITHOUT touching
+    // intent, so recovery can re-arm iff intent still says the mic should be on.
+    private var evenHubMicActive: Bool = false
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -1635,40 +1651,83 @@ class G2: NSObject, SGCManager {
 
     // MARK: - BLE Sending
 
-    // Per-side FIFO write queues. We DON'T dump a multi-packet burst into CoreBluetooth in a tight
-    // loop: when its internal buffer is full, `.withoutResponse` writes are silently DROPPED, so the
-    // glasses receive an incomplete fragment, never ACK it, and the send appears to hang. Instead we
-    // enqueue and drain only while `canSendWriteWithoutResponse` is true, resuming from
-    // `peripheralIsReady(toSendWriteWithoutResponse:)`. This also keeps pacing off any timer/looper.
+    // Per-side FIFO write queues, drained by a single paced async writer per side.
+    //
+    // We write `.withoutResponse` directly and pace with a small `Task.sleep` between packets —
+    // exactly like G1 (`G1.swift attemptSend`). We deliberately do NOT gate on
+    // `canSendWriteWithoutResponse` / wait for `peripheralIsReady(toSendWriteWithoutResponse:)`:
+    // iOS suppresses that "ready" callback for a backgrounded bluetooth-central app (G2 has no
+    // active AVAudioSession — glasses-mic audio arrives over BLE), so a gated drain DEADLOCKS in the
+    // background: the queue grows for the whole bg window and floods the glasses on resume — the
+    // captions "freeze in bg, then flood" bug. G1 never gates and never floods; this matches it.
+    // The pace replaces the gate's overflow protection (the original reason for gating). Any packet
+    // CoreBluetooth still drops self-heals: text is re-sent (TextContainer.pendingSends) and image
+    // fragments retry on their ACK (`awaitImageAck`).
     private var leftWriteQueue: [Data] = []
     private var rightWriteQueue: [Data] = []
+    private var leftDraining = false
+    private var rightDraining = false
+    // Pace between consecutive packets (~G1's chunk pacing). Off any external callback, so the drain
+    // keeps making progress in the background instead of waiting for a callback iOS won't deliver.
+    private let writePaceNanos: UInt64 = 6_000_000
+    // Diagnostic: warn if a side's queue ever backs up (it shouldn't now — the drainer is always
+    // making progress). Rate-limited. Prefixed "BGCAP:" so it's easy to grep/strip after validation.
+    private var bgcapDepthLogAt: Double = 0
 
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
-        // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         if right {
             rightWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: true)
+            startDrain(right: true)
         }
         if left {
             leftWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: false)
+            startDrain(right: false)
         }
     }
 
-    /// Drain one side's queue while the peripheral can accept write-without-response. Stops as soon
-    /// as the buffer is full; `peripheralIsReady(toSendWriteWithoutResponse:)` resumes the drain.
-    private func drainWriteQueue(right: Bool) {
-        let peripheral = right ? rightPeripheral : leftPeripheral
-        let char = right ? rightWriteChar : leftWriteChar
-        guard let peripheral = peripheral, let char = char else {
-            // No connection for this side; drop its pending packets so they can't replay later.
-            if right { rightWriteQueue.removeAll() } else { leftWriteQueue.removeAll() }
-            return
+    /// Ensure a single paced drainer is running for this side. Idempotent — a second call while one
+    /// is already draining is a no-op (the running loop will pick up the newly-enqueued packets).
+    private func startDrain(right: Bool) {
+        if right {
+            if rightDraining { return }
+            rightDraining = true
+        } else {
+            if leftDraining { return }
+            leftDraining = true
         }
-        while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
-            guard peripheral.canSendWriteWithoutResponse else { return }
+        Task { @MainActor [weak self] in
+            await self?.drainLoop(right: right)
+        }
+    }
+
+    /// Drain one side's queue: write each packet directly (`.withoutResponse`), paced by a small
+    /// sleep. No `canSend` gate (see note above). Runs until the queue is empty, then clears the
+    /// per-side flag so the next enqueue restarts it.
+    private func drainLoop(right: Bool) async {
+        while true {
+            guard let peripheral = right ? rightPeripheral : leftPeripheral,
+                let char = right ? rightWriteChar : leftWriteChar
+            else {
+                // No connection for this side; drop pending packets so they can't replay later.
+                if right { rightWriteQueue.removeAll(); rightDraining = false }
+                else { leftWriteQueue.removeAll(); leftDraining = false }
+                return
+            }
+            let depth = (right ? rightWriteQueue : leftWriteQueue).count
+            if depth == 0 {
+                if right { rightDraining = false } else { leftDraining = false }
+                return
+            }
+            if depth > 20 {
+                let now = Date().timeIntervalSince1970
+                if now - bgcapDepthLogAt >= 1.0 {
+                    Bridge.log("BGCAP: g2 write queue depth=\(depth) side=\(right ? "R" : "L") (draining, not blocked)")
+                    bgcapDepthLogAt = now
+                }
+            }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            try? await Task.sleep(nanoseconds: writePaceNanos)
         }
     }
 
@@ -2109,16 +2168,22 @@ class G2: NSObject, SGCManager {
         }) {
             textContainers[i].content = content
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
-            signalDisplayDirty()
             let container = textContainers[i]
+            // Wake the reconcile loop either way. When the page is live it sends the text;
+            // when the page is down the loop coalesces the burst into a single rebuild (see
+            // reconcileDisplay) instead of one shutdown/rebuild per caption. The container's
+            // content is overwritten in place (last-wins), so a backlog that piled up while
+            // iOS had us suspended collapses to one catch-up render — no flood on resume.
+            signalDisplayDirty()
+            if !pageCreated {
+                Bridge.log(
+                    "G2: sendText() - page down, buffering latest content for container \(container.id) (rebuild deferred to reconcile)"
+                )
+                return
+            }
             Bridge.log(
                 "G2: sendText() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
-            // A brand-new page needs its structure built first; pendingSends stays set so the loop
-            // pushes the content once the page exists.
-            if !pageCreated {
-                await rebuildPage()
-            }
             return
         }
 
@@ -2146,32 +2211,22 @@ class G2: NSObject, SGCManager {
 
     func clearDisplay() {
         Bridge.log("G2: clearDisplay()")
-        // Don't shutdown the EvenHub page — that kills audio streaming too.
-        // Instead, just clear the text content by sending a space.
-
-        // if !pageCreated {
-        //     Bridge.log("G2: clearDisplay() - page not created")
-        //     createPageWithContainers()
-        // }
-
-        // reset the content of all text containers to empty:
+        // Blank the text in place — do NOT shut down + rebuild the page. A teardown kills audio
+        // and triggers a firmware systemExit→recovery→rebuild; the cloud sends clearDisplay in
+        // bursts, so that turned into a rebuild storm. The reconcile loop pushes the blanked text.
         for i in textContainers.indices {
             textContainers[i].content = " "
-            // The rebuild below re-embeds this blank content via createPageWithContainers, so no
-            // separate updateText send is needed — drop any scheduled sends.
-            textContainers[i].pendingSends = 0
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
-        for i in imageContainers.indices {
-            // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
+        for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
+            // The firmware still shows this container's image; emptying bmpData locally never
+            // reaches it (#3232 dropped the teardown that used to drop empty containers on
+            // rebuild). Empty + dirty tells the reconcile loop to push an all-black frame that
+            // overwrites the image on-glass — the page stays up, so no audio/mic churn.
             imageContainers[i].bmpData = Data()
-            imageContainers[i].dirty = false
+            imageContainers[i].dirty = true
         }
-        // shutdown the page and then recreate the containers without the content:
-        Task {
-            await rebuildPage()
-            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
-            // createPageWithContainers()
-        }
+        signalDisplayDirty()
     }
 
     /// Send a bitmap to an image container as fragmented updateImageRawData packets.
@@ -2186,7 +2241,7 @@ class G2: NSObject, SGCManager {
         let fragmentSize = 4096
         let totalSize = Int32(bmpData.count)
         let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
-        
+
         // skip if the image is empty:
         if bmpData.count == 0 {
             return
@@ -2358,7 +2413,27 @@ class G2: NSObject, SGCManager {
     /// and `imgAckBox` is never clobbered. A failed image send leaves the container dirty for the
     /// next cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
     private func reconcileDisplay() async {
-        guard pageCreated else { return }
+        // Page is dead but content is waiting (e.g. captions kept arriving while iOS had us
+        // suspended and the firmware tore the session down). Rebuild the page ONCE here — the
+        // reconcile loop is coalesced (1-deep signal buffer), so a burst of buffered sendText
+        // calls collapses into a single rebuild instead of one shutdown/rebuild per caption.
+        // rebuildState() recreates the page, re-pushes the current text/image, and re-arms the
+        // mic iff intent says so. Skip while the native dashboard owns the screen.
+        if !pageCreated {
+            let useNativeDashboard =
+                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+            // Only resurrect a dead page for non-blank content — don't rebuild just to render a
+            // clearDisplay's blank, or a clear burst churns the page back up pointlessly.
+            let hasPendingText = textContainers.contains {
+                $0.pendingSends > 0 && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+            let hasPendingImage = imageContainers.contains { $0.dirty && !$0.bmpData.isEmpty }
+            if (hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0) {
+                Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
+                await rebuildState()
+            }
+            return
+        }
 
         // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
         for i in textContainers.indices where textContainers[i].pendingSends > 0 {
@@ -2382,10 +2457,23 @@ class G2: NSObject, SGCManager {
             guardCount += 1
             let container = imageContainers[i]
             let sentBytes = container.bmpData
-            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
-            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            // Empty + dirty means "just cleared": the firmware still shows the old image, so push an
+            // all-black frame sized to the container to overwrite it on-glass (the page stays up — no
+            // teardown, no mic churn). A container only reaches here when dirty, and clearDisplay is
+            // the sole source of an empty-but-dirty container, so this fires exactly on a clear.
             if sentBytes.isEmpty {
-                imageContainers[i].dirty = false
+                if let blank = blankBmp(width: Int(container.width), height: Int(container.height)) {
+                    await sendImageData(
+                        containerID: container.id, containerName: container.name, bmpData: blank
+                    )
+                }
+                // Only settle the flag if it's still empty — a displayBitmap during the await would
+                // have set new bytes, so leave it dirty for the next pass to send the real image.
+                if let j = imageContainers.firstIndex(where: { $0.id == container.id }),
+                    imageContainers[j].bmpData.isEmpty
+                {
+                    imageContainers[j].dirty = false
+                }
                 continue
             }
             await sendImageData(
@@ -2444,6 +2532,7 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        try? await Task.sleep(nanoseconds: 300_000_000)// 300ms to settle
         // we will automatically rebuild state when we detect the glasses shutdown:
         // await rebuildState()
     }
@@ -2469,6 +2558,41 @@ class G2: NSObject, SGCManager {
 
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
         restartMicIfAlreadyEnabled()
+    }
+
+    /// Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never
+    /// stack rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this
+    /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
+    /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
+    private func recoverPageAndMic(reason: String) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // If the page is already alive and the mic matches intent, there's nothing to recover —
+        // this is a spurious/phantom firmware event (it spams close/exit even when our page is
+        // healthy). Rebuilding here is what created the churn, so skip it.
+        let micIntent = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        if pageCreated && evenHubMicActive == micIntent {
+            // Bridge.log("G2: recover(\(reason)) skipped — page alive, mic matches intent")
+            return
+        }
+        if recoveryInFlight {
+            // Bridge.log("G2: recover(\(reason)) skipped — already in flight")
+            return
+        }
+        if now - lastRecoveryRebuildMs < RECOVERY_DEBOUNCE_MS {
+            // Bridge.log("G2: recover(\(reason)) skipped — debounced")
+            return
+        }
+        recoveryInFlight = true
+        lastRecoveryRebuildMs = now
+        Bridge.log("G2: recover(\(reason)) — rebuilding EvenHub page")
+        Task { [weak self] in
+            guard let self = self else { return }
+            await self.rebuildState()
+            // Reconcile against DeviceManager's authoritative current view so the glasses
+            // match the phone, not just the last-cached G2 containers.
+            DeviceManager.shared.sendCurrentState()
+            self.recoveryInFlight = false
+        }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2620,6 +2744,15 @@ class G2: NSObject, SGCManager {
         return bmp
     }
 
+    /// Build an all-black BMP sized to a container. Sent to overwrite (and thus visually clear) an
+    /// image container without tearing the page down — on the green monochrome display, pixel 0 is
+    /// unlit, so an all-zero frame reads as blank. Used by the reconcile loop to clear a bitmap.
+    private func blankBmp(width: Int, height: Int) -> Data? {
+        guard width > 0, height > 0 else { return nil }
+        let zeros = Data(count: width * height)  // all-zero 8-bit grayscale = black
+        return build4BitBmp(grayscalePixels: zeros, width: width, height: height)
+    }
+
     /// Build a 4-bit indexed BMP file from 8-bit grayscale pixel data.
     /// BMP rows are stored bottom-up. Each row is padded to a 4-byte boundary.
     private func build4BitBmp(grayscalePixels: Data, width: Int, height: Int) -> Data? {
@@ -2699,10 +2832,14 @@ class G2: NSObject, SGCManager {
     /// The glasses fall back to the dashboard automatically when no page is up.
     func showDashboard() {
         Bridge.log("G2: showDashboard()")
-        dashboardShowing += 2
+        // Dashboard is open: a 0/1 flag (the old +=2/-=1 depth dance drifted >0 and wedged the
+        // mic). dashboardOpening latches so the open-confirm 08011A00 doesn't trigger recovery.
+        dashboardShowing = 1
+        dashboardOpening = true
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        evenHubMicActive = false  // dashboard takes EvenHub focus; firmware kills the mic
         currentBitmapBase64 = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
@@ -2927,8 +3064,10 @@ class G2: NSObject, SGCManager {
     }
 
     func restartMic() {
-        // if already enabled, set to disabled, then send enabled after 500ms:
+        // Intent is "mic on". The mic only exists inside a live EvenHub page, so we
+        // toggle it off then back on (the firmware needs the off→on edge to re-arm).
         DeviceStore.shared.apply("glasses", "micEnabled", true)
+        evenHubMicActive = false
         let msg = EvenHubProto.audioControlMessage(enable: false)
         sendEvenHubCommand(msg)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -2936,14 +3075,24 @@ class G2: NSObject, SGCManager {
             let useNativeDashboard =
                 DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
             // Bridge.log("G2: setMicEnabled - useNativeDashboard=\(useNativeDashboard), dashboardShowing=\(dashboardShowing)")
+            // Dashboard owns the screen + session right now — don't arm the mic into a
+            // page the dashboard has taken over; recovery re-arms on dashboard close.
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if !pageCreated {
-                DeviceManager.shared.sendCurrentState()  // should re-create the page if needed
+            // Never send audioControl(enable:true) without a live page — no page means no
+            // mic. Rebuild first, which itself re-arms the mic at the end (intent is on),
+            // so we're done.
+            if !self.pageCreated {
+                Task { [weak self] in
+                    await self?.rebuildState()
+                    DeviceManager.shared.sendCurrentState()
+                }
+                return
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
+            self.evenHubMicActive = true
         }
     }
 
@@ -2951,8 +3100,12 @@ class G2: NSObject, SGCManager {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G2: setMicEnabled(\(enabled))")
+        if enabled && !pageCreated {
+            restartMic()
+            return
+        }
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if currentEnabled && enabled {
+        if enabled && currentEnabled {
             restartMic()
             return
         }
@@ -2960,6 +3113,7 @@ class G2: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "micEnabled", enabled)
         let msg = EvenHubProto.audioControlMessage(enable: enabled)
         sendEvenHubCommand(msg)
+        evenHubMicActive = enabled
     }
 
     func sortMicRanking(list: [String]) -> [String] {
@@ -3031,6 +3185,7 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         dashboardShowing = 0
+        dashboardOpening = false
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
@@ -3196,6 +3351,7 @@ class G2: NSObject, SGCManager {
         // } else {
         //     stopCompass()
         // }
+        Task { await runAuthSequence() }
     }
 
     /// Start a navigation session so the glasses stream compass heading via
@@ -3675,7 +3831,7 @@ class G2: NSObject, SGCManager {
         // Parse evenhub_main_msg_ctx: field 1 = Cmd (varint), field 13 = DevEvent (submessage)
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
-        
+
 
         let payloadStr = "\(payload.map { String(format: "%02X", $0) }.joined())"
         if payloadStr.contains("080C7A02100C") {
@@ -3684,7 +3840,7 @@ class G2: NSObject, SGCManager {
         }
 
         // Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
-        
+
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
                 "G2: EvenHub response - no cmd field, \(payload.count) bytes: \(payload.map { String(format: "%02X", $0) }.joined())"
@@ -3766,6 +3922,7 @@ class G2: NSObject, SGCManager {
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
                             pageCreated = false
+                            evenHubMicActive = false  // mic dies with the page
                         }
                     }
                     // if let errorCode = resFields[8] as? Int32 {
@@ -3783,6 +3940,7 @@ class G2: NSObject, SGCManager {
             if cmdValue == 9 || cmdValue == 10 {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
+                evenHubMicActive = false  // mic dies with the page
             }
         }
     }
@@ -3942,25 +4100,15 @@ class G2: NSObject, SGCManager {
             //     Bridge.log("G2: Click detected")
             // }
 
-            // System exit: glasses killed our EvenHub page (e.g. the firmware's
-            // "End this feature? Yes/No" screen, or another app taking focus). The page
-            // is gone, so re-create it to reclaim EvenHub focus — otherwise the next
-            // sendText reuses a container on a page that no longer exists and nothing
-            // renders. rebuildState() recreates the page, re-pushes current text + image
-            // content through the reconcile loop, and re-arms the mic if it should be on
-            // (the firmware also kills the mic on system exit). We intentionally do NOT
-            // clear glasses/micEnabled first: that flag is the intended state, and
-            // rebuildState relies on it to know whether to re-send the mic-enable command
-            // (mirrors the dashboard-shutdown recovery path).
+            // System exit: the firmware killed our page (and the mic). ONLY mark state dead;
+            // do NOT rebuild here. systemExit is fired alongside the dashboard-close (08011A00)
+            // event for the same transition — if both rebuilt, the fresh page gets torn down
+            // again → rebuild→exit→rebuild loop. Recovery is owned by one place: the
+            // dashboard-close handler (and the reconcile page-down path). Don't touch
+            // micEnabled (user intent) — recovery reads it to re-arm; clobbering it strands the mic.
             if eventType == .systemExit || eventType == .abnormalExit {
-                Bridge.log("G2: SysEvent systemExit/abnormalExit — rebuilding EvenHub page")
                 pageCreated = false
-                Task { [weak self] in
-                    await self?.rebuildState()
-                    // Reconcile against DeviceManager's authoritative current view so the
-                    // glasses match the phone, not just the last-cached G2 containers.
-                    DeviceManager.shared.sendCurrentState()
-                }
+                evenHubMicActive = false  // firmware killed the mic with the page
             }
             return
         }
@@ -4272,46 +4420,21 @@ class G2: NSObject, SGCManager {
         }
         lastGestureCtrlTimestamp = timestamp
 
-        // if we got 08011A00 that means we closed the dashboard, which means the mic is probably dead,
-        // so we need to revive it:
+        // 08011A00 is the dashboard open/close toggle. It fires on BOTH transitions, so we use
+        // the dashboardOpening latch (set by showDashboard) to tell them apart:
+        //   • First event after showDashboard → the OPEN confirm. Consume it, keep the dashboard
+        //     up, and do NOT recover (recovering would rebuild our page and snatch the screen back
+        //     — that's the "double-tap makes captions flicker but never opens the dashboard" bug).
+        //   • Next event → the real CLOSE. Reset state and recover our page + mic.
         if data == Data([0x08, 0x01, 0x1A, 0x00]) {
-            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=\(dashboardShowing)")
-            let useNativeDashboard =
-                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
-            if !useNativeDashboard {
-                dashboardShowing = 0
-                // rebuild state:
-                Task {
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                }
+            Bridge.log("G2: dashboard toggle - dashboardShowing=\(dashboardShowing) opening=\(dashboardOpening)")
+            if dashboardOpening {
+                dashboardOpening = false  // open confirmed; dashboard now owns the screen
                 return
-            } else {
-                // if we aren't trying to show the dashboard
-                // then we need to turn the mic back on and display the mentra main page:
-                if dashboardShowing <= 1 {
-                    dashboardShowing = 0
-                    // rebuild state:
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                    return
-                }
-                // do nothing this time since we just closed the dashboard
-                dashboardShowing -= 1
-                if dashboardShowing < 0 {
-                    dashboardShowing = 0
-                }
             }
+            dashboardShowing = 0
+            recoverPageAndMic(reason: "dashboard-close")
+            return
         }
 
         // if we got 08011097012200 that means we selected a menu item:
@@ -4521,6 +4644,7 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.dashboardShowing = 0
+            self.dashboardOpening = false
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
 
@@ -4715,15 +4839,16 @@ extension G2: CBPeripheralDelegate {
         }
     }
 
-    /// CoreBluetooth's write-without-response buffer freed up — resume draining that side's queue.
-    /// Called on the BLE queue; hop to the main actor to touch the queue state.
+    /// CoreBluetooth's write-without-response buffer freed up. The paced drainer doesn't depend on
+    /// this (it's suppressed in the background), but in the foreground it's a cheap nudge to make
+    /// sure a drainer is running for that side.
     nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             if peripheral === self.rightPeripheral {
-                self.drainWriteQueue(right: true)
+                self.startDrain(right: true)
             } else if peripheral === self.leftPeripheral {
-                self.drainWriteQueue(right: false)
+                self.startDrain(right: false)
             }
         }
     }
