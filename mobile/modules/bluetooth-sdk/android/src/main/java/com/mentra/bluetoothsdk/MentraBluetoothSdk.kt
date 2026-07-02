@@ -31,6 +31,7 @@ class MentraBluetoothSdk private constructor(
     private val streamKeepAliveLock = Any()
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
     private val pendingPhotoRequests = ConcurrentHashMap<String, PendingResponse<PhotoResponseEvent>>()
+    private val pendingCameraStatusRequests = ConcurrentHashMap<String, PendingResponse<CameraStatusEvent>>()
     private val pendingVideoRecordingRequests =
         ConcurrentHashMap<String, PendingVideoRecordingRequest>()
     private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
@@ -745,16 +746,44 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
+        val routedRequest =
+            nonBlankRequestId(request.requestId)
+                ?.let { if (it == request.requestId) request else request.copy(requestId = it) }
+                ?: request.copy(requestId = generatedCameraRequestId("photo"))
         Bridge.log(
-            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${routedRequest.requestId}"
         )
-        val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
-        pendingPhotoRequests[request.requestId] = pending
+        val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}")
+        pendingPhotoRequests[routedRequest.requestId] = pending
         try {
-            deviceManager.requestPhoto(request)
+            deviceManager.requestPhoto(routedRequest)
             return pending.await()
         } finally {
-            pendingPhotoRequests.remove(request.requestId, pending)
+            pendingPhotoRequests.remove(routedRequest.requestId, pending)
+        }
+    }
+
+    fun warmUpCamera(
+        requestId: String? = null,
+        size: PhotoSize,
+        exposureTimeNs: Long?,
+        durationMs: Int,
+    ): CameraStatusEvent {
+        val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
+        val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
+        // Guard against a concurrent warm-up reusing the same requestId: a blind put would overwrite
+        // (and strand) the first caller's continuation until it times out. Reject the duplicate.
+        if (pendingCameraStatusRequests.putIfAbsent(effectiveRequestId, pending) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A camera warm-up request with this requestId is already waiting for a glasses response.",
+            )
+        }
+        try {
+            deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
+            return pending.await()
+        } finally {
+            pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
     }
 
@@ -1110,7 +1139,7 @@ class MentraBluetoothSdk private constructor(
     private fun resolveOtaVersionUrl(status: GlassesStatus): String {
         val deviceUrl = status.otaVersionUrl.trim()
         if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
-            return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
+            return OtaManifestDefaults.LEGACY_PROD_OTA_VERSION_URL
         }
         // SDK consumers are pinned to the manifest built for their SDK version.
         // A future glasses-advertised URL should not silently change that pairing.
@@ -1331,6 +1360,11 @@ class MentraBluetoothSdk private constructor(
                 dispatchToListeners { it.onPhotoResponse(event) }
             }
             "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
+            "camera_status" -> {
+                val event = CameraStatusEvent(data)
+                handleCameraStatusForRequests(event)
+                dispatchToListeners { it.onCameraStatus(event) }
+            }
             "video_recording_status" -> {
                 val event = VideoRecordingStatusEvent(data)
                 handleVideoRecordingStatusForRequests(event)
@@ -1564,6 +1598,22 @@ class MentraBluetoothSdk private constructor(
                         response.errorMessage,
                     )
                 )
+        }
+    }
+
+    private fun handleCameraStatusForRequests(event: CameraStatusEvent) {
+        val pending = pendingCameraStatusRequests[event.requestId] ?: return
+        when (event.state.lowercase()) {
+            "ready" -> pending.resolve(event)
+            "error" ->
+                pending.reject(
+                    BluetoothSdkException(
+                        event.errorCode ?: "camera_warm_up_failed",
+                        event.errorMessage ?: "Camera warm-up failed.",
+                    )
+                )
+            // "warming"/"stopped" are progress updates; leave the pending promise alone.
+            else -> {}
         }
     }
 

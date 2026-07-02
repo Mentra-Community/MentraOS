@@ -89,6 +89,9 @@ export enum MiniappRequestType {
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
 
+  /** Pre-warm the glasses camera so the next takePhoto() is near-instant. */
+  CAMERA_WARM_UP = "miniapp_camera_warm_up",
+
   /**
    * Enable/disable raw accelerometer (IMU) streaming on the glasses. The
    * accel stream also auto-enables on subscribe; this is an explicit override

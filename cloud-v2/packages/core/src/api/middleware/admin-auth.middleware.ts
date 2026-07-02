@@ -25,8 +25,9 @@ function isAdminEmail(email: string): boolean {
   const emails = parseList(process.env.CLOUD_CORE_ADMIN_EMAILS).map(value => value.toLowerCase());
   if (emails.includes(normalized)) return true;
 
-  const configuredDomains = parseList(process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS);
-  const domains = configuredDomains.length > 0 ? configuredDomains : ["mentraglass.com"];
+  // Fail closed: without an explicit domain allowlist, do not grant admin via
+  // domain matching. Admin access then requires membership in CLOUD_CORE_ADMIN_EMAILS.
+  const domains = parseList(process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS);
   return domains
     .map(domain => domain.toLowerCase().replace(/^@/, ""))
     .some(domain => normalized.endsWith(`@${domain}`));

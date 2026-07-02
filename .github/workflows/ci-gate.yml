@@ -55,6 +55,7 @@ on:
       - "Mobile App Android Build"
       - "MentraOS ASG Client Build"
       - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
       - "🧪 Test Cloud build"
       - "🧪 Test SDK build"
       - "🧪 Test Console build"
@@ -107,6 +108,7 @@ jobs:
               "Mobile App Android Build",
               "MentraOS ASG Client Build",
               "Mobile App Quality Checks",
+              "Bun Lockfile Checks",
               "🧪 Test Cloud build",
               "🧪 Test SDK build",
               "🧪 Test Console build",

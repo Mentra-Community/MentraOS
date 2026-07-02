@@ -28,11 +28,13 @@ posts a single `ci-gate-dev` commit status:
 
 Two kinds of gated workflow, with different "runs when" behavior:
 
-- **Path-filtered builders** — iOS/Android/ASG/jest and `Run Cloud Tests ☁️`
-  only run when their area changes (`mobile/**`, `asg_client/**`, `cloud/**`). On
-  a PR that doesn't touch their area they **don't run at all**, so the gate never
-  waits on them. This is the heavy work (Mac builds, device tests) we want
-  scoped — a cloud-only PR never runs iOS/Android, and vice-versa.
+- **Path-filtered builders** — iOS/Android/ASG/jest, `Bun Lockfile Checks`, and
+  `Run Cloud Tests ☁️` only run when their area changes (`mobile/**`,
+  `asg_client/**`, lockfile/workspace package manifests, `cloud/**`). On a PR
+  that doesn't touch their area they **don't run at all**, so the gate never
+  waits on them. This is the heavy work (Mac builds, device tests) plus the
+  targeted dependency-integrity work we want scoped — a cloud-only PR never runs
+  iOS/Android, and vice-versa.
 - **Always-on cloud builds** — the four `🧪 Test * build` workflows have an
   **unfiltered** `pull_request` trigger, so they run on **every** `dev` PR. They
   self-skip internally (via `dorny/paths-filter`) when their package didn't
@@ -62,6 +64,7 @@ below. `Recovery Worker Build` is deliberately excluded.
 | Android | `Mobile App Android Build` | `mobile/**` |
 | ASG | `MentraOS ASG Client Build` | `asg_client/**` |
 | Mobile jest | `Mobile App Quality Checks` | `mobile/**` |
+| Lockfiles | `Bun Lockfile Checks` | root/mobile/sdk lockfiles and workspace package manifests |
 | Cloud | `🧪 Test Cloud build` | all dev PRs (self-skips internally) |
 | SDK | `🧪 Test SDK build` | all dev PRs (self-skips internally) |
 | Console | `🧪 Test Console build` | all dev PRs (self-skips internally) |

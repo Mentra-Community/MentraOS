@@ -38,7 +38,16 @@ async function main() {
   const mongoUrl =
     process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2";
   await connectMongo(mongoUrl);
-  console.log(`connected mongo=${mongoUrl} env=${ENVIRONMENT}`);
+  // Log only safe metadata (host + db name); never the full URI, which can carry credentials.
+  let mongoTarget = mongoUrl;
+  try {
+    const u = new URL(mongoUrl);
+    mongoTarget = `${u.host}${u.pathname}`;
+  } catch {
+    // Non-URL connection string; fall back to a redacted marker rather than leaking it.
+    mongoTarget = "<redacted>";
+  }
+  console.log(`connected mongo=${mongoTarget} env=${ENVIRONMENT}`);
 
   const miniapps = new MiniAppService();
   const registries = new PreinstalledRegistryService();
@@ -46,17 +55,16 @@ async function main() {
   const bundle = new Uint8Array(readFileSync(BUNDLE_PATH));
   console.log(`bundle=${BUNDLE_PATH} bytes=${bundle.byteLength}`);
 
-  // 1) miniapp (idempotent-ish: ignore "already exists")
-  try {
-    await miniapps.createMiniApp(developer, {
-      packageName: PACKAGE,
-      displayName: "Captions",
-      description: "Seeded preinstall miniapp",
-    });
-    console.log(`created miniapp ${PACKAGE}`);
-  } catch (err) {
-    console.log(`createMiniApp: ${(err as Error).message} (continuing)`);
-  }
+  // 1) miniapp: createMiniApp is idempotent for the same developer/org (it
+  // returns the existing app), so no error-swallowing is needed. It only throws
+  // "package_taken" when the package is owned by another org or archived, which
+  // is a real setup conflict that must surface rather than fail later at release.
+  await miniapps.createMiniApp(developer, {
+    packageName: PACKAGE,
+    displayName: "Captions",
+    description: "Seeded preinstall miniapp",
+  });
+  console.log(`created miniapp ${PACKAGE}`);
 
   // 2) release
   const release = await miniapps.createRelease(developer, {

@@ -221,6 +221,7 @@ public enum BluetoothEvent: CustomStringConvertible {
     case hotspotError(HotspotErrorEvent)
     case photoResponse(PhotoResponseEvent)
     case photoStatus(PhotoStatusEvent)
+    case cameraStatus(CameraStatusEvent)
     case videoRecordingStatus(VideoRecordingStatusEvent)
     case mediaUpload(MediaUploadEvent)
     case rgbLedControlResponse(RgbLedControlResponseEvent)
@@ -252,6 +253,8 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .photoResponse(event):
             event.description
         case let .photoStatus(event):
+            event.description
+        case let .cameraStatus(event):
             event.description
         case let .videoRecordingStatus(event):
             event.description

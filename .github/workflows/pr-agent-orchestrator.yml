@@ -9,6 +9,7 @@ on:
       - "Run Cloud Tests ☁️"
       - "🧪 Test SDK build"
       - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
       - "MentraOS ASG Client Build"
       - "Mobile App Android Build"
     types: [completed]

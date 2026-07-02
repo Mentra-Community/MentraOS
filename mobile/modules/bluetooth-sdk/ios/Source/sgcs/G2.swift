@@ -2218,10 +2218,13 @@ class G2: NSObject, SGCManager {
             textContainers[i].content = " "
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
-        for i in imageContainers.indices {
-            // Cleared to empty — nothing to (re)send, so mark clean so the reconcile loop skips it.
+        for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
+            // The firmware still shows this container's image; emptying bmpData locally never
+            // reaches it (#3232 dropped the teardown that used to drop empty containers on
+            // rebuild). Empty + dirty tells the reconcile loop to push an all-black frame that
+            // overwrites the image on-glass — the page stays up, so no audio/mic churn.
             imageContainers[i].bmpData = Data()
-            imageContainers[i].dirty = false
+            imageContainers[i].dirty = true
         }
         signalDisplayDirty()
     }
@@ -2454,10 +2457,23 @@ class G2: NSObject, SGCManager {
             guardCount += 1
             let container = imageContainers[i]
             let sentBytes = container.bmpData
-            // Empty containers (e.g. cleared) have nothing to send; clear the flag without a send so
-            // the loop doesn't keep re-selecting them (sendImageData would no-op anyway).
+            // Empty + dirty means "just cleared": the firmware still shows the old image, so push an
+            // all-black frame sized to the container to overwrite it on-glass (the page stays up — no
+            // teardown, no mic churn). A container only reaches here when dirty, and clearDisplay is
+            // the sole source of an empty-but-dirty container, so this fires exactly on a clear.
             if sentBytes.isEmpty {
-                imageContainers[i].dirty = false
+                if let blank = blankBmp(width: Int(container.width), height: Int(container.height)) {
+                    await sendImageData(
+                        containerID: container.id, containerName: container.name, bmpData: blank
+                    )
+                }
+                // Only settle the flag if it's still empty — a displayBitmap during the await would
+                // have set new bytes, so leave it dirty for the next pass to send the real image.
+                if let j = imageContainers.firstIndex(where: { $0.id == container.id }),
+                    imageContainers[j].bmpData.isEmpty
+                {
+                    imageContainers[j].dirty = false
+                }
                 continue
             }
             await sendImageData(
@@ -2726,6 +2742,15 @@ class G2: NSObject, SGCManager {
         }
 
         return bmp
+    }
+
+    /// Build an all-black BMP sized to a container. Sent to overwrite (and thus visually clear) an
+    /// image container without tearing the page down — on the green monochrome display, pixel 0 is
+    /// unlit, so an all-zero frame reads as blank. Used by the reconcile loop to clear a bitmap.
+    private func blankBmp(width: Int, height: Int) -> Data? {
+        guard width > 0, height > 0 else { return nil }
+        let zeros = Data(count: width * height)  // all-zero 8-bit grayscale = black
+        return build4BitBmp(grayscalePixels: zeros, width: width, height: height)
     }
 
     /// Build a 4-bit indexed BMP file from 8-bit grayscale pixel data.

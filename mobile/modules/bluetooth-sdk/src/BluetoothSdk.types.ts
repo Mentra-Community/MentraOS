@@ -270,6 +270,15 @@ export type PhotoStatusEvent = {
   errorMessage?: string
 }
 
+export type CameraStatusEvent = {
+  type: "camera_status"
+  requestId: string
+  state: "warming" | "ready" | "stopped" | "error" | string
+  timestamp: number
+  errorCode?: string
+  errorMessage?: string
+}
+
 export type VideoRecordingStatusEvent = {
   type: "video_recording_status"
   requestId?: string
@@ -532,8 +541,7 @@ export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
 export type PhotoRequestParams = {
-  requestId: string
-  appId: string
+  requestId?: string
   size: PhotoSize
   webhookUrl: string | null
   authToken: string | null
@@ -554,6 +562,13 @@ export type PhotoRequestParams = {
   zsl?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
+}
+
+export type WarmUpCameraParams = {
+  requestId?: string
+  size: PhotoSize
+  exposureTimeNs?: number | null
+  durationMs?: number
 }
 
 export type StreamVideoConfig = {
@@ -798,6 +813,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
+  camera_status: (event: CameraStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
   media_success: (event: MediaUploadSuccessEvent) => void
   media_error: (event: MediaUploadErrorEvent) => void
@@ -874,6 +890,7 @@ export type BluetoothSdkEventMap = {
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
+  camera_status: CameraStatusEvent
   video_recording_status: VideoRecordingStatusEvent
   media_success: MediaUploadSuccessEvent
   media_error: MediaUploadErrorEvent
@@ -963,6 +980,7 @@ export interface BluetoothSdkPublicModule {
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   startVideoRecording(
     requestId: string,
     save: boolean,

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { displayNameForUser } from "@/features/session/session.api";
 import { sessionQuery } from "@/features/session/session.queries";
-import { normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
+import { isValidPackagePrefix, normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
 import {
   getDeveloperOrg,
   getOrgAccess,
@@ -18,9 +18,11 @@ import {
   removeOrgMember,
   revokeOrgInvitation,
   saveDeveloperOrg,
+  updateOrgMemberRole,
   type DeveloperOrg,
   type OrgInvitation,
   type OrgMember,
+  type OrgRole,
 } from "./org.api";
 
 export function OrganizationPage() {
@@ -90,9 +92,20 @@ export function OrganizationPage() {
       await queryClient.invalidateQueries({ queryKey: ["developer-org-access"] });
     },
   });
+  const updateMemberRole = useMutation({
+    mutationFn: updateOrgMemberRole,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["developer-org-access"] });
+    },
+  });
+  const viewerRole: OrgRole = accessQuery.data?.viewerRole ?? session.data?.viewerRole ?? "member";
+  // Editing an existing org is owner-only (server-enforced); onboarding (no org
+  // yet) is always allowed since the creator becomes the owner.
+  const canEditOrg = !org || viewerRole === "owner";
   const canSave =
+    canEditOrg &&
     displayName.trim().length >= 2 &&
-    normalizedPrefix.length > 0 &&
+    isValidPackagePrefix(normalizedPrefix) &&
     !orgSave.isPending &&
     (displayName.trim() !== org?.name || normalizedPrefix !== org?.packagePrefix);
 
@@ -197,12 +210,13 @@ export function OrganizationPage() {
             error={accessQuery.error}
             isLoading={accessQuery.isLoading}
             currentOrg={org}
-            currentUserId={user?.id ?? null}
+            viewerRole={viewerRole}
             inviteEmail={inviteEmail}
             setInviteEmail={setInviteEmail}
             inviteMember={inviteMember}
             revokeInvite={revokeInvite}
             removeMember={removeMember}
+            updateMemberRole={updateMemberRole}
           />
         ) : null}
       </main>
@@ -231,12 +245,23 @@ type TeamAccessSectionProps = {
   error: unknown;
   isLoading: boolean;
   currentOrg: DeveloperOrg;
-  currentUserId: string | null;
+  viewerRole: OrgRole;
   inviteEmail: string;
   setInviteEmail: (value: string) => void;
-  inviteMember: UseMutationResult<{ invitation: OrgInvitation }, Error, { email: string }, unknown>;
+  inviteMember: UseMutationResult<
+    { invitation: OrgInvitation; inviteUrl: string },
+    Error,
+    { email: string },
+    unknown
+  >;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
+  updateMemberRole: UseMutationResult<
+    { ok: boolean; role: string },
+    Error,
+    { membershipId: string; role: "owner" | "admin" | "member" },
+    unknown
+  >;
 };
 
 function TeamAccessSection({
@@ -244,12 +269,13 @@ function TeamAccessSection({
   error,
   isLoading,
   currentOrg,
-  currentUserId,
+  viewerRole,
   inviteEmail,
   setInviteEmail,
   inviteMember,
   revokeInvite,
   removeMember,
+  updateMemberRole,
 }: TeamAccessSectionProps) {
   const org = access?.org ?? currentOrg;
   const members = access?.members ?? [];
@@ -260,7 +286,7 @@ function TeamAccessSection({
     ...invitations.map(invitation => ({ kind: "invitation" as const, invitation })),
     ...members.map(member => ({ kind: "member" as const, member })),
   ];
-  const canManage = currentUserId === org.ownerUserId;
+  const canManage = viewerRole === "owner" || viewerRole === "admin";
   const canInvite = canManage && inviteEmail.trim().includes("@") && !inviteMember.isPending;
 
   return (
@@ -302,7 +328,7 @@ function TeamAccessSection({
                 disabled={!canManage}
               />
               {!canManage ? (
-                <p className="mt-2 text-xs leading-5 text-[#8a8d95]">Only the org owner can invite or remove members.</p>
+                <p className="mt-2 text-xs leading-5 text-[#8a8d95]">Only owners and admins can invite or remove members.</p>
               ) : null}
             </div>
             <Button
@@ -321,7 +347,12 @@ function TeamAccessSection({
           ) : null}
           {inviteMember.isSuccess ? (
             <div className="rounded-[12px] bg-[#edf8f2] px-4 py-3 text-sm text-[#087d50]">
-              Invitation sent.
+              <div>Invitation sent by email.</div>
+              {inviteMember.data?.inviteUrl ? (
+                <div className="mt-1 break-all text-xs text-[#256953]">
+                  Or share this link: {inviteMember.data.inviteUrl}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -340,8 +371,10 @@ function TeamAccessSection({
                     key={row.kind === "invitation" ? `invite:${row.invitation.id}` : `member:${row.member.id}`}
                     row={row}
                     canManage={canManage}
+                    viewerRole={viewerRole}
                     removeMember={removeMember}
                     revokeInvite={revokeInvite}
+                    updateMemberRole={updateMemberRole}
                   />
                 ))
               ) : (
@@ -362,13 +395,22 @@ type AccessRow =
 function AccessRow({
   row,
   canManage,
+  viewerRole,
   removeMember,
   revokeInvite,
+  updateMemberRole,
 }: {
   row: AccessRow;
   canManage: boolean;
+  viewerRole: OrgRole;
   removeMember: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
   revokeInvite: UseMutationResult<{ ok: boolean }, Error, string, unknown>;
+  updateMemberRole: UseMutationResult<
+    { ok: boolean; role: string },
+    Error,
+    { membershipId: string; role: "owner" | "admin" | "member" },
+    unknown
+  >;
 }) {
   if (row.kind === "invitation") {
     return <InvitationRow invitation={row.invitation} canManage={canManage} revokeInvite={revokeInvite} />;
@@ -376,10 +418,13 @@ function AccessRow({
 
   const member = row.member;
   const displayName = member.name || member.email || member.userId;
-  const subtitle = [member.email && member.name ? member.email : null, titleCase(member.status), titleCase(member.role)]
+  const subtitle = [member.email && member.name ? member.email : null, titleCase(member.status)]
     .filter(Boolean)
     .join(" · ");
-  const removable = canManage && member.role !== "owner";
+  const targetIsOwner = member.role === "owner";
+  const viewerIsOwner = viewerRole === "owner";
+  // Admins manage members/admins; only an owner can edit or remove another owner.
+  const canEditRole = canManage && (!targetIsOwner || viewerIsOwner);
 
   return (
     <div className="flex min-h-16 items-center gap-3 border-b border-[#eceeeb] px-3 py-3 last:border-b-0 sm:px-4">
@@ -390,7 +435,28 @@ function AccessRow({
         <div className="truncate text-[15px] font-semibold text-[#14151b]">{displayName}</div>
         <div className="truncate text-xs text-[#8a8d95]">{subtitle || member.userId}</div>
       </div>
-      {removable ? (
+      {canEditRole ? (
+        <select
+          value={member.role}
+          disabled={updateMemberRole.isPending}
+          onChange={event => {
+            const next = event.target.value;
+            updateMemberRole.mutate({
+              membershipId: member.id,
+              role: next === "owner" ? "owner" : next === "admin" ? "admin" : "member",
+            });
+          }}
+          className="h-9 rounded-[10px] border border-[#dfe3dc] bg-white px-2 text-sm text-[#1c1d22] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9dddc7]/35"
+          aria-label={`Role for ${displayName}`}
+        >
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+          {viewerIsOwner ? <option value="owner">Owner</option> : null}
+        </select>
+      ) : (
+        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-[#8a8d95]">{titleCase(member.role)}</span>
+      )}
+      {canEditRole ? (
         <Button
           type="button"
           variant="ghost"
