@@ -79,4 +79,37 @@ public interface IBluetoothManager {
     void removeBluetoothListener(TransportListener listener);
 
     void shutdown();
+
+    /**
+     * Called when the BLE MTU has been negotiated with the phone. Implementations should adjust
+     * transport packet sizes accordingly. Default is a no-op for transports without configurable
+     * packet sizes.
+     *
+     * @param mtu the negotiated MTU value in bytes
+     */
+    default void onMtuNegotiated(int mtu) {}
+
+    /**
+     * Called when the transport connection is reset (e.g. the phone reconnects). Implementations
+     * should restore default transport configuration. Default is a no-op.
+     */
+    default void onTransportReset() {}
+
+    /**
+     * Called when the phone confirms a file transfer result. Default is a no-op for transports
+     * without file-transfer sessions.
+     *
+     * @param fileName the name of the file that was transferred
+     * @param success whether the transfer succeeded
+     */
+    default void onFileTransferConfirmation(String fileName, boolean success) {}
+
+    /**
+     * Called when the MCU sends a file-transfer ACK frame. Default is a no-op for transports
+     * without file-transfer sessions.
+     *
+     * @param state ACK state code from the MCU
+     * @param index packet index being acknowledged
+     */
+    default void onFileTransferAck(int state, int index) {}
 }
