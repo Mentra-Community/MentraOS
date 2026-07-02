@@ -3707,8 +3707,12 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
+        let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         Task {
             let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace))
+            guard trace != nil, queueSize >= significantQueueSize else {
+                return
+            }
             await MainActor.run {
                 self.logBleChunkTrace("queued", trace, extra: [
                     "queueSizeAfterAdd": queueSize,

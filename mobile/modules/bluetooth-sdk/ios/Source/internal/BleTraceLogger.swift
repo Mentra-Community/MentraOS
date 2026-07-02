@@ -8,9 +8,24 @@ enum BleTraceLogger {
     private static let k900Type = "k900"
     private static let sensitiveKeyParts = ["password", "pass", "token", "secret", "authorization", "auth", "email"]
 
-    static func logJson(direction: String, layer: String, payload: [String: Any]?, bytes: Int? = nil) {
+    static func logJson(
+        direction: String,
+        layer: String,
+        payload: [String: Any]?,
+        bytes: Int? = nil,
+        sourceFile: String = #fileID,
+        sourceFunction: String = #function,
+        sourceLine: Int = #line
+    ) {
         guard let payload else {
-            emit(format(direction: direction, layer: layer, source: caller(), type: "null", bytes: bytes, payload: "null"))
+            emit(format(
+                direction: direction,
+                layer: layer,
+                source: source(file: sourceFile, function: sourceFunction, line: sourceLine),
+                type: "null",
+                bytes: bytes,
+                payload: "null"
+            ))
             return
         }
 
@@ -18,19 +33,28 @@ enum BleTraceLogger {
         emit(format(
             direction: direction,
             layer: layer,
-            source: caller(),
+            source: source(file: sourceFile, function: sourceFunction, line: sourceLine),
             type: extractType(from: payload),
             bytes: bytes,
             payload: jsonString(sanitized)
         ))
     }
 
-    static func logMap(direction: String, layer: String, type: String?, payload: [String: Any], bytes: Int? = nil) {
+    static func logMap(
+        direction: String,
+        layer: String,
+        type: String?,
+        payload: [String: Any],
+        bytes: Int? = nil,
+        sourceFile: String = #fileID,
+        sourceFunction: String = #function,
+        sourceLine: Int = #line
+    ) {
         let sanitized = sanitizeDictionary(payload)
         emit(format(
             direction: direction,
             layer: layer,
-            source: caller(),
+            source: source(file: sourceFile, function: sourceFunction, line: sourceLine),
             type: type ?? extractType(from: sanitized),
             bytes: bytes,
             payload: jsonString(sanitized)
@@ -154,14 +178,8 @@ enum BleTraceLogger {
         return string
     }
 
-    private static func caller() -> String {
-        Thread.callStackSymbols
-            .dropFirst()
-            .first { !$0.contains("BleTraceLogger") }?
-            .components(separatedBy: " ")
-            .filter { !$0.isEmpty }
-            .dropFirst(3)
-            .first ?? "unknown"
+    private static func source(file: String, function: String, line: Int) -> String {
+        "\(function)(\(file):\(line))"
     }
 
     private static func truncate(_ value: String) -> String {
