@@ -29,6 +29,10 @@ public class OtaConstants {
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
     public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
     public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
+    // Copy of the currently installed ASG APK, staged here so the OEM SystemUI installer can
+    // read it during a factory reset (it cannot reliably read /data/app/... paths).
+    public static final String FACTORY_RESET_APK_FILENAME = "asg_client_factory_reset.apk";
+    public static final String FACTORY_RESET_APK_PATH = BASE_DIR + "/" + FACTORY_RESET_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";

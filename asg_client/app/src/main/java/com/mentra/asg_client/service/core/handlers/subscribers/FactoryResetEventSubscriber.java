@@ -12,13 +12,16 @@ import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 
 /**
  * Reacts to {@link FactoryResetEvent}s (BES requesting a factory reset via {@code cs_fcrst}, fired
- * when the user holds PWR+FN2 for ~10s). Resets the glasses by (re)installing the ASG client APK:
- * a validated local APK is installed first when present, otherwise a fresh APK is downloaded via
- * the existing OTA pipeline. The install itself is performed by {@link OtaHelper}, which broadcasts
- * the OEM SystemUI install intent ({@code com.xy.xsetting.action cmd=install}).
+ * when the user presses PWR 5x rapidly). Resets the glasses by reinstalling the ASG client APK
+ * that is currently installed on the device: the installed APK ({@code sourceDir}) is copied to
+ * external storage and reinstalled. Only if that fails does it fall back to a staged/backup local
+ * APK, and finally to a fresh OTA download. The install itself is performed by {@link OtaHelper},
+ * which broadcasts the OEM SystemUI install intent ({@code com.xy.xsetting.action cmd=install}).
  *
  * <p>The {@link OtaHelper} instance is injected (the same Hilt-provided singleton wired in {@code
  * ServiceInitializer}); the static {@link OtaHelper#getInstance()} is intentionally not used because
@@ -104,8 +107,10 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
      * <ol>
      *   <li>Stop any active video recording to avoid a corrupt file when the process is killed
      *       during install.
-     *   <li>After a short delay (so the recorder can finalize the moov atom), install a validated
-     *       local APK if one is staged on disk (no network required).
+     *   <li>After a short delay (so the recorder can finalize the moov atom), reinstall the APK
+     *       that is currently installed on the device (copied out of {@code sourceDir}), so the
+     *       reset always runs regardless of whether the installed version is up to date.
+     *   <li>If that fails, install a validated local staged/backup APK if one exists on disk.
      *   <li>Otherwise fall back to downloading + installing a fresh APK via the OTA pipeline.
      * </ol>
      */
@@ -126,6 +131,10 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
 
     private void performReset() {
         try {
+            if (installCurrentlyInstalledApk()) {
+                Log.i(TAG, "🏭 Factory reset: reinstall of currently installed APK kicked off");
+                return;
+            }
             if (installLocalApk()) {
                 Log.i(TAG, "🏭 Factory reset: local APK install kicked off");
                 return;
@@ -135,6 +144,73 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             // A successful local install kills this process shortly; clearing the guard is harmless
             // and lets a later deliberate reset retry if the process is still alive.
             resetInProgress = false;
+        }
+    }
+
+    /**
+     * Reinstall the APK that is currently installed on the device. The installed APK ({@code
+     * ApplicationInfo.sourceDir} under {@code /data/app/...}) is copied to external storage first,
+     * because the OEM SystemUI installer cannot reliably read randomized {@code /data/app} paths.
+     * Reinstalling the same version through the SystemUI install broadcast ({@code pm install -r})
+     * restarts the app cleanly and always executes, even when the installed version matches the
+     * OTA server (where the old download path would no-op with "no updates available").
+     *
+     * @return {@code true} if the install broadcast was dispatched (process death is now expected).
+     */
+    private boolean installCurrentlyInstalledApk() {
+        Context ctx = resolveContext();
+        if (ctx == null) {
+            Log.e(TAG, "🏭 Cannot reinstall current APK - context not available");
+            return false;
+        }
+
+        String sourceDir;
+        try {
+            sourceDir =
+                    ctx.getPackageManager()
+                            .getApplicationInfo(ctx.getPackageName(), 0)
+                            .sourceDir;
+        } catch (Exception e) {
+            Log.e(TAG, "🏭 Cannot resolve installed APK path", e);
+            return false;
+        }
+
+        File staged = new File(OtaConstants.FACTORY_RESET_APK_PATH);
+        try {
+            File dir = staged.getParentFile();
+            if (dir != null && !dir.exists() && !dir.mkdirs()) {
+                Log.e(TAG, "🏭 Cannot create staging dir for factory reset APK: " + dir);
+                return false;
+            }
+            copyFile(new File(sourceDir), staged);
+        } catch (Exception e) {
+            Log.e(TAG, "🏭 Failed to copy installed APK " + sourceDir + " to " + staged, e);
+            staged.delete();
+            return false;
+        }
+
+        if (!apkChecker.isInstallableApk(ctx, staged.getAbsolutePath())) {
+            Log.e(TAG, "🏭 Copied APK failed validation: " + staged);
+            staged.delete();
+            return false;
+        }
+
+        Log.i(TAG, "🏭 Reinstalling currently installed APK (" + sourceDir + ") via " + staged);
+        if (OtaHelper.installApk(ctx, staged.getAbsolutePath())) {
+            return true;
+        }
+        Log.w(TAG, "🏭 Reinstall of current APK failed - trying staged/backup APKs");
+        return false;
+    }
+
+    private static void copyFile(File src, File dst) throws java.io.IOException {
+        try (FileInputStream in = new FileInputStream(src);
+                FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
         }
     }
 
