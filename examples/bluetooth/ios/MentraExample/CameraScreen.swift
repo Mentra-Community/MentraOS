@@ -85,8 +85,6 @@ private func cameraSdkCall(
     \(prefix)
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
-          requestId: requestId,
-          appId: "com.mentra.bluetoothsdk.example.ios",
           size: .\(size),
           webhookUrl: uploadUrl,
           compress: .\(compression),

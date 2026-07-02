@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,9 @@ class MainActivity : ComponentActivity() {
 
                 DisposableEffect(controller) {
                     onDispose { controller.close() }
+                }
+                LaunchedEffect(tab, controller) {
+                    controller.setCameraTabForeground(tab == Tab.CAMERA)
                 }
                 CompositionLocalProvider(
                     LocalKeyboardVisible provides keyboardVisible,

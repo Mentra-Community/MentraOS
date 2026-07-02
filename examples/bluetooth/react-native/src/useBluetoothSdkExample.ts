@@ -296,6 +296,9 @@ export const BARCODE_SCAN_PHOTO_PRESET = {
 export const CAMERA_FOV_MIN = 62;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
+const CAMERA_WARM_UP_DURATION_MS = 30_000;
+const CAMERA_WARM_UP_REFRESH_MS = 20_000;
+const CAMERA_WARM_UP_DISCONNECTED_RETRY_MS = 2_000;
 export const CAMERA_ROI_POSITIONS = [
   {label: 'Center', value: 'center'},
   {label: 'Bottom', value: 'bottom'},
@@ -615,6 +618,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const scanModeRef = useRef(false);
   const photoCaptureDefaultsSyncGenerationRef = useRef(0);
   const photoCaptureDefaultsSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const cameraWarmUpFailureLoggedRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
   const activeTabRef = useRef<ExampleTabKey>('device');
   const galleryModeEnabledRef = useRef(false);
@@ -915,6 +919,56 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('TX', `photo receiver prewarm failed: ${formatError(error)}`);
     });
   }, [activeTab, photoCloudServerEnabled, glassesConnected]);
+
+  useEffect(() => {
+    if (activeTab !== 'camera') {
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleNext(delayMs: number) {
+      timer = setTimeout(() => {
+        void warmUpCamera();
+      }, delayMs);
+    }
+
+    async function warmUpCamera() {
+      if (cancelled || activeTabRef.current !== 'camera') {
+        return;
+      }
+      if (!glassesConnectedRef.current) {
+        scheduleNext(CAMERA_WARM_UP_DISCONNECTED_RETRY_MS);
+        return;
+      }
+      try {
+        await BluetoothSdk.warmUpCamera({
+          size: photoSize,
+          exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
+          durationMs: CAMERA_WARM_UP_DURATION_MS,
+        });
+        cameraWarmUpFailureLoggedRef.current = false;
+      } catch (error) {
+        if (!cancelled && glassesConnectedRef.current && !cameraWarmUpFailureLoggedRef.current) {
+          cameraWarmUpFailureLoggedRef.current = true;
+          addEvent('TX', `camera warm-up failed: ${formatError(error)}`);
+        }
+      }
+      if (!cancelled) {
+        scheduleNext(CAMERA_WARM_UP_REFRESH_MS);
+      }
+    }
+
+    cameraWarmUpFailureLoggedRef.current = false;
+    void warmUpCamera();
+
+    return () => {
+      cancelled = true;
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [activeTab, photoExposureManual, photoExposureTimeNs, photoSize]);
 
   useEffect(() => {
     if (glassesConnected) {
@@ -1365,7 +1419,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function addRequestTuningFields(
-    fields: Omit<PhotoRequestParams, 'requestId' | 'appId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1400,7 +1454,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function buildPhotoRequestFields(): Omit<
     PhotoRequestParams,
-    'requestId' | 'appId' | 'webhookUrl' | 'authToken'
+    'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
       size: photoSize,
@@ -1586,7 +1640,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       try {
         const response = await BluetoothSdk.requestPhoto({
           requestId,
-          appId: PHOTO_APP_ID,
           webhookUrl: uploadUrlText,
           authToken: null,
           ...buildPhotoRequestFields(),
@@ -1624,7 +1677,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     try {
       const response = await BluetoothSdk.requestPhoto({
         requestId,
-        appId: PHOTO_APP_ID,
         webhookUrl: receiver.uploadUrl,
         authToken: null,
         ...buildPhotoRequestFields(),

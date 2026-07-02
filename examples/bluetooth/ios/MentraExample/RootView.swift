@@ -32,6 +32,12 @@ struct RootView: View {
             .ignoresSafeArea(.container, edges: .bottom)
         }
         .animation(.easeOut(duration: 0.18), value: keyboard.isVisible)
+        .onAppear {
+            bluetooth.setCameraTabForeground(tab == .camera)
+        }
+        .onChange(of: tab) { nextTab in
+            bluetooth.setCameraTabForeground(nextTab == .camera)
+        }
     }
 }
 

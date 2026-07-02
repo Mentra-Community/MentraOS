@@ -190,7 +190,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={styles.recPill}><Text style={styles.recText}>REC</Text></View>
         </View>
         <View style={{ paddingHorizontal: 18 }}>
-          <StatusRow label="LAST ACTION" value={sdk.lastAction} />
+          <StatusRow label="LAST ACTION" value={sdk.lastAction} selectable />
           <StatusRow label="CONNECTION" custom={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <View style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: colors.greenPrimary }} />
             <Text style={[styles.statusValue, { color: colors.greenInk, fontWeight: '600' }]}>{connection}</Text>
@@ -558,12 +558,26 @@ function StatCard({ label, value, sub, subColor, bold }: { label: string; value:
   );
 }
 
-function StatusRow({ label, value, custom, mono, last }: { label: string; value?: string; custom?: React.ReactNode; mono?: boolean; last?: boolean }) {
+function StatusRow({
+  label,
+  value,
+  custom,
+  mono,
+  last,
+  selectable,
+}: {
+  label: string;
+  value?: string;
+  custom?: React.ReactNode;
+  mono?: boolean;
+  last?: boolean;
+  selectable?: boolean;
+}) {
   return (
     <View style={[styles.statusRow, !last && styles.statusBorder]}>
       <Text style={styles.statusLabel}>{label}</Text>
       <View style={{ flex: 1 }}>
-        {custom ?? <Text style={[styles.statusValue, mono && { fontFamily: 'Courier' }]}>{value}</Text>}
+        {custom ?? <Text selectable={selectable} style={[styles.statusValue, mono && { fontFamily: 'Courier' }]}>{value}</Text>}
       </View>
     </View>
   );

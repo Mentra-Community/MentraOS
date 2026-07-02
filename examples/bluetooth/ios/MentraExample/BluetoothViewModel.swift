@@ -64,6 +64,9 @@ let photoIsoDefault = 200
 let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
+let cameraWarmUpDurationMs = 30_000
+let cameraWarmUpRefreshMs = 20_000
+let cameraWarmUpDisconnectedRetryMs = 2_000
 let photoAeExposureDivisorOptions = [2, 3, 5]
 let photoIsoCapOptions = [400, 800, 1600]
 let photoIspDigitalGainOptions = [0, 1, 2, 4]
@@ -220,6 +223,8 @@ func deviceModelLabel(_ model: DeviceModel) -> String {
         return "Mach1"
     case .z100:
         return "Z100"
+    case .nimo:
+        return "Nimo"
     case .frame:
         return "Frame"
     case .r1:
@@ -365,6 +370,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var pollGeneration = 0
     private var videoPollGeneration = 0
     private var directPhotoTimeoutTask: Task<Void, Never>?
+    private var cameraTabForeground = false
+    private var cameraWarmUpFailureLogged = false
+    private var cameraWarmUpTask: Task<Void, Never>?
     private var previewHealthTask: Task<Void, Never>?
     private var directStreamStartTask: Task<Void, Never>?
     private var directStreamStopTask: Task<Void, Never>?
@@ -473,6 +481,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     deinit {
+        cameraWarmUpTask?.cancel()
         previewHealthTask?.cancel()
         directPhotoTimeoutTask?.cancel()
         directStreamStartTask?.cancel()
@@ -560,6 +569,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             mentraBluetoothSdk.clearDefaultDevice()
             bluetoothValues = mentraBluetoothSdk.sdkState
             selectedDiscoveredDevice = nil
+        }
+    }
+
+    func setCameraTabForeground(_ foreground: Bool) {
+        guard cameraTabForeground != foreground else { return }
+        cameraTabForeground = foreground
+        if foreground {
+            cameraWarmUpFailureLogged = false
+            startCameraWarmUpLoop()
+        } else {
+            stopCameraWarmUpLoop()
         }
     }
 
@@ -877,7 +897,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let responseEvent: PhotoResponseEvent
             do {
                 responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                    buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
+                    buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
                 )
             } catch {
                 if activePhotoRequestId == requestId {
@@ -912,7 +932,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let responseEvent: PhotoResponseEvent
         do {
             responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
+                buildPhotoRequest(requestId: requestId, webhookUrl: uploadUrl)
             )
         } catch {
             directPhotoTimeoutTask?.cancel()
@@ -926,10 +946,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
-    private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
+    private func buildPhotoRequest(requestId: String, webhookUrl: String) -> PhotoRequest {
         return PhotoRequest(
             requestId: requestId,
-            appId: appId,
             size: photoSize,
             webhookUrl: webhookUrl,
             compress: photoCompression,
@@ -1774,7 +1793,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handleMediaUpload(upload)
         case let .streamStatus(status):
             handleStreamStatus(status.status)
-        case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
+        case .otaStartAck, .settingsAck, .rgbLedControlResponse:
             break
         case let .otaStatus(event):
             applyOtaStatus(event)
@@ -1953,7 +1972,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: message)
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothError) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
         append(tag: "TX", text: error.description)
     }
 
@@ -2019,6 +2038,41 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func isOtaInProgress() -> Bool {
         otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
+    }
+
+    private func startCameraWarmUpLoop() {
+        guard cameraWarmUpTask == nil else { return }
+        cameraWarmUpTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let nextDelayMs = await self?.runCameraWarmUpTick() ?? cameraWarmUpDisconnectedRetryMs
+                try? await Task.sleep(nanoseconds: UInt64(nextDelayMs) * 1_000_000)
+            }
+        }
+    }
+
+    private func stopCameraWarmUpLoop() {
+        cameraWarmUpTask?.cancel()
+        cameraWarmUpTask = nil
+    }
+
+    private func runCameraWarmUpTick() async -> Int {
+        guard cameraTabForeground else { return cameraWarmUpRefreshMs }
+        guard glassesConnected else { return cameraWarmUpDisconnectedRetryMs }
+        let exposureTimeNs = photoExposureManual ? Double(photoExposureTimeNs) : nil
+        do {
+            _ = try await mentraBluetoothSdk.warmUpCamera(
+                size: photoSize,
+                exposureTimeNs: exposureTimeNs,
+                durationMs: cameraWarmUpDurationMs
+            )
+            cameraWarmUpFailureLogged = false
+        } catch {
+            if cameraTabForeground && glassesConnected && !cameraWarmUpFailureLogged {
+                cameraWarmUpFailureLogged = true
+                append(tag: "TX", text: "camera warm-up failed: \(error.localizedDescription)")
+            }
+        }
+        return cameraWarmUpRefreshMs
     }
 
     private func requireConnected(_ feature: String) throws {
