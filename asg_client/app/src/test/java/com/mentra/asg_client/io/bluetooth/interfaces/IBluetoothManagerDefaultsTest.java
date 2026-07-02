@@ -35,6 +35,19 @@ public class IBluetoothManagerDefaultsTest {
         }
 
         @Override
+        public boolean sendMessage(byte[] data, IBluetoothManager.SendMessageCallback callback) {
+            return false;
+        }
+
+        @Override
+        public boolean sendMessage(
+                byte[] data,
+                IBluetoothManager.SendMessageCallback callback,
+                IBluetoothManager.SendMessageGate gate) {
+            return false;
+        }
+
+        @Override
         public boolean sendFile(String filePath) {
             return false;
         }
