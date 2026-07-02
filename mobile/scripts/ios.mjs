@@ -5,6 +5,10 @@ await setBuildEnv()
 // prebuild ios:
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 
+// Sync CocoaPods after prebuild so local podspec/native config changes are
+// reflected before xcodebuild compiles the generated workspace.
+await $({stdio: "inherit", cwd: "ios"})`pod install`
+
 // copy .env to ios/.xcode.env.local:
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 
