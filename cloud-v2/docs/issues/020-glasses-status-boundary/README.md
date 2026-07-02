@@ -7,6 +7,7 @@ Sections that say "current" describe the pre-migration state that motivated the
 implementation.
 
 Implementation plan: [implementation-plan.md](./implementation-plan.md).
+Fable 5 handoff: [fable-5-handoff.md](./fable-5-handoff.md).
 
 ## Goal
 
