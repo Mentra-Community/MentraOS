@@ -4288,13 +4288,17 @@ public class MediaCaptureService {
                 json.put("resolvedConfig", resolvedConfig);
             }
             if (requestedCaptureConfig != null) {
-                json.put("requestedCaptureConfig", requestedCaptureConfig);
+                logFullPhotoStatusMetadata(
+                        requestId, status, "requestedCaptureConfig", requestedCaptureConfig);
+            }
+            if (meteredPreview != null) {
+                logFullPhotoStatusMetadata(requestId, status, "meteredPreview", meteredPreview);
+            }
+            if (captureMetadata != null) {
+                logFullPhotoStatusMetadata(requestId, status, "captureMetadata", captureMetadata);
             }
             if (meteredPreview != null) {
                 json.put("meteredPreview", meteredPreview);
-            }
-            if (captureMetadata != null) {
-                json.put("captureMetadata", captureMetadata);
             }
             if (errorCode != null && !errorCode.isEmpty()) {
                 json.put("errorCode", errorCode);
@@ -4311,6 +4315,23 @@ public class MediaCaptureService {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating photo status", e);
         }
+    }
+
+    private void logFullPhotoStatusMetadata(
+            String requestId, String status, String metadataName, JSONObject metadata) {
+        if (metadata == null) {
+            return;
+        }
+        Log.i(
+                TAG,
+                "📸 photo_status "
+                        + status
+                        + " full "
+                        + metadataName
+                        + " requestId="
+                        + requestId
+                        + " "
+                        + metadata);
     }
 
     /** Send simplified photo error response with only essential fields */
