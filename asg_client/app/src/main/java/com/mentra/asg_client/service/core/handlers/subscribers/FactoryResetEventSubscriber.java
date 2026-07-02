@@ -1,6 +1,8 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
@@ -26,12 +28,42 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
 
     private static final String TAG = "FactoryResetEventSubscriber";
 
+    /**
+     * Delay between stopping an active recording and kicking off the install. Mirrors {@link
+     * ShutdownEventSubscriber}: gives {@code MediaRecorder.stop()} time to finalize the MP4 moov
+     * atom before the install broadcast kills this process.
+     */
+    private static final long INSTALL_DELAY_MS = 500L;
+
+    /** Seam for checking whether an APK file is present + readable, kept mockable for tests. */
+    interface FileReadableChecker {
+        boolean isReadable(String path);
+    }
+
     private final AsgClientServiceManager serviceManager;
     private final Context context;
+    private final Handler mainHandler;
+    private final FileReadableChecker fileChecker;
 
     public FactoryResetEventSubscriber(AsgClientServiceManager serviceManager, Context context) {
+        this(serviceManager, context, defaultFileChecker());
+    }
+
+    FactoryResetEventSubscriber(
+            AsgClientServiceManager serviceManager,
+            Context context,
+            FileReadableChecker fileChecker) {
         this.serviceManager = serviceManager;
         this.context = context;
+        this.mainHandler = new Handler(Looper.getMainLooper());
+        this.fileChecker = fileChecker;
+    }
+
+    private static FileReadableChecker defaultFileChecker() {
+        return path -> {
+            File file = new File(path);
+            return file.exists() && file.canRead();
+        };
     }
 
     @Override
@@ -48,7 +80,8 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
      * <ol>
      *   <li>Stop any active video recording to avoid a corrupt file when the process is killed
      *       during install.
-     *   <li>Install a local APK if one is staged on disk (no network required).
+     *   <li>After a short delay (so the recorder can finalize the moov atom), install a local APK
+     *       if one is staged on disk (no network required).
      *   <li>Otherwise fall back to downloading + installing a fresh APK via the OTA pipeline.
      * </ol>
      */
@@ -57,6 +90,12 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
 
         stopActiveRecordingBeforeReset();
 
+        // Delay the install so an in-progress MediaRecorder.stop() can finalize the file before the
+        // install broadcast kills this process (same rationale as ShutdownEventSubscriber).
+        mainHandler.postDelayed(this::performReset, INSTALL_DELAY_MS);
+    }
+
+    private void performReset() {
         if (installLocalApk()) {
             Log.i(TAG, "🏭 Factory reset: local APK install kicked off");
             return;
@@ -66,10 +105,11 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
     }
 
     /**
-     * Attempt a local-first (re)install. Tries the staged update APK first, then the backup APK.
+     * Attempt a local-first (re)install. Tries the staged update APK first, then the backup APK. If
+     * a candidate exists but its install fails, the next candidate is still attempted.
      *
      * @return {@code true} if an install was successfully kicked off (the process is now expected to
-     *     be killed by the system); {@code false} if no usable local APK was found.
+     *     be killed by the system); {@code false} if no local install succeeded.
      */
     private boolean installLocalApk() {
         Context ctx = resolveContext();
@@ -78,22 +118,24 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             return false;
         }
 
-        File updateApk = new File(OtaConstants.ASG_UPDATE_APK_PATH);
-        if (updateApk.exists() && updateApk.canRead()) {
+        if (fileChecker.isReadable(OtaConstants.ASG_UPDATE_APK_PATH)) {
             Log.i(TAG, "🏭 Installing staged update APK: " + OtaConstants.ASG_UPDATE_APK_PATH);
-            return OtaHelper.installApk(ctx, OtaConstants.ASG_UPDATE_APK_PATH);
+            if (OtaHelper.installApk(ctx, OtaConstants.ASG_UPDATE_APK_PATH)) {
+                return true;
+            }
+            Log.w(TAG, "🏭 Staged update APK install failed - trying backup APK");
         }
 
         OtaHelper otaHelper = OtaHelper.getInstance();
-        if (otaHelper != null) {
-            File backupApk = new File(OtaConstants.BACKUP_APK_PATH);
-            if (backupApk.exists() && backupApk.canRead()) {
-                Log.i(TAG, "🏭 Installing backup APK: " + OtaConstants.BACKUP_APK_PATH);
-                return otaHelper.reinstallApkFromBackup();
+        if (otaHelper != null && fileChecker.isReadable(OtaConstants.BACKUP_APK_PATH)) {
+            Log.i(TAG, "🏭 Installing backup APK: " + OtaConstants.BACKUP_APK_PATH);
+            if (otaHelper.reinstallApkFromBackup()) {
+                return true;
             }
+            Log.w(TAG, "🏭 Backup APK install failed");
         }
 
-        Log.i(TAG, "🏭 No local APK available - will fall back to download");
+        Log.i(TAG, "🏭 No local APK installed - will fall back to download");
         return false;
     }
 
