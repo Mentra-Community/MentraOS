@@ -14,7 +14,7 @@
  *
  * Started by `toolkit.start()`. Idempotent.
  */
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 
 let sub: {remove: () => void} | null = null

@@ -2,7 +2,7 @@ import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletInterface} from "../types"
-import {type PhotoResponseEvent} from "../../../bluetooth-sdk/build/_internal"
+import {type PhotoResponseEvent} from "@mentra/bluetooth-sdk/internal"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useConnectionStore} from "../stores/connection"
 import {WebSocketStatus} from "../stores/connection"

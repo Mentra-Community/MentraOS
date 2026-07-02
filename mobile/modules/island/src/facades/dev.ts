@@ -8,7 +8,7 @@
  * still lives host-side in `@/services/cloudClient` during the migration; this
  * facade manages the explicit overrides + reconnect.
  */
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {isGlassesReady} from "../services/GlassesReadiness"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {useConnectionStore} from "../stores/connection"

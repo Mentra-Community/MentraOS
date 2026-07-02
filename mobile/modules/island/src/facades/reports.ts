@@ -6,7 +6,7 @@
  * collection, recent phone logs, Cloud V2 calls, local automatic throttling,
  * screenshots, and notifying connected glasses.
  */
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {
   ReportAttachmentInput,
   ReportContext,

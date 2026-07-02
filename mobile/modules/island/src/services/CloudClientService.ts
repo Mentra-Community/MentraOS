@@ -18,7 +18,7 @@ import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-c
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"

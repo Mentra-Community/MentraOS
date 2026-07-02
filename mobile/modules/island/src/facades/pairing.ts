@@ -182,7 +182,7 @@ export const pairing = {
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
   /** The current scan results (snapshot). */
-  searchResults: () => useCoreStore.getState().searchResults,
+  searchResults: () => [...useCoreStore.getState().searchResults],
   /** Subscribe to scan-result changes; fires only when they change. Returns an unsubscribe. */
   onFound: (cb: (results: ReturnType<typeof useCoreStore.getState>["searchResults"]) => void): (() => void) => {
     let last = JSON.stringify(useCoreStore.getState().searchResults)

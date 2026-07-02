@@ -1,4 +1,4 @@
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {ISLAND_SETTINGS_KEYS} from "../runtime/config"
 import {useSettingsStore} from "../stores/settings"
 import {cloudClientService} from "./CloudClientService"

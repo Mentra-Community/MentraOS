@@ -4,7 +4,7 @@
  * exact types via Parameters<>), so the facade never drifts from the managers.
  * STT additionally exposes the auto-download status stream (the TTS path has none).
  */
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import sttModelManager from "../services/STTModelManager"
 import ttsModelManager from "../services/TTSModelManager"
 import offlineSpeechModelService from "../services/OfflineSpeechModelService"

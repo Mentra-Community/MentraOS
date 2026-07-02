@@ -41,7 +41,8 @@ export const glassesWifi = {
 
   /** The glasses' current wifi connection status (snapshot). */
   status(): WifiStatus {
-    return useGlassesStore.getState().wifi
+    // Copy: the snapshot must not hand callers a mutable reference into the store.
+    return {...useGlassesStore.getState().wifi}
   },
 
   /** Subscribe to wifi-status changes; returns an unsubscribe. */

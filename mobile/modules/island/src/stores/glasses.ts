@@ -6,7 +6,7 @@ import type {
   OtaStatus,
   OtaUpdateInfo,
   WifiStatus,
-} from "../../../bluetooth-sdk/build/_internal"
+} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected, isGlassesLinkLayerBusy, isGlassesReady} from "../services/GlassesReadiness"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"

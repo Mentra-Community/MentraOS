@@ -27,7 +27,7 @@
  * does not need sub-second background fidelity.
  */
 
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import displayProcessor from "./DisplayProcessor"
 import {useDisplayStore} from "../stores/display"
 import {BgTimer} from "../utils/timers"

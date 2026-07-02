@@ -1,5 +1,5 @@
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
-import type {OtaUpdateInfo} from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"

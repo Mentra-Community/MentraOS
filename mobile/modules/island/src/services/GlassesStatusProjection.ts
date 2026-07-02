@@ -11,7 +11,7 @@
  *
  * Started by `toolkit.start()`. Idempotent.
  */
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import localMiniappRuntime from "./LocalMiniappRuntime"

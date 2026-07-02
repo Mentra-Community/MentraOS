@@ -4,7 +4,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 
 const mockUpdateBluetoothSettings = mock(() => Promise.resolve())
 
-mock.module("../../../../bluetooth-sdk/build/_internal", () => ({
+mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
   default: {
     updateBluetoothSettings: mockUpdateBluetoothSettings,

@@ -14,7 +14,7 @@
  */
 import {shallow} from "zustand/shallow"
 
-import BluetoothSdk from "../../../bluetooth-sdk/build/_internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useSettingsStore} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "./GlassesReadiness"
