@@ -101,7 +101,7 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(
                 new ButtonEventSubscriber(serviceManager, hardwareManager, stateManager));
         peripheralBus.subscribe(new ShutdownEventSubscriber(serviceManager, context));
-        peripheralBus.subscribe(new FactoryResetEventSubscriber(serviceManager, context));
+        peripheralBus.subscribe(new FactoryResetEventSubscriber(serviceManager, context, otaHelper));
         peripheralBus.subscribe(new BesVersionEventSubscriber(serviceManager));
         peripheralBus.subscribe(new BtMacEventSubscriber(context));
         peripheralBus.subscribe(new BesOtaAuthEventSubscriber(serviceManager));
