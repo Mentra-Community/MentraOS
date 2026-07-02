@@ -486,7 +486,19 @@ class Bridge {
     static func sendTypedMessage(_ type: String, body: [String: Any]) {
         var body = body
         body["type"] = type
+        if shouldTraceTypedMessage(type) {
+            BleTraceLogger.logMap(
+                direction: "phone_to_app",
+                layer: "sdk_event_dispatch",
+                type: type,
+                payload: body
+            )
+        }
         // Send directly using type as event name - no JSON serialization
         dispatchEvent(type, body)
+    }
+
+    private static func shouldTraceTypedMessage(_ type: String) -> Bool {
+        type != "log" && type != "mic_pcm" && type != "mic_lc3"
     }
 }
