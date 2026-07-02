@@ -17,7 +17,7 @@ import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinato
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, isChinaBuild, RENAMED_BUNDLED_MINIAPPS} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
@@ -250,8 +250,8 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
-        miniappAuth: {
-          getToken: (packageName, opts) => {
+      miniappAuth: {
+        getToken: (packageName, opts) => {
           const isDevApp = packageName === DEV_APP_PACKAGE_NAME
           const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
           if (!authPackageName) {
@@ -478,6 +478,11 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
+    // Remove installs of bundled miniapps that have since been renamed
+    // (com.mentra.local-* → com.mentra.*) BEFORE the renamed bundle installs,
+    // so upgraded devices don't keep a duplicate tile under the old name.
+    await this.cleanupRenamedBundledMiniapps()
+
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
@@ -502,6 +507,22 @@ class MantleManager {
    * is HTTP-only) and hand the local zip to AppRegistry, which unzips and
    * installs it.
    */
+  private async cleanupRenamedBundledMiniapps() {
+    for (const [oldPackageName, newPackageName] of Object.entries(RENAMED_BUNDLED_MINIAPPS)) {
+      try {
+        if (appRegistry.getInstalledVersions(oldPackageName).length === 0) continue
+        const res = await appRegistry.uninstall(oldPackageName)
+        if (res.is_error()) {
+          console.error(`MANTLE: failed to remove renamed miniapp ${oldPackageName}:`, res.error)
+          continue
+        }
+        console.log(`MANTLE: removed ${oldPackageName} (renamed to ${newPackageName})`)
+      } catch (error) {
+        console.error(`MANTLE: error removing renamed miniapp ${oldPackageName}:`, error)
+      }
+    }
+  }
+
   private async installBundledMiniapps() {
     for (const module of BUNDLED_MINIAPPS) {
       try {
