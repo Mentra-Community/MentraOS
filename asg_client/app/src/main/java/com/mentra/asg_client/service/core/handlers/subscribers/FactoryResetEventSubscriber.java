@@ -14,6 +14,10 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import org.json.JSONObject;
 
 /**
  * Reacts to {@link FactoryResetEvent}s (BES requesting a factory reset via {@code cs_fcrst}, fired
@@ -250,16 +254,82 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
     }
 
     /**
-     * Download a fresh APK from the OTA manifest and install it. Reuses the phone-initiated OTA flow
-     * which downloads, verifies, and installs.
+     * Download the ASG client APK from the OTA manifest and install it directly — without the full
+     * OTA pipeline's version gate, firmware-update steps, or phone-side orchestration.
+     *
+     * <p>The manifest at {@link OtaConstants#VERSION_JSON_URL} is fetched and the
+     * {@code com.mentra.asg_client} entry is read. A dedicated {@code recoveryApkUrl} field is
+     * preferred when present (allows the server to publish a pinned recovery build); the normal
+     * {@code apkUrl} is used as a fallback. The APK is downloaded to
+     * {@link OtaConstants#FACTORY_RESET_APK_PATH} and installed via
+     * {@link OtaHelper#installApk(Context, String)} — the same OEM SystemUI broadcast used by
+     * every other install path, with no version comparison.
+     *
+     * <p>Runs entirely on a background thread so the main thread is never blocked.
      */
     private void downloadAndInstallApk() {
         if (otaHelper == null) {
-            Log.e(TAG, "🏭 OtaHelper unavailable - cannot download reset APK; aborting");
+            Log.e(TAG, "🏭 OtaHelper unavailable - cannot download recovery APK; aborting");
             return;
         }
-        Log.i(TAG, "🏭 Factory reset: no local APK, starting OTA download+install");
-        otaHelper.startOtaFromPhone();
+        Context ctx = resolveContext();
+        if (ctx == null) {
+            Log.e(TAG, "🏭 Context unavailable - cannot download recovery APK; aborting");
+            return;
+        }
+        Log.i(TAG, "🏭 Factory reset: fetching recovery APK from OTA manifest");
+        new Thread(() -> downloadRecoveryApkOnThread(ctx), "factory-reset-download").start();
+    }
+
+    private void downloadRecoveryApkOnThread(Context ctx) {
+        try {
+            // 1. Fetch the OTA manifest.
+            HttpURLConnection conn =
+                    (HttpURLConnection) new URL(OtaConstants.VERSION_JSON_URL).openConnection();
+            conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
+            conn.connect();
+            String manifestJson;
+            try (InputStream in = conn.getInputStream()) {
+                byte[] buf = in.readAllBytes();
+                manifestJson = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            // 2. Parse the ASG client entry and find the recovery APK URL.
+            JSONObject manifest = new JSONObject(manifestJson);
+            JSONObject appEntry =
+                    manifest.getJSONObject("apps").getJSONObject(OtaConstants.ASG_PACKAGE);
+
+            // Prefer a dedicated recoveryApkUrl field; fall back to the regular apkUrl.
+            // The server can publish a pinned recovery build under recoveryApkUrl without
+            // affecting the normal over-the-air update channel.
+            String apkUrl = appEntry.optString("recoveryApkUrl", "");
+            if (apkUrl.isEmpty()) {
+                apkUrl = appEntry.getString("apkUrl");
+            }
+            Log.i(TAG, "🏭 Recovery APK URL resolved: " + apkUrl);
+
+            // 3. Download to the factory-reset staging path (separate from the OTA update path).
+            boolean downloaded =
+                    otaHelper.downloadApk(
+                            apkUrl, appEntry, ctx, OtaConstants.FACTORY_RESET_APK_FILENAME);
+            if (!downloaded) {
+                Log.e(TAG, "🏭 Recovery APK download failed - factory reset aborted");
+                resetInProgress = false;
+                return;
+            }
+
+            // 4. Install directly — no version check, no firmware steps.
+            Log.i(TAG, "🏭 Recovery APK downloaded; triggering install");
+            if (!OtaHelper.installApk(ctx, OtaConstants.FACTORY_RESET_APK_PATH)) {
+                Log.e(TAG, "🏭 Recovery APK install broadcast failed");
+                resetInProgress = false;
+            }
+            // On success the process will be killed by the installer; guard stays set.
+        } catch (Exception e) {
+            Log.e(TAG, "🏭 Recovery APK download/install failed", e);
+            resetInProgress = false;
+        }
     }
 
     /**
