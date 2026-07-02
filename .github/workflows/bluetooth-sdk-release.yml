@@ -70,8 +70,13 @@ jobs:
             echo "BluetoothSdkDefaults.swift must not hardcode the SDK version; iOS OTA defaults must use package metadata." >&2
             exit 1
           fi
-          if ! grep -Fq "normalizedSdkVersion(swiftPackageSdkVersion) ?? packageVersion(from: sdkBundle)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
-            echo "BluetoothSdkDefaults.swift must prefer the packed SDK version and fall back to iOS package metadata." >&2
+          if grep -Fq "packageVersion(from:" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift \
+            || grep -Fq "Bundle(for: BluetoothSdkBundleToken.self)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
+            echo "BluetoothSdkDefaults.swift must not derive the SDK version from iOS bundle metadata." >&2
+            exit 1
+          fi
+          if ! grep -Fq "normalizedSdkVersion(swiftPackageSdkVersion)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
+            echo "BluetoothSdkDefaults.swift must derive the SDK version from the packed SDK version." >&2
             exit 1
           fi
 
