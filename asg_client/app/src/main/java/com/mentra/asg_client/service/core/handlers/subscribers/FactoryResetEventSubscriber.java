@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -17,15 +18,18 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
 
 /**
  * Reacts to {@link FactoryResetEvent}s (BES requesting a factory reset via {@code cs_fcrst}, fired
- * when the user presses PWR 5x rapidly). Resets the glasses by reinstalling the ASG client APK
- * that is currently installed on the device: the installed APK ({@code sourceDir}) is copied to
- * external storage and reinstalled. Only if that fails does it fall back to a staged/backup local
- * APK, and finally to a fresh OTA download. The install itself is performed by {@link OtaHelper},
- * which broadcasts the OEM SystemUI install intent ({@code com.xy.xsetting.action cmd=install}).
+ * when the user presses PWR 5x rapidly). Resets the glasses by reinstalling the ASG client APK.
+ *
+ * <p>Reset order: (1) copy and reinstall the currently-installed APK from {@code sourceDir};
+ * (2) install a staged update or backup APK from disk; (3) download from the OTA manifest's
+ * {@code recoveryApkUrl} field (falls back to {@code apkUrl}) and install directly — no version
+ * gate, no firmware steps. The install in all paths uses the OEM SystemUI broadcast
+ * ({@code com.xy.xsetting.action cmd=install}).
  *
  * <p>The {@link OtaHelper} instance is injected (the same Hilt-provided singleton wired in {@code
  * ServiceInitializer}); the static {@link OtaHelper#getInstance()} is intentionally not used because
@@ -51,36 +55,61 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
         boolean isInstallableApk(Context context, String path);
     }
 
+    /**
+     * Seam for the recovery-APK download fallback, kept mockable for tests. The default
+     * implementation calls {@link #downloadRecoveryApkOnThread(Context)}.
+     */
+    interface RecoveryDownloader {
+        void download(Context ctx, OtaHelper otaHelper);
+    }
+
     private final AsgClientServiceManager serviceManager;
     private final Context context;
     private final OtaHelper otaHelper;
     private final Handler mainHandler;
     private final LocalApkChecker apkChecker;
+    private final RecoveryDownloader recoveryDownloader;
 
     /** Guards against a repeated/replayed cs_fcrst firing multiple install broadcasts. */
-    private volatile boolean resetInProgress = false;
+    private final AtomicBoolean resetInProgress = new AtomicBoolean(false);
 
     public FactoryResetEventSubscriber(
             AsgClientServiceManager serviceManager, Context context, OtaHelper otaHelper) {
-        this(serviceManager, context, otaHelper, defaultApkChecker());
+        this.serviceManager = serviceManager;
+        this.context = context;
+        this.otaHelper = otaHelper;
+        this.mainHandler = new Handler(Looper.getMainLooper());
+        this.apkChecker = defaultApkChecker();
+        // Lambda captures `this` after construction — valid because the field is only read
+        // after the constructor returns, when downloadAndInstallApk() is called.
+        this.recoveryDownloader =
+                (ctx, helper) ->
+                        new Thread(
+                                        () -> this.downloadRecoveryApkOnThread(ctx),
+                                        "factory-reset-download")
+                                .start();
     }
 
     FactoryResetEventSubscriber(
             AsgClientServiceManager serviceManager,
             Context context,
             OtaHelper otaHelper,
-            LocalApkChecker apkChecker) {
+            LocalApkChecker apkChecker,
+            RecoveryDownloader recoveryDownloader) {
         this.serviceManager = serviceManager;
         this.context = context;
         this.otaHelper = otaHelper;
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.apkChecker = apkChecker;
+        this.recoveryDownloader = recoveryDownloader;
     }
 
     /**
-     * Default check: the file exists, is readable, and parses as a valid Android package. Parsing
-     * guards against installing a partial/corrupt staged APK and silently skipping the known-good
-     * backup/OTA fallbacks.
+     * Default check: the file exists, is readable, parses as a valid Android package, and declares
+     * the ASG client package name. Parsing guards against installing a partial/corrupt staged APK;
+     * the package-name check prevents a replacement attack where an attacker swaps a different APK
+     * into the world-writable staging directory between validation and the SystemUI install
+     * broadcast. The Android package manager enforces signing-certificate continuity on top of this.
      */
     private static LocalApkChecker defaultApkChecker() {
         return (ctx, path) -> {
@@ -89,7 +118,17 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
                 return false;
             }
             try {
-                return ctx.getPackageManager().getPackageArchiveInfo(path, 0) != null;
+                PackageInfo info = ctx.getPackageManager().getPackageArchiveInfo(path, 0);
+                if (info == null || info.packageName == null) {
+                    return false;
+                }
+                if (!OtaConstants.ASG_PACKAGE.equals(info.packageName)) {
+                    Log.w(TAG, "🏭 Staged APK package " + info.packageName
+                            + " does not match expected " + OtaConstants.ASG_PACKAGE
+                            + " — rejecting");
+                    return false;
+                }
+                return true;
             } catch (Exception e) {
                 Log.w(TAG, "🏭 Failed to validate APK at " + path, e);
                 return false;
@@ -119,11 +158,10 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
      * </ol>
      */
     private void handleFactoryReset() {
-        if (resetInProgress) {
+        if (!resetInProgress.compareAndSet(false, true)) {
             Log.w(TAG, "🏭 Factory reset already in progress - ignoring duplicate cs_fcrst");
             return;
         }
-        resetInProgress = true;
         Log.i(TAG, "🏭 Received factory reset command (cs_fcrst) from BES");
 
         stopActiveRecordingBeforeReset();
@@ -134,20 +172,22 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
     }
 
     private void performReset() {
-        try {
-            if (installCurrentlyInstalledApk()) {
-                Log.i(TAG, "🏭 Factory reset: reinstall of currently installed APK kicked off");
-                return;
-            }
-            if (installLocalApk()) {
-                Log.i(TAG, "🏭 Factory reset: local APK install kicked off");
-                return;
-            }
-            downloadAndInstallApk();
-        } finally {
-            // A successful local install kills this process shortly; clearing the guard is harmless
-            // and lets a later deliberate reset retry if the process is still alive.
-            resetInProgress = false;
+        if (installCurrentlyInstalledApk()) {
+            Log.i(TAG, "🏭 Factory reset: reinstall of currently installed APK kicked off");
+            // Guard stays set — installer will kill this process.
+            return;
+        }
+        if (installLocalApk()) {
+            Log.i(TAG, "🏭 Factory reset: local APK install kicked off");
+            // Guard stays set — installer will kill this process.
+            return;
+        }
+        // Download path: if the background thread starts successfully the thread itself is
+        // responsible for clearing resetInProgress (only on failure; on success the installer
+        // kills us). If we can't start the thread at all, clear here.
+        boolean downloadStarted = downloadAndInstallApk();
+        if (!downloadStarted) {
+            resetInProgress.set(false);
         }
     }
 
@@ -240,10 +280,11 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             Log.w(TAG, "🏭 Staged update APK install failed - trying backup APK");
         }
 
-        if (otaHelper != null && apkChecker.isInstallableApk(ctx, OtaConstants.BACKUP_APK_PATH)) {
+        if (apkChecker.isInstallableApk(ctx, OtaConstants.BACKUP_APK_PATH)) {
             Log.i(TAG, "🏭 Installing backup APK: " + OtaConstants.BACKUP_APK_PATH);
-            // reinstallApkFromBackup() re-validates the archive before installing.
-            if (otaHelper.reinstallApkFromBackup()) {
+            // Call installApk() directly — reinstallApkFromBackup() does not propagate the
+            // broadcast result and always returns true, masking failed installs.
+            if (OtaHelper.installApk(ctx, OtaConstants.BACKUP_APK_PATH)) {
                 return true;
             }
             Log.w(TAG, "🏭 Backup APK install failed");
@@ -266,19 +307,24 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
      * every other install path, with no version comparison.
      *
      * <p>Runs entirely on a background thread so the main thread is never blocked.
+     *
+     * @return {@code true} if the background thread was successfully started; {@code false} if an
+     *     immediate precondition failure prevented the thread from starting (caller must clear the
+     *     reset guard).
      */
-    private void downloadAndInstallApk() {
+    private boolean downloadAndInstallApk() {
         if (otaHelper == null) {
             Log.e(TAG, "🏭 OtaHelper unavailable - cannot download recovery APK; aborting");
-            return;
+            return false;
         }
         Context ctx = resolveContext();
         if (ctx == null) {
             Log.e(TAG, "🏭 Context unavailable - cannot download recovery APK; aborting");
-            return;
+            return false;
         }
         Log.i(TAG, "🏭 Factory reset: fetching recovery APK from OTA manifest");
-        new Thread(() -> downloadRecoveryApkOnThread(ctx), "factory-reset-download").start();
+        recoveryDownloader.download(ctx, otaHelper);
+        return true;
     }
 
     private void downloadRecoveryApkOnThread(Context ctx) {
@@ -315,7 +361,7 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
                             apkUrl, appEntry, ctx, OtaConstants.FACTORY_RESET_APK_FILENAME);
             if (!downloaded) {
                 Log.e(TAG, "🏭 Recovery APK download failed - factory reset aborted");
-                resetInProgress = false;
+                resetInProgress.set(false);
                 return;
             }
 
@@ -323,12 +369,12 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             Log.i(TAG, "🏭 Recovery APK downloaded; triggering install");
             if (!OtaHelper.installApk(ctx, OtaConstants.FACTORY_RESET_APK_PATH)) {
                 Log.e(TAG, "🏭 Recovery APK install broadcast failed");
-                resetInProgress = false;
+                resetInProgress.set(false);
             }
             // On success the process will be killed by the installer; guard stays set.
         } catch (Exception e) {
             Log.e(TAG, "🏭 Recovery APK download/install failed", e);
-            resetInProgress = false;
+            resetInProgress.set(false);
         }
     }
 

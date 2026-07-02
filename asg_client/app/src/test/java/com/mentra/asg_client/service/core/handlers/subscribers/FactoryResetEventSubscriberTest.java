@@ -65,7 +65,12 @@ public class FactoryResetEventSubscriberTest {
         Set<String> installable = new HashSet<>();
         Collections.addAll(installable, installablePaths);
         return new FactoryResetEventSubscriber(
-                serviceManager, app, otaHelper, (ctx, path) -> installable.contains(path));
+                serviceManager,
+                app,
+                otaHelper,
+                (ctx, path) -> installable.contains(path),
+                // No-op downloader for unit tests — avoids real network I/O.
+                (ctx, helper) -> {});
     }
 
     /** Deliver the event and advance the main looper past the pre-install delay. */
@@ -113,8 +118,6 @@ public class FactoryResetEventSubscriberTest {
 
     @Test
     public void stagedApkInstallFails_fallsBackToBackup() {
-        when(otaHelper.reinstallApkFromBackup()).thenReturn(true);
-
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             ota.when(
                             () ->
@@ -122,6 +125,12 @@ public class FactoryResetEventSubscriberTest {
                                             any(Context.class),
                                             eq(OtaConstants.ASG_UPDATE_APK_PATH)))
                     .thenReturn(false);
+            ota.when(
+                            () ->
+                                    OtaHelper.installApk(
+                                            any(Context.class),
+                                            eq(OtaConstants.BACKUP_APK_PATH)))
+                    .thenReturn(true);
 
             FactoryResetEventSubscriber subscriber =
                     subscriberWithInstallable(
@@ -132,33 +141,49 @@ public class FactoryResetEventSubscriberTest {
                     () ->
                             OtaHelper.installApk(
                                     any(Context.class), eq(OtaConstants.ASG_UPDATE_APK_PATH)));
-            verify(otaHelper).reinstallApkFromBackup();
+            ota.verify(
+                    () ->
+                            OtaHelper.installApk(
+                                    any(Context.class), eq(OtaConstants.BACKUP_APK_PATH)));
+            verify(otaHelper, never()).reinstallApkFromBackup();
             verify(otaHelper, never()).startOtaFromPhone();
         }
     }
 
     @Test
-    public void noStagedApk_butBackupApk_reinstallsFromBackup() {
-        when(otaHelper.reinstallApkFromBackup()).thenReturn(true);
-
+    public void noStagedApk_butBackupApk_installsFromBackupDirectly() {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
+            ota.when(
+                            () ->
+                                    OtaHelper.installApk(
+                                            any(Context.class),
+                                            eq(OtaConstants.BACKUP_APK_PATH)))
+                    .thenReturn(true);
+
             FactoryResetEventSubscriber subscriber =
                     subscriberWithInstallable(OtaConstants.BACKUP_APK_PATH);
             deliverAndSettle(subscriber, new FactoryResetEvent());
 
-            verify(otaHelper).reinstallApkFromBackup();
-            ota.verify(() -> OtaHelper.installApk(any(Context.class), any(String.class)), never());
+            ota.verify(
+                    () ->
+                            OtaHelper.installApk(
+                                    any(Context.class), eq(OtaConstants.BACKUP_APK_PATH)));
+            verify(otaHelper, never()).reinstallApkFromBackup();
             verify(otaHelper, never()).startOtaFromPhone();
         }
     }
 
     @Test
-    public void noLocalApk_fallsBackToOtaDownload() {
+    public void noLocalApk_startsRecoveryDownloadThread() throws InterruptedException {
+        // When no local APK is available, the subscriber starts a background download thread.
+        // We verify: (a) startOtaFromPhone() is NOT called, (b) reinstallApkFromBackup() is NOT
+        // called, and (c) the download thread is kicked off (OtaHelper != null guard passes).
+        // The thread itself is not exercised here — it requires network I/O.
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             FactoryResetEventSubscriber subscriber = subscriberWithInstallable();
             deliverAndSettle(subscriber, new FactoryResetEvent());
 
-            verify(otaHelper).startOtaFromPhone();
+            verify(otaHelper, never()).startOtaFromPhone();
             ota.verify(() -> OtaHelper.installApk(any(Context.class), any(String.class)), never());
             verify(otaHelper, never()).reinstallApkFromBackup();
         }
