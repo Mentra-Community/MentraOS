@@ -804,6 +804,7 @@ jest.mock("@mentra/island", () => {
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),
       resolveBundle: jest.fn(() => Promise.resolve(null)),
+      autostartLocalMiniapps: jest.fn(() => Promise.resolve()),
       stop: jest.fn(() => Promise.resolve()),
     },
     ensureMiniappEngine: jest.fn(() => ({
