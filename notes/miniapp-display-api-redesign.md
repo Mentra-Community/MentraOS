@@ -100,7 +100,7 @@ Immediate-mode mental model, last-wins per app, no lifecycle to manage:
 const result = await session.display.render([
   {type: "text",  id: "title", box: {x: 0, y: 0, w: 500, h: 40},  text: "Turn left"},
   {type: "text",  id: "stats", box: {x: 0, y: 180, w: 500, h: 40}, text: "2.1 km · 14 min", style: {border: 1, radius: 4, overflow: "ellipsis"}},
-  {type: "image", id: "map",   box: {x: 400, y: 0, w: 100, h: 100}, data: bmpBase64},
+  {type: "image", id: "map",   box: {x: 400, y: 0, w: 100, h: 100}, data: pngBase64},  // base64 PNG (§3.4.3)
   {type: "rect",  box: {x: 0, y: 176, w: 500, h: 44}, radius: 4, fill: false},
 ], {view: "main", durationMs?})
 // result: {status: "displayed" | "queued" | "blocked", reason?} — awaiting is OPT-IN; plain fire-and-forget call works
