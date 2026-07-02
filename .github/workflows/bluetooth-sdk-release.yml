@@ -63,15 +63,15 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
 
-      - name: Verify iOS SDK version is metadata-derived
+      - name: Verify iOS SDK version is package-derived
         run: |
           set -euo pipefail
           if grep -Fq "compiledSdkVersion" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
             echo "BluetoothSdkDefaults.swift must not hardcode the SDK version; iOS OTA defaults must use package metadata." >&2
             exit 1
           fi
-          if ! grep -Fq "packageVersion(from: sdkBundle)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
-            echo "BluetoothSdkDefaults.swift must derive the SDK version from iOS package metadata." >&2
+          if ! grep -Fq "normalizedSdkVersion(swiftPackageSdkVersion) ?? packageVersion(from: sdkBundle)" mobile/modules/bluetooth-sdk/ios/Source/BluetoothSdkDefaults.swift; then
+            echo "BluetoothSdkDefaults.swift must prefer the packed SDK version and fall back to iOS package metadata." >&2
             exit 1
           fi
 
@@ -487,6 +487,40 @@ jobs:
         if: steps.npm-registry.outputs.exists != 'true'
         working-directory: ${{ env.SDK_PACKAGE_DIR }}
         run: npm pack --dry-run
+
+      - name: Verify packed npm iOS SDK version
+        if: steps.npm-registry.outputs.exists != 'true'
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        env:
+          SDK_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          pack_dir="$(mktemp -d)"
+          trap 'rm -rf "$pack_dir"' EXIT
+
+          npm pack --json --pack-destination "$pack_dir" > "$pack_dir/pack.json"
+          tarball="$(find "$pack_dir" -maxdepth 1 -name '*.tgz' -print -quit)"
+          if [ -z "$tarball" ]; then
+            echo "npm pack did not produce a tarball." >&2
+            exit 1
+          fi
+
+          mkdir "$pack_dir/unpacked"
+          tar -xzf "$tarball" -C "$pack_dir/unpacked"
+
+          packed_defaults="$pack_dir/unpacked/package/ios/Source/BluetoothSdkDefaults.swift"
+          if ! grep -Fq "swiftPackageSdkVersion = \"${SDK_VERSION}\"" "$packed_defaults"; then
+            echo "Packed npm iOS SDK did not contain SDK version ${SDK_VERSION}." >&2
+            exit 1
+          fi
+          if grep -Fq "__MENTRA_BLUETOOTH_SDK_VERSION__" "$packed_defaults"; then
+            echo "Packed npm iOS SDK still contains the SDK version placeholder." >&2
+            exit 1
+          fi
+          if ! grep -Fq 'swiftPackageSdkVersion = "__MENTRA_BLUETOOTH_SDK_VERSION__"' ios/Source/BluetoothSdkDefaults.swift; then
+            echo "npm pack did not restore the source SDK version placeholder." >&2
+            exit 1
+          fi
 
       - name: Stage npm package
         if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true'
