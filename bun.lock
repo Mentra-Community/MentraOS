@@ -43,9 +43,11 @@
       "dependencies": {
         "@mentra/miniapp-cli": "file:../../../sdk/miniapp-cli",
         "commander": "^14.0.2",
+        "qrcode": "^1.5.4",
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/qrcode": "^1.5.5",
       },
     },
     "cloud-v2/packages/cloud-client": {
