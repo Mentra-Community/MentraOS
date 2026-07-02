@@ -9,7 +9,14 @@ import {
   TouchableOpacity,
   View,
 } from "react-native"
-import Animated, {Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming} from "react-native-reanimated"
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated"
 import {warmCachedRemoteImageSources} from "@/hooks/useCachedRemoteImageSource"
 import {DraggableList} from "@/components/home/DraggableList"
 import {BlurView} from "expo-blur"
@@ -212,15 +219,26 @@ const AppPopover: React.FC<{
 // so its own mt-3 would push it 12px below the grid rows it's covering).
 // `count` is how many skeleton cells to draw — pass the real gridData length so
 // the skeleton matches the grid it's covering cell-for-cell.
-const PlaceholderGrid: React.FC<{asCover?: boolean; count?: number}> = ({
+const PlaceholderGrid: React.FC<{asCover?: boolean; count?: number; pulse?: boolean}> = ({
   asCover = false,
   count = PLACEHOLDER_COUNT,
+  pulse: pulseEnabled = true,
 }) => {
   const pulse = useSharedValue(0.4)
 
   useEffect(() => {
+    if (!pulseEnabled) {
+      // A paused skeleton must not keep an infinite reanimated loop alive: each
+      // loop tick commits new props through Fabric, so an off-screen skeleton
+      // (e.g. inside the closed all-apps sheet) forces the whole app to re-render
+      // at 60fps indefinitely.
+      cancelAnimation(pulse)
+      pulse.value = 0.4
+      return
+    }
     pulse.value = withRepeat(withTiming(1, {duration: 800, easing: Easing.inOut(Easing.ease)}), -1, true)
-  }, [pulse])
+    return () => cancelAnimation(pulse)
+  }, [pulse, pulseEnabled])
 
   const animatedStyle = useAnimatedStyle(() => ({opacity: pulse.value}))
 
@@ -259,6 +277,13 @@ interface AppsGridProps {
    * by the all-apps sheet. The home grid leaves this off to paint immediately.
    */
   gateOnIconsReady?: boolean
+  /**
+   * Animate the placeholder skeleton's pulse. Pass false while the skeleton is
+   * mounted but not visible (the closed all-apps sheet keeps one mounted) — an
+   * infinite reanimated loop commits every frame and pins the render pipeline
+   * at 60fps even though nothing on screen changes.
+   */
+  skeletonPulse?: boolean
 }
 
 export function AppsGrid({
@@ -268,6 +293,7 @@ export function AppsGrid({
   searchQuery,
   showPlaceholders = false,
   gateOnIconsReady = false,
+  skeletonPulse = true,
 }: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
@@ -886,7 +912,7 @@ export function AppsGrid({
   }
 
   if (showPlaceholders) {
-    return <PlaceholderGrid count={skeletonCount || PLACEHOLDER_COUNT} />
+    return <PlaceholderGrid count={skeletonCount || PLACEHOLDER_COUNT} pulse={skeletonPulse} />
   }
 
   // Gated path (all-apps sheet): the masonry grid renders empty until it measures

@@ -13,7 +13,7 @@
     "backend:start": "bun backend/src/index.ts",
     "miniapp:dev": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp dev",
     "miniapp:build": "cd miniapp && bun run build.ts",
-    "miniapp:pack": "cd miniapp && VERSION=$(node -p \"require('./miniapp.json').version\") && rm -f build/com.mentra.local-merge-$VERSION.zip && mkdir -p build && cd dist && zip -qr ../build/com.mentra.local-merge-$VERSION.zip .",
+    "miniapp:pack": "cd miniapp && PKG=$(node -p \"require('./miniapp.json').packageName\") && VERSION=$(node -p \"require('./miniapp.json').version\") && rm -f build/$PKG-$VERSION.zip && mkdir -p build && cd dist && zip -qr ../build/$PKG-$VERSION.zip .",
     "build": "bun run miniapp:build",
     "pack": "bun run miniapp:build && bun run miniapp:pack"
   },

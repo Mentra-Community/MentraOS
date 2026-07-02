@@ -83,6 +83,15 @@ export async function setBuildEnv() {
   //   process.env[key] = value
   // })
 
+  // Snapshot which variables were already set in the real environment BEFORE
+  // dotenv loads .env. Those keep their values (standard dotenv semantics:
+  // explicit environment beats .env file). CI relies on this — it injects the
+  // release-signing credentials (ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_*) as env
+  // vars while its .env is a verbatim copy of .env.example; letting the file
+  // win clobbered them with empty strings and silently downgraded staging
+  // release builds to debug signing (broken Play internal uploads, June 2026).
+  const inheritedEnv = new Set(Object.keys(process.env))
+
   // Load existing .env
   const existingEnv = config().parsed || {}
 
@@ -121,10 +130,17 @@ export async function setBuildEnv() {
     delete updatedEnv.MAPBOX_DOWNLOADS_TOKEN
   }
 
-  // write env to process.env:
+  // Write env to process.env. buildVars are computed fresh for this build and
+  // always apply; every other key only fills a gap — a variable that was
+  // already set in the environment keeps its value (its actual value is not
+  // echoed either, since env-injected values can be secrets).
   Object.entries(updatedEnv).forEach(([key, value]) => {
-    console.log(`  ${key}: ${value}`)
-    process.env[key] = value
+    if (key in buildVars || !inheritedEnv.has(key)) {
+      process.env[key] = value
+      console.log(`  ${key}: ${value}`)
+    } else {
+      console.log(`  ${key}: (kept from environment)`)
+    }
   })
 
   // Write back to .env

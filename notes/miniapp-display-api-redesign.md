@@ -59,7 +59,7 @@ miniapp SDK (display.*/canvas.*)
 | Canvas | 576×135 usable | 390px wrap, 7 lines | 576×288+ (declared 640×200 — wrong) | 540×280 panel, **500×220 drawable** | 640×480 panel; public exposure TBD (less, for pupil/waveguide margin) |
 | Positioned text | ✗ | ✗ | ✓ text box w/ border, radius, padding; **no font size**; max 6 | ✓ text box w/ 4 font sizes (charset caveats per size), alpha 0–255 | ✓ (OEM spec: x/y + font_code + size + align) |
 | Shapes | ✗ | ✗ | ✗ (container borders only — border+radius box ≈ rect) | ✓ line, rect (radius, fill), circle, per-object alpha | ✓ (OEM spec: line/rect/circle, intensity 0–15) |
-| Images | fullscreen 1-bit — path exists both platforms but **broken in practice** (format must be byte-perfect; see §3.4.6) | ✗ declared — but Ultralite SDK `canvas.drawBackground` is plumbed in `Mach1.swift`/`.kt`, never wired | ✓ positioned, max 4, 4-bit gray, 4096B fragments + ACK | ✓ positioned, 2bpp + zlib | ✓ (OEM spec: positioned, raw/RLE, chunked + ACK, cached by id) |
+| Images | fullscreen 1-bit — path exists both platforms but **broken in practice** (format must be byte-perfect; see §3.4.8) | ✗ declared — but Ultralite SDK `canvas.drawBackground` is plumbed in `Mach1.swift`/`.kt`, never wired | ✓ positioned, max 4, 4-bit gray, 4096B fragments + ACK | ✓ positioned, 2bpp + zlib | ✓ (OEM spec: positioned, raw/RLE, chunked + ACK, cached by id) |
 | Partial update | ✗ | ✗ | ✓ update text/image in place | ✗ (full frame resend) | ✓ (OEM spec: retained ids + `update` + atomic `commit`) |
 | Unused headroom | — | — | firmware **ListContainer** (scrollable selectable menus + selection events) — unexposed | — | we control the spec |
 
@@ -85,7 +85,7 @@ G2 (retained containers), NIMO (immediate draw list), and our own OEM Display Pr
 Differences to bridge:
 
 1. **Retained vs immediate** — G2 wants diffs; NIMO wants full frames. A *declarative* API absorbs both: the dev describes the frame; the host diffs per device. `G2.swift` already works this way internally (reconcile loop; display ops are pure state mutations, `G2.swift:1578-1603, 2160-2230`) — the pattern just isn't surfaced.
-2. **Fonts** — G2: one fixed size; NIMO: 4 quantized sizes with charset limits; Nex: whatever ships. Font size must be a *hint* the host quantizes per device, with real sizes reported in capabilities.
+2. **Fonts** — G2: one fixed size; NIMO: 4 quantized sizes with charset limits; Nex: whatever ships. Resolution: v1 ships **no font-size knob at all** (decision 5); if/when one is added it must be a *hint* the host quantizes per device against capability-reported sizes.
 3. **Coordinates** — different canvas geometries (§4, decision 1).
 
 ---
@@ -100,10 +100,12 @@ Immediate-mode mental model, last-wins per app, no lifecycle to manage:
 const result = await session.display.render([
   {type: "text",  id: "title", box: {x: 0, y: 0, w: 500, h: 40},  text: "Turn left"},
   {type: "text",  id: "stats", box: {x: 0, y: 180, w: 500, h: 40}, text: "2.1 km · 14 min", style: {border: 1, radius: 4, overflow: "ellipsis"}},
-  {type: "image", id: "map",   box: {x: 400, y: 0, w: 100, h: 100}, data: bmpBase64},
-  {type: "rect",  box: {x: 0, y: 176, w: 500, h: 44}, radius: 4, fill: false},
+  {type: "image", id: "map",   box: {x: 400, y: 0, w: 100, h: 100}, data: pngBase64},  // base64 PNG (§3.4.3)
+  {type: "rect",  box: {x: 0, y: 176, w: 500, h: 44}, style: {radius: 4, fill: false}},
 ], {view: "main", durationMs?})
-// result: {status: "displayed" | "queued" | "blocked", reason?} — awaiting is OPT-IN; plain fire-and-forget call works
+// result: {status: "displayed" | "queued" | "blocked", degraded?: boolean, dropped?: string[], reason?}
+// "displayed" = accepted & sent to the device, NOT a render confirmation (only NIMO acks frames; don't promise what G1/G2 can't report)
+// awaiting is OPT-IN; plain fire-and-forget call works
 ```
 
 - **`render` replaces the frame.** Matches NIMO natively and matches how miniapps already think (captions/teleprompter re-send full text each tick). `render([])` ≡ `clear()`; `clear()` stays as sugar.
@@ -112,8 +114,8 @@ const result = await session.display.render([
 - **No `align`, no font `size` in v1.** G2 `TextContainerProperty` has neither field; NIMO labels have no alignment and only 4 quantized sizes with per-size charset caveats. Shipping style knobs that render approximately-wrong (space-padded "centering" with a proportional font) or inconsistently on the two primary targets loses developer trust. Devs position/center the *box* instead. Both can be added later as additive style fields once backends support them; capabilities will advertise them when they exist.
 - **Awaitable result (opt-in).** Today's #1 "why isn't my display showing" is the arbitration layer silently eating frames (boot queue, background lock, other app owns display). The envelope protocol already supports `requestId` + `REQUEST_RESULT`, so `render()` returns a promise resolving `{status, reason?}`; not awaiting keeps fire-and-forget behavior.
 - **Element union is v1-minimal but extensible**: `text | image | rect` now; `line | circle | list` reserved (see decisions 2–3).
-- **Legacy sugar survives**: `showTextWall` / `showReferenceCard` compile onto `render` (one text element filling the default region); `showDoubleTextWall` compiles to two side-by-side boxed text elements (real containers on G2/NIMO, column-composed on G1/Z100 — §3.4.6). Zero migration for the 90% case; captions/teleprompter/kawaii don't change.
-- **`display.measure(text, style, widthPx)` helper** exposes the host's per-device text measurement (line count, fit) so devs never hand-tune against one device — the navigation-miniapp failure mode.
+- **Legacy sugar survives**: `showTextWall` / `showReferenceCard` compile onto `render` (one text element filling the default region); `showDoubleTextWall` compiles to two side-by-side boxed text elements (real containers on G2/NIMO, column-composed on G1/Z100 — §3.4.8). Zero migration for the 90% case; captions/teleprompter/kawaii don't change.
+- **`await display.measure(text, style, widthPx)` helper** exposes the host's per-device text measurement (line count, fit) so devs never hand-tune against one device — the navigation-miniapp failure mode. **Async by necessity**: font metrics live host-side; this is an RPC, never a sync call.
 
 ### 3.2 Host-side IR: the OEM Display Protocol DrawOp list
 
@@ -125,8 +127,8 @@ SDK scene ──compile──▶ DrawOp frame ──┬─▶ Nex / future OEMs:
                                       │     text → TextContainer, image → ImageContainer,
                                       │     rect → bordered empty container
                                       ├─▶ NIMO adapter: DrawOps → dynamic-UI frame (appid 253, is_clear_all_obj=1)
-                                      └─▶ G1/Z100 degrade: extract text elements in reading order (y, then x)
-                                            → join → wrap → text wall; image → fullscreen BMP (G1) / drop (Z100)
+                                      └─▶ G1/Z100 degrade: text elements in reading order (ColumnComposer for rows)
+                                            → join → wrap → text wall; images/rects dropped + reported (§3.4.8)
 ```
 
 New OEM = new adapter — or no adapter, if they implement the spec. The `positioned_text` viewState bypass, the quad-mode magic, and the single-slot model all dissolve because the IR *is* a scene.
@@ -139,10 +141,10 @@ Miniapps must be able to query this (plumb through `session.capabilities`; popul
 display: {
   width: number, height: number,        // real public drawable canvas (fix the 640×200-vs-576×288 lie)
   canPosition: boolean,                 // false → only sugar methods render
-  maxTextElements: number,              // G2: 6
+  maxTextElements: number,              // G2: 6 — rects share this pool on G2 (§3.4.6)
   maxImageElements: number,             // G2: 4
   shapes: ("rect" | "line" | "circle")[],  // G2: ["rect"]; NIMO/Nex: all three eventually
-  fontSizes: number[],                  // quantization targets, px
+  // fontSizes intentionally absent in v1 — no size knob exists (§3.4.5); added with the knob
   intensityLevels: number,              // NIMO 256, OEM spec 16, G1 2
   partialUpdate: boolean,
 } | null                                // Mentra Live
@@ -164,7 +166,7 @@ The API shape doesn't change for this — ids stay optional — but adapters MUS
 
 - **Wrapping always happens on the phone** (display-utils metrics are the single source of truth). The box then either passes through as a container (G2) or decomposes into per-line positioned ops (Nex per OEM spec — `DrawText` is single-line by design; NIMO too if its firmware in-box wrap proves untrustworthy — the PDF doesn't specify wrap-vs-clip, test it).
 - `overflow: "clip" | "ellipsis"`, default `"clip"`. Pagination/scroll stays app-level (display-utils ScrollView helpers).
-- `display.measure(text, style, widthPx)` gives devs the host's exact per-device measurement.
+- `await display.measure(text, style, widthPx)` gives devs the host's exact per-device measurement (async — metrics live host-side).
 
 #### 3.4.3 Images
 
@@ -181,7 +183,17 @@ The API shape doesn't change for this — ids stay optional — but adapters MUS
 
 `text.style`: `border?`, `radius?`, `overflow?`, `breakMode?`. **No `align`, no `size`** (see §3.1 rationale; additive later). Capabilities omit `fontSizes` until a size knob exists.
 
-#### 3.4.6 G1/Z100 degrade rules
+#### 3.4.6 Bounds & budgets
+
+- **Out-of-bounds boxes are clamped, never rejected.** The host intersects every box with the device's drawable canvas and re-wraps text to the clamped width; raw boxes never reach firmware (G2 returns a hard `OVERSIZE_RESPONSE_CONTAINER` error for oversized containers). Clamping is reported via `degraded: true`. This is what makes "designed on G2's 576×288, running on NIMO's 500×220" safe, and vice versa.
+- **Element-budget overflow: render in array order until the device budget is exhausted, drop the rest**, report `degraded: true, dropped: [...]`. Never error — consistent with §3.4.8.
+- **G2 accounting trap: rects share the text-container pool** (a rect compiles to an empty bordered text container, §3.4.4). A scene with 6 texts + 1 rect exceeds G2's budget of 6. `maxTextElements` documents this shared pool.
+
+#### 3.4.7 Scene persistence & replay
+
+The host retains each app's **last scene per (app, view)** and adapters **replay it on device recovery** — glasses reconnect, G2 firmware recovery (`systemExit` → rebuild), display power-cycle. Apps never re-send on reconnect; the current scene is always reconstructible host-side. This is the declarative model's core payoff (recovery = replay, no app cooperation needed — `G2.swift` already does this internally today) and it is normative: the arbitration layer must NOT be stateless.
+
+#### 3.4.8 G1/Z100 degrade rules
 
 Context: few users, dwindling over time — don't over-optimize, but nothing may straight-up break. Guiding rule: **content-preserving, never-erroring, honestly-reported.**
 
@@ -200,6 +212,8 @@ Context: few users, dwindling over time — don't over-optimize, but nothing may
 - Quad-mode magic threshold — replaced by explicit multi-element scenes.
 - Fix docs: `clearView` → `clear`; document actual surface.
 
+**Dashboard disposition**: the whole dashboard surface (`session.dashboard`, `view: "dashboard"`, `showDashboardCard`) is busted/no-op today and nothing uses it. Leave it no-op — do not build dashboard rendering into this redesign. The `view` option stays in the API signature for forward compat, but dashboard semantics are explicitly out of scope.
+
 ---
 
 ## 4. Decisions (made)
@@ -213,16 +227,20 @@ Context: few users, dwindling over time — don't over-optimize, but nothing may
 7. **Awaitable `render()` result, opt-in** — `{status: "displayed" | "queued" | "blocked", reason?}` via existing `requestId`/`REQUEST_RESULT` plumbing. Fire-and-forget stays the default.
 8. **Wrap always on the phone; the box is the SDK abstraction.** G2 gets containers; Nex gets per-line `DrawText` ops (per OEM spec); NIMO in-box wrap is untrusted until tested — fall back to per-line labels if flaky.
 9. **Image input = PNG (documented); adapters always decode → re-encode** — dev bytes never reach the wire verbatim (§3.4.3). No SDK-side format converter.
-10. **G1/Z100: content-preserving degrade, no bitmap attempt in v1** (§3.4.6) — text collapses to a wall (ColumnComposer for side-by-side rows), rects dropped, images dropped + reported via the awaitable result; G1's `canDisplayBitmap` capability flips to `false` to match reality.
+10. **G1/Z100: content-preserving degrade, no bitmap attempt in v1** (§3.4.8) — text collapses to a wall (ColumnComposer for side-by-side rows), rects dropped, images dropped + reported via the awaitable result; G1's `canDisplayBitmap` capability flips to `false` to match reality.
+11. **Out-of-bounds boxes clamped, budget overflow drops tail + reports** (§3.4.6) — never reject a frame, never let raw geometry reach firmware.
+12. **Scene persistence & replay is normative** (§3.4.7) — host retains last scene per (app, view); adapters replay on device recovery; apps never re-send on reconnect.
+13. **Dashboard stays no-op** — the surface is busted today and unused; `view` stays in the signature, dashboard semantics out of scope (§3.5).
 
 ---
 
 ## 5. Phasing
 
-1. **Contract first** — scene/element types + typed display capabilities in the SDK; `render()` compiles to today's layout union under the hood (no host changes yet: G2 gets positioned elements via existing `positioned_text`/`bitmap_view`, others get the text fallback). Migrate the **navigation miniapp** onto it — the acid test, since it holds all the G2 hacks.
-2. **Host IR swap** — DrawOp-list IR through `LocalDisplayManager`/`DisplayProcessor`; real G2 adapter with container diffing (kills the `DeviceManager.swift` viewState bypass); G1/Z100 degrade path.
+1. **Contract first** — scene/element types + typed display capabilities in the SDK; `render()` compiles to today's layout union under the hood (no host changes yet). **Fidelity caveat, stated up front**: today's pipeline is single-slot, so a multi-element scene can only ride it as *sequential* `positioned_text`/`bitmap_view` events — best-effort, non-atomic, no diff guarantees (exactly how navigation hacks it today). Phase 1's real deliverables are the API contract, the typed capabilities, and prepping the **navigation miniapp** migration — the acid test, since it holds all the G2 hacks. Do not expect phase-1 scenes to render atomically; phase 2 fixes that.
+2. **Host IR swap** — DrawOp-list IR through `LocalDisplayManager`/`DisplayProcessor`; real G2 adapter with container diffing (kills the `DeviceManager.swift` viewState bypass); scene persistence/replay (§3.4.7); G1/Z100 degrade path.
 3. **NIMO adapter** — dynamic-UI protocol (appid 253) SGC backend.
-4. **Deprecations** — canvas module, `showTextAt`, dashboard noop, docs fixes.
+4. **Migrate all first-party miniapps** onto `render()`/sugar — Mentra AI, Merge, Captions, Translation, Navigation/Maps, Teleprompter, Recorder, Kawaii, Everything, example-miniapp + template. After this, nothing first-party calls the legacy surface.
+5. **Remove the legacy display API** — delete the canvas module, `showTextAt`/`positioned_text` public surface, legacy layout-union paths that no longer have consumers; fix docs (`clearView` → `clear`, document the real surface).
 
 ---
 
