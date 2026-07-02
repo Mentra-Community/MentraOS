@@ -174,6 +174,25 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
+    public void noLocalApk_invokesRecoveryDownloader() {
+        FactoryResetEventSubscriber.RecoveryDownloader mockDownloader =
+                mock(FactoryResetEventSubscriber.RecoveryDownloader.class);
+        FactoryResetEventSubscriber subscriber =
+                new FactoryResetEventSubscriber(
+                        serviceManager, app, otaHelper,
+                        (ctx, path) -> false,
+                        mockDownloader);
+
+        try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
+            deliverAndSettle(subscriber, new FactoryResetEvent());
+
+            verify(mockDownloader).download(any(Context.class), eq(otaHelper));
+            ota.verify(() -> OtaHelper.installApk(any(Context.class), any(String.class)), never());
+            verify(otaHelper, never()).reinstallApkFromBackup();
+        }
+    }
+
+    @Test
     public void noLocalApk_startsRecoveryDownloadThread() throws InterruptedException {
         // When no local APK is available, the subscriber starts a background download thread.
         // We verify: (a) startOtaFromPhone() is NOT called, (b) reinstallApkFromBackup() is NOT
