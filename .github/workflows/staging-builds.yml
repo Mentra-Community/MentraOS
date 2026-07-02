@@ -17,7 +17,7 @@ name: Staging Builds
 #        - https://staging.ota.mentraglass.com/staging_live_version.json
 #          once the custom domain is attached.
 #      This intentionally does not deploy to the production ota.mentraglass.com
-#      project or include prod_live_version.json.
+#      project or include test_bes_ota_prod_live_version.json.
 #
 # Mobile also uploads to TestFlight (iOS) and Play Store internal track
 # (Android), as the release scripts already do, IF the runner has the creds
@@ -905,8 +905,8 @@ jobs:
             '  Cache-Control: public, max-age=0, must-revalidate' \
             > asg-pages-site/_headers
 
-          if [ -e asg-pages-site/prod_live_version.json ]; then
-            echo "Staging OTA payload must not contain prod_live_version.json." >&2
+          if [ -e asg-pages-site/test_bes_ota_prod_live_version.json ]; then
+            echo "Staging OTA payload must not contain test_bes_ota_prod_live_version.json." >&2
             exit 1
           fi
 
