@@ -250,8 +250,8 @@ class MantleManager {
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
       cloud,
-        miniappAuth: {
-          getToken: (packageName, opts) => {
+      miniappAuth: {
+        getToken: (packageName, opts) => {
           const isDevApp = packageName === DEV_APP_PACKAGE_NAME
           const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
           if (!authPackageName) {

@@ -7,7 +7,6 @@ import {
   BgTimer,
   configureIsland,
   decideDevLaunchRoute,
-  HardwareCompatibility,
   HardwareRequirementLevel,
   HardwareType,
   miniappLauncher,
@@ -58,6 +57,13 @@ class MiniappCatalog {
 
   private refreshTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private refreshInterval: ReturnType<typeof BgTimer.setInterval> | null = null
+
+  /**
+   * Cloud applets we've already asked the cloud to stop because a local
+   * miniapp owns their packageName. Re-armed when the cloud copy reports
+   * not-running, so a later cloud-side start gets stopped again.
+   */
+  private shadowedCloudStopsRequested = new Set<string>()
 
   static getInstance(): MiniappCatalog {
     if (!MiniappCatalog._instance) {
@@ -167,6 +173,14 @@ class MiniappCatalog {
   // ---------------------------------------------------------------------
 
   private async loadExtraApps(): Promise<ClientApp[]> {
+    // A local (new-SDK) miniapp owns its packageName outright: a cloud applet
+    // with the same packageName is a stale duplicate (e.g. the old cloud-SDK
+    // version of a ported miniapp). The island store dedupes by packageName
+    // with the cloud copy winning, so the duplicate must be dropped HERE,
+    // before the merge — otherwise it shadows the local miniapp entirely.
+    const installed = await appRegistry.getInstalledMiniapps()
+    const localPackages = new Set(installed.filter((a) => a.local || a.isMiniappDev).map((a) => a.packageName))
+
     const res = await restComms.getApplets()
     if (res.is_error()) {
       console.error(`MiniappCatalog: getApplets failed: ${res.error}`)
@@ -175,20 +189,52 @@ class MiniappCatalog {
       // running flag to false and cascade into "Cannot reach" error screens.
       // The island store will keep the prior snapshot for whatever isn't
       // re-emitted from local sources during refresh().
-      return useAppStatusStore.getState().apps.filter((a) => !a.local && !a.offline)
+      return useAppStatusStore
+        .getState()
+        .apps.filter((a) => !a.local && !a.offline && !localPackages.has(a.packageName))
     }
-    return res.value.map((app) => ({
-      ...app,
-      loading: false,
-      offline: false,
-      offlineRoute: "",
-      local: false,
-      hidden: false,
-      hardwareRequirements: [
-        ...app.hardwareRequirements,
-        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-      ],
-    }))
+
+    const applets: ClientApp[] = []
+    for (const app of res.value) {
+      if (localPackages.has(app.packageName)) {
+        void this.stopShadowedCloudApplet(app.packageName, app.running)
+        continue
+      }
+      applets.push({
+        ...app,
+        loading: false,
+        offline: false,
+        offlineRoute: "",
+        local: false,
+        hidden: false,
+        hardwareRequirements: [
+          ...app.hardwareRequirements,
+          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+        ],
+      })
+    }
+    return applets
+  }
+
+  /**
+   * A cloud applet hidden behind a local miniapp shouldn't keep running
+   * server-side (it would keep consuming the session — displays, mic subs).
+   * Fire a one-shot stop when the cloud copy reports running; a failed stop
+   * re-arms so the next refresh retries.
+   */
+  private async stopShadowedCloudApplet(packageName: string, running: boolean): Promise<void> {
+    if (!running) {
+      this.shadowedCloudStopsRequested.delete(packageName)
+      return
+    }
+    if (this.shadowedCloudStopsRequested.has(packageName)) return
+    this.shadowedCloudStopsRequested.add(packageName)
+    console.log(`MiniappCatalog: stopping cloud applet ${packageName} — a local miniapp owns this package`)
+    const res = await restComms.stopApp(packageName)
+    if (res.is_error()) {
+      console.error(`MiniappCatalog: stop failed for shadowed cloud applet ${packageName}: ${res.error}`)
+      this.shadowedCloudStopsRequested.delete(packageName)
+    }
   }
 
   private getCapabilities() {
