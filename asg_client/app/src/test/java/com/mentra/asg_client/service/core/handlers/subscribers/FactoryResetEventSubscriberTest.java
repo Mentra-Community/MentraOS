@@ -80,7 +80,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void nonFactoryResetEvent_isNoOp() {
+    public void nonFactoryResetEvent_isNoOp()  {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             FactoryResetEventSubscriber subscriber = subscriberWithInstallable();
 
@@ -94,7 +94,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void stagedUpdateApk_installsLocallyWithoutDownloading() {
+    public void stagedUpdateApk_installsLocallyWithoutDownloading()  {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             ota.when(
                             () ->
@@ -117,7 +117,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void stagedApkInstallFails_fallsBackToBackup() {
+    public void stagedApkInstallFails_fallsBackToBackup()  {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             ota.when(
                             () ->
@@ -151,7 +151,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void noStagedApk_butBackupApk_installsFromBackupDirectly() {
+    public void noStagedApk_butBackupApk_installsFromBackupDirectly()  {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             ota.when(
                             () ->
@@ -174,7 +174,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void noLocalApk_invokesRecoveryDownloader() {
+    public void noLocalApk_invokesRecoveryDownloader()  {
         FactoryResetEventSubscriber.RecoveryDownloader mockDownloader =
                 mock(FactoryResetEventSubscriber.RecoveryDownloader.class);
         FactoryResetEventSubscriber subscriber =
@@ -209,7 +209,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void activeRecording_isStoppedBeforeReset() {
+    public void activeRecording_isStoppedBeforeReset()  {
         MediaCaptureService mediaCaptureService = mock(MediaCaptureService.class);
         when(serviceManager.getMediaCaptureService()).thenReturn(mediaCaptureService);
         when(mediaCaptureService.isRecordingVideo()).thenReturn(true);
@@ -223,7 +223,7 @@ public class FactoryResetEventSubscriberTest {
     }
 
     @Test
-    public void duplicateEvent_whileInProgress_isIgnored() {
+    public void duplicateEvent_whileInProgress_isIgnored()  {
         try (MockedStatic<OtaHelper> ota = mockStatic(OtaHelper.class)) {
             ota.when(
                             () ->

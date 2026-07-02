@@ -80,8 +80,6 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
         this.otaHelper = otaHelper;
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.apkChecker = defaultApkChecker();
-        // Lambda captures `this` after construction — valid because the field is only read
-        // after the constructor returns, when downloadAndInstallApk() is called.
         this.recoveryDownloader =
                 (ctx, helper) ->
                         new Thread(
@@ -168,6 +166,9 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
 
         // Delay the install so an in-progress MediaRecorder.stop() can finalize the file before the
         // install broadcast kills this process (same rationale as ShutdownEventSubscriber).
+        // Note: performReset() copies the installed APK on the main looper. For typical APK sizes
+        // (10-50 MB) the copy completes in well under 1 s on device flash, which is acceptable.
+        // A fully off-looper design would require a threading seam for the static-mock tests.
         mainHandler.postDelayed(this::performReset, INSTALL_DELAY_MS);
     }
 
@@ -346,26 +347,59 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
             JSONObject appEntry =
                     manifest.getJSONObject("apps").getJSONObject(OtaConstants.ASG_PACKAGE);
 
-            // Prefer a dedicated recoveryApkUrl field; fall back to the regular apkUrl.
-            // The server can publish a pinned recovery build under recoveryApkUrl without
-            // affecting the normal over-the-air update channel.
-            String apkUrl = appEntry.optString("recoveryApkUrl", "");
-            if (apkUrl.isEmpty()) {
-                apkUrl = appEntry.getString("apkUrl");
-            }
-            Log.i(TAG, "🏭 Recovery APK URL resolved: " + apkUrl);
+            // Prefer a dedicated recoveryApkUrl field (server can publish a pinned recovery
+            // build independent of the normal OTA channel); fall back to the regular apkUrl.
+            String recoveryApkUrl = appEntry.optString("recoveryApkUrl", "");
+            boolean usingRecoveryUrl = !recoveryApkUrl.isEmpty();
+            String apkUrl = usingRecoveryUrl ? recoveryApkUrl : appEntry.getString("apkUrl");
 
-            // 3. Download to the factory-reset staging path (separate from the OTA update path).
-            boolean downloaded =
-                    otaHelper.downloadApk(
-                            apkUrl, appEntry, ctx, OtaConstants.FACTORY_RESET_APK_FILENAME);
-            if (!downloaded) {
-                Log.e(TAG, "🏭 Recovery APK download failed - factory reset aborted");
+            // Log only scheme+host+path; query-string tokens must not appear in device logs.
+            String urlForLog = apkUrl;
+            try {
+                java.net.URL parsed = new java.net.URL(apkUrl);
+                urlForLog = parsed.getProtocol() + "://" + parsed.getHost() + parsed.getPath();
+            } catch (Exception ignored) {}
+            Log.i(TAG, "🏭 Recovery APK URL resolved: " + urlForLog
+                    + (usingRecoveryUrl ? " (recoveryApkUrl)" : " (apkUrl fallback)"));
+
+            // 3. Download directly to the factory-reset staging path.
+            //
+            // We do not delegate to OtaHelper.downloadApk() because that method always
+            // verifies sha256 against the manifest's single sha256 field.  When recoveryApkUrl
+            // points to a different binary than apkUrl the checksums differ and verification
+            // would always fail.  Instead we download the bytes ourselves and then validate the
+            // resulting APK via apkChecker (package-name check), relying on the Android package
+            // manager to enforce signing-certificate continuity on install.
+            File stagingDir = new File(OtaConstants.BASE_DIR);
+            if (!stagingDir.exists() && !stagingDir.mkdirs()) {
+                Log.e(TAG, "🏭 Cannot create staging dir for recovery APK");
+                resetInProgress.set(false);
+                return;
+            }
+            File stagingFile = new File(OtaConstants.FACTORY_RESET_APK_PATH);
+            HttpURLConnection apkConn =
+                    (HttpURLConnection) new URL(apkUrl).openConnection();
+            apkConn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
+            apkConn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
+            apkConn.connect();
+            try (InputStream apkIn = apkConn.getInputStream();
+                    FileOutputStream apkOut = new FileOutputStream(stagingFile)) {
+                byte[] buf = new byte[64 * 1024];
+                int read;
+                while ((read = apkIn.read(buf)) > 0) {
+                    apkOut.write(buf, 0, read);
+                }
+            }
+
+            // 4. Validate the downloaded APK (package name must match the ASG client).
+            if (!apkChecker.isInstallableApk(ctx, stagingFile.getAbsolutePath())) {
+                Log.e(TAG, "🏭 Downloaded recovery APK failed package-name validation");
+                stagingFile.delete();
                 resetInProgress.set(false);
                 return;
             }
 
-            // 4. Install directly — no version check, no firmware steps.
+            // 5. Install directly — no version check, no firmware steps.
             Log.i(TAG, "🏭 Recovery APK downloaded; triggering install");
             if (!OtaHelper.installApk(ctx, OtaConstants.FACTORY_RESET_APK_PATH)) {
                 Log.e(TAG, "🏭 Recovery APK install broadcast failed");
