@@ -139,6 +139,15 @@ class MentraLive : SGCManager() {
             }
             return manufData[ADV_MANUF_PAIRING_FLAG_OFFSET] == ADV_PAIRING_DISCOVERABLE
         }
+
+        // Field firmware does not advertise the Mentra manufacturer pairing flag. Its absence
+        // means "legacy firmware, discoverability unknown", which must NOT hide the unit — the
+        // OS-1615 rollout cannot require new firmware just to be able to pair. Only firmware that
+        // actually advertises the flag can assert "not in pairing mode" and be filtered out.
+        private fun advertisesPairingFlag(result: ScanResult): Boolean {
+            val manufData = result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
+            return manufData != null && manufData.size > ADV_MANUF_PAIRING_FLAG_OFFSET
+        }
         private const val SHUTDOWN_RECENT_MS = 45_000L // Consider "recent shutdown" for 45s
 
         // Keep-alive parameters
@@ -1010,7 +1019,10 @@ class MentraLive : SGCManager() {
                     ) {
                         val isReconnectTarget =
                                 savedDeviceName != null && savedDeviceName == deviceName
-                        if (!isReconnectTarget && !isPairingDiscoverable(result)) {
+                        if (!isReconnectTarget &&
+                                        advertisesPairingFlag(result) &&
+                                        !isPairingDiscoverable(result)
+                        ) {
                             return
                         }
                         val glassType = if (deviceName == "Xy_A") "Standard" else "K900"

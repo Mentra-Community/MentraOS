@@ -845,7 +845,9 @@ extension MentraLive: CBCentralManagerDelegate {
         {
             let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME)
             let isReconnectTarget = savedDeviceName != nil && savedDeviceName == name
-            if !isReconnectTarget && !isPairingDiscoverable(advertisementData) {
+            if !isReconnectTarget && advertisesPairingFlag(advertisementData)
+                && !isPairingDiscoverable(advertisementData)
+            {
                 return
             }
 
@@ -1227,6 +1229,23 @@ class MentraLive: NSObject, SGCManager {
             return false
         }
         return manufData[advManufPairingFlagOffset] == advPairingDiscoverable
+    }
+
+    // Field firmware does not advertise the Mentra manufacturer pairing flag. Its absence means
+    // "legacy firmware, discoverability unknown", which must NOT hide the unit — the OS-1615
+    // rollout cannot require new firmware just to be able to pair. Only advertisements carrying
+    // the Mentra company id can assert "not in pairing mode" and be filtered out. CoreBluetooth
+    // returns manufacturer data prefixed with the 2-byte company id (little-endian), so verify it
+    // matches before trusting the flag byte — otherwise unrelated manufacturer data would wrongly
+    // hide a legacy unit.
+    private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
+        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufData.count > advManufPairingFlagOffset
+        else {
+            return false
+        }
+        let companyId = UInt16(manufData[0]) | (UInt16(manufData[1]) << 8)
+        return companyId == mentraManufacturerId
     }
 
     var connectionState: String = ConnTypes.DISCONNECTED

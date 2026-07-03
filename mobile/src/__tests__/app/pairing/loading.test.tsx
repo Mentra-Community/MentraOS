@@ -170,4 +170,26 @@ describe("pairing loading screen", () => {
       )
     })
   })
+
+  it("navigates to success when firmware never emits pairing_info (legacy fallback)", async () => {
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+
+    // No pairing_info event arrives (field firmware). Without the fallback, pairing hangs forever.
+    expect(replace).not.toHaveBeenCalled()
+
+    act(() => {
+      jest.advanceTimersByTime(5_000)
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
 })

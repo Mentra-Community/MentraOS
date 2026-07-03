@@ -17,6 +17,11 @@ import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 
+// Field firmware does not emit the pairing_info handshake. Once the glasses are fully booted,
+// wait this long for pairing_info before treating its absence as had_previous_bond=false so
+// pairing does not hang forever on units running firmware without the new handshake.
+const PAIRING_INFO_FALLBACK_MS = 5_000
+
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
   const route = useRoute()
@@ -30,6 +35,7 @@ export default function GlassesPairingLoadingScreen() {
   const pairingInfoRef = useRef<boolean | null>(null)
   const [pairingResolved, setPairingResolved] = useState(false)
   const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
+  const [pairingInfoTimedOut, setPairingInfoTimedOut] = useState(false)
   const wipePromptShownRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
 
@@ -188,6 +194,18 @@ export default function GlassesPairingLoadingScreen() {
   }, [deviceModel, deviceName])
 
   useEffect(() => {
+    if (!isMentraLive || !glassesFullyBooted || pairingInfoReceived || pairingInfoTimedOut) {
+      return
+    }
+    const timer = setTimeout(() => {
+      setPairingInfoTimedOut(true)
+    }, PAIRING_INFO_FALLBACK_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [isMentraLive, glassesFullyBooted, pairingInfoReceived, pairingInfoTimedOut])
+
+  useEffect(() => {
     if (!glassesFullyBooted) {
       return
     }
@@ -196,10 +214,10 @@ export default function GlassesPairingLoadingScreen() {
     }
 
     if (isMentraLive) {
-      if (!pairingInfoReceived) {
+      if (!pairingInfoReceived && !pairingInfoTimedOut) {
         return
       }
-      if (pairingInfoRef.current === true && !pairingResolved) {
+      if (pairingInfoReceived && pairingInfoRef.current === true && !pairingResolved) {
         promptMediaWipe()
         return
       }
@@ -209,7 +227,16 @@ export default function GlassesPairingLoadingScreen() {
     setTimeout(() => {
       replace("/pairing/success", {deviceModel: deviceModel})
     }, 1000)
-  }, [glassesFullyBooted, replace, deviceModel, isMentraLive, pairingInfoReceived, pairingResolved, promptMediaWipe])
+  }, [
+    glassesFullyBooted,
+    replace,
+    deviceModel,
+    isMentraLive,
+    pairingInfoReceived,
+    pairingInfoTimedOut,
+    pairingResolved,
+    promptMediaWipe,
+  ])
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
