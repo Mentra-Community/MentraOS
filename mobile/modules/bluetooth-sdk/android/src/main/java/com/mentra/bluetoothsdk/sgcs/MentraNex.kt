@@ -563,20 +563,56 @@ class MentraNex : SGCManager() {
     // first (retained-mode contract); legacy calls (null layoutId) leave it untouched.
     private var currentLayoutId: String? = null
 
-    /** Wipe the previous scene when a new layout id arrives. */
+    /**
+     * Handle a scene/layout change. DeviceManager sweeps the previous app's
+     * elements before a cross-app frame arrives, so the registry is usually
+     * empty here and switching costs nothing. Only when stale components remain
+     * (e.g. legacy callers with no sweep) do we delete them — individually, NOT
+     * via CanvasClear: clear also exits the canvas VIEW (the first create
+     * re-activates it), which reads as a full-screen flash.
+     */
     private fun ensureLayout(layoutId: String?) {
         if (layoutId != null && layoutId != currentLayoutId) {
-            canvasElements.clear()
-            sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
+            if (canvasElements.isNotEmpty()) {
+                for (el in canvasElements.values) {
+                    sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(el.firmwareId))
+                }
+                canvasElements.clear()
+            }
             currentLayoutId = layoutId
         }
     }
 
-    /** Lowest free firmware id in the type's pool, or null when the pool (6 text / 4 bitmap) is full. */
+    /**
+     * A replay frame (reconnect / firmware recovery / re-dispatch) repaints from
+     * scratch: forget the registry so every element takes the CREATE path.
+     * Create-on-existing-id is replace in firmware, so repainting over a live
+     * canvas is safe, and updates-to-dead-ids (which firmware drops silently)
+     * can never happen.
+     */
+    override fun onSceneReplay(appId: String) {
+        canvasElements.clear()
+        currentLayoutId = appId
+    }
+
+    /**
+     * Free firmware id from the type's pool. When the pool is exhausted the
+     * OLDEST registered element of that type is evicted for real: its firmware
+     * component is deleted and its id reused (LinkedHashMap preserves insertion
+     * order).
+     */
     private fun allocFirmwareId(isBitmap: Boolean): Int? {
         val pool = if (isBitmap) canvasBitmapIdPool else canvasTextIdPool
         val used = canvasElements.values.filter { it.isBitmap == isBitmap }.map { it.firmwareId }.toSet()
-        return pool.firstOrNull { it !in used }
+        pool.firstOrNull { it !in used }?.let {
+            return it
+        }
+        // Pool full — evict the oldest same-type element.
+        val oldest = canvasElements.entries.firstOrNull { it.value.isBitmap == isBitmap } ?: return null
+        Bridge.log("Nex: pool full — evicting oldest ${if (isBitmap) "bitmap" else "text"} element '${oldest.key}' (fw id ${oldest.value.firmwareId})")
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(oldest.value.firmwareId))
+        canvasElements.remove(oldest.key)
+        return oldest.value.firmwareId
     }
 
     // Legacy positioned text: identity is the rect, so repeated updates reuse the component.
@@ -798,7 +834,14 @@ class MentraNex : SGCManager() {
             private fun handleDisconnection(gatt: BluetoothGatt) {
                 Bridge.log("glass disconnected, stopping heartbeats")
                 Bridge.log("Entering STATE_DISCONNECTED branch")
-                
+
+                // The glasses lose their canvas on disconnect — forget the
+                // component registry so post-reconnect frames take the CREATE
+                // path (firmware silently drops updates to dead component ids).
+                // The host replays the current scene after reconnect.
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before disconnection
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before disconnection: $microphoneStateBeforeDisconnection")
@@ -1686,6 +1729,19 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadUpEvent())
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
+                }
+                GlassesToPhone.PayloadCase.CANVAS_RESULT -> {
+                    // Ack for CanvasCreateComponent / CanvasClear (updates are
+                    // unacked). Firmware codes: OK / INVALID (bad id for type) /
+                    // OVERSIZE (bitmap > 200x200) / OOM (no backing storage).
+                    // Consumed for observability — a silent blank screen becomes
+                    // a diagnosable log line. Non-OK codes also invalidate the
+                    // registry entry so the next frame recreates the component.
+                    val canvasResult = glassesToPhone.canvasResult
+                    if (canvasResult.code != mentraos.ble.MentraosBle.CanvasResult.ResultCode.OK) {
+                        Bridge.log("Nex: CANVAS_RESULT id=${canvasResult.id} code=${canvasResult.code} — dropping registry entry for recreate")
+                        canvasElements.entries.removeAll { it.value.firmwareId == canvasResult.id.toInt() }
+                    }
                 }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {

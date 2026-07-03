@@ -325,6 +325,12 @@ struct ViewState {
         ),
     ]
 
+    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
+    // viewStates. When a slot holds a scene, viewStates carries a "scene"
+    // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
+    // native re-dispatch coherent (dashboard exit re-applies a complete scene).
+    var sceneStates: [SceneFrame?] = [nil, nil]
+
     override init() {
         Bridge.log("MAN: init()")
         super.init()
@@ -732,6 +738,11 @@ struct ViewState {
                     borderWidth: currentViewState.borderWidth ?? 0,
                     borderRadius: currentViewState.borderRadius ?? 0
                 )
+            case "scene":
+                let sceneIndex = (headUp && self.contextualDashboard) ? 1 : 0
+                if let frame = self.sceneStates[sceneIndex] {
+                    await sgc?.applySceneFrame(frame)
+                }
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -1044,8 +1055,35 @@ struct ViewState {
             stateIndex = 0
         }
 
-        let layout = event["layout"] as! [String: Any]
-        let layoutType = layout["layoutType"] as! String
+        // Scene frames (display.render() pipeline) take their own path: the
+        // whole frame is the unit, not a layout, and the host's per-element
+        // annotations make redundant frames self-deduping (all-"unchanged"
+        // frames no-op in the SGC base handler).
+        if let sceneMap = event["scene"] as? [String: Any] {
+            handleSceneEvent(stateIndex, sceneMap)
+            return
+        }
+
+        guard let layout = event["layout"] as? [String: Any],
+              let layoutType = layout["layoutType"] as? String
+        else {
+            Bridge.log("MAN: displayEvent missing layout")
+            return
+        }
+
+        // Scene→legacy handoff: a legacy layout is about to draw over a scene
+        // (e.g. a cloud app taking the view from a miniapp). Sweep the scene's
+        // elements first so they don't linger under the new content; clear_view
+        // wipes everything anyway.
+        if let prevFrame = sceneStates[stateIndex] {
+            sceneStates[stateIndex] = nil
+            if layoutType != "clear_view" {
+                let ids = prevFrame.elements.map(\.id)
+                Task { [weak self] in
+                    await self?.sgc?.clearSceneElements(ids)
+                }
+            }
+        }
         var text = layout["text"] as? String ?? " "
         var topText = layout["topText"] as? String ?? " "
         var bottomText = layout["bottomText"] as? String ?? " "
@@ -1090,26 +1128,11 @@ struct ViewState {
             }
         }
 
-        // positioned_text is a sticky overlay container (e.g. the nav trip-stats
-        // label) that lives ALONGSIDE the main view. It must NOT flow through the
-        // single replaceable viewState[stateIndex] — otherwise the constantly-
-        // refreshing main text_wall (maneuver text) and the minimap bitmap_view
-        // overwrite it every frame and it never renders. Route it straight to the
-        // SGC, which keeps its own persistent text container for that rect.
-        if layoutType == "positioned_text" {
-            Bridge.log(
-                "MAN: positioned_text (sticky) → text='\(text)' rect=\(bmpX ?? 0),\(bmpY ?? 0) \(bmpWidth ?? 576)x\(bmpHeight ?? 288)"
-            )
-            Task { [weak self] in
-                await self?.sgc?.sendPositionedText(
-                    text,
-                    x: bmpX ?? 0, y: bmpY ?? 0,
-                    width: bmpWidth ?? 576, height: bmpHeight ?? 288,
-                    borderWidth: borderWidth ?? 0, borderRadius: borderRadius ?? 0
-                )
-            }
-            return
-        }
+        // NOTE: positioned_text used to bypass the viewState slot here (the
+        // "sticky overlay" hack for the old nav HUD). Scenes made that
+        // obsolete: multi-element frames arrive as ONE scene event, so nothing
+        // clobbers anything. Legacy positioned_text now flows through the slot
+        // like every other layout (matching Android).
 
         let cS = viewStates[stateIndex]
         let nS = newViewState
@@ -1134,6 +1157,93 @@ struct ViewState {
         } else if stateIndex == 1 && hUp {
             sendCurrentState()
         }
+    }
+
+    /// Parse + store a scene frame, then dispatch it if its view is visible.
+    private func handleSceneEvent(_ stateIndex: Int, _ sceneMap: [String: Any]) {
+        guard var frame = parseSceneFrame(sceneMap) else { return }
+        let prevFrame = sceneStates[stateIndex]
+
+        if prevFrame == nil {
+            // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
+            // text wall) must not linger under the scene's elements.
+            // clearDisplay is the per-device "wipe what's there" (blank-in-place
+            // on G2 — no page rebuild).
+            let prevLegacyType = viewStates[stateIndex].layoutType
+            if !prevLegacyType.isEmpty, prevLegacyType != "clear_view", prevLegacyType != "scene" {
+                sgc?.clearDisplay()
+            }
+        } else if let prevFrame, prevFrame.appId != frame.appId {
+            // Cross-app switch: the host's diff baseline is per-app, so the new
+            // app's annotations don't know the old app's elements are on the
+            // glasses. Sweep the old app's elements (SGC registries still map
+            // them), then paint the new frame from scratch. The boot message
+            // interposes between apps in practice, so this isn't visible.
+            let ids = prevFrame.elements.map(\.id)
+            Task { [weak self] in
+                await self?.sgc?.clearSceneElements(ids)
+            }
+            frame = frame.asReplay()
+        }
+
+        // Store the REDISPATCH form: any later sendCurrentState (dashboard
+        // exit, head-up return) must repaint the whole frame — the original
+        // annotations are only valid for the first dispatch right now.
+        sceneStates[stateIndex] = frame.asReplay()
+        viewStates[stateIndex] = ViewState(
+            topText: " ", bottomText: " ", title: " ", layoutType: "scene",
+            text: " ", data: nil, animationData: nil
+        )
+
+        let hUp = headUp && contextualDashboard
+        if (stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp) {
+            dispatchSceneFrame(frame)
+        }
+    }
+
+    /// Guarded scene dispatch — mirrors sendCurrentState's send conditions.
+    private func dispatchSceneFrame(_ frame: SceneFrame) {
+        if screenDisabled { return }
+        if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true { return }
+        guard sgc?.fullyBooted == true else {
+            Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
+            return
+        }
+        Task { [weak self] in
+            await self?.sgc?.applySceneFrame(frame)
+        }
+    }
+
+    private func parseSceneFrame(_ sceneMap: [String: Any]) -> SceneFrame? {
+        guard let elementsRaw = sceneMap["elements"] as? [[String: Any]] else { return nil }
+        let elements: [SceneElement] = elementsRaw.compactMap { el in
+            guard let id = el["id"] as? String,
+                  let type = el["type"] as? String,
+                  let box = el["box"] as? [String: Any]
+            else { return nil }
+            let style = el["style"] as? [String: Any]
+            return SceneElement(
+                id: id,
+                type: type,
+                x: (box["x"] as? NSNumber)?.int32Value ?? 0,
+                y: (box["y"] as? NSNumber)?.int32Value ?? 0,
+                w: (box["w"] as? NSNumber)?.int32Value ?? 0,
+                h: (box["h"] as? NSNumber)?.int32Value ?? 0,
+                text: (el["text"] as? String).map { parsePlaceholders($0) },
+                data: el["data"] as? String,
+                border: ((style?["border"]) as? NSNumber)?.int32Value ?? 0,
+                radius: ((style?["radius"]) as? NSNumber)?.int32Value ?? 0,
+                change: el["change"] as? String ?? "created",
+                contentHash: el["contentHash"] as? String ?? ""
+            )
+        }
+        return SceneFrame(
+            appId: sceneMap["appId"] as? String ?? "",
+            epoch: (sceneMap["sceneEpoch"] as? NSNumber)?.intValue ?? 0,
+            replay: sceneMap["replay"] as? Bool ?? false,
+            elements: elements,
+            removed: (sceneMap["removed"] as? [String]) ?? []
+        )
     }
 
     func showDashboard() {

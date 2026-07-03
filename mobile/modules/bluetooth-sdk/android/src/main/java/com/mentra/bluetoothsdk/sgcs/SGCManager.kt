@@ -6,6 +6,39 @@ import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
+/**
+ * One element of a scene frame (display.render()). Geometry is raw pixels on
+ * the device's drawable canvas; `change` is the host differ's annotation
+ * against the previous frame sent to this device.
+ */
+data class SceneElement(
+        val id: String,
+        val type: String, // "text" | "rect" | "image"
+        val x: Int,
+        val y: Int,
+        val w: Int,
+        val h: Int,
+        val text: String?,
+        val data: String?, // base64 image pixels (SGC decodes → re-encodes to wire format)
+        val border: Int,
+        val radius: Int,
+        val change: String, // "created" | "updated" | "moved" | "unchanged"
+        val contentHash: String
+)
+
+/**
+ * A whole scene from the host pipeline — the full frame plus per-element change
+ * annotations and host-computed removes. Full-frame consumers can serialize
+ * `elements` and ignore the annotations; per-element consumers walk them.
+ */
+data class SceneFrame(
+        val appId: String,
+        val epoch: Int,
+        val replay: Boolean,
+        val elements: List<SceneElement>,
+        val removed: List<String>
+)
+
 abstract class SGCManager {
     // Hard coded device properties:
     @JvmField var type: String = ""
@@ -123,6 +156,67 @@ abstract class SGCManager {
 
     /** Remove a retained layout element by id. Default: no-op (SGC doesn't support layouts). */
     open fun removeLayoutElement(elementId: String, layoutId: String?) {}
+
+    /**
+     * Apply a whole scene frame from the host pipeline (display.render()).
+     *
+     * The host has already diffed the scene against what it last sent, so each
+     * element arrives annotated (created/updated/moved/unchanged) and `removed`
+     * lists what disappeared. This default implementation is fully generic:
+     *
+     *  - PAINT-THEN-SWEEP: creates/updates/moves first (new content lands over
+     *    or beside old), removes LAST — so a scene transition never shows a
+     *    blank interval.
+     *  - "unchanged" elements are skipped entirely (the host diff is the truth;
+     *    this is also what prevents image re-uploads over BLE).
+     *  - `replay` frames arrive all-"created" after a reconnect/recovery —
+     *    [onSceneReplay] lets an SGC reset its component registry first so
+     *    creates take the create path (updates to dead firmware ids are dropped
+     *    silently by hardware).
+     *  - rects compile to empty bordered text boxes (no shape primitive on
+     *    current targets); a rect always gets a visible border.
+     *
+     * SGCs with per-element verbs (G2, Mentra Display) just implement
+     * [drawLayoutText]/[drawLayoutBitmap]/[removeLayoutElement]. A full-frame
+     * device (e.g. NIMO-style) overrides this whole method instead and
+     * serializes [SceneFrame.elements], ignoring the annotations.
+     */
+    open fun applySceneFrame(frame: SceneFrame) {
+        if (frame.replay) {
+            onSceneReplay(frame.appId)
+        }
+        for (el in frame.elements) {
+            if (!frame.replay && el.change == "unchanged") continue
+            when (el.type) {
+                "text" ->
+                    drawLayoutText(el.text ?: "", el.x, el.y, el.w, el.h, el.border, el.radius, el.id, frame.appId)
+                "rect" ->
+                    drawLayoutText("", el.x, el.y, el.w, el.h, maxOf(1, el.border), el.radius, el.id, frame.appId)
+                "image" ->
+                    el.data?.let { drawLayoutBitmap(it, el.x, el.y, el.w, el.h, el.id, frame.appId) }
+                else -> Bridge.log("SGC: applySceneFrame: unknown element type ${el.type}")
+            }
+        }
+        for (id in frame.removed) {
+            removeLayoutElement(id, frame.appId)
+        }
+    }
+
+    /**
+     * A replay frame is about to repaint from scratch — forget any retained
+     * component bookkeeping for [appId] so "created" elements take the create
+     * path. Default: no-op.
+     */
+    open fun onSceneReplay(appId: String) {}
+
+    /**
+     * Remove a set of scene elements (scene→legacy handoff: a legacy layout is
+     * about to draw and the previous scene's elements must not linger under it).
+     */
+    open fun clearSceneElements(elementIds: List<String>) {
+        for (id in elementIds) removeLayoutElement(id, null)
+    }
+
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

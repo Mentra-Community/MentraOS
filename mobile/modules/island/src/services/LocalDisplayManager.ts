@@ -150,13 +150,14 @@ class LocalDisplayManager {
     // without rendering must put the prior frame back rather than blank it.
     const preBoot = this.currentDisplay
 
-    // Send the boot message directly (bypass throttle + arbitration — this is
-    // a system display).
-    const bootEvent: Record<string, unknown> = {
+    // Send the boot message directly (bypass arbitration — this is a system
+    // display). Goes through sendNow so scene devices render it as a scene:
+    // otherwise every app start would be a legacy→scene transition on the
+    // glasses (which costs a blanking clear).
+    this.sendNow(SYSTEM_BOOT_PKG, {
       view: "main",
       layout: {layoutType: "text_wall", text: `Starting ${displayName}…`},
-    }
-    this.sendToNative(SYSTEM_BOOT_PKG, bootEvent, null)
+    })
 
     const timerId = BgTimer.setTimeout(() => {
       this.endBoot(/* triggeredByFirstDisplay */ false)

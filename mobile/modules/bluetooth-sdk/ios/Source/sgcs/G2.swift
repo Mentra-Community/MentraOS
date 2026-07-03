@@ -1622,6 +1622,14 @@ class G2: NSObject, SGCManager {
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
+
+    /// Scene-verb registries (display.render() pipeline): element id → container
+    /// id. Containers stay rect-keyed underneath — these pin element↔container
+    /// so content updates go in place and moves recreate at the SAME container
+    /// id. At most one app's ids are live at a time (DeviceManager sweeps the
+    /// previous app's elements on an app switch).
+    private var sceneTextByElement: [String: Int32] = [:]
+    private var sceneImageByElement: [String: Int32] = [:]
     private static let defaultImgContainer = (
         x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100)
     )
@@ -2207,6 +2215,121 @@ class G2: NSObject, SGCManager {
         // G2 doesn't have native double text wall, combine them
         let combined = top + "\n\n" + bottom
         await sendTextWall(combined)
+    }
+
+    // MARK: - Scene verbs (display.render() pipeline)
+
+    func onSceneReplay(_: String) async {
+        // A replay frame repaints from scratch through the create path; forget
+        // the element mapping so creates re-match/re-register cleanly.
+        sceneTextByElement.removeAll()
+        sceneImageByElement.removeAll()
+    }
+
+    func drawLayoutText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, elementId: String, layoutId _: String?
+    ) async {
+        let content = text.isEmpty ? " " : text
+        if let existingId = sceneTextByElement[elementId] {
+            if let i = textContainers.firstIndex(where: { $0.id == existingId }) {
+                let c = textContainers[i]
+                if c.x == x, c.y == y, c.width == width, c.height == height,
+                   c.borderWidth == borderWidth, c.borderRadius == borderRadius
+                {
+                    // Content-only change: update in place — NEVER a page
+                    // rebuild. On G2 this is correctness, not perf: page
+                    // teardown couples to mic state and firmware recovery
+                    // storms (design doc §3.4.1 hard rule).
+                    textContainers[i].content = content
+                    textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                    signalDisplayDirty()
+                    return
+                }
+                // Moved/restyled: recreate at the SAME container id (structural).
+                textContainers[i] = TextContainer(
+                    id: existingId, x: x, y: y, width: width, height: height, content: content,
+                    borderWidth: borderWidth, borderColor: G2.defaultTextContainer.borderColor,
+                    borderRadius: borderRadius, paddingLength: G2.defaultTextContainer.paddingLength,
+                    pendingSends: 1 + EVEN_HUB_RESEND_COUNT
+                )
+                signalDisplayDirty()
+                await rebuildPage()
+                return
+            }
+            // Container got evicted underneath us — fall through to create.
+            sceneTextByElement.removeValue(forKey: elementId)
+        }
+
+        await sendTextAt(
+            content, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius
+        )
+        if let i = textContainers.firstIndex(where: {
+            $0.matches(
+                x: x, y: y, width: width, height: height, borderWidth: borderWidth,
+                borderColor: G2.defaultTextContainer.borderColor, borderRadius: borderRadius,
+                paddingLength: G2.defaultTextContainer.paddingLength)
+        }) {
+            let cid = textContainers[i].id
+            // The container id may have been LRU-recycled from another element.
+            sceneTextByElement = sceneTextByElement.filter { $0.value != cid }
+            sceneTextByElement[elementId] = cid
+        }
+    }
+
+    func drawLayoutBitmap(
+        base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        elementId: String, layoutId _: String?
+    ) async -> Bool {
+        if let existingId = sceneImageByElement[elementId] {
+            if let i = imageContainers.firstIndex(where: { $0.id == existingId }) {
+                if !imageContainers[i].matches(x: x, y: y, width: width, height: height) {
+                    // Moved: blacken the old rect in place (no per-container
+                    // delete on G2) and let the normal path place the new rect.
+                    if !imageContainers[i].bmpData.isEmpty {
+                        imageContainers[i].bmpData = Data()
+                        imageContainers[i].dirty = true
+                        signalDisplayDirty()
+                    }
+                    sceneImageByElement.removeValue(forKey: elementId)
+                }
+            } else {
+                sceneImageByElement.removeValue(forKey: elementId)
+            }
+        }
+
+        let ok = await displayBitmap(
+            base64ImageData: base64ImageData, x: x, y: y, width: width, height: height
+        )
+        if ok, let i = imageContainers.firstIndex(where: {
+            $0.matches(x: x, y: y, width: width, height: height)
+        }) {
+            let cid = imageContainers[i].id
+            sceneImageByElement = sceneImageByElement.filter { $0.value != cid }
+            sceneImageByElement[elementId] = cid
+        }
+        return ok
+    }
+
+    func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
+        if let id = sceneTextByElement.removeValue(forKey: elementId),
+           let i = textContainers.firstIndex(where: { $0.id == id })
+        {
+            // Blank in place — G2 has no per-container delete, and shutdownPage
+            // is the mic-coupled footgun (see clearDisplay).
+            textContainers[i].content = " "
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+            signalDisplayDirty()
+        }
+        if let id = sceneImageByElement.removeValue(forKey: elementId),
+           let i = imageContainers.firstIndex(where: { $0.id == id }),
+           !imageContainers[i].bmpData.isEmpty
+        {
+            imageContainers[i].bmpData = Data()
+            imageContainers[i].dirty = true
+            signalDisplayDirty()
+        }
     }
 
     func clearDisplay() {

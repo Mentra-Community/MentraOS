@@ -2041,10 +2041,12 @@ class G2 : SGCManager() {
         val ry = y ?: defaultTextY
         val rw = width ?: defaultTextWidth
         val rh = height ?: defaultTextHeight
-        val rBorderWidth = defaultTextBorderWidth
-        val rBorderColor = defaultTextBorderColor
-        val rBorderRadius = defaultTextBorderRadius
-        val rPaddingLength = defaultTextPaddingLength
+        // Honor caller-provided border styling (scene rects render as bordered
+        // empty containers — a border of 0-by-default here made them invisible).
+        val rBorderWidth = borderWidth ?: defaultTextBorderWidth
+        val rBorderColor = borderColor ?: defaultTextBorderColor
+        val rBorderRadius = borderRadius ?: defaultTextBorderRadius
+        val rPaddingLength = paddingLength ?: defaultTextPaddingLength
         val content = if (text.isEmpty()) " " else text
 
         // Pure state mutation: update the container's content and schedule its sends; the reconcile
@@ -2212,6 +2214,164 @@ class G2 : SGCManager() {
         }
 
         return true
+    }
+
+    // ── Scene verbs (display.render() pipeline) ─────────────────────────────
+    // Element-id-aware wrappers over the container machinery. The base
+    // SGCManager.applySceneFrame walks host-diffed frames into these; identity
+    // is the element id (DeviceManager sweeps the previous app's elements on an
+    // app switch, so at most one app's ids are live at a time). Containers are
+    // still rect-keyed underneath — the maps pin element↔container so content
+    // updates go in place and moves recreate at the SAME container id.
+    private val sceneTextByElement = mutableMapOf<String, Int>()
+    private val sceneImageByElement = mutableMapOf<String, Int>()
+
+    override fun onSceneReplay(appId: String) {
+        // A replay frame repaints from scratch through the create path; forget
+        // the element mapping so creates re-match/re-register cleanly.
+        sceneTextByElement.clear()
+        sceneImageByElement.clear()
+    }
+
+    override fun drawLayoutText(
+        text: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        elementId: String,
+        layoutId: String?
+    ) {
+        displayScope.launch {
+            val content = if (text.isEmpty()) " " else text
+            val existingId = sceneTextByElement[elementId]
+            if (existingId != null) {
+                val idx = textContainers.indexOfFirst { it.id == existingId }
+                if (idx >= 0) {
+                    val c = textContainers[idx]
+                    if (c.x == x && c.y == y && c.width == width && c.height == height &&
+                        c.borderWidth == borderWidth && c.borderRadius == borderRadius
+                    ) {
+                        // Content-only change: update in place — NEVER a page
+                        // rebuild. On G2 this is correctness, not perf: page
+                        // teardown couples to mic state and firmware recovery
+                        // storms (design doc §3.4.1 hard rule).
+                        c.content = content
+                        c.pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                        signalDisplayDirty()
+                        return@launch
+                    }
+                    // Moved/restyled: recreate at the SAME container id (structural).
+                    textContainers[idx] =
+                        TextContainer(
+                            id = existingId,
+                            x = x,
+                            y = y,
+                            width = width,
+                            height = height,
+                            content = content,
+                            borderWidth = borderWidth,
+                            borderColor = defaultTextBorderColor,
+                            borderRadius = borderRadius,
+                            paddingLength = defaultTextPaddingLength,
+                            pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                        )
+                    signalDisplayDirty()
+                    rebuildPage()
+                    return@launch
+                }
+                // Container got evicted underneath us — fall through to create.
+                sceneTextByElement.remove(elementId)
+            }
+
+            sendText2(
+                content,
+                x,
+                y,
+                width,
+                height,
+                borderWidth,
+                defaultTextBorderColor,
+                borderRadius,
+                defaultTextPaddingLength
+            )
+            val idx =
+                textContainers.indexOfFirst {
+                    it.matches(x, y, width, height, borderWidth, defaultTextBorderColor, borderRadius, defaultTextPaddingLength)
+                }
+            if (idx >= 0) {
+                val cid = textContainers[idx].id
+                // The container id may have been LRU-recycled from another element.
+                sceneTextByElement.entries.removeAll { it.value == cid }
+                sceneTextByElement[elementId] = cid
+            }
+        }
+    }
+
+    override fun drawLayoutBitmap(
+        base64ImageData: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        elementId: String,
+        layoutId: String?
+    ): Boolean {
+        val existingId = sceneImageByElement[elementId]
+        if (existingId != null) {
+            val idx = imageContainers.indexOfFirst { it.id == existingId }
+            if (idx >= 0) {
+                val c = imageContainers[idx]
+                if (!c.matches(x, y, width, height)) {
+                    // Moved: blacken the old rect in place (no per-container
+                    // delete on G2) and let the normal path place the new rect.
+                    if (c.bmpData.isNotEmpty()) {
+                        c.bmpData = ByteArray(0)
+                        c.dirty = true
+                        signalDisplayDirty()
+                    }
+                    sceneImageByElement.remove(elementId)
+                }
+            } else {
+                sceneImageByElement.remove(elementId)
+            }
+        }
+
+        val ok = displayBitmap(base64ImageData, x, y, width, height)
+        if (ok) {
+            val idx = imageContainers.indexOfFirst { it.matches(x, y, width, height) }
+            if (idx >= 0) {
+                val cid = imageContainers[idx].id
+                sceneImageByElement.entries.removeAll { it.value == cid }
+                sceneImageByElement[elementId] = cid
+            }
+        }
+        return ok
+    }
+
+    override fun removeLayoutElement(elementId: String, layoutId: String?) {
+        displayScope.launch {
+            sceneTextByElement.remove(elementId)?.let { id ->
+                val idx = textContainers.indexOfFirst { it.id == id }
+                if (idx >= 0) {
+                    // Blank in place — G2 has no per-container delete, and
+                    // shutdownPage is the mic-coupled footgun (see clearDisplay).
+                    textContainers[idx].content = " "
+                    textContainers[idx].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                    signalDisplayDirty()
+                }
+            }
+            sceneImageByElement.remove(elementId)?.let { id ->
+                val idx = imageContainers.indexOfFirst { it.id == id }
+                if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
+                    imageContainers[idx].bmpData = ByteArray(0)
+                    imageContainers[idx].dirty = true
+                    signalDisplayDirty()
+                }
+            }
+        }
     }
 
     /**
