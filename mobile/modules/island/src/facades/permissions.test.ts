@@ -64,6 +64,13 @@ mock.module("react-native-permissions", () => ({
 
 mock.module("../services/AppRegistry", () => ({
   default: {getInstalledMiniapps: mock(async () => [])},
+  // bun test runs every file in one process and this file registers the
+  // AppRegistry mock first (directory order). A later mock.module for the same
+  // path cannot ADD export names to the already-linked synthetic module, so any
+  // named export another suite's module graph imports (MiniappLauncher pulls
+  // these two) must exist here as well. Keep them inert.
+  getLocalAppRunningState: () => false,
+  saveLocalAppRunningState: () => {},
 }))
 
 const {PermissionFeatures, permissions} = await import("./permissions")

@@ -15,6 +15,11 @@ mock.module("../AppRegistry", () => ({
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
   },
+  // MiniappLauncher imports these named exports for its autostart path; none of
+  // these tests exercise autostart, but the bindings must exist for the module
+  // graph to load. Keep them inert.
+  getLocalAppRunningState: () => false,
+  saveLocalAppRunningState: () => {},
 }))
 mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
 
