@@ -101,6 +101,204 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         return true
     }
 
+    // MARK: - Canvas scene verbs (display.render() pipeline)
+
+    // Retained-mode canvas registry: elementId → firmware component. Mirrors
+    // MentraNex.kt. Text ids come from the firmware pool 1–6, bitmaps from
+    // 10–13 (mos_display_canvas_view.c); insertion order drives real oldest-out
+    // eviction when a pool is exhausted.
+    private struct CanvasElement {
+        let firmwareId: UInt32
+        let isBitmap: Bool
+        var rect: String
+    }
+
+    private var canvasElements: [(key: String, value: CanvasElement)] = []
+    private var currentLayoutId: String?
+    private let canvasTextIdPool: [UInt32] = [1, 2, 3, 4, 5, 6]
+    private let canvasBitmapIdPool: [UInt32] = [10, 11, 12, 13]
+
+    private func canvasElementIndex(_ key: String) -> Int? {
+        canvasElements.firstIndex(where: { $0.key == key })
+    }
+
+    private func sendCanvasCommand(_ configure: (inout Mentraos_Ble_PhoneToGlasses) -> Void) {
+        var msg = Mentraos_Ble_PhoneToGlasses()
+        configure(&msg)
+        guard let data = try? msg.serializedData() else { return }
+        queueDataWithOptimalChunking(data, packetType: PACKET_TYPE_PROTOBUF, waitTimeMs: 10)
+    }
+
+    /**
+     Handle a scene/layout change. DeviceManager sweeps the previous app's
+     elements before a cross-app frame arrives, so the registry is usually empty
+     here and switching costs nothing. Stale components are deleted
+     individually, NOT via CanvasClear — clear also exits the canvas VIEW (the
+     first create re-activates it), which reads as a full-screen flash.
+     */
+    private func ensureLayout(_ layoutId: String?) {
+        guard let layoutId, layoutId != currentLayoutId else { return }
+        if !canvasElements.isEmpty {
+            for (_, el) in canvasElements {
+                sendCanvasCommand { $0.canvasDeleteComponent = .with { $0.id = el.firmwareId } }
+            }
+            canvasElements.removeAll()
+        }
+        currentLayoutId = layoutId
+    }
+
+    /// Replay frames repaint from scratch: forget the registry so every element
+    /// takes the CREATE path (create-on-existing-id is replace in firmware;
+    /// updates to dead component ids are dropped silently).
+    func onSceneReplay(_ appId: String) async {
+        canvasElements.removeAll()
+        currentLayoutId = appId
+    }
+
+    /// Free firmware id from the type's pool, evicting the oldest same-type
+    /// element (delete on glasses + registry) when the pool is exhausted.
+    private func allocFirmwareId(isBitmap: Bool) -> UInt32? {
+        let pool = isBitmap ? canvasBitmapIdPool : canvasTextIdPool
+        let used = Set(canvasElements.filter { $0.value.isBitmap == isBitmap }.map(\.value.firmwareId))
+        if let free = pool.first(where: { !used.contains($0) }) {
+            return free
+        }
+        guard let oldestIdx = canvasElements.firstIndex(where: { $0.value.isBitmap == isBitmap }) else {
+            return nil
+        }
+        let oldest = canvasElements.remove(at: oldestIdx)
+        Bridge.log("NEX: pool full — evicting oldest \(isBitmap ? "bitmap" : "text") element '\(oldest.key)' (fw id \(oldest.value.firmwareId))")
+        sendCanvasCommand { $0.canvasDeleteComponent = .with { $0.id = oldest.value.firmwareId } }
+        return oldest.value.firmwareId
+    }
+
+    func drawLayoutText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, elementId: String, layoutId: String?
+    ) async {
+        ensureLayout(layoutId)
+        let rect = "\(x),\(y),\(width)x\(height),\(borderWidth),\(borderRadius)"
+        if let i = canvasElementIndex(elementId), !canvasElements[i].value.isBitmap {
+            let fid = canvasElements[i].value.firmwareId
+            if canvasElements[i].value.rect != rect {
+                // Geometry moved/restyled — recreate the box at the SAME
+                // firmware id (create-on-existing-id = replace), then set text.
+                sendCanvasCommand {
+                    $0.canvasCreateComponent = .with {
+                        $0.id = fid
+                        $0.type = .canvasTextbox
+                        $0.x = UInt32(max(0, x)); $0.y = UInt32(max(0, y))
+                        $0.width = UInt32(max(0, width)); $0.height = UInt32(max(0, height))
+                        $0.borderWidth = UInt32(max(0, borderWidth))
+                        $0.borderRadius = UInt32(max(0, borderRadius))
+                    }
+                }
+                canvasElements[i].value.rect = rect
+            }
+            sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = text } }
+            return
+        }
+        guard let fid = allocFirmwareId(isBitmap: false) else {
+            Bridge.log("NEX: text pool exhausted — dropping element '\(elementId)'")
+            return
+        }
+        canvasElements.append((key: elementId, value: CanvasElement(firmwareId: fid, isBitmap: false, rect: rect)))
+        sendCanvasCommand {
+            $0.canvasCreateComponent = .with {
+                $0.id = fid
+                $0.type = .canvasTextbox
+                $0.x = UInt32(max(0, x)); $0.y = UInt32(max(0, y))
+                $0.width = UInt32(max(0, width)); $0.height = UInt32(max(0, height))
+                $0.borderWidth = UInt32(max(0, borderWidth))
+                $0.borderRadius = UInt32(max(0, borderRadius))
+            }
+        }
+        sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = text } }
+    }
+
+    func drawLayoutBitmap(
+        base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        elementId: String, layoutId: String?
+    ) async -> Bool {
+        ensureLayout(layoutId)
+        guard let imageData = Data(base64Encoded: base64ImageData),
+              let image = UIImage(data: imageData)
+        else {
+            Bridge.log("NEX: drawLayoutBitmap failed to decode base64 image")
+            return false
+        }
+        // Scale phone-side to the component box (never on glasses), then use
+        // the existing 1-bit BMP conversion. (Android additionally inverts +
+        // Floyd–Steinberg dithers — visual parity TODO once hardware-checked.)
+        let scaled = scaledImage(image, toWidth: width, height: height)
+        guard let bmpData = convertUIImageToBmpData(scaled) else {
+            Bridge.log("NEX: drawLayoutBitmap failed to convert image")
+            return false
+        }
+
+        let rect = "\(x),\(y),\(width)x\(height)"
+        let fid: UInt32
+        if let i = canvasElementIndex(elementId), canvasElements[i].value.isBitmap {
+            fid = canvasElements[i].value.firmwareId
+            if canvasElements[i].value.rect != rect {
+                sendCanvasCommand {
+                    $0.canvasCreateComponent = .with {
+                        $0.id = fid
+                        $0.type = .canvasBitmap
+                        $0.x = UInt32(max(0, x)); $0.y = UInt32(max(0, y))
+                        $0.width = UInt32(max(0, width)); $0.height = UInt32(max(0, height))
+                    }
+                }
+                canvasElements[i].value.rect = rect
+            }
+        } else {
+            guard let allocated = allocFirmwareId(isBitmap: true) else {
+                Bridge.log("NEX: bitmap pool exhausted — dropping element '\(elementId)'")
+                return false
+            }
+            fid = allocated
+            canvasElements.append((key: elementId, value: CanvasElement(firmwareId: fid, isBitmap: true, rect: rect)))
+            sendCanvasCommand {
+                $0.canvasCreateComponent = .with {
+                    $0.id = fid
+                    $0.type = .canvasBitmap
+                    $0.x = UInt32(max(0, x)); $0.y = UInt32(max(0, y))
+                    $0.width = UInt32(max(0, width)); $0.height = UInt32(max(0, height))
+                }
+            }
+        }
+
+        // Stream pixels into the component: CanvasUpdateImage header, then the
+        // same 0xB0 chunk transport the legacy DisplayImage path uses.
+        let streamId = String(format: "%04X", Int.random(in: 0 ... 0xFFFF))
+        let totalChunks = Int(ceil(Double(bmpData.count) / Double(bmpChunkSize)))
+        sendCanvasCommand {
+            $0.canvasUpdateImage = .with {
+                $0.id = fid
+                $0.streamID = streamId
+                $0.totalChunks = UInt32(totalChunks)
+            }
+        }
+        sendImageChunks(streamId: streamId, imageData: bmpData)
+        return true
+    }
+
+    func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
+        guard let i = canvasElementIndex(elementId) else { return }
+        let el = canvasElements.remove(at: i)
+        sendCanvasCommand { $0.canvasDeleteComponent = .with { $0.id = el.value.firmwareId } }
+    }
+
+    private func scaledImage(_ image: UIImage, toWidth width: Int32, height: Int32) -> UIImage {
+        let size = CGSize(width: CGFloat(max(1, width)), height: CGFloat(max(1, height)))
+        if image.size == size { return image }
+        UIGraphicsBeginImageContextWithOptions(size, false, 1)
+        image.draw(in: CGRect(origin: .zero, size: size))
+        let out = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return out
+    }
+
     func showDashboard() {
         exit()
     }
@@ -1256,6 +1454,14 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         Bridge.log("NEX: Clearing display")
 
+        // Tear down any canvas components and forget the registry — clear_view
+        // wipes the whole screen, canvas included.
+        if !canvasElements.isEmpty || currentLayoutId != nil {
+            canvasElements.removeAll()
+            currentLayoutId = nil
+            sendCanvasCommand { $0.canvasClear = Mentraos_Ble_CanvasClear() }
+        }
+
         // Drop any pending/resendable text wall so a stale caption can't
         // repaint the display after this clear.
         textWallLock.lock()
@@ -1625,6 +1831,16 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             emitBleCommandReceived(fullPacket, payloadDescription: String(describing: glassesToPhone.payload))
 
             switch glassesToPhone.payload {
+            case let .canvasResult(canvasResult):
+                // Ack for CanvasCreateComponent / CanvasClear (updates are
+                // unacked). Non-OK (INVALID / OVERSIZE / OOM) invalidates the
+                // registry entry so the next frame recreates the component —
+                // and a silent blank screen becomes a diagnosable log line.
+                if canvasResult.code != .ok {
+                    Bridge.log("NEX: CANVAS_RESULT id=\(canvasResult.id) code=\(canvasResult.code) — dropping registry entry for recreate")
+                    canvasElements.removeAll { $0.value.firmwareId == canvasResult.id }
+                }
+
             case let .batteryStatus(batteryStatus):
                 handleBatteryStatusProtobuf(batteryStatus)
 
@@ -2477,6 +2693,13 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         if let error {
             Bridge.log("NEX-CONN: ⚠️ Disconnect error: \(error.localizedDescription)")
         }
+
+        // The glasses lose their canvas on disconnect — forget the component
+        // registry so post-reconnect frames take the CREATE path (firmware
+        // silently drops updates to dead component ids). The host replays the
+        // current scene after reconnect.
+        canvasElements.removeAll()
+        currentLayoutId = nil
 
         // Reset connection state
         // Save microphone state before disconnection (like Java implementation)
