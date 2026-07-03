@@ -1,4 +1,8 @@
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {displayProcessor} from "@mentra/island"
+
 import ws from "@/services/WebSocketManager"
+import {useDisplayStore} from "@/stores/display"
 import {useSettingsStore} from "@/stores/settings"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 
@@ -78,6 +82,31 @@ class SocketComms {
     console.error("SOCKET: auth error")
   }
 
+  /**
+   * The Cloud V1 cloud still drives the OS dashboard (packageName
+   * com.mentra.os) through display_event — this is live V1 *infrastructure*,
+   * not a V1 app path, so it survived the V1-app end-of-life deletion. Retire
+   * it with the websocket itself once the dashboard moves to Cloud V2.
+   */
+  public handle_display_event(msg: any) {
+    if (!msg.view) {
+      console.error("SOCKET: display_event missing view")
+      return
+    }
+
+    let processedEvent
+    try {
+      processedEvent = displayProcessor.processDisplayEvent(msg)
+    } catch (err) {
+      console.error("SOCKET: DisplayProcessor error, using raw event:", err)
+      processedEvent = msg
+    }
+
+    BluetoothSdk.displayEvent(processedEvent)
+    const displayEventStr = JSON.stringify(processedEvent)
+    useDisplayStore.getState().setDisplayEvent(displayEventStr)
+  }
+
   // Message Handling
   //
   // The Cloud V1 app bridge (display events, photo/stream/video commands,
@@ -97,6 +126,10 @@ class SocketComms {
       case "app_started":
       case "app_stopped":
         // Legacy cloud-v1 message types — ignored.
+        break
+
+      case "display_event":
+        this.handle_display_event(msg)
         break
 
       case "connection_error":

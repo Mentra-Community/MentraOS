@@ -48,7 +48,7 @@ together.
 | Path | Direction | Disposition | Notes |
 | --- | --- | --- | --- |
 | `connectWebsocket` / `setAuthCreds` (core_token) | — | keep-until-V2-port | V1 session bootstrap; V2 auth is island-owned |
-| `display_event` | cloud→device | keep-until-V2-port | Cloud-SDK app display path (glasses + mirror store) |
+| `display_event` | cloud→device | **keep-until-V2-port (LIVE infrastructure)** | The V1 cloud's OS dashboard (`com.mentra.os`) still pushes these every few seconds — found on-device 2026-07-03 after tier 3 deleted the handler; restored. Retires with the websocket (tier 5), not with V1 apps. |
 | `photo_request` → BluetoothSdk.requestPhoto | cloud→device | keep-until-V2-port | V1-app photo pipeline; local miniapps use the island coordinator instead |
 | `start_stream` / `stop_stream` / `keep_stream_alive` | cloud→device | keep-until-V2-port | externally-managed streams |
 | `start_video_recording` / `stop_video_recording` | cloud→device | keep-until-V2-port | cloud-supplied webhook/auth |
