@@ -8,7 +8,7 @@
  */
 import {useDisplayStore} from "../stores/display"
 
-export type DisplayMirrorEvent = Record<string, unknown> & {view?: string}
+export type DisplayMirrorEvent = Record<string, unknown> & {view?: string; layout?: any}
 
 export const displayMirror = {
   /** The display event currently shown on the previewed view (snapshot). */

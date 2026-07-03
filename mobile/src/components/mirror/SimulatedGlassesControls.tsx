@@ -5,8 +5,8 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useDisplayStore} from "@/stores/display"
 import {ThemedStyle} from "@/theme"
+import {toolkit} from "@mentra/island"
 
 interface SimulatedGlassesControlsProps {}
 
@@ -14,7 +14,7 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
   const {themed} = useAppTheme()
   const insets = useSaferAreaInsets()
   const [showDashboard, setShowDashboard] = useState(false)
-  const {setView} = useDisplayStore()
+  const {setView} = toolkit.display.mirror
 
   // when this is unmounted, set the dashboard position to down:
   useFocusEffect(
