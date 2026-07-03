@@ -97,7 +97,6 @@ describe("SocketComms display events", () => {
 describe("SocketComms stream messages", () => {
   const streamSocketComms = socketComms as typeof socketComms & {
     handle_start_stream: (msg: unknown) => void
-    handle_keep_stream_alive: (msg: unknown) => void
   }
 
   beforeEach(() => {
@@ -155,19 +154,4 @@ describe("SocketComms stream messages", () => {
     })
   })
 
-  it("forwards keep_stream_alive as its own narrow command", () => {
-    streamSocketComms.handle_keep_stream_alive({
-      type: "keep_stream_alive",
-      streamId: "stream-1",
-      ackId: "ack-1",
-      keepAliveIntervalSeconds: 1,
-      ignored: true,
-    })
-
-    expect(BluetoothSdk.sendExternallyManagedStreamKeepAlive).toHaveBeenCalledWith({
-      type: "keep_stream_alive",
-      streamId: "stream-1",
-      ackId: "ack-1",
-    })
-  })
 })

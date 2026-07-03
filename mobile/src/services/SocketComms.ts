@@ -22,12 +22,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const finiteNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined
 
-type ExternalStreamKeepAliveRequest = {
-  type: "keep_stream_alive"
-  streamId: string
-  ackId: string
-}
-
 const normalizeStreamVideoConfig = (value: unknown): StreamStartRequest["video"] | undefined => {
   if (!isRecord(value)) return undefined
   const config: NonNullable<StreamStartRequest["video"]> = {}
@@ -123,18 +117,6 @@ class SocketComms {
     // Keep the legacy Cloud V1 token private to SocketComms. Cloud V2 report
     // auth is synced into the Bluetooth core_token slot by island.
     // this.connectWebsocket()
-  }
-
-  public sendStreamStatus(statusMessage: any) {
-    // Forward the status message directly since it's already in the correct format
-    ws.sendText(JSON.stringify(statusMessage))
-    console.log("SOCKET: Sent RTMP stream status:", statusMessage)
-  }
-
-  public sendKeepAliveAck(ackMessage: any) {
-    // Forward the ACK message directly since it's already in the correct format
-    ws.sendText(JSON.stringify(ackMessage))
-    console.log("SOCKET: Sent keep-alive ACK:", ackMessage)
   }
 
   public sendText(text: string) {
@@ -347,26 +329,6 @@ class SocketComms {
     })
   }
 
-  private handle_stop_stream() {
-    void BluetoothSdk.stopStream().catch((error) => {
-      console.warn("SOCKET: stop_stream failed:", error)
-    })
-  }
-
-  private handle_keep_stream_alive(msg: unknown) {
-    console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    if (!isRecord(msg) || typeof msg.streamId !== "string" || typeof msg.ackId !== "string") {
-      console.log("Invalid keep_stream_alive request: missing streamId or ackId")
-      return
-    }
-    const request: ExternalStreamKeepAliveRequest = {
-      type: "keep_stream_alive",
-      streamId: msg.streamId,
-      ackId: msg.ackId,
-    }
-    BluetoothSdk.sendExternallyManagedStreamKeepAlive(request)
-  }
-
   private handle_start_video_recording(msg: any) {
     console.log(`SOCKET: Received START_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const videoRequestId = msg.requestId || `video_${Date.now()}`
@@ -509,14 +471,6 @@ class SocketComms {
 
       case "start_stream":
         this.handle_start_stream(msg)
-        break
-
-      case "stop_stream":
-        this.handle_stop_stream()
-        break
-
-      case "keep_stream_alive":
-        this.handle_keep_stream_alive(msg)
         break
 
       case "start_video_recording":

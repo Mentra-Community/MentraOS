@@ -83,8 +83,6 @@ jest.mock("@/services/SocketComms", () => ({
     sendSwitchStatus: jest.fn(),
     sendRgbLedControlResponse: jest.fn(),
     sendText: jest.fn(),
-    sendStreamStatus: jest.fn(),
-    sendKeepAliveAck: jest.fn(),
     handle_display_event: jest.fn(),
     sendLocationUpdate: jest.fn(),
   },

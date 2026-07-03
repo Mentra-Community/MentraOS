@@ -6,8 +6,6 @@ import * as Location from "expo-location"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import {phonePhotoCoordinator} from "@mentra/island"
-import {phoneStreamCoordinator} from "@mentra/island"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
@@ -655,24 +653,9 @@ class MantleManager {
         }),
       )
 
-      this.subs.push(
-        BluetoothSdk.addListener("stream_status", (event) => {
-          // Phone-owned streams are handled by the island stream coordinator (DeviceEventRouter);
-          // cloud-SDK app streams forward to cloud (v1) so its lifecycle state machine sees them.
-          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) return
-          console.log("MANTLE: Forwarding stream status to server:", event)
-          socketComms.sendStreamStatus(event)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("keep_alive_ack", (event) => {
-          // Phone-owned keep-alives handled by the island stream coordinator (DeviceEventRouter).
-          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) return
-          console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
-          socketComms.sendKeepAliveAck(event)
-        }),
-      )
+      // stream_status / keep_alive_ack: phone-owned streams are handled by the island
+      // stream coordinator (DeviceEventRouter). The Cloud V1 relay for non-phone-owned
+      // (cloud-SDK app) streams was removed with Cloud V1 app end-of-life.
 
       // OTA availability (`ota_update_available`) was removed in the OTA-simplify
       // path; update discovery now comes from the phone-side manifest check. The
