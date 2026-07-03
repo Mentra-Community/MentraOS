@@ -9,7 +9,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {useCoreStore} from "@/stores/core"
 
 export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
@@ -17,7 +16,7 @@ export const ConnectDeviceButton = () => {
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
-  const isSearching = useCoreStore((state) => state.searching)
+  const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
   // Same busy source as home's DeviceStatus: an active scan OR the native link
   // layer mid connect/bond — either way a tap must cancel, not start a second
   // connect.
@@ -109,7 +108,9 @@ export const ConnectControllerButton = () => {
     toolkit.glasses.controller.onStatus(onChange),
   )
   const controllerConnected = controllerStatus.connected
-  const isSearching = useCoreStore((state) => state.searchingController)
+  const isSearching = useToolkitSnapshot(toolkit.pairing.scanningController, (onChange) =>
+    toolkit.pairing.onScanningController(onChange),
+  )
 
   if (controllerConnected) {
     return null

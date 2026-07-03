@@ -5,7 +5,6 @@ import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {decideReconnect, toolkit} from "@mentra/island"
-import {useCoreStore} from "@/stores/core"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
@@ -19,7 +18,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     defaultWearable,
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
     connected: toolkit.pairing.readiness().connected,
-    searching: useCoreStore.getState().searching,
+    searching: toolkit.pairing.scanning(),
   })
   if (decision.kind === "skip") {
     return decision.result
@@ -45,7 +44,7 @@ export function Reconnect() {
   const glassesConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
     toolkit.pairing.onReadiness(onChange),
   ).connected
-  const isSearching = useCoreStore((state) => state.searching)
+  const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Add a listener for app state changes to detect when the app comes back from background

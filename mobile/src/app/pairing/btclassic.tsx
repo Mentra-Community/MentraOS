@@ -7,7 +7,6 @@ import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHist
 import {toolkit} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {useCoreStore} from "@/stores/core"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -19,7 +18,9 @@ export default function BtClassicPairingScreen() {
   const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
     toolkit.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
-  const otherBtConnected = useCoreStore((state) => state.otherBtConnected)
+  const otherBtConnected = useToolkitSnapshot(toolkit.pairing.otherBtConnected, (onChange) =>
+    toolkit.pairing.onOtherBtConnected(onChange),
+  )
   const [deviceName] = useSetting(SETTINGS.device_name.key)
   const {theme} = useAppTheme()
 

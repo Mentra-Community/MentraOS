@@ -11,11 +11,11 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -24,7 +24,9 @@ export default function SelectGlassesBluetoothScreen() {
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const searchResults = useCoreStore((state) => state.searchResults)
+  const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
+    toolkit.pairing.onFound(onChange),
+  )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(

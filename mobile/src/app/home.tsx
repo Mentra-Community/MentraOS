@@ -12,7 +12,6 @@ import {Group} from "@/components/ui"
 import {BgTimer, toolkit, useRefresh} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {appSwitcherProgress} from "@/stores/appSwitcher"
-import {useCoreStore} from "@/stores/core"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
 import AppSwitcher from "@/components/home/AppSwitcher"
@@ -28,7 +27,7 @@ export default function Homepage() {
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesConnected =
     useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
-  const isSearching = useCoreStore((state) => state.searching)
+  const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
   const hasAttemptedInitialConnect = useRef(false)
   const swipeProgress = appSwitcherProgress
   const insets = useSaferAreaInsets()

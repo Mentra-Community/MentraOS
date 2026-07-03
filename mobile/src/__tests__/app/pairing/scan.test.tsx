@@ -168,6 +168,14 @@ describe("pairing scan screen", () => {
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
+    // The screen reads scan results through the pairing facade now; delegate the
+    // mocked facade to the real core store this test seeds via setState().
+    ;(toolkit.pairing.searchResults as jest.Mock).mockImplementation(() => [
+      ...useCoreStore.getState().searchResults,
+    ])
+    ;(toolkit.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
+      useCoreStore.subscribe((s) => s.searchResults, cb),
+    )
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, push, goBack})
     ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)

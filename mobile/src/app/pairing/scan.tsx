@@ -19,7 +19,6 @@ import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 
 export default function SelectGlassesBluetoothScreen() {
@@ -32,7 +31,9 @@ export default function SelectGlassesBluetoothScreen() {
     toolkit.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
-  const searchResults = useCoreStore((state) => state.searchResults)
+  const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
+    toolkit.pairing.onFound(onChange),
+  )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(

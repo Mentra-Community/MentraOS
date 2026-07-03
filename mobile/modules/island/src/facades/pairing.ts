@@ -181,6 +181,19 @@ export const pairing = {
   scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
+  /** Subscribe to scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
+  onScanning: (cb: (scanning: boolean) => void): (() => void) =>
+    useCoreStore.subscribe((s) => s.searching, cb),
+  /** Whether a controller scan is currently in progress. */
+  scanningController: (): boolean => useCoreStore.getState().searchingController,
+  /** Subscribe to controller-scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
+  onScanningController: (cb: (scanning: boolean) => void): (() => void) =>
+    useCoreStore.subscribe((s) => s.searchingController, cb),
+  /** Whether the phone has another Bluetooth (audio) device connected — the BT Classic pairing hint. */
+  otherBtConnected: (): boolean => useCoreStore.getState().otherBtConnected,
+  /** Subscribe to other-Bluetooth-device-connected changes; fires only when it changes. Returns an unsubscribe. */
+  onOtherBtConnected: (cb: (connected: boolean) => void): (() => void) =>
+    useCoreStore.subscribe((s) => s.otherBtConnected, cb),
   /** The current scan results (snapshot). */
   searchResults: () => [...useCoreStore.getState().searchResults],
   /** Subscribe to scan-result changes; fires only when they change. Returns an unsubscribe. */

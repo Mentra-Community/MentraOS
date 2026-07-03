@@ -21,7 +21,6 @@ import {
 } from "@/utils/getGlassesImage"
 
 import MicIcon from "assets/icons/component/MicIcon"
-import {useCoreStore} from "@/stores/core"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 
 const getBatteryIcon = (batteryLevel: number): string => {
@@ -81,7 +80,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const batteryLevel = glassesStatus.battery
   const charging = glassesStatus.charging
   const wifiConnected = wifiStatus.state === "connected"
-  const searching = useCoreStore((state) => state.searching)
+  const searching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   // Listen for glasses_not_ready event to know when glasses are actually booting
@@ -266,7 +265,9 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
   const controllerConnected = controllerStatus.connected
   const controllerFullyBooted = controllerStatus.fullyBooted
   const controllerBatteryLevel = controllerStatus.battery
-  const isSearching = useCoreStore((state) => state.searchingController)
+  const isSearching = useToolkitSnapshot(toolkit.pairing.scanningController, (onChange) =>
+    toolkit.pairing.onScanningController(onChange),
+  )
 
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
