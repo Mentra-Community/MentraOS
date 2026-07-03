@@ -1,3 +1,4 @@
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {toolkit, type WifiSearchResult} from "@mentra/island"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
