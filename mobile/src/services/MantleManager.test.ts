@@ -93,13 +93,6 @@ jest.mock("@/services/SocketComms", () => ({
 // gallerySyncService moved into @mentra/island; the global @mentra/island jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
 
-jest.mock("@/services/Livekit", () => ({
-  __esModule: true,
-  default: {
-    disconnect: jest.fn(),
-  },
-}))
-
 jest.mock("@/services/Migrations", () => ({
   migrate: jest.fn(() => Promise.resolve()),
 }))

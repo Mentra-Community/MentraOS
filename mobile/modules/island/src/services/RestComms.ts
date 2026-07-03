@@ -388,28 +388,6 @@ class RestComms {
     return res
   }
 
-  public getLivekitUrlAndToken(): AsyncResult<{url: string; token: string}, Error> {
-    const config: RequestConfig = {
-      method: "GET",
-      endpoint: "/api/client/livekit/token",
-    }
-    interface Response {
-      // url: string
-      // token: string
-      success: boolean
-      data: {url: string; token: string}
-    }
-    const res = this.authenticatedRequest<Response>(config)
-
-    // ;(async () => {
-    //   console.log("result@@@@@", await result)
-    //   // const response = await Res.value
-    //   // return {url: response.url, token: response.token}
-    // })()
-
-    return res.map((response) => response.data)
-  }
-
   public writeUserSettings(settings: any): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",

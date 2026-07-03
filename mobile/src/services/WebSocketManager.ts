@@ -310,10 +310,9 @@ class WebSocketManager extends EventEmitter {
     const store = useConnectionStore.getState()
     store.setUrl(url)
 
-    // Attach auth and feature flags as query params.
+    // Attach auth as a query param.
     const wsUrl = new URL(url)
     wsUrl.searchParams.set("token", coreToken)
-    wsUrl.searchParams.set("livekit", "true")
 
     console.log("WSM: Connecting to WebSocket URL:", wsUrl.toString().replace(/token=[^&]+/, "token=REDACTED"))
 
