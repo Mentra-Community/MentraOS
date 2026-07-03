@@ -107,7 +107,13 @@ await $({stdio: "inherit"})`xcodebuild \
   -allowProvisioningUpdates \
   build`
 
-const appPath = `${derivedData}/Build/Products/Debug-iphoneos/${SCHEME}.app`
+// The bundle is named after PRODUCT_NAME ("Mentra"), not the scheme/project
+// ("MentraOS" on this branch) — glob the products dir instead of assuming.
+const appBundles = await glob(`${derivedData}/Build/Products/Debug-iphoneos/*.app`, {onlyDirectories: true})
+if (appBundles.length !== 1) {
+  throw new Error(`Expected exactly one built .app bundle, found: ${appBundles.join(", ") || "none"}`)
+}
+const appPath = appBundles[0]
 
 // Install + launch via devicectl (works where expo's installer fails).
 await $({stdio: "inherit"})`xcrun devicectl device install app --device ${deviceUdid} ${appPath}`
