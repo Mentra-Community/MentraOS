@@ -113,6 +113,14 @@ store/registry):
 
 ### Ordered delete list once "no Cloud V1 apps exist" is declared
 
+**Executed 2026-07-02** (V1 apps declared EOL): tiers 1-4 below are DELETED on
+this branch (commits 5e15ca5f58, d6a415462f, ef5c8859d2, e0b96b0811; the
+Livekit.ts deletion itself rode along in e4d8207ec6). `applet/settings.tsx`
+was kept and reworked island-only (live for local miniapps); the
+`/apps/:packageName` deeplink now points at it. Tier 5 (SocketComms +
+WebSocketManager + core_token retirement) remains gated on V2
+settings/calendar/notifications endpoints.
+
 1. Now, no product decision needed (dead code): `services/Livekit.ts`,
    `RestComms.getLivekitUrlAndToken`, `livekit=true` WS param.
 2. Push-only V1 stream plumbing: `handle_stop_stream`,
