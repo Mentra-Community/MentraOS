@@ -12,14 +12,27 @@ import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {otaInstallCoordinator} from "../../modules/island/src/services/OtaInstallCoordinator"
 import {
+  BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
+  LEGACY_APK_COMPLETION_SETTLE_MS,
+  LEGACY_EXTRA_TIMEOUT_MS,
+  LEGACY_MTK_SIM_TICK_MS,
+  LEGACY_MTK_STALL_DETECT_MS,
+  LEGACY_RETRY_INTERVAL_MS,
   MAX_RETRIES,
+  MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
+  PING_INTERVAL_MS,
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
 } from "../../modules/island/src/services/otaInstallPolicy"
+import {
+  legacyOtaProgressFromOtaStatusEvent,
+  normalizeOtaStatusEvent,
+  otaStatusFromNormalized,
+} from "../../modules/island/src/services/otaLegacyMapping"
 import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 import GlobalEventEmitter from "../../modules/island/src/utils/GlobalEventEmitter"
 
@@ -27,6 +40,42 @@ import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
 
 function setGlassesConnected() {
   useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+}
+
+/** Connected old-build (< 37) glasses — the population that used /ota/progress-legacy. */
+function setLegacyGlassesConnected(buildNumber = "33") {
+  useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber})
+}
+
+/**
+ * WP 8C: exactly what lands in the store when an old (< 37) ASG build sends a legacy
+ * `ota_progress` BLE message. The SDK (Android MentraLive.kt / iOS MentraLive.swift) maps
+ * it to a unified ota_status with sessionId "", totalSteps 1, and FAILED→failed /
+ * FINISHED→complete (regardless of phase!) / else in_progress; OtaService then projects
+ * that into BOTH store shapes. Runs the real island mapping code so the fixture cannot
+ * drift from production.
+ */
+function emitLegacyOtaProgress(input: {
+  stage: "download" | "install"
+  status: "STARTED" | "PROGRESS" | "FINISHED" | "FAILED"
+  progress: number
+  currentUpdate: "apk" | "mtk" | "bes"
+  errorMessage?: string
+}) {
+  const unified = input.status === "FAILED" ? "failed" : input.status === "FINISHED" ? "complete" : "in_progress"
+  const normalized = normalizeOtaStatusEvent({
+    session_id: "",
+    total_steps: 1,
+    current_step: 1,
+    step_type: input.currentUpdate,
+    phase: input.stage,
+    step_percent: input.progress,
+    overall_percent: input.progress,
+    status: unified,
+    error_message: input.errorMessage,
+  })
+  useGlassesStore.getState().setOtaStatus(otaStatusFromNormalized(normalized))
+  useGlassesStore.getState().setOtaProgress(legacyOtaProgressFromOtaStatusEvent(normalized))
 }
 
 function inProgressStatus(overrides: Partial<OtaStatus> = {}): OtaStatus {
@@ -313,5 +362,429 @@ describe("OtaInstallCoordinator snapshot subscription", () => {
     unsubscribe()
     useGlassesStore.getState().setOtaStatus(null)
     expect(seen[seen.length - 1]).toBe(`failed|${OtaProgressMessages.stalledOrStuck}`)
+  })
+})
+
+// --- WP 8C: old-build (< 37) compatibility, ported from mobile/src/app/ota/progress-legacy.tsx ---
+
+describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", () => {
+  it("renders legacy download progress as updating from the unified snapshot", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 40, currentUpdate: "apk"})
+
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.displayState).toBe("updating")
+    expect(snap.otaStatus?.sessionId).toBe("")
+    expect(snap.otaProgress?.progress).toBe(40)
+  })
+
+  it("legacy apk download FINISHED (mapped to status complete) is NOT terminal", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 80, currentUpdate: "apk"})
+
+    emitLegacyOtaProgress({stage: "download", status: "FINISHED", progress: 100, currentUpdate: "apk"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+  })
+
+  it("legacy bes download FINISHED is not BES-terminal; bes install FINISHED is", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+
+    emitLegacyOtaProgress({stage: "download", status: "FINISHED", progress: 100, currentUpdate: "bes"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 50, currentUpdate: "bes"})
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "bes"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+  })
+
+  it("legacy bes install FINISHED then disconnect/reconnect edge completes", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 50, currentUpdate: "bes"})
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "bes"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    setLegacyGlassesConnected()
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("legacy mtk install FINISHED completes and marks MTK updated this session", () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 30, currentUpdate: "mtk"})
+    expect(useGlassesStore.getState().mtkUpdatedThisSession).toBe(false)
+
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "mtk"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    expect(useGlassesStore.getState().mtkUpdatedThisSession).toBe(true)
+  })
+})
+
+describe("OtaInstallCoordinator legacy query-status fallback (WP 8C-b)", () => {
+  it("attach with a stale legacy-shaped session sends ota_start immediately (legacy screens never queried)", () => {
+    setLegacyGlassesConnected()
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 50, currentUpdate: "apk"})
+
+    otaInstallCoordinator.attach()
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+  })
+
+  it("reconnect query ignored by old glasses: stale legacy events do NOT suppress the ota_start fallback", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 50, currentUpdate: "apk"})
+    bluetoothSdkMock.startOtaUpdate.mockClear()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setLegacyGlassesConnected()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // Old builds ignore ota_query_status: nothing new arrives. The pre-query
+    // legacy-shaped otaStatus/otaProgress must not count as a reply.
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("reconnect query with a stale unified-session status keeps the fallback suppressed (>= 37 unchanged)", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 10, overallPercent: 10}))
+    otaInstallCoordinator.attach()
+    bluetoothSdkMock.startOtaUpdate.mockClear()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe("OtaInstallCoordinator APK completion by build-number increase (WP 8C-c)", () => {
+  function seedLegacyApkUpdateAvailable() {
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      versionCode: 45,
+      versionName: "45.0",
+      updates: ["apk"],
+      totalSize: 0,
+    })
+  }
+
+  it("legacy apk session completes on build-number increase when no explicit status arrives", () => {
+    setLegacyGlassesConnected("33")
+    seedLegacyApkUpdateAvailable()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 80, currentUpdate: "apk"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    // Glasses reboot into the new build; the only signal is version_info.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.displayState).toBe("complete")
+    expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
+
+    // finish() must clear the stale build number exactly like an explicit APK step.
+    otaInstallCoordinator.finish()
+    expect(bluetoothSdkMock.updateGlasses).toHaveBeenCalledWith({buildNumber: ""})
+  })
+
+  it("build-number increase recovers a legacy session even from a watchdog failure", async () => {
+    setLegacyGlassesConnected("33")
+    seedLegacyApkUpdateAvailable()
+    otaInstallCoordinator.attach()
+
+    // Old-build no-ack retry runs on the padded legacy interval (WP 8C-g).
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * MAX_RETRIES)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
+    await jest.advanceTimersByTimeAsync(LEGACY_RETRY_INTERVAL_MS * MAX_RETRIES)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.noAckResponse)
+
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.displayState).toBe("complete")
+    expect(snap.errorMsg).toBe("")
+  })
+
+  it("does not fire without an apk step in the selected update", () => {
+    setLegacyGlassesConnected("33")
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      versionCode: 45,
+      versionName: "45.0",
+      updates: ["bes"],
+      totalSize: 0,
+    })
+    otaInstallCoordinator.attach()
+
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
+  })
+
+  it("unified multi-step session ignores build-number increase (>= 37 unchanged)", () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}, buildNumber: "40"})
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      versionCode: 45,
+      versionName: "45.0",
+      updates: ["apk", "bes"],
+      totalSize: 0,
+    })
+    otaInstallCoordinator.attach()
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({totalSteps: 2, stepType: "apk", phase: "install", status: "step_complete"}))
+
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+
+    // The unified session still has a BES step to run: not complete.
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+  })
+})
+
+describe("OtaInstallCoordinator legacy manifest URL fallback (WP 8C-d)", () => {
+  it("legacy build sends ota_start with the glasses-reported manifest URL (dev override ignored)", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "33",
+      otaVersionUrl: "https://glasses.example/version.json",
+    })
+
+    otaInstallCoordinator.attach()
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("https://glasses.example/version.json")
+  })
+
+  it("legacy build with no reported URL falls back to the prod manifest", () => {
+    setLegacyGlassesConnected("33")
+
+    otaInstallCoordinator.attach()
+
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledWith("https://ota.mentraglass.com/prod_live_version.json")
+  })
+})
+
+describe("OtaInstallCoordinator legacy MTK install stall simulation (WP 8C-e)", () => {
+  it("simulates display-only progress after a stall in the 45-55% zone, capped at 60, cleared by real progress", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 49, currentUpdate: "mtk"})
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBeNull()
+
+    await jest.advanceTimersByTimeAsync(LEGACY_MTK_STALL_DETECT_MS)
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBe(51)
+
+    await jest.advanceTimersByTimeAsync(LEGACY_MTK_SIM_TICK_MS)
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBe(52)
+
+    // Cap at 60 and stop ticking.
+    await jest.advanceTimersByTimeAsync(LEGACY_MTK_SIM_TICK_MS * 20)
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBe(60)
+
+    // Real progress beyond the simulated value clears the simulation.
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 70, currentUpdate: "mtk"})
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBeNull()
+  })
+
+  it("never simulates for unified (>= 37) MTK install sessions", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({stepType: "mtk", phase: "install", stepPercent: 49, overallPercent: 49}))
+
+    await jest.advanceTimersByTimeAsync(LEGACY_MTK_STALL_DETECT_MS + LEGACY_MTK_SIM_TICK_MS)
+
+    expect(otaInstallCoordinator.snapshot().mtkInstallStallSimulatedPercent).toBeNull()
+  })
+
+  it("simulation does not silence the padded MTK install stall watchdog", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 49, currentUpdate: "mtk"})
+
+    await jest.advanceTimersByTimeAsync(MTK_INSTALL_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+    expect(snap.displayState).toBe("failed")
+  })
+})
+
+describe("OtaInstallCoordinator BES restart continue lockout (WP 8C-f)", () => {
+  it("legacy BES restart holds the Continue button for the padded 35s", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 50, currentUpdate: "bes"})
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "bes"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
+
+    await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS)
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
+
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(false)
+  })
+
+  it("unified BES restart keeps the 15s lockout (>= 37 unchanged)", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({stepType: "bes", phase: "install", status: "step_complete", stepPercent: 100}))
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(true)
+
+    await jest.advanceTimersByTimeAsync(BES_CONTINUE_LOCKOUT_MS)
+    expect(otaInstallCoordinator.snapshot().continueButtonDisabled).toBe(false)
+  })
+})
+
+describe("OtaInstallCoordinator legacy padded watchdogs (WP 8C-g)", () => {
+  it("legacy stuck-at-zero watchdog uses the padded duration", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+
+    await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+  })
+
+  it("legacy progress-stall watchdog uses the padded duration", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 10, currentUpdate: "apk"})
+
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+  })
+
+  it("legacy global timeout uses the padded cap", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+
+    // Steadily-advancing legacy progress keeps the per-step watchdogs quiet.
+    let pct = 1
+    for (let elapsed = 60_000; elapsed <= GLOBAL_OTA_TIMEOUT_MS; elapsed += 60_000) {
+      emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: pct++, currentUpdate: "apk"})
+      await jest.advanceTimersByTimeAsync(60_000)
+    }
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: pct, currentUpdate: "apk"})
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.globalTimeout)
+  })
+
+  it("legacy ping keepalive uses the padded interval", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.ping).toHaveBeenCalledTimes(1)
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.ping).toHaveBeenCalledTimes(1)
+
+    await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
+    expect(bluetoothSdkMock.ping).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", () => {
+  it("holds the complete state for the 32s settle window after an in-flight apk install FINISHED", async () => {
+    setLegacyGlassesConnected("33")
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 90, currentUpdate: "apk"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    await jest.advanceTimersByTimeAsync(LEGACY_APK_COMPLETION_SETTLE_MS - 1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    await jest.advanceTimersByTimeAsync(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("build-number increase during the settle hold completes immediately", async () => {
+    setLegacyGlassesConnected("33")
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      available: true,
+      versionCode: 45,
+      versionName: "45.0",
+      updates: ["apk"],
+      totalSize: 0,
+    })
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 90, currentUpdate: "apk"})
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("apk install FINISHED arriving without an observed in-flight install completes immediately (post-reboot signal)", () => {
+    setLegacyGlassesConnected("33")
+    otaInstallCoordinator.attach()
+
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it("legacy install FINISHED after a watchdog failure overrides the failure (legacy last-write-wins)", async () => {
+    setLegacyGlassesConnected("33")
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 40, currentUpdate: "apk"})
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS + LEGACY_EXTRA_TIMEOUT_MS)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "apk"})
+
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
   })
 })

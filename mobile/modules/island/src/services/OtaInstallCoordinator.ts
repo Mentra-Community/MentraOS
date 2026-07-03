@@ -27,8 +27,23 @@ import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
+  BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
+  LEGACY_APK_COMPLETION_SETTLE_MS,
+  LEGACY_BES_CONTINUE_LOCKOUT_MS,
+  LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS,
+  LEGACY_GLOBAL_OTA_TIMEOUT_MS,
+  LEGACY_MTK_INSTALL_TIMEOUT_MS,
+  LEGACY_MTK_SIM_CAP_PERCENT,
+  LEGACY_MTK_SIM_FLOOR_PERCENT,
+  LEGACY_MTK_SIM_TICK_MS,
+  LEGACY_MTK_STALL_DETECT_MS,
+  LEGACY_MTK_STALL_ZONE_MAX_PERCENT,
+  LEGACY_MTK_STALL_ZONE_MIN_PERCENT,
+  LEGACY_PING_INTERVAL_MS,
+  LEGACY_PROGRESS_TIMEOUT_MS,
+  LEGACY_RETRY_INTERVAL_MS,
   MAX_RETRIES,
   MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
@@ -37,6 +52,8 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
+  isLegacyShapedOtaSession,
+  isLegacyShapedOtaStatus,
 } from "./otaInstallPolicy"
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
@@ -53,16 +70,35 @@ function buildProgressStalenessSignature(
   if (otaStatus && (otaStatus.status === "in_progress" || otaStatus.status === "step_complete")) {
     return `s:${otaStatus.sessionId}|${otaStatus.status}|${otaStatus.phase}|${otaStatus.stepType}|${otaStatus.stepPercent}|${otaStatus.overallPercent}`
   }
+  // Legacy-shaped BES download FINISHED (WP 8C): the legacy screen kept a progress
+  // watchdog armed while waiting for the BES install events to start; keep the stall
+  // watchdog armed here too so a wedged flash still fails instead of hanging.
+  if (
+    isLegacyShapedOtaStatus(otaStatus) &&
+    otaStatus?.stepType === "bes" &&
+    otaStatus.phase === "download" &&
+    otaStatus.status === "complete"
+  ) {
+    return "s:legacy-bes-download-complete-await-install"
+  }
   if (otaProgress && (otaProgress.status === "PROGRESS" || otaProgress.status === "STARTED")) {
     return `p:${otaProgress.currentUpdate}|${otaProgress.stage}|${otaProgress.status}|${otaProgress.progress}`
   }
   return ""
 }
 
-function progressTimeoutDurationMs(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): number {
-  if (otaStatus?.stepType === "mtk" && otaStatus.phase === "install") return MTK_INSTALL_TIMEOUT_MS
-  if (otaProgress?.currentUpdate === "mtk" && otaProgress.stage === "install") return MTK_INSTALL_TIMEOUT_MS
-  return PROGRESS_TIMEOUT_MS
+function progressTimeoutDurationMs(
+  otaStatus: OtaStatus | null,
+  otaProgress: OtaProgress | null,
+  legacySession: boolean,
+): number {
+  if (otaStatus?.stepType === "mtk" && otaStatus.phase === "install") {
+    return legacySession ? LEGACY_MTK_INSTALL_TIMEOUT_MS : MTK_INSTALL_TIMEOUT_MS
+  }
+  if (otaProgress?.currentUpdate === "mtk" && otaProgress.stage === "install") {
+    return legacySession ? LEGACY_MTK_INSTALL_TIMEOUT_MS : MTK_INSTALL_TIMEOUT_MS
+  }
+  return legacySession ? LEGACY_PROGRESS_TIMEOUT_MS : PROGRESS_TIMEOUT_MS
 }
 
 function latestPercentForStuck(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): number {
@@ -92,6 +128,12 @@ export interface OtaInstallSnapshot {
   connected: boolean
   otaStatus: OtaStatus | null
   otaProgress: OtaProgress | null
+  /**
+   * Display-only simulated percent for legacy (< 37) MTK install stalls (WP 8C-e), or
+   * null. The MTK system install goes quiet around 49-50%; the legacy screen simulated
+   * +1% ticks up to 60% purely to reassure the user. Render max(real, simulated).
+   */
+  mtkInstallStallSimulatedPercent: number | null
 }
 
 class OtaInstallCoordinator {
@@ -107,6 +149,20 @@ class OtaInstallCoordinator {
   private apkStepSeen = false
   private prevConnected = false
 
+  // Legacy (< 37) compatibility state, ported from progress-legacy.tsx (WP 8C).
+  // Build number at session start — legacy APK completion is detected by the build
+  // number increasing past it when the explicit reconnect status never arrives.
+  private initialBuildNumber: string | null = null
+  // Captured with initialBuildNumber: whether the selected update includes an APK step.
+  private apkExpectedInSession = false
+  // Latched when the legacy build-number completion fires; projected as "complete".
+  private apkCompletedViaBuildIncrease = false
+  // Holds a legacy apk install FINISHED out of "complete" for the settle window.
+  private legacyApkSettleHold = false
+  // Display-only legacy MTK install stall simulation.
+  private mtkSimulatedPercent: number | null = null
+  private lastRealMtkProgress = 0
+
   // Timer handles
   private globalTimeout: ReturnType<typeof setTimeout> | null = null
   private globalTimeoutStarted = false
@@ -117,6 +173,9 @@ class OtaInstallCoordinator {
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
+  private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
+  private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
+  private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
 
   // Retry / ack bookkeeping (no glasses source)
   private hasReceivedAck = false
@@ -133,6 +192,7 @@ class OtaInstallCoordinator {
   private lastConnected = false
   private lastOtaStatus: OtaStatus | null = null
   private lastOtaProgress: OtaProgress | null = null
+  private lastBuildNumber = ""
   private lastDisplayState: DisplayState | null = null
   private lastStallSig = ""
 
@@ -200,11 +260,17 @@ class OtaInstallCoordinator {
     this.reacting = true
     try {
       this.clearPerStepTimers()
+      this.clearLegacyApkSettleTimer()
+      this.clearMtkSimulationTimers()
       this.retryCount = 0
       this.hasFirstActivity = false
       this.hasReceivedAck = false
       this.setSawReconnectEdge(false)
       this.setErrorMsg("")
+      this.setApkCompletedViaBuildIncrease(false)
+      this.setLegacyApkSettleHold(false)
+      this.setMtkSimulatedPercent(null)
+      this.lastRealMtkProgress = 0
       const store = useGlassesStore.getState()
       store.setOtaProgress(null)
       store.setOtaStatus(null)
@@ -242,12 +308,15 @@ class OtaInstallCoordinator {
         connected,
         errorMsg: this.errorMsg,
         sawReconnectEdge: this.sawReconnectEdge,
+        legacyApkSettleHold: this.legacyApkSettleHold,
+        apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
       }),
       errorMsg: this.errorMsg,
       continueButtonDisabled: this.continueButtonDisabled,
       connected,
       otaStatus,
       otaProgress,
+      mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
     }
   }
 
@@ -281,6 +350,12 @@ class OtaInstallCoordinator {
     this.continueButtonDisabled = false
     this.apkStepSeen = false
     this.prevConnected = false
+    this.initialBuildNumber = null
+    this.apkExpectedInSession = false
+    this.apkCompletedViaBuildIncrease = false
+    this.legacyApkSettleHold = false
+    this.mtkSimulatedPercent = null
+    this.lastRealMtkProgress = 0
     this.hasReceivedAck = false
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
@@ -290,6 +365,7 @@ class OtaInstallCoordinator {
     this.lastConnected = false
     this.lastOtaStatus = null
     this.lastOtaProgress = null
+    this.lastBuildNumber = ""
     this.lastDisplayState = null
     this.lastStallSig = ""
     this.reactQueued = false
@@ -323,6 +399,41 @@ class OtaInstallCoordinator {
     this.react()
   }
 
+  private setApkCompletedViaBuildIncrease(next: boolean): void {
+    if (this.apkCompletedViaBuildIncrease === next) return
+    this.apkCompletedViaBuildIncrease = next
+    this.emitInternalChange()
+    this.react()
+  }
+
+  private setLegacyApkSettleHold(next: boolean): void {
+    if (this.legacyApkSettleHold === next) return
+    this.legacyApkSettleHold = next
+    this.emitInternalChange()
+    this.react()
+  }
+
+  /** Display-only (WP 8C-e): notifies snapshot subscribers but never queues a reaction pass. */
+  private setMtkSimulatedPercent(next: number | null): void {
+    if (this.mtkSimulatedPercent === next) return
+    this.mtkSimulatedPercent = next
+    this.emitInternalChange()
+  }
+
+  /**
+   * Legacy-session shape (WP 8C): event shape wins once events exist; before any event
+   * only the session-start build number can tell (falls back to the live build number
+   * until it is captured). Old builds get the LEGACY_* padded policy durations.
+   */
+  private isLegacySessionShapeNow(): boolean {
+    const state = useGlassesStore.getState()
+    return isLegacyShapedOtaSession(
+      state.otaStatus,
+      state.otaProgress,
+      this.initialBuildNumber || state.buildNumber,
+    )
+  }
+
   private react(): void {
     if (!this.attached) return
     if (this.reacting) {
@@ -349,6 +460,29 @@ class OtaInstallCoordinator {
     const connected = isGlassesConnected(state.connection)
     const otaStatus = state.otaStatus
     const otaProgress = state.otaProgress
+    const buildNumber = state.buildNumber
+
+    const connectedChanged = isMount || connected !== this.lastConnected
+    const otaStatusChanged = isMount || otaStatus !== this.lastOtaStatus
+    const otaProgressChanged = isMount || otaProgress !== this.lastOtaProgress
+    const buildNumberChanged = isMount || buildNumber !== this.lastBuildNumber
+
+    // Session-start build capture (legacy build-number APK completion, WP 8C-c) —
+    // mirrors the legacy screen capturing initialBuildNumber on its first truthy value,
+    // marked for APK only when the selected update sequence includes an apk step.
+    if (!this.initialBuildNumber && buildNumber) {
+      this.initialBuildNumber = buildNumber
+      this.apkExpectedInSession = !!state.otaUpdateAvailable?.updates?.includes("apk")
+    }
+
+    // Legacy pre-derivation compat (WP 8C): must run BEFORE deriveDisplayState so a
+    // legacy apk install "complete" is held by the settle window in the same pass it
+    // lands (never leaking a premature terminal pass to the watchdog blocks below).
+    if (otaStatusChanged) {
+      this.handleLegacyInstallCompleteEdge(otaStatus)
+    }
+
+    const legacySession = this.isLegacySessionShapeNow()
 
     // Derived UI state — the glasses data IS the source of truth.
     const displayState = deriveDisplayState({
@@ -357,13 +491,12 @@ class OtaInstallCoordinator {
       connected,
       errorMsg: this.errorMsg,
       sawReconnectEdge: this.sawReconnectEdge,
+      legacyApkSettleHold: this.legacyApkSettleHold,
+      apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
-    const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress)
+    const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
 
-    const connectedChanged = isMount || connected !== this.lastConnected
-    const otaStatusChanged = isMount || otaStatus !== this.lastOtaStatus
-    const otaProgressChanged = isMount || otaProgress !== this.lastOtaProgress
     const displayStateChanged = isMount || displayState !== this.lastDisplayState
     const stallSigChanged = isMount || stallSig !== this.lastStallSig
 
@@ -373,6 +506,7 @@ class OtaInstallCoordinator {
     this.lastConnected = connected
     this.lastOtaStatus = otaStatus
     this.lastOtaProgress = otaProgress
+    this.lastBuildNumber = buildNumber
     this.lastDisplayState = displayState
     this.lastStallSig = stallSig
 
@@ -410,6 +544,50 @@ class OtaInstallCoordinator {
       this.apkStepSeen = true
     }
 
+    // Legacy MTK completion side effect (WP 8C-a): old builds never send the
+    // mtk_update_complete BLE event; their install FINISHED is the completion signal,
+    // and the legacy screen marked MTK as updated this session right there.
+    if (
+      otaStatusChanged &&
+      isLegacyShapedOtaStatus(otaStatus) &&
+      otaStatus?.stepType === "mtk" &&
+      otaStatus.phase === "install" &&
+      otaStatus.status === "complete"
+    ) {
+      console.log("[OTA_PROGRESS] legacy mtk install complete — marking MTK updated this session")
+      useGlassesStore.getState().setMtkUpdatedThisSession(true)
+    }
+
+    // Legacy APK completion by build-number increase (WP 8C-c): old builds reboot into
+    // the new build without a reliable explicit reconnect status; the fresh version_info
+    // build number is the completion signal (ported from progress-legacy.tsx, which
+    // completed from installing-with-apk and from starting/failed).
+    if (
+      buildNumberChanged &&
+      !this.apkCompletedViaBuildIncrease &&
+      this.apkExpectedInSession &&
+      legacySession &&
+      this.initialBuildNumber
+    ) {
+      const currentBuild = Number.parseInt(buildNumber, 10)
+      const initialBuild = Number.parseInt(this.initialBuildNumber, 10)
+      const increased = Number.isFinite(currentBuild) && Number.isFinite(initialBuild) && currentBuild > initialBuild
+      const apkStepCurrent = otaStatus?.stepType === "apk" || otaProgress?.currentUpdate === "apk"
+      const detectable =
+        displayState === "starting" || displayState === "failed" || (displayState === "updating" && apkStepCurrent)
+      if (increased && detectable) {
+        console.log(
+          `[OTA_PROGRESS] legacy apk complete via build-number increase (${initialBuild} -> ${currentBuild}), completing session`,
+        )
+        this.clearPerStepTimers()
+        this.clearLegacyApkSettleTimer()
+        this.setLegacyApkSettleHold(false)
+        this.apkStepSeen = true
+        this.setErrorMsg("")
+        this.setApkCompletedViaBuildIncrease(true)
+      }
+    }
+
     // Cancel the query-reply fallback as soon as the glasses reply with a useful
     // status (in_progress / step_complete / complete / failed) or any progress
     // event. An "idle" ota_status means glasses have no active session, so we
@@ -438,15 +616,17 @@ class OtaInstallCoordinator {
       GlobalEventEmitter.on("mtk_update_complete", this.handleMtkComplete)
     }
 
-    // Ping keepalive while an OTA is actively running
+    // Ping keepalive while an OTA is actively running (legacy sessions pinged on the
+    // padded interval — old builds slept less eagerly and pings are costlier for them).
     if (connectedChanged || displayStateChanged) {
       this.clearPingInterval()
       const active = connected && (displayState === "starting" || displayState === "updating")
       if (active) {
         void BluetoothSdk.ping().catch(() => {})
+        const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
         this.pingInterval = setInterval(() => {
           void BluetoothSdk.ping().catch(() => {})
-        }, PING_INTERVAL_MS)
+        }, pingIntervalMs)
       }
     }
 
@@ -489,20 +669,29 @@ class OtaInstallCoordinator {
       }
     }
 
-    // 15s lockout on Continue button after BES restart to prevent accidental tap.
+    // Lockout on Continue button after BES restart to prevent accidental tap
+    // (15s unified, 35s for legacy-shaped sessions — WP 8C-f).
     if (displayStateChanged) {
       this.clearContinueLockoutTimer()
       if (displayState === "restarting") {
+        const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
         this.setContinueButtonDisabled(true)
         this.continueLockoutTimer = setTimeout(() => {
           this.continueLockoutTimer = null
           this.setContinueButtonDisabled(false)
-        }, 15_000)
+        }, lockoutMs)
       }
     }
 
     if (displayStateChanged && displayState === "failed") {
       this.clearPerStepTimers()
+    }
+
+    // Legacy MTK install stall simulation (WP 8C-e): display-only. The simulation
+    // timers only ever touch the projected snapshot percent — they never feed back
+    // into arbitration (no reaction pass, no watchdog resets).
+    if (otaProgressChanged) {
+      this.runMtkStallSimulationPass(otaProgress, legacySession)
     }
 
     // Clear the selected update once this session reaches any terminal UI state.
@@ -531,6 +720,14 @@ class OtaInstallCoordinator {
     if (becameConnected) {
       console.log("[OTA_PROGRESS] connect-edge: false->true, flipping sawReconnectEdge=true")
       this.setSawReconnectEdge(true)
+    }
+
+    // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
+    // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
+    // query/fallback; the settle timer (or the build-number increase) completes.
+    if (becameConnected && this.legacyApkSettleHold) {
+      console.log("[OTA_PROGRESS] connect-edge: reconnect during legacy apk settle hold — no query")
+      return
     }
 
     const storeState = useGlassesStore.getState()
@@ -601,6 +798,109 @@ class OtaInstallCoordinator {
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
   }
 
+  // --- legacy (< 37) compatibility, ported from progress-legacy.tsx (WP 8C) ---
+
+  /**
+   * Reacts to a NEW legacy-shaped install-phase "complete" (an old build's
+   * `install FINISHED`). Two ports from the legacy screen:
+   * - last-write-wins: completion arriving after a watchdog failure overrides it
+   *   (the old screen completed from "failed" too);
+   * - apk settle window: an apk install FINISHED observed in flight is held out of
+   *   "complete" for LEGACY_APK_COMPLETION_SETTLE_MS so the ASG process restart
+   *   settles (and fresh version_info lands) before the user can continue. From
+   *   starting/failed (post-reboot explicit signal) completion is immediate.
+   */
+  private handleLegacyInstallCompleteEdge(otaStatus: OtaStatus | null): void {
+    if (!isLegacyShapedOtaStatus(otaStatus) || otaStatus?.phase !== "install" || otaStatus.status !== "complete") {
+      return
+    }
+
+    if (this.errorMsg) {
+      console.log("[OTA_PROGRESS] legacy install complete arrived after a failure — completing (legacy last-write-wins)")
+      this.setErrorMsg("")
+      this.clearLegacyApkSettleTimer()
+      this.setLegacyApkSettleHold(false)
+      return
+    }
+
+    if (
+      otaStatus.stepType === "apk" &&
+      !this.apkCompletedViaBuildIncrease &&
+      !this.legacyApkSettleHold &&
+      this.legacyApkSettleTimer === null &&
+      this.lastDisplayState === "updating"
+    ) {
+      console.log(
+        `[OTA_PROGRESS] legacy apk install complete — holding complete for ${LEGACY_APK_COMPLETION_SETTLE_MS}ms settle window`,
+      )
+      this.setLegacyApkSettleHold(true)
+      this.legacyApkSettleTimer = setTimeout(() => {
+        this.legacyApkSettleTimer = null
+        console.log("[OTA_PROGRESS] legacy apk settle window elapsed — releasing complete")
+        this.setLegacyApkSettleHold(false)
+      }, LEGACY_APK_COMPLETION_SETTLE_MS)
+    }
+  }
+
+  /**
+   * Legacy MTK install stall simulation (WP 8C-e), ported verbatim: the MTK system
+   * install typically stalls around 49-50%. Every real event restarts stall detection;
+   * after LEGACY_MTK_STALL_DETECT_MS of silence inside the [45, 55) zone, simulate +1%
+   * every LEGACY_MTK_SIM_TICK_MS from max(stall+1, 51), capped at 60. Real progress
+   * beyond the simulated value clears it. Display-only by construction: the timers call
+   * only {@link setMtkSimulatedPercent}, which never queues a reaction pass.
+   */
+  private runMtkStallSimulationPass(otaProgress: OtaProgress | null, legacySession: boolean): void {
+    const isLegacyMtkInstall =
+      legacySession &&
+      otaProgress?.currentUpdate === "mtk" &&
+      otaProgress.stage === "install" &&
+      (otaProgress.status === "STARTED" || otaProgress.status === "PROGRESS")
+
+    if (!isLegacyMtkInstall) {
+      this.clearMtkSimulationTimers()
+      this.setMtkSimulatedPercent(null)
+      return
+    }
+
+    const realProgress = otaProgress.progress ?? 0
+    if (realProgress > 0 && realProgress !== this.lastRealMtkProgress) {
+      this.lastRealMtkProgress = realProgress
+      if (this.mtkSimulatedPercent !== null && realProgress > this.mtkSimulatedPercent) {
+        this.setMtkSimulatedPercent(null)
+      }
+    }
+
+    // A real event arrived: restart stall detection (and stop any running ticker).
+    this.clearMtkSimulationTimers()
+    const inStallZone =
+      realProgress >= LEGACY_MTK_STALL_ZONE_MIN_PERCENT && realProgress < LEGACY_MTK_STALL_ZONE_MAX_PERCENT
+    if (!inStallZone) return
+
+    this.mtkStallDetectTimer = setTimeout(() => {
+      this.mtkStallDetectTimer = null
+      const stalledAt = this.lastRealMtkProgress
+      const prev = this.mtkSimulatedPercent
+      const target = Math.max(
+        prev !== null ? Math.max(prev, stalledAt + 1) : stalledAt + 1,
+        LEGACY_MTK_SIM_FLOOR_PERCENT,
+      )
+      console.log(
+        `[OTA_PROGRESS] legacy mtk install stalled at ${stalledAt}%, simulating display progress from ${target}%`,
+      )
+      this.setMtkSimulatedPercent(target)
+      this.mtkSimTickTimer = setInterval(() => {
+        const current = this.mtkSimulatedPercent ?? stalledAt + 1
+        const capped = Math.min(current + 1, LEGACY_MTK_SIM_CAP_PERCENT)
+        this.setMtkSimulatedPercent(capped)
+        if (capped >= LEGACY_MTK_SIM_CAP_PERCENT && this.mtkSimTickTimer) {
+          clearInterval(this.mtkSimTickTimer)
+          this.mtkSimTickTimer = null
+        }
+      }, LEGACY_MTK_SIM_TICK_MS)
+    }, LEGACY_MTK_STALL_DETECT_MS)
+  }
+
   // --- watchdogs / send path ---
 
   /**
@@ -615,6 +915,8 @@ class OtaInstallCoordinator {
       connected: isGlassesConnected(state.connection),
       errorMsg: this.errorMsg,
       sawReconnectEdge: this.sawReconnectEdge,
+      legacyApkSettleHold: this.legacyApkSettleHold,
+      apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
     })
   }
 
@@ -645,19 +947,34 @@ class OtaInstallCoordinator {
   private maybeStartGlobalTimeout(): void {
     if (this.globalTimeoutStarted) return
     this.globalTimeoutStarted = true
+    // Legacy-shape check happens once, when the session cap is armed at the first
+    // ota_start send (WP 8C-b): old builds get the padded legacy cap for the whole
+    // session; a session that starts unified keeps the unified cap.
+    const globalTimeoutMs = this.isLegacySessionShapeNow() ? LEGACY_GLOBAL_OTA_TIMEOUT_MS : GLOBAL_OTA_TIMEOUT_MS
     this.globalTimeout = setTimeout(() => {
       this.globalTimeout = null
       this.globalTimeoutStarted = false
       if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
       console.log("[OTA_PROGRESS] watchdog: global timeout fired, failing session")
       this.clearPerStepTimers()
+      // Legacy parity: the old screen's global-timeout handler also killed the apk
+      // completion timer and the MTK stall simulation (the flags/percent stay put —
+      // errorMsg outranks them in the projection, and retry()/last-write-wins reset them).
+      this.clearLegacyApkSettleTimer()
+      this.clearMtkSimulationTimers()
       this.setErrorMsg(OtaProgressMessages.globalTimeout)
-    }, GLOBAL_OTA_TIMEOUT_MS)
+    }, globalTimeoutMs)
   }
 
   private armAckAndStuckWatchdogsOnly(): void {
     this.clearRetryTimeout()
     this.clearStuckTimeout()
+
+    // Durations resolved at arm time (WP 8C-b): legacy-shaped sessions get the
+    // padded values progress-legacy.tsx used for old (< 37) builds.
+    const legacySession = this.isLegacySessionShapeNow()
+    const retryIntervalMs = legacySession ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
+    const stuckTimeoutMs = legacySession ? LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS : DOWNLOAD_STUCK_TIMEOUT_MS
 
     this.retryTimeout = setTimeout(() => {
       this.retryTimeout = null
@@ -667,7 +984,7 @@ class OtaInstallCoordinator {
         this.retryCount += 1
         this.hasReceivedAck = false
         console.log(
-          `[OTA_PROGRESS] watchdog: no ack in ${RETRY_INTERVAL_MS}ms, retrying ota_start (attempt ${this.retryCount})`,
+          `[OTA_PROGRESS] watchdog: no ack in ${retryIntervalMs}ms, retrying ota_start (attempt ${this.retryCount})`,
         )
         void this.sendOtaStartWithWatchdogs(true)
           .then(() => {
@@ -678,7 +995,7 @@ class OtaInstallCoordinator {
         console.log(`[OTA_PROGRESS] watchdog: ota_start ack never received after ${MAX_RETRIES} attempts, failing`)
         this.setErrorMsg(OtaProgressMessages.noAckResponse)
       }
-    }, RETRY_INTERVAL_MS)
+    }, retryIntervalMs)
 
     this.stuckTimeout = setTimeout(() => {
       this.stuckTimeout = null
@@ -689,10 +1006,10 @@ class OtaInstallCoordinator {
       }
       const pct = latestPercentForStuck(state.otaStatus, state.otaProgress)
       if (pct !== 0) return
-      console.log(`[OTA_PROGRESS] watchdog: stuck at 0% for ${DOWNLOAD_STUCK_TIMEOUT_MS}ms, failing`)
+      console.log(`[OTA_PROGRESS] watchdog: stuck at 0% for ${stuckTimeoutMs}ms, failing`)
       this.clearRetryTimeout()
       this.setErrorMsg(OtaProgressMessages.stalledOrStuck)
-    }, DOWNLOAD_STUCK_TIMEOUT_MS)
+    }, stuckTimeoutMs)
   }
 
   private async sendOtaStartWithWatchdogs(retryAlreadyCounted = false): Promise<void> {
@@ -712,10 +1029,11 @@ class OtaInstallCoordinator {
         if (!retryAlreadyCounted) {
           this.retryCount += 1
         }
+        const retryIntervalMs = this.isLegacySessionShapeNow() ? LEGACY_RETRY_INTERVAL_MS : RETRY_INTERVAL_MS
         this.retryTimeout = setTimeout(() => {
           this.retryTimeout = null
           void this.sendOtaStartWithWatchdogs()
-        }, RETRY_INTERVAL_MS)
+        }, retryIntervalMs)
       } else {
         console.log("[OTA_PROGRESS] sendOtaStart failed after max retries, failing session")
         this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed)
@@ -740,8 +1058,17 @@ class OtaInstallCoordinator {
       this.queryReplyTimeout = null
       const state = useGlassesStore.getState()
       // If we already got a useful reply, we'd have been cleared. Defensive
-      // re-check: idle replies must not block the retry.
-      if (hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
+      // re-check: idle replies must not block the retry. Legacy-shaped state is
+      // exempt (WP 8C-b): old (< 37) builds ignore ota_query_status entirely, so
+      // whatever legacy-shaped status/progress sits in the store is a pre-query
+      // leftover, not a reply — a NEW legacy event would have cleared this timer
+      // through the reaction pass. Only a unified reply suppresses the fallback.
+      const legacySession = isLegacyShapedOtaSession(
+        state.otaStatus,
+        state.otaProgress,
+        this.initialBuildNumber || state.buildNumber,
+      )
+      if (!legacySession && hasRecoveringOtaReply(state.otaStatus, state.otaProgress)) return
       // Don't fire if we've left the active phase (e.g. user backed out, error overlay).
       if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
       console.log(
@@ -814,6 +1141,31 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearLegacyApkSettleTimer(): void {
+    if (this.legacyApkSettleTimer) {
+      clearTimeout(this.legacyApkSettleTimer)
+      this.legacyApkSettleTimer = null
+    }
+  }
+
+  private clearMtkSimulationTimers(): void {
+    if (this.mtkStallDetectTimer) {
+      clearTimeout(this.mtkStallDetectTimer)
+      this.mtkStallDetectTimer = null
+    }
+    if (this.mtkSimTickTimer) {
+      clearInterval(this.mtkSimTickTimer)
+      this.mtkSimTickTimer = null
+    }
+  }
+
+  /**
+   * NOTE (WP 8C): the legacy apk settle timer and the MTK stall simulation timers are
+   * deliberately NOT per-step watchdogs — a per-step failure must not kill them (the
+   * legacy screen kept the simulation ticking through a watchdog failure, and the
+   * settle latch resolves completion, not liveness). They are cleared on detach,
+   * retry(), global timeout, and their own supersession paths.
+   */
   private clearPerStepTimers(): void {
     this.clearRetryTimeout()
     this.clearStuckTimeout()
@@ -826,6 +1178,8 @@ class OtaInstallCoordinator {
     this.clearPerStepTimers()
     this.clearGlobalTimeout()
     this.clearPingInterval()
+    this.clearLegacyApkSettleTimer()
+    this.clearMtkSimulationTimers()
   }
 }
 

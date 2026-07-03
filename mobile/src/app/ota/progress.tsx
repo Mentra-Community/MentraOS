@@ -21,7 +21,15 @@ export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
   const install = useToolkitSnapshot(toolkit.ota.installSession.snapshot, toolkit.ota.installSession.onSnapshot)
-  const {displayState, errorMsg, continueButtonDisabled, connected, otaStatus, otaProgress} = install
+  const {
+    displayState,
+    errorMsg,
+    continueButtonDisabled,
+    connected,
+    otaStatus,
+    otaProgress,
+    mtkInstallStallSimulatedPercent,
+  } = install
 
   focusEffectPreventBack()
 
@@ -98,7 +106,10 @@ export default function OtaProgressScreen() {
         : totalSteps >= 2
         ? otaStatus?.overallPercent ?? 0
         : otaStatus?.stepPercent ?? 0
-      const percent = Math.min(Math.max(rawPercent, 0), 100)
+      // Legacy (< 37) MTK install stall simulation (WP 8C-e): the coordinator projects a
+      // display-only percent while the MTK system install goes quiet; render whichever is
+      // further along. Null for unified sessions and outside legacy MTK installs.
+      const percent = Math.min(Math.max(rawPercent, mtkInstallStallSimulatedPercent ?? 0, 0), 100)
 
       return (
         <View className="flex-1 items-center justify-center px-6">

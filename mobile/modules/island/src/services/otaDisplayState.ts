@@ -1,5 +1,7 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 
+import {isLegacyShapedOtaStatus} from "./otaInstallPolicy"
+
 export type DisplayState = "starting" | "updating" | "complete" | "failed" | "disconnected" | "restarting"
 
 /**
@@ -8,17 +10,27 @@ export type DisplayState = "starting" | "updating" | "complete" | "failed" | "di
  * OtaInstallCoordinator.ts for the state machine that consumes this (the host
  * progress screen renders its snapshot).
  *
+ * Legacy shape (WP 8C): old (< 37) ASG builds send `ota_progress`, which the SDK
+ * maps to ota_status with sessionId "" and FINISHED→"complete" at ANY phase. For
+ * those statuses a download-phase "complete" only means the download finished
+ * (the install is still ahead), and an apk install "complete" may be held by the
+ * coordinator's settle window — both stay "updating" instead of terminal.
+ *
  * Priority-ordered rules (first match wins):
  *   1. errorMsg !== ""                                          -> "failed"
  *   2. BES terminal + connected + sawReconnectEdge             -> "complete"
  *   3. BES terminal (any connection state)                     -> "restarting"
- *   4. otaStatus.status === "failed"                           -> "failed"
- *   5. otaStatus.status === "complete" (non-BES)               -> "complete"
- *   6. !connected + APK step_complete with totalSteps > 1      -> "starting"   (expected reboot)
- *   7. !connected + BES in flight                              -> "restarting" (defensive)
- *   8. !connected                                              -> "disconnected"
- *   9. connected + status in_progress | step_complete          -> "updating"
- *   10. fallback                                               -> "starting"
+ *      (legacy-shaped BES "complete" counts only in install phase)
+ *   4. apkCompletedViaBuildIncrease (legacy build-number port) -> "complete"
+ *   5. otaStatus.status === "failed"                           -> "failed"
+ *   6. otaStatus.status === "complete" (non-BES)               -> "complete"
+ *      (unless legacy-shaped download-complete or held apk settle -> in flight)
+ *   7. !connected + legacy in-flight complete (held apk)       -> "updating"
+ *   8. !connected + APK step_complete with totalSteps > 1      -> "starting"   (expected reboot)
+ *   9. !connected + BES in flight                              -> "restarting" (defensive)
+ *   10. !connected                                             -> "disconnected"
+ *   11. connected + in_progress | step_complete | legacy in-flight complete -> "updating"
+ *   12. fallback                                               -> "starting"
  */
 export function deriveDisplayState(args: {
   otaStatus: OtaStatus | null
@@ -26,8 +38,13 @@ export function deriveDisplayState(args: {
   connected: boolean
   errorMsg: string
   sawReconnectEdge: boolean
+  /** Coordinator is holding a legacy apk install "complete" for the settle window (WP 8C). */
+  legacyApkSettleHold?: boolean
+  /** Legacy APK completion detected by build-number increase (WP 8C). */
+  apkCompletedViaBuildIncrease?: boolean
 }): DisplayState {
-  const {otaStatus, otaProgress, connected, errorMsg, sawReconnectEdge} = args
+  const {otaStatus, otaProgress, connected, errorMsg, sawReconnectEdge, legacyApkSettleHold, apkCompletedViaBuildIncrease} =
+    args
 
   if (errorMsg) return "failed"
 
@@ -35,25 +52,47 @@ export function deriveDisplayState(args: {
   if (besTerminal && connected && sawReconnectEdge) return "complete"
   if (besTerminal) return "restarting"
 
+  // Legacy build-number APK completion: the coordinator clears errorMsg when it fires,
+  // and the flag outranks whatever stale legacy status is still in the store (the old
+  // screen's last-write-wins completion from starting/failed/installing).
+  if (apkCompletedViaBuildIncrease) return "complete"
+
   if (otaStatus?.status === "failed") return "failed"
-  if (otaStatus?.status === "complete") return "complete"
+
+  // Legacy-shaped "complete" that is still in flight: a download-phase FINISHED (the
+  // install is still ahead), or an apk install FINISHED held by the settle window.
+  const legacyInFlightComplete =
+    isLegacyShapedOtaStatus(otaStatus) &&
+    otaStatus?.status === "complete" &&
+    (otaStatus.phase === "download" ||
+      (!!legacyApkSettleHold && otaStatus.stepType === "apk" && otaStatus.phase === "install"))
+
+  if (otaStatus?.status === "complete" && !legacyInFlightComplete) return "complete"
 
   if (!connected) {
-    // By here, Rules 4 & 5 already returned for status==="failed"|"complete".
+    // The held apk install complete means the glasses are restarting into the new
+    // build — the legacy screen kept showing "installing" through that restart.
+    if (legacyInFlightComplete && otaStatus?.phase === "install") return "updating"
+
+    // By here, the failed/complete rules already returned for terminal statuses.
     // For APK multi-step, "step_complete" means the current step ended and the
     // glasses are rebooting to start the next one.
     const apkRebootExpected =
       otaStatus?.stepType === "apk" && (otaStatus?.totalSteps ?? 0) > 1 && otaStatus.status === "step_complete"
     if (apkRebootExpected) return "starting"
 
+    // Legacy-shaped BES download events do not mean a reboot is coming (the flash
+    // has not started); the legacy screen treated that drop as a plain disconnect.
+    const besStatusInFlight =
+      otaStatus?.stepType === "bes" && !(isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase === "download")
     const besInFlight =
-      otaStatus?.stepType === "bes" || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
+      besStatusInFlight || (otaProgress?.currentUpdate === "bes" && otaProgress?.stage === "install")
     if (besInFlight) return "restarting"
 
     return "disconnected"
   }
 
-  if (otaStatus?.status === "in_progress" || otaStatus?.status === "step_complete") {
+  if (otaStatus?.status === "in_progress" || otaStatus?.status === "step_complete" || legacyInFlightComplete) {
     return "updating"
   }
 
@@ -62,6 +101,11 @@ export function deriveDisplayState(args: {
 
 function isBesTerminal(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
   if (otaStatus?.stepType === "bes" && (otaStatus.status === "step_complete" || otaStatus.status === "complete")) {
+    // Legacy-shaped statuses map download FINISHED to "complete" too; only an
+    // install-phase terminal means the BES flash actually ran (WP 8C).
+    if (isLegacyShapedOtaStatus(otaStatus) && otaStatus.phase !== "install") {
+      return false
+    }
     return true
   }
   if (otaProgress?.currentUpdate === "bes" && otaProgress.stage === "install" && otaProgress.status === "FINISHED") {
