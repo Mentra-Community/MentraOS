@@ -2486,7 +2486,7 @@ class G2: NSObject, SGCManager {
         {
             // Blank in place — G2 has no per-container delete, and shutdownPage
             // is the mic-coupled footgun (see clearDisplay).
-            textContainers[i].content = " "
+            textContainers[i].content = ""
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
             signalDisplayDirty()
         }
@@ -2544,7 +2544,7 @@ class G2: NSObject, SGCManager {
         // and triggers a firmware systemExit→recovery→rebuild; the cloud sends clearDisplay in
         // bursts, so that turned into a rebuild storm. The reconcile loop pushes the blanked text.
         for i in textContainers.indices {
-            textContainers[i].content = " "
+            textContainers[i].content = ""
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
