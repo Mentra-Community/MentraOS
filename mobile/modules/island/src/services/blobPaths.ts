@@ -12,10 +12,12 @@ export function sanitizeSegment(s: string): string {
 
 /**
  * Filesystem-safe display name for a shared blob, guaranteed to carry an
- * extension. The on-disk blob name is a generated, extension-less id, so the OS
- * share sheet (which keys off the file path, not any metadata) would otherwise
- * emit an extension-less file — breaking "open with"/preview on the receiving
- * side. Derives the extension from the mimeType when the stored name lacks one.
+ * extension. The on-disk blob name is a generated machine id (with a
+ * mime-derived extension since withDiskExt; legacy blobs may lack it), so the
+ * OS share sheet (which keys off the file path, not any metadata) would
+ * otherwise emit a machine-named file — breaking "open with"/preview on the
+ * receiving side. Derives the extension from the mimeType when the stored name
+ * lacks one.
  */
 export function shareFileName(meta: {name?: string; fileName: string; mimeType: string}): string {
   const raw = (meta.name || meta.fileName).trim()
@@ -39,6 +41,19 @@ export function shareFileName(meta: {name?: string; fileName: string; mimeType: 
     base = base.slice(0, Math.max(1, MAX_LEN - suffix.length))
   }
   return base + suffix
+}
+
+/**
+ * On-disk name for a stored blob: the generated id plus a mime-derived
+ * extension when one is known. iOS AVPlayer resolves a local file's format
+ * from its path extension (not content sniffing), so an extension-less WAV is
+ * unplayable through `session.speaker.play` even though the bytes are valid.
+ * Leaves a name that already has an extension untouched.
+ */
+export function withDiskExt(fileName: string, mimeType: string): string {
+  if (fileName.includes(".")) return fileName
+  const ext = extForMime(mimeType)
+  return ext ? `${fileName}.${ext}` : fileName
 }
 
 /** Best-effort file extension (no dot) for a MIME type. Inverse of inferMime in BlobStore. */
