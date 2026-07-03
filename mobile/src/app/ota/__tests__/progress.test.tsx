@@ -7,7 +7,7 @@ import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
-import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
+import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/island"
 
 const mockReplace = jest.fn()
 

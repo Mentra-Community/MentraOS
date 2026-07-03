@@ -2,7 +2,6 @@ import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
 
-import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
@@ -205,9 +204,9 @@ export default function OtaCheckForUpdatesScreen() {
       }),
     )
     toolkit.ota.clearProgress()
-    const buildNum = parseInt(currentBuildNumber || "0", 10)
-    const route = buildNum > 0 && buildNum < MINIMUM_OTA_STATUS_BUILD ? "/ota/progress-legacy" : "/ota/progress"
-    replace(route)
+    // One unified progress route: old-build (< MINIMUM_OTA_STATUS_BUILD)
+    // compatibility now lives inside the island install coordinator (WP 8C/8D).
+    replace("/ota/progress")
   }
 
   const renderContent = () => {
