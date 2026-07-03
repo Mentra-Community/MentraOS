@@ -63,6 +63,9 @@ augmentos_npm/
 **/expo-env.d.ts
 *.tsbuildinfo
 .tsbuildinfo
+.cloud-v2-storage/
+miniapps/**/build/*.zip
+mobile/.env.*-backup
 
 ### PYTHON
 #

@@ -14,26 +14,31 @@ FROM oven/bun:1.3.14
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /app/cloud-v2
 
 # Copy lockfile + workspace manifests first to maximize layer reuse on
 # dependency-only changes (Docker layer cache).
-COPY bun.lock package.json ./
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/auth/package.json ./packages/auth/
-COPY packages/core/package.json ./packages/core/
-COPY packages/runtime/package.json ./packages/runtime/
-COPY packages/proxy/package.json ./packages/proxy/
-COPY packages/cloud-client/package.json ./packages/cloud-client/
-COPY test/test-oem/package.json ./test/test-oem/
-COPY test/test-client/package.json ./test/test-client/
+COPY cloud-v2/bun.lock cloud-v2/package.json ./
+COPY cloud-v2/packages/shared/package.json ./packages/shared/
+COPY cloud-v2/packages/auth/package.json ./packages/auth/
+COPY cloud-v2/packages/cli/package.json ./packages/cli/
+COPY cloud-v2/packages/core/package.json ./packages/core/
+COPY cloud-v2/packages/runtime/package.json ./packages/runtime/
+COPY cloud-v2/packages/proxy/package.json ./packages/proxy/
+COPY cloud-v2/packages/cloud-client/package.json ./packages/cloud-client/
+COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
+COPY cloud-v2/test/test-client/package.json ./test/test-client/
+COPY cloud-v2/websites/admin/package.json ./websites/admin/
+COPY cloud-v2/websites/console/package.json ./websites/console/
+COPY cloud-v2/websites/portal/package.json ./websites/portal/
+COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
 # Install (frozen lockfile so reproducible deploys).
 RUN bun install --frozen-lockfile
 
 # Now the source. Comes after install so dependency changes don't invalidate
 # the install layer.
-COPY . .
+COPY cloud-v2/ ./
 
 # Typecheck as a build-time gate so we don't deploy broken type code.
 RUN bun run typecheck

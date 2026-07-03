@@ -114,6 +114,12 @@ export type DevSettings = {
    * Gough St"). The distance suffix ("in 198 m") is preserved.
    */
   useRawInstructions: boolean
+  /**
+   * Dev toggle for the swipe-up large map (WIP). When OFF (default), swipe
+   * gestures do nothing — the large map feature is disabled. When ON, swiping
+   * toggles the full-screen route map on/off as usual.
+   */
+  largeMapEnabled: boolean
 }
 
 export type NavSnapshot = {

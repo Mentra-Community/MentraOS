@@ -185,7 +185,11 @@ export function parseVerdictFromText(text: string): Verdict | null {
 }
 
 function extractJsonObjects(text: string): string[] {
-  const objects: string[] = [];
+  return extractJsonObjectSpans(text).map((s) => s.json);
+}
+
+function extractJsonObjectSpans(text: string): Array<{ json: string; start: number; end: number }> {
+  const objects: Array<{ json: string; start: number; end: number }> = [];
   let depth = 0;
   let start = -1;
   let inString = false;
@@ -207,10 +211,29 @@ function extractJsonObjects(text: string): string[] {
     } else if (ch === '}' && depth > 0) {
       depth--;
       if (depth === 0 && start >= 0) {
-        objects.push(text.slice(start, i + 1));
+        objects.push({ json: text.slice(start, i + 1), start, end: i + 1 });
         start = -1;
       }
     }
   }
   return objects;
+}
+
+/**
+ * Return the human-readable portion of a review by removing the trailing verdict
+ * JSON object (and any surrounding ```json fence). Leaves all other prose intact.
+ */
+export function stripVerdictJson(text: string): string {
+  const spans = extractJsonObjectSpans(text);
+  for (let i = spans.length - 1; i >= 0; i--) {
+    try {
+      VerdictSchema.parse(JSON.parse(spans[i]!.json));
+    } catch {
+      continue;
+    }
+    const before = text.slice(0, spans[i]!.start).replace(/```(?:json)?\s*$/i, '');
+    const after = text.slice(spans[i]!.end).replace(/^\s*```/, '');
+    return `${before}${after}`.trim();
+  }
+  return text.trim();
 }

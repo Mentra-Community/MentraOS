@@ -123,19 +123,20 @@ async function main() {
   await startContainers();
 
   if (TEST_MODE) {
-    console.log(
-      "\n\x1b[32mReady.\x1b[0m Run tests:\n" +
-        "  bun test                       # whole suite\n" +
-        "  bun test tests/audio*          # just audio tests\n" +
-        "\n  When done: \x1b[2mdocker compose -f docker-compose.test.yml down\x1b[0m\n",
-    );
+    if (process.env.CLOUD_V2_SETUP_CALLER === "dev") {
+      console.log("\n\x1b[32mReady.\x1b[0m Starting Cloud V2 dev stack.\n");
+    } else {
+      console.log(
+        "\n\x1b[32mReady.\x1b[0m Run tests:\n" +
+          "  bun test                       # whole suite\n" +
+          "  bun test tests/audio*          # just audio tests\n" +
+          "\n  When done: \x1b[2mdocker compose -f docker-compose.test.yml down\x1b[0m\n",
+      );
+    }
   } else {
     console.log(
       "\n\x1b[32mReady.\x1b[0m Next:\n" +
-        "  \x1b[2m# in separate terminals\x1b[0m\n" +
-        "  bun run dev:core\n" +
-        "  bun run dev:runtime\n" +
-        "  bun run dev:proxy\n",
+        "  bun run dev\n",
     );
   }
 }

@@ -23,7 +23,7 @@ import type {ClientApp} from "../types/applet"
 import type {Capabilities} from "../types/hardware"
 import {DeviceTypes} from "../types/enums"
 import {getModelCapabilities} from "../types/hardware"
-import {HardwareCompatibility} from "../utils/hardware/hardware"
+import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import {miniappLauncher} from "../services/MiniappLauncher"
@@ -200,20 +200,67 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[], extr
   // key of an object already passed to a worklet" warning whenever the home
   // screen's animated app cards held a reference to a previous snapshot's
   // app object that we then mutated.
-  return Array.from(byPackage.values()).map((app) => ({
-    ...app,
-    screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
-    compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
-    hidden: previousState.getHiddenStatus(app.packageName),
-    // Derive the foreground flag from the store's single source of truth
-    // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
-    // per-app meant a refresh that momentarily omitted an app (e.g. the
-    // two-pass local-only → merged emit) would reset its flag to false — which
-    // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
-    // through to the root router (restart). Deriving here keeps the flag stable
-    // across both passes.
-    foregrounded: app.packageName === previousState.foregroundedPackage,
-  }))
+  //
+  // Identity stability: refresh() is event-driven and fires repeatedly (and
+  // twice per cycle via the local-only → merged two-pass emit). If we always
+  // returned fresh objects, every poll changed the identity of EVERY app —
+  // which re-rendered the Compositor (via useForegroundApp) mid-slide and made
+  // the open/close animation hitch, and churned the home grid / switcher pill.
+  // So we build the candidate object, then REUSE the previous reference when
+  // nothing meaningful changed. Same pattern as the miniappRunningRegistry
+  // projection below. A stable foreground-app reference lets the Compositor's
+  // slide run uninterrupted on the UI thread.
+  return Array.from(byPackage.values()).map((app) => {
+    const next: ClientApp = {
+      ...app,
+      screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
+      compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
+      hidden: previousState.getHiddenStatus(app.packageName),
+      // Derive the foreground flag from the store's single source of truth
+      // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
+      // per-app meant a refresh that momentarily omitted an app (e.g. the
+      // two-pass local-only → merged emit) would reset its flag to false — which
+      // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
+      // through to the root router (restart). Deriving here keeps the flag stable
+      // across both passes.
+      foregrounded: app.packageName === previousState.foregroundedPackage,
+    }
+    const prev = previousByPackage.get(app.packageName)
+    return prev && shallowEqualApp(prev, next) ? prev : next
+  })
+}
+
+// Cheap equality check used by projectApps to preserve object identity across
+// refreshes when nothing meaningful changed. Most keys are compared by
+// reference (the source app's nested fields — permissions, hardwareRequirements,
+// parameters — are reference-stable within a refresh). The ONE exception is
+// `compatibility`, which projectApps recomputes into a fresh object every call;
+// comparing it by reference would always differ and defeat the whole point. We
+// compare it structurally instead so identity is only broken when the device's
+// actual compatibility verdict changes (e.g. glasses connect/disconnect).
+function shallowEqualApp(a: ClientApp, b: ClientApp): boolean {
+  const aKeys = Object.keys(a) as (keyof ClientApp)[]
+  const bKeys = Object.keys(b) as (keyof ClientApp)[]
+  if (aKeys.length !== bKeys.length) return false
+  for (const k of aKeys) {
+    if (k === "compatibility") {
+      if (!compatibilityEqual(a.compatibility, b.compatibility)) return false
+      continue
+    }
+    if (a[k] !== b[k]) return false
+  }
+  return true
+}
+
+function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.isCompatible === b.isCompatible &&
+    a.missingRequired.length === b.missingRequired.length &&
+    a.missingOptional.length === b.missingOptional.length &&
+    a.warnings.length === b.warnings.length
+  )
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
@@ -278,16 +325,34 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // Skip if any app is currently loading.
-    if (state.apps.some((a) => a.loading)) {
+    // Skip spawning a NEW app while another is mid-launch — concurrent spawns
+    // race the foreground-only-one teardown. This is checked BEFORE beforeStart
+    // (which navigates/foregrounds) so a gated launch doesn't paint a splash it
+    // can't back. Re-opening an already-running app is exempt: it has nothing to
+    // spawn, so it skips this gate and is allowed to re-navigate/animate below.
+    // That exemption is the fix for the "second tap during another app's launch
+    // window silently does nothing" bug.
+    if (!app.running && state.apps.some((a) => a.loading)) {
       console.log(`ISLAND: skipping start ${packageName} — another app is loading`)
       return false
     }
 
-    // Host gate (incompatible alerts, offline-mode rejection, etc.).
+    // Host gate (incompatible alerts, offline-mode rejection, etc.). This is
+    // ALSO where the host navigates / foregrounds for the open animation
+    // (MiniappCatalog.navigateForApp: overlay apps setForeground for the slide,
+    // cloud apps push the webview route). It must run on EVERY open — including
+    // re-opening an already-running app — so the animation always plays.
     if (hostHooks.beforeStart) {
       const proceed = await hostHooks.beforeStart(app, opts)
       if (!proceed) return false
+    }
+
+    // If the tapped app is already running, this is a re-open: the nav/foreground
+    // above already drove the animation, and there's nothing to spawn. Short-
+    // circuit before the spawn pipeline.
+    if (app.running) {
+      saveLastOpenTime(packageName)
+      return true
     }
 
     // Foreground-only-one rule: stop other running standard apps.

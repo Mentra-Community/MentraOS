@@ -104,6 +104,7 @@ final class LocalPhotoUploadServer {
   }
 
   private func handle(_ connection: NWConnection) {
+    traceWifiInput("photo_receiver_connection", connection: connection, state: nil)
     connection.start(queue: queue)
     receive(connection, state: RequestReadState())
   }
@@ -171,6 +172,14 @@ final class LocalPhotoUploadServer {
       let request = HttpRequest.parse(headerText)
       state.request = request
       onLog("\(request.method) \(request.path)")
+      var requestTraceValues: [String: Any] = [
+        "method": request.method,
+        "path": request.path,
+      ]
+      if let contentLength = request.headers["content-length"].flatMap(Int.init) {
+        requestTraceValues["contentLength"] = contentLength
+      }
+      traceWifiInput("photo_receiver_request", connection: connection, state: state, values: requestTraceValues)
 
       if request.method == "GET", request.path == "/" || request.path == "/health" {
         writeJson(connection, status: 200, body: #"{"ok":true,"service":"mentra-photo-upload-receiver"}"#)
@@ -263,6 +272,29 @@ final class LocalPhotoUploadServer {
     )
 
     onLog("upload fields=\(parsed.fields.keys.joined(separator: ",")) requestId=\(requestId ?? "") bytes=\(photoPart.byteCount) saved=\(photoFile.path)")
+    var uploadReceivedTraceValues: [String: Any] = [
+      "durationMs": Int(Date().timeIntervalSince1970 * 1000 - state.startMs),
+      "photoBytes": photoPart.byteCount,
+      "contentLength": state.contentLength,
+      "method": request.method,
+      "path": request.path,
+    ]
+    if let requestId {
+      uploadReceivedTraceValues["requestId"] = requestId
+    }
+    traceWifiInput("photo_receiver_upload_received", connection: connection, state: state, values: uploadReceivedTraceValues)
+    var uploadResponseTraceValues: [String: Any] = [
+      "statusCode": 200,
+      "success": true,
+      "durationMs": Int(Date().timeIntervalSince1970 * 1000 - state.startMs),
+      "contentLength": state.contentLength,
+      "method": request.method,
+      "path": request.path,
+    ]
+    if let requestId {
+      uploadResponseTraceValues["requestId"] = requestId
+    }
+    traceWifiOutput("photo_receiver_response", connection: connection, state: state, values: uploadResponseTraceValues)
     writeJson(
       connection,
       status: 200,
@@ -368,6 +400,51 @@ final class LocalPhotoUploadServer {
       try FileManager.default.copyItem(at: source, to: destination)
       try? FileManager.default.removeItem(at: source)
     }
+  }
+
+  private func traceWifiInput(
+    _ type: String,
+    connection: NWConnection,
+    state: RequestReadState?,
+    values: [String: Any] = [:]
+  ) {
+    traceWifi(direction: "wifi_to_phone", layer: "wifi_http_input", type: type, connection: connection, state: state, values: values)
+  }
+
+  private func traceWifiOutput(
+    _ type: String,
+    connection: NWConnection,
+    state: RequestReadState?,
+    values: [String: Any] = [:]
+  ) {
+    traceWifi(direction: "phone_to_wifi", layer: "wifi_http_output", type: type, connection: connection, state: state, values: values)
+  }
+
+  private func traceWifi(
+    direction: String,
+    layer: String,
+    type: String,
+    connection: NWConnection,
+    state: RequestReadState?,
+    values: [String: Any]
+  ) {
+    var payload = endpointPayload(type: type, connection: connection)
+    if let state {
+      payload["startMs"] = state.startMs
+    }
+    for (key, value) in values {
+      payload[key] = value
+    }
+    BleTraceLogger.logMap(direction: direction, layer: layer, type: type, payload: payload)
+  }
+
+  private func endpointPayload(type: String, connection: NWConnection) -> [String: Any] {
+    var payload: [String: Any] = ["type": type]
+    if case let .hostPort(host, port) = connection.endpoint {
+      payload["remoteHost"] = String(describing: host)
+      payload["remotePort"] = Int(port.rawValue)
+    }
+    return payload
   }
 
   private struct HttpRequest {
@@ -613,6 +690,7 @@ final class LocalPhotoUploadServer {
   }
 
   private final class RequestReadState {
+    let startMs = Date().timeIntervalSince1970 * 1000
     var buffer = Data()
     var request: HttpRequest?
     var contentLength = 0

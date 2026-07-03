@@ -12,7 +12,6 @@
 import {
   cameraPackageName,
   feedbackPackageName,
-  lmaInstallerPackageName,
   mirrorPackageName,
   settingsPackageName,
   storePackageName,
@@ -24,7 +23,6 @@ export const OFFLINE_HOSTED_PACKAGES = new Set([
   mirrorPackageName,
   cameraPackageName,
   feedbackPackageName,
-  lmaInstallerPackageName,
 ])
 
 export const isOfflineHosted = (packageName: string) => OFFLINE_HOSTED_PACKAGES.has(packageName)

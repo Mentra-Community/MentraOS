@@ -16,6 +16,7 @@ import { runFix } from './fix.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
 import { recheckHandoff } from './recheck-handoff.js';
+import { buildReviewComment } from './review-comment.js';
 import { runReview } from './review.js';
 import {
   createOctokit,
@@ -23,8 +24,9 @@ import {
   loadOrCreateState,
   removeLabel,
   saveState,
+  upsertMarkerComment,
 } from './state.js';
-import type { ReviewSlot } from './types.js';
+import { MARKER_REVIEW, type ReviewSlot } from './types.js';
 
 const repoRoot = process.env.GITHUB_WORKSPACE ?? process.cwd();
 const owner = process.env.GITHUB_REPOSITORY_OWNER!;
@@ -92,6 +94,14 @@ async function cmdAggregate() {
   const result = aggregateCycle(repoRoot, state, reviews, ciChecks, activePair);
 
   await saveState(octokit, owner, repo, prNumber, result.state, commentId);
+
+  // Always surface the human-readable review to the PR, regardless of verdict.
+  const reviewComment = buildReviewComment(
+    result.state,
+    { standards: reviews.standards, depth: reviews.depth, bugbot: reviews.bugbot },
+    activePair,
+  );
+  await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
 
   const out = process.env.GITHUB_OUTPUT;
   if (out) {

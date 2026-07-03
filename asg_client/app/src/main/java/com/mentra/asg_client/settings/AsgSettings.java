@@ -37,6 +37,8 @@ public class AsgSettings {
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
+    private static final String KEY_CAMERA_ANR_ENABLED = "camera_anr_enabled";
+    private static final String KEY_CAMERA_GAIN_ENABLED = "camera_gain_enabled";
 
     /** Supported FOV range for K900 camera, inclusive (118 = No ROI) */
     private static final int MIN_CAMERA_FOV = 62;
@@ -515,5 +517,32 @@ public class AsgSettings {
      */
     public void setBesFirmwareVersion(String version) {
         setMcuFirmwareVersion(version);
+    }
+
+    /**
+     * Whether ANR (Adaptive Noise Reduction) is enabled for the camera HAL tuning.
+     * Defaults to {@code true} (ANR on).
+     */
+    public boolean isCameraAnrEnabled() {
+        return prefs.getBoolean(KEY_CAMERA_ANR_ENABLED, true);
+    }
+
+    public void setCameraAnrEnabled(boolean enabled) {
+        Log.d(TAG, "Setting camera ANR enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_CAMERA_ANR_ENABLED, enabled).commit();
+    }
+
+    /**
+     * Whether the stock gain parameters are used for the camera HAL tuning.
+     * {@code true} = stock gain on; {@code false} = pixsmart gain-off parameters.
+     * Defaults to {@code true}.
+     */
+    public boolean isCameraGainEnabled() {
+        return prefs.getBoolean(KEY_CAMERA_GAIN_ENABLED, true);
+    }
+
+    public void setCameraGainEnabled(boolean enabled) {
+        Log.d(TAG, "Setting camera gain enabled to: " + enabled);
+        prefs.edit().putBoolean(KEY_CAMERA_GAIN_ENABLED, enabled).commit();
     }
 }

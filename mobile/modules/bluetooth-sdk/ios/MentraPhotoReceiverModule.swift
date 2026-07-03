@@ -79,6 +79,16 @@ public class MentraPhotoReceiverModule: Module {
   }
 
   private func handlePhotoUpload(_ upload: PhotoUpload) {
+    BleTraceLogger.logMap(
+      direction: "phone_to_app",
+      layer: "photo_receiver_event",
+      type: "photo_upload",
+      payload: [
+        "requestId": upload.requestId ?? "",
+        "fileName": upload.photoFile.lastPathComponent,
+        "byteCount": upload.byteCount,
+      ]
+    )
     sendEvent("photoUpload", [
       "requestId": upload.requestId as Any,
       "fileUri": upload.photoFile.absoluteString,

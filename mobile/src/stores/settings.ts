@@ -27,6 +27,14 @@ export const SETTINGS: Record<string, Setting> = {
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  appearance_menu_enabled: {key: "appearance_menu_enabled", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  app_boot_extra_info: {
+    key: "app_boot_extra_info",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   enable_squircles: {
     key: "enable_squircles",
@@ -99,11 +107,15 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // When on, LC3 audio received from Nex glasses is played back (Android only).
-  nex_audio_playback: {
-    key: "nex_audio_playback",
+  // Local-only dev toggle: defaults off and never synced to the cloud account
+  // (saveOnServer: false); persists locally so it survives app restarts.
+  // Key renamed from the legacy `nex_audio_playback` so stale server/local
+  // values (saved back when this was saveOnServer:true) can't re-enable it.
+  nex_lc3_audio_playback: {
+    key: "nex_lc3_audio_playback",
     defaultValue: () => false,
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   china_deployment: {
@@ -164,6 +176,16 @@ export const SETTINGS: Record<string, Setting> = {
   cloud_runtime_url: {
     key: "cloud_runtime_url",
     defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
+  // runtimeUrl} — core + runtime are saved together because they are always
+  // applied as a matched set (presets fill both; Save & Test verifies both).
+  saved_cloud_url_pairs: {
+    key: "saved_cloud_url_pairs",
+    defaultValue: () => [],
     writable: true,
     saveOnServer: false,
     persist: true,
@@ -702,7 +724,7 @@ const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.gallery_mode.key,
   // Mentra Nex feature flags:
   SETTINGS.nex_chinese_captions.key,
-  SETTINGS.nex_audio_playback.key,
+  SETTINGS.nex_lc3_audio_playback.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]

@@ -51,6 +51,95 @@ import { PROTOCOL_MAJOR } from "./protocol/envelope";
 
 const logger = createLogger("runtime");
 
+type RuntimeEnv = Record<string, string | undefined>;
+
+const DEPLOYED_RUNTIME_ENV_KEYS = [
+  "PORTER_APP_NAME",
+  "PORTER_SERVICE_NAME",
+  "KUBERNETES_SERVICE_HOST",
+  "ECS_CONTAINER_METADATA_URI",
+  "ECS_CONTAINER_METADATA_URI_V4",
+  "FLY_APP_NAME",
+  "K_SERVICE",
+  "RENDER",
+  "HEROKU_APP_NAME",
+] as const;
+
+function isIPv4Family(family: string | number): boolean {
+  return family === "IPv4" || family === 4;
+}
+
+function isPrivateIPv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = parts;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function isIgnoredInterface(name: string): boolean {
+  return /^(lo|awdl|llw|utun|tun|tap|bridge|docker|veth|vmnet|tailscale|zt)/i.test(name);
+}
+
+function preferredInterfaceRank(name: string): number {
+  if (/^(en|eth|wlan|wi-?fi)/i.test(name)) return 0;
+  return 1;
+}
+
+export function detectLanIPv4(opts: {
+  interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+  preferredInterface?: string;
+} = {}): string | undefined {
+  const interfaces = opts.interfaces ?? os.networkInterfaces();
+  const preferredInterface = opts.preferredInterface?.trim();
+  const candidates: Array<{ name: string; address: string }> = [];
+
+  for (const [name, entries] of Object.entries(interfaces)) {
+    if (!name || !entries?.length) continue;
+    if (preferredInterface && name !== preferredInterface) continue;
+    if (!preferredInterface && isIgnoredInterface(name)) continue;
+    for (const entry of entries) {
+      if (!entry || entry.internal || !isIPv4Family(entry.family) || !isPrivateIPv4(entry.address)) continue;
+      candidates.push({ name, address: entry.address });
+    }
+  }
+
+  candidates.sort((a, b) => preferredInterfaceRank(a.name) - preferredInterfaceRank(b.name));
+  return candidates[0]?.address;
+}
+
+export function shouldAutoDetectUdpAdvertisedHost(env: RuntimeEnv = process.env): boolean {
+  if (env.AUDIO_UDP_ADVERTISED_HOST?.trim()) return false;
+  if (env.AUDIO_UDP_AUTO_DETECT_LAN === "false") return false;
+  if (env.AUDIO_UDP_AUTO_DETECT_LAN === "true") return true;
+  if (env.NODE_ENV === "production") return false;
+  return !DEPLOYED_RUNTIME_ENV_KEYS.some((key) => !!env[key]);
+}
+
+export function resolveUdpAdvertisedHost(opts: {
+  explicitHost?: string;
+  env?: RuntimeEnv;
+  interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+} = {}): { host: string; source: "option" | "env" | "auto-lan" | "fallback" } {
+  const env = opts.env ?? process.env;
+  const explicitHost = opts.explicitHost?.trim();
+  if (explicitHost) return { host: explicitHost, source: "option" };
+
+  const envHost = env.AUDIO_UDP_ADVERTISED_HOST?.trim();
+  if (envHost) return { host: envHost, source: "env" };
+
+  if (shouldAutoDetectUdpAdvertisedHost(env)) {
+    const host = detectLanIPv4({
+      interfaces: opts.interfaces,
+      preferredInterface: env.AUDIO_UDP_ADVERTISED_INTERFACE ?? env.AUDIO_UDP_INTERFACE,
+    });
+    if (host) return { host, source: "auto-lan" };
+  }
+
+  return { host: "127.0.0.1", source: "fallback" };
+}
+
 export interface StartRuntimeOptions {
   /** HTTP/WS port. Default: `process.env.PORT ?? 3001`. */
   httpPort?: number;
@@ -98,8 +187,10 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
     opts.udpPort ?? Number.parseInt(process.env.AUDIO_UDP_PORT ?? "8000", 10);
   const redisUrl =
     opts.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
-  const udpAdvertisedHost =
-    opts.udpAdvertisedHost ?? process.env.AUDIO_UDP_ADVERTISED_HOST ?? "127.0.0.1";
+  const resolvedUdpAdvertisedHost = resolveUdpAdvertisedHost({
+    explicitHost: opts.udpAdvertisedHost,
+  });
+  const udpAdvertisedHost = resolvedUdpAdvertisedHost.host;
   const udpAdvertisedPort =
     opts.udpAdvertisedPort ??
     Number.parseInt(process.env.AUDIO_UDP_ADVERTISED_PORT ?? String(udpPort), 10);
@@ -183,7 +274,13 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
 
   const boundHttpPort = server.port!;
   logger.info(
-    { httpPort: boundHttpPort, udpPort },
+    {
+      httpPort: boundHttpPort,
+      udpPort,
+      udpAdvertisedHost,
+      udpAdvertisedPort,
+      udpAdvertisedHostSource: resolvedUdpAdvertisedHost.source,
+    },
     "cloud-v2 runtime listening (audio UDP + WS ready; workers + streams pending)",
   );
 

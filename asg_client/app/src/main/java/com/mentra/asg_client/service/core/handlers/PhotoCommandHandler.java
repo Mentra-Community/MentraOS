@@ -20,6 +20,9 @@ import org.json.JSONObject;
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
 
+    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros {@code durationMs}. */
+    private static final long DEFAULT_WARM_UP_DURATION_MS = 15000;
+
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
 
@@ -35,7 +38,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("take_photo");
+        return Set.of("take_photo", "camera_warm_up");
     }
 
     @Override
@@ -44,6 +47,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             switch (commandType) {
                 case "take_photo":
                     return handleTakePhoto(data);
+                case "camera_warm_up":
+                    return handleCameraWarmUp(data);
                 default:
                     Log.e(TAG, "Unsupported photo command: " + commandType);
                     return false;
@@ -51,6 +56,99 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling photo command: " + commandType, e);
             return false;
+        }
+    }
+
+    /**
+     * Handle {@code camera_warm_up}: open + configure + preview the camera and hold it warm for a TTL
+     * (default 15000ms) without capturing, so a subsequent {@code take_photo} of the same {@code
+     * size}/{@code exposureTimeNs} reuses the warm session. Routes to {@link
+     * MediaCaptureService#warmUpCamera} which emits {@code camera_status} (warming → ready →
+     * stopped/error).
+     */
+    private boolean handleCameraWarmUp(JSONObject data) {
+        try {
+            String packageName = resolvePackageName(data);
+            logCommandStart("camera_warm_up", packageName);
+
+            // requestId is required — reject if missing.
+            if (!validateRequestId(data)) {
+                return false;
+            }
+
+            String requestId = data.optString("requestId", "");
+            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            long durationMs = data.optLong("durationMs", 0L);
+            if (durationMs <= 0) {
+                durationMs = DEFAULT_WARM_UP_DURATION_MS;
+            }
+
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService == null) {
+                logCommandResult("camera_warm_up", false, "Media capture service not available");
+                sendCameraWarmUpError(
+                        requestId,
+                        "media_capture_service_unavailable",
+                        "Media capture service not available");
+                return false;
+            }
+
+            Log.i(
+                    TAG,
+                    "📷 camera_warm_up requestId="
+                            + requestId
+                            + " size="
+                            + size
+                            + " exposureTimeNs="
+                            + exposureTimeNs
+                            + " durationMs="
+                            + durationMs);
+
+            boolean accepted =
+                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs);
+            logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
+            return accepted;
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera warm-up command", e);
+            logCommandResult("camera_warm_up", false, "Exception: " + e.getMessage());
+            String requestId = data.optString("requestId", "");
+            if (!requestId.isEmpty()) {
+                sendCameraWarmUpError(
+                        requestId,
+                        "camera_warm_up_failed",
+                        "Camera warm-up failed: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    private void sendCameraWarmUpError(String requestId, String errorCode, String errorMessage) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject status = new JSONObject();
+            status.put("type", "camera_status");
+            status.put("state", "error");
+            status.put("requestId", requestId);
+            status.put("timestamp", System.currentTimeMillis());
+            status.put("errorCode", errorCode);
+            status.put("errorMessage", errorMessage);
+
+            if (serviceManager.getBluetoothManager() != null) {
+                serviceManager.getBluetoothManager().sendMessage(status.toString().getBytes());
+                Log.d(
+                        TAG,
+                        "📷 camera_status sent: state=error requestId="
+                                + requestId
+                                + " errorCode="
+                                + errorCode);
+            } else {
+                Log.w(TAG, "Cannot send camera warm-up error - Bluetooth manager unavailable");
+            }
+        } catch (Exception sendError) {
+            Log.e(TAG, "Error sending camera warm-up error", sendError);
         }
     }
 

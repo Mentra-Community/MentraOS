@@ -67,4 +67,8 @@ export const evenRealitiesG2: Capabilities = {
 
   // WiFi capabilities - G2 does not support WiFi
   hasWifi: false,
+
+  // Dashboard - G2 renders Even Realities' native dashboard in firmware, so
+  // MentraOS does not manage the dashboard or expose dashboard settings for it
+  hasNativeDashboard: true,
 };

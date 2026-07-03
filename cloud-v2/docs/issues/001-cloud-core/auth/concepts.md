@@ -79,7 +79,7 @@ Here is our real **access token**, decoded (this is the device's main credential
 ```json
 {
   "sub": "663b1f...e91a",   // mentraUserId: which user (our users._id)
-  "oem_id": "mentra",       // which OEM vouched for them
+  "tenant_id": "mentra",       // which OEM vouched for them
   "session_id": "...",      // this runtime session
   "aud": "mentra-cloud",    // who this token is FOR (section 7)
   "iss": "mentra-cloud",    // who issued it
@@ -90,8 +90,8 @@ Here is our real **access token**, decoded (this is the device's main credential
 
 Standard claim names are three letters by convention: `sub` (subject = the user),
 `aud` (audience), `iss` (issuer), `exp` (expiry), `iat` (issued-at), `jti`
-(JWT id). The rest (`oem_id`, `session_id`) are ours. (The miniapp token in
-section 7 uses a camelCase `oemId` and `aud = <packageName>` instead -- that is
+(JWT id). The rest (`tenant_id`, `session_id`) are ours. (The miniapp token in
+section 7 uses a camelCase `tenantId` and `aud = <packageName>` instead -- that is
 a separate token, verified by developer backends, not the device access token.)
 
 ## 5. Signing: how a note cannot be forged
@@ -173,7 +173,7 @@ Concretely, our **miniapp-scoped token** is minted with `aud = <packageName>`,
 pinned to exactly one miniapp:
 
 ```json
-{ "sub": "663b1f...", "oemId": "mentra",
+{ "sub": "663b1f...", "tenantId": "mentra",
   "aud": "com.dev.weather",   // valid ONLY for this miniapp's backend
   "iss": "cloud-core", "exp": ... }
 ```
@@ -215,12 +215,12 @@ for the user, server-side, and we turn that into a Mentra credential.
 The standard for "present a token from issuer A, get back a token from issuer B"
 is **token exchange (RFC 8693)**. The flow:
 
-1. The OEM's backend signs a short-lived JWT saying "this is my user `oemUserId`"
+1. The OEM's backend signs a short-lived JWT saying "this is my user `tenantUserId`"
    (the **subject token**), using the OEM's own private key.
 2. The device hands that subject token to `POST /api/client/auth/exchange`.
 3. Mentra verifies it against the OEM's **registered public key** (same
    asymmetric idea, in the other direction: the OEM signs, Mentra verifies), maps
-   `(oemId, oemUserId)` to a Mentra user, and returns **our** access + refresh
+   `(tenantId, tenantUserId)` to a Mentra user, and returns **our** access + refresh
    tokens.
 
 From that point on the device carries a Mentra-issued credential, and the OEM's
@@ -251,7 +251,7 @@ backend. Watch each concept fire.
 6. **The miniapp calls its backend** with `Authorization: Bearer <miniapp token>`.
 7. **The backend verifies, alone (JWKS, aud).** It fetched Mentra's
    `/.well-known/jwks.json` once, picks the key by `kid`, checks the signature is
-   Mentra's, checks `aud == com.dev.weather`, and reads `mentraUserId` + `oemId`.
+   Mentra's, checks `aud == com.dev.weather`, and reads `mentraUserId` + `tenantId`.
    It never calls Mentra per request, and it could never forge a token because it
    only holds public keys.
 
@@ -295,7 +295,7 @@ sequenceDiagram
     CC->>App: inject the token, read via useMentraAuth
     App->>Backend: call with the token as Bearer
     Note over Backend: fetched the Mentra JWKS once, cached
-    Backend->>Backend: verify signature + aud, read mentraUserId + oemId
+    Backend->>Backend: verify signature + aud, read mentraUserId + tenantId
     Backend-->>App: response, no call to Mentra
 ```
 

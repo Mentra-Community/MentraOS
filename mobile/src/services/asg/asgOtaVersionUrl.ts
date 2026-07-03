@@ -1,10 +1,11 @@
-import {OTA_VERSION_URL_PROD} from "@/config/ota"
+import {OTA_VERSION_URL_LEGACY_PROD, OTA_VERSION_URL_PROD} from "@/config/ota"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
-  // Pre-wall-clock ASG builds ignore ota_start.ota_version_url, so compare against the URL they will actually use.
-  return Number.isFinite(buildNumber) && buildNumber < 100000
+  // ASG builds before 39 ignore ota_start.ota_version_url, so the phone-side
+  // availability check must match the manifest those glasses will actually use.
+  return Number.isFinite(buildNumber) && buildNumber < 39
 }
 
 function getOtaVersionUrlDevOverride(): string | null {
@@ -21,9 +22,7 @@ function getOtaVersionUrlDevOverride(): string | null {
 export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
   const deviceUrl = glassesUrl?.trim()
   if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
-    // Legacy glasses ignore ota_start.ota_version_url and install from their compiled
-    // default, so the developer override does not apply to them either.
-    return deviceUrl || OTA_VERSION_URL_PROD
+    return OTA_VERSION_URL_LEGACY_PROD
   }
 
   const devOverrideUrl = getOtaVersionUrlDevOverride()

@@ -116,12 +116,12 @@ hard-coded "Core exists" assumption.
 
 This is the default Mentra-managed path. An OEM onboards through the portal with:
 
-- a unique `oemId`;
+- a unique `tenantId`;
 - production issuer metadata (`issuer`, JWKS or well-known URL);
 - optional sandbox/staging issuer metadata for development environments.
 
 Core/Auth verifies the OEM's subject token using that onboarded metadata, maps
-`(oemId, oemUserId)`, then mints normalized `cloud-runtime` tokens for the hosted
+`(tenantId, tenantUserId)`, then mints normalized `cloud-runtime` tokens for the hosted
 Runtime. Hosted Runtime only has to trust the normalized Cloud Runtime issuer.
 
 Mentra's own mobile app is treated as one OEM integration. During migration, its
@@ -159,7 +159,7 @@ runtimeAuth: {
       issuer: "https://auth.example.com",
       jwksUrl: "https://auth.example.com/.well-known/jwks.json",
       userIdClaim: "sub",
-      oemIdClaim: "oem_id"
+      oemIdClaim: "tenant_id"
     },
     {
       issuer: "https://sandbox-auth.example.com",
@@ -174,14 +174,14 @@ runtimeAuth: {
 The two issuer entries above are examples of two mapping modes, not two required
 entries:
 
-- `oemIdClaim` means the token carries the OEM id in a claim such as `oem_id`.
+- `oemIdClaim` means the token carries the OEM id in a claim such as `tenant_id`.
 - `fixedOemId` means this issuer is dedicated to one OEM, so Runtime gets the OEM
   id from config.
 
-Every configured issuer must provide exactly one way to derive `oemId`. `sub` is
+Every configured issuer must provide exactly one way to derive `tenantId`. `sub` is
 the JWT-standard "subject" claim and should be the default user id claim, but the
 claim name is configurable for OEM compatibility. Runtime normalizes the result
-internally to a stable runtime user id plus `oemId`.
+internally to a stable runtime user id plus `tenantId`.
 
 Open claim-shape question: should runtime continue requiring
 `session_id` and `jti`, or should those become optional/issuer-specific claims?
@@ -214,7 +214,7 @@ Runtime-only auth can be as simple as:
 type RuntimeOnlyAuthConfig = {
   runtime: {
     getToken: () => Promise<string>
-    identity?: () => Promise<{ userId: string; oemId?: string }>
+    identity?: () => Promise<{ userId: string; tenantId?: string }>
   }
 }
 ```

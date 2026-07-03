@@ -2,6 +2,10 @@
 
 Android application that runs on Android-based smart glasses like Mentra Live. Primary transport is BLE to the paired phone (the phone forwards to MentraOS Cloud). Manages hardware interfaces (camera, microphone, LED control, sensors).
 
+## Required Mentra Live Reference
+
+Before working on any code, docs, tests, or behavior under `asg_client`, read and apply [`docs/mentra-live-spec.md`](docs/mentra-live-spec.md). That spec is the standing product/platform reference for what Mentra Live is, its supported features, and how the glasses are expected to work. Keep it updated when product-level Mentra Live behavior changes.
+
 ## Compatible Devices
 
 **Officially Supported:**
@@ -154,7 +158,7 @@ asg_client/
 
 ### Architecture
 
-- **Dependency Injection**: Manual factories under `io/*/core/*Factory.java` and `service/utils/DeviceProfile`. No Dagger/Hilt today (`/di` only has `AppModule.java`).
+- **Dependency Injection**: Hilt is used for the service layer (`AsgClientService` and the `di/hilt/` modules). Manual factories remain under `io/*/core/*Factory.java` and `service/utils/DeviceProfile` for device-detection paths.
 - **Error Reporting**: Use Sentry via reporting package
 - **Logging**: Use Android Logcat with appropriate tags
 - **Services**: Follow Android foreground service best practices

@@ -11,6 +11,7 @@ export {
   unregisterDevApp,
   getDevAppRecords,
   getDevAppSourcePackage,
+  getDevAppAttestation,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
 } from "./services/AppRegistry"

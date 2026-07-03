@@ -60,6 +60,16 @@ public class MentraLiveSystemController implements ISystemController {
     }
 
     @Override
+    public void setCameraTuningConfig(boolean anrOn, boolean gainOn) {
+        Log.d(TAG, "setCameraTuningConfig: anr=" + anrOn + ", gain=" + gainOn);
+        Intent nn = new Intent();
+        nn.putExtra("cmd", "camconfig");
+        nn.putExtra("anr", anrOn);
+        nn.putExtra("gain", gainOn);
+        sendBroadcast(nn);
+    }
+
+    @Override
     public void restartCameraHal() {
         Log.d(TAG, "Restarting camera HAL (ctl.restart / camerahalserver)");
         Intent nn = new Intent();

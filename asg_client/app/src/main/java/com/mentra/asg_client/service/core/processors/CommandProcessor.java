@@ -39,6 +39,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
@@ -91,7 +92,8 @@ public class CommandProcessor {
             FileManager fileManager,
             RgbLedCommandHandler rgbLedCommandHandler,
             OtaCommandHandler otaCommandHandler,
-            IPeripheralBus peripheralBus) {
+            IPeripheralBus peripheralBus,
+            Set<CommandProtocolDetector.ProtocolDetectionStrategy> extraProtocolStrategies) {
         Log.d(TAG, "🔧 Initializing CommandProcessor with dependencies");
         this.context = context;
         this.communicationManager = communicationManager;
@@ -115,6 +117,15 @@ public class CommandProcessor {
         this.besTracePoller = new BesTracePoller();
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
+
+        // Register vendor-supplied protocol strategies (e.g. the Mentra Live MCU wire format)
+        // before chunked support so chunked messages keep the highest priority.
+        if (extraProtocolStrategies != null) {
+            for (CommandProtocolDetector.ProtocolDetectionStrategy strategy :
+                    extraProtocolStrategies) {
+                this.protocolDetector.addDetectionStrategy(strategy);
+            }
+        }
 
         // Add chunked message support to protocol detector
         this.protocolDetector.addChunkedMessageSupport(chunkReassembler);
@@ -421,7 +432,7 @@ public class CommandProcessor {
                     new ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
+            commandHandlerRegistry.registerHandler(new BleConfigCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
             commandHandlerRegistry.registerHandler(

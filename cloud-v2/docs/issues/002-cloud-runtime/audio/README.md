@@ -29,4 +29,4 @@ folder is the audio service in depth.
   sits on.
 - [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md):
   a connecting user presents a `cloud-runtime` token; the audio path verifies it
-  and reads the configured user id plus `oemId` from its claims.
+  and reads the configured user id plus `tenantId` from its claims.

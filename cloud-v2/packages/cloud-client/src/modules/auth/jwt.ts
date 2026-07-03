@@ -3,7 +3,7 @@
  *
  * The client is not a security boundary for its own token: the cloud verifies
  * the signature on every call. So here we only need to read claims the client
- * already trusts (its own `mentraUserId`, `oem_id`, and `exp` for the refresh
+ * already trusts (its own `mentraUserId`, `tenant_id`, and `exp` for the refresh
  * timing), and we deliberately skip signature checks. Doing a real verification
  * would mean shipping the cloud's public keys to the device, which buys nothing.
  *
@@ -14,14 +14,14 @@
 /**
  * The claims this client reads off an access token.
  *
- * `sub` is the `mentraUserId`, `oem_id` is the issuing OEM, and `exp` is the
+ * `sub` is the `mentraUserId`, `tenant_id` is the issuing OEM, and `exp` is the
  * Unix-seconds expiry used to decide when to refresh. The index signature keeps
  * the rest of the claims (`sessionId`, `jti`, `aud`, `iss`) accessible without
  * naming each one, since the client only acts on these three.
  */
 export interface JwtClaims {
   sub: string;
-  oem_id: string;
+  tenant_id: string;
   exp: number;
   [k: string]: unknown;
 }

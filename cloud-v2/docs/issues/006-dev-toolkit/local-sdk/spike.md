@@ -179,7 +179,7 @@ Where v2 is today, for orientation:
 - `packages/core` — Hono server (`:3000`), OEM auth (RFC 8693 token
   exchange), Mongo + Redis connections, `/healthz` + `/ready`. **No
   phone WebSocket yet.** No `PHONE_SUBSCRIPTION_UPDATE` handler.
-- `packages/audio` — UDP ingress (`:8000`), LC3 decode workers,
+- `packages/runtime` — UDP ingress (`:8000`), LC3 decode workers,
   Soniox provider, ownership in Redis. Transcripts already get fanned
   out internally — there's no consumer wired up yet (it's pushed
   into the audio WS as `TRANSCRIPT` messages for the test client).

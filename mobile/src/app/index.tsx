@@ -57,6 +57,8 @@ export default function InitScreen() {
   const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
+  const [bootPhase, setBootPhase] = useState<string>("Starting up…")
   const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
 
   // Helper Functions
@@ -133,6 +135,7 @@ export default function InitScreen() {
 
   const handleTokenExchange = async (): Promise<void> => {
     console.log("INDEX: handleTokenExchange()")
+    setBootPhase("Exchanging auth token…")
     const token = session?.token
     if (!token) {
       setState("auth")
@@ -152,8 +155,10 @@ export default function InitScreen() {
 
     socketComms.setAuthCreds(coreToken, uid)
     console.log("INDEX: Socket comms auth creds set")
+    setBootPhase("Initializing core…")
     await mantle.init()
 
+    setBootPhase("Navigating…")
     await navigateToDestination()
   }
 
@@ -164,6 +169,7 @@ export default function InitScreen() {
     } else {
       setIsRetrying(true)
     }
+    setBootPhase("Checking for updates…")
 
     const localVer = getLocalVersion()
     console.log("INDEX: Local version:", localVer)
@@ -175,7 +181,12 @@ export default function InitScreen() {
       return
     }
 
-    const res = await restComms.getMinimumClientVersion()
+    // The phone often fires this the instant wifi reconnects, before the DNS
+    // path is warm — on China cloud the api.mentraglass.cn → Aliyun ALB CNAME
+    // chain intermittently returns SERVFAIL (EAI_FAIL) at that moment. Retry
+    // with backoff so a single transient DNS blip at boot doesn't dump the user
+    // to the connection-error screen (which blocks login).
+    const res = await restComms.retry(() => restComms.getMinimumClientVersion(), 3, 1000)
     if (res.is_error()) {
       console.error("Failed to fetch cloud version:", res.error)
 
@@ -317,7 +328,7 @@ export default function InitScreen() {
   if (state === "loading") {
     return (
       <Screen preset="fixed">
-        <SplashVideo colorOverride={superMode ? theme.colors.chart_4 : undefined} />
+        <SplashVideo label={appBootExtraInfo ? bootPhase : undefined} />
       </Screen>
     )
   }
