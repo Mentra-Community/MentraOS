@@ -3884,11 +3884,64 @@ class G2: NSObject, SGCManager {
             handleEvenAIResponse(result.payload)
         case ServiceID.evenHubCtrl.rawValue:
             handleEvenHubCtrlResponse(result.payload)
+        case ServiceID.notification.rawValue:
+            handleNotificationResponse(result.payload)
         default:
             Bridge.log(
                 "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.map { String(format: "%02X", $0) }.joined())"
             )
         }
+    }
+
+    /// Notification service (0x04 — UI_FOREGROUND_NOTIFICATION_ID).
+    ///
+    /// On iOS the G2 reads notifications straight from the phone via ANCS (the
+    /// system BLE notification service — no app code involved), and reports
+    /// notification activity to us on this channel as a NotificationDataPackage
+    /// (notification.proto from the RE work):
+    ///   field 1: commandId (1=CTRL, 2=NOTIFICATION_IOS, 3=WHITELIST_CTRL, 161=COMM_RSP)
+    ///   field 3: NotificationControl {notifEnable, autoDispEnable, dispTime, avoidDisturbEnable}
+    ///   field 4: NotificationIOS {appID, displayName} — the source app of a notification
+    ///   field 6: NotificationWhitelistCtrl {whitelistDisable}
+    ///
+    /// Log-only for now: this is the observability hook for the notification
+    /// relay work (the CTRL/WHITELIST commands are also how the app would
+    /// control notification behavior on-glass).
+    private func handleNotificationResponse(_ payload: Data) {
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        let cmd = fields[1] as? Int32 ?? 0
+
+        var detail = ""
+        if let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            detail = " ios={app: \(appID), name: \(name)}"
+        }
+        if let ctrlData = fields[3] as? Data {
+            var ctrl = ProtobufReader(ctrlData)
+            let ctrlFields = ctrl.parseFields()
+            detail += " ctrl={enable: \(ctrlFields[1] as? Int32 ?? -1), autoDisp: \(ctrlFields[2] as? Int32 ?? -1), dispTime: \(ctrlFields[3] as? Int32 ?? -1), dnd: \(ctrlFields[5] as? Int32 ?? -1)}"
+        }
+        if let wlData = fields[6] as? Data {
+            var wl = ProtobufReader(wlData)
+            let wlFields = wl.parseFields()
+            detail += " whitelist={disable: \(wlFields[1] as? Int32 ?? -1)}"
+        }
+
+        let cmdName: String
+        switch cmd {
+        case 1: cmdName = "CTRL"
+        case 2: cmdName = "NOTIFICATION_IOS"
+        case 3: cmdName = "WHITELIST_CTRL"
+        case 161: cmdName = "COMM_RSP"
+        default: cmdName = "cmd_\(cmd)"
+        }
+        Bridge.log("G2: NOTIFICATION service — \(cmdName)\(detail)")
     }
 
     /// EvenAI service (0x07). Logs the decoded EvenAIDataPackage so we can read the
