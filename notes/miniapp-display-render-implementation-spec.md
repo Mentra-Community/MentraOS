@@ -255,12 +255,24 @@ Pre-PR (this branch):
       Mentra Display Android (tier-1) are compile-verified only (PR caveat)
 - [ ] Final sweep: prettier, full jest, gradle, iOS build; push + PR to dev
 
-Post-merge (spec §11 steps 9–10, gated on Alex):
-- [ ] Remaining sugar retirement (`showTextWall` / `showBitmapView` / `clear`):
-      blocked on the external Mentra-AI-Miniapp migrating to render(); then
-      migrate kawaii + codex-kawaii-e2e one-liners and delete
-- [ ] Delete `everything` miniapp + canvas module + host handleCanvas
-      (everything is unbundled, unreferenced, sole canvas consumer)
+Also done in-branch (2026-07-03 round 2):
+- [x] kawaii 0.1.9 + codex-kawaii-e2e 0.1.2 migrated to render()
+- [x] `everything` miniapp DELETED (was unbundled, unreferenced, sole canvas
+      consumer) and `miniapps/mentra-ai` DELETED (abandoned example-scaffold;
+      the real Mentra AI lives in Mentra-Community/Mentra-AI-Miniapp)
+- [x] render() migration PR opened on Mentra-Community/Mentra-AI-Miniapp —
+      NOT merged; gated on host render() rollout (MentraOS PR #3341)
+
+Post-merge (gated on Alex):
+- [ ] Remaining SDK sugar retirement (`showTextWall` / `showBitmapView` /
+      `clear`): monorepo is clean except nav's secondary paths
+      (showText/showTestBox/showLargeBitmap/showBitmapTest/clear); blocked on
+      the external Mentra-AI-Miniapp PR merging + releasing
+- [ ] Host WIRE support for legacy DISPLAY layouts must OUTLIVE the SDK
+      methods — registry bundles packed with older SDKs and cloud-SDK apps
+      still send them; needs a deprecation window, not a delete
+- [ ] Delete canvas module + host handleCanvas (zero consumers now that
+      `everything` is gone)
 - [ ] `display.measure()` helper (reserved in the contract, unimplemented)
 
 Follow-ups:
