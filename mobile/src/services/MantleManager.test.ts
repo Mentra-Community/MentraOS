@@ -2,7 +2,6 @@ import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
-import socketComms from "@/services/SocketComms"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
@@ -47,10 +46,6 @@ jest.mock("@/services/RestComms", () => ({
       is_ok: () => true,
       is_error: () => false,
     })),
-    sendPhotoResponse: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
     sendPhoneNotification: jest.fn(async () => ({
       is_ok: () => true,
       is_error: () => false,
@@ -76,15 +71,6 @@ jest.mock("@/services/SocketComms", () => ({
   default: {
     connectWebsocket: jest.fn(),
     cleanup: jest.fn(),
-    sendTouchEvent: jest.fn(),
-    sendButtonPress: jest.fn(),
-    sendHeadPosition: jest.fn(),
-    sendSwipeVolumeStatus: jest.fn(),
-    sendSwitchStatus: jest.fn(),
-    sendRgbLedControlResponse: jest.fn(),
-    sendText: jest.fn(),
-    handle_display_event: jest.fn(),
-    sendLocationUpdate: jest.fn(),
   },
 }))
 
@@ -215,21 +201,8 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().deviceModel).toBe("Mentra Live")
     expect(useGlassesStore.getState().batteryLevel).toBe(77)
 
-    // photo_response routing moved into island's DeviceEventRouter (covered by
-    // deviceEventRouter.test.ts); MantleManager no longer handles it.
-
-    emitBluetoothSdkEvent("touch_event", {
-      type: "touch_event",
-      deviceModel: "Mentra Live",
-      gestureName: "tap",
-      timestamp: 999,
-    })
-    expect(socketComms.sendTouchEvent).toHaveBeenCalledWith({
-      type: "touch_event",
-      deviceModel: "Mentra Live",
-      gestureName: "tap",
-      timestamp: 999,
-    })
+    // photo_response / touch_event routing moved into island's DeviceEventRouter
+    // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
     // Local transcripts no longer roundtrip through the cloud (SocketComms has
     // no transcription send anymore). With no local-miniapp subscription and
@@ -240,7 +213,6 @@ describe("MantleManager", () => {
       transcribeLanguage: "en-US",
     })
     emitBluetoothSdkEvent("head_up", {up: true})
-    expect(socketComms.sendHeadPosition).toHaveBeenCalledWith(true)
     await waitFor(() => {
       expect(useDisplayStore.getState().view).toBe("dashboard")
     })

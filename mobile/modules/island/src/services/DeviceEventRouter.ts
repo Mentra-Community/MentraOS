@@ -10,18 +10,15 @@
  * data flowing in (no miniapp input, dead gallery sync, starved coordinators). This
  * service moves those inbound bridges into island so ANY host gets them.
  *
- * Scope: only the NON-v1 legs move here. The v1 SocketComms forwards (touch→cloud,
- * battery→cloud, the cloud-SDK stream/photo legs, etc.) stay in MantleManager and die at
- * v1 retirement. For events MantleManager also forwards over v1, it keeps its v1 leg and
- * this router adds the island leg (no double-handling — owned-stream/photo legs are
- * `owns()`-gated; the forwardEvent legs were removed from MantleManager).
+ * Scope: the island legs only. The Cloud V1 relays that used to live beside them in
+ * MantleManager (touch→cloud, the cloud-SDK stream/photo legs, etc.) were deleted with
+ * Cloud V1 app end-of-life.
  *
  * Started by `toolkit.start()`. Idempotent.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {shallow} from "zustand/shallow"
 
-import restComms from "./RestComms"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
@@ -124,10 +121,11 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
-  // --- coordinators (owns()-gated; MantleManager keeps the cloud-SDK v1 legs) ---
+  // --- coordinators (owns()-gated) ---
 
-  // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout). Cloud-app
-  // photos forward via restComms (island REST). MantleManager no longer handles this.
+  // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).
+  // Non-owned photo responses used to forward to the Cloud V1 photo pipeline via
+  // restComms; that relay was removed with Cloud V1 app end-of-life, so they drop.
   subs.push(
     BluetoothSdk.addListener("photo_response", (event) => {
       if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
@@ -138,14 +136,12 @@ export function startDeviceEventRouter(): void {
             event.errorMessage ?? "Glasses reported an error",
           )
         }
-        return
       }
-      restComms.sendPhotoResponse(event)
     }),
   )
 
-  // Phone-owned stream status / keep-alive → the stream coordinator. Non-owned (cloud-SDK)
-  // streams stay on MantleManager's v1 SocketComms leg.
+  // Phone-owned stream status / keep-alive → the stream coordinator. The Cloud V1 relay
+  // for non-owned streams was removed with Cloud V1 app end-of-life.
   subs.push(
     BluetoothSdk.addListener("stream_status", (event) => {
       if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {

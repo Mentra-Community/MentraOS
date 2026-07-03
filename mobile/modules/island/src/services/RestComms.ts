@@ -2,7 +2,6 @@ import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletInterface} from "../types"
-import {type PhotoResponseEvent} from "@mentra/bluetooth-sdk/internal"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useConnectionStore} from "../stores/connection"
 import {WebSocketStatus} from "../stores/connection"
@@ -491,37 +490,6 @@ class RestComms {
       method: "POST",
       endpoint: "/api/client/notifications/dismissed",
       data: data,
-    }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
-
-  public sendPhotoResponse(data: PhotoResponseEvent): AsyncResult<any, Error> {
-    const response =
-      data.state === "success"
-        ? {
-            type: data.type,
-            requestId: data.requestId,
-            photoUrl: data.uploadUrl,
-            timestamp: data.timestamp,
-            success: true,
-          }
-        : {
-            type: data.type,
-            requestId: data.requestId,
-            timestamp: data.timestamp,
-            success: false,
-            errorCode: data.errorCode,
-            errorMessage: data.errorMessage,
-          }
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: "/api/client/photo/response",
-      data: response,
     }
     interface Response {
       success: boolean

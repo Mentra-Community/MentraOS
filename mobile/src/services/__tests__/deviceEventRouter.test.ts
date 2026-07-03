@@ -1,12 +1,13 @@
 // Exercises the real island DeviceEventRouter by path (not via "@mentra/island",
 // which jest mocks): inbound device BLE events must route into island stores, the
-// process event bus (which island's own gallerySyncService listens on), restComms,
-// and local miniapps — so a bare OEM gets device data, not just the Mentra app.
+// process event bus (which island's own gallerySyncService listens on), the photo
+// coordinator, and local miniapps — so a bare OEM gets device data, not just the
+// Mentra app.
 import {startDeviceEventRouter, stopDeviceEventRouter} from "../../../modules/island/src/services/DeviceEventRouter"
 import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
 import {useSettingsStore} from "../../../modules/island/src/stores/settings"
 import GlobalEventEmitter from "../../../modules/island/src/utils/GlobalEventEmitter"
-import restComms from "../../../modules/island/src/services/RestComms"
+import {phonePhotoCoordinator} from "../../../modules/island/src/services/PhonePhotoCoordinator"
 import localMiniappRuntime from "../../../modules/island/src/services/LocalMiniappRuntime"
 import localSttFallbackCoordinator from "../../../modules/island/src/services/LocalSttFallbackCoordinator"
 import {asgCameraApi} from "../../../modules/island/src/services/asg/asgCameraApi"
@@ -90,8 +91,11 @@ describe("DeviceEventRouter", () => {
     expect(setSpy).toHaveBeenCalledWith("brightness", 42)
   })
 
-  it("forwards an owned photo_response error to the photo coordinator and a non-owned one to restComms", () => {
-    const sendSpy = jest.spyOn(restComms, "sendPhotoResponse").mockResolvedValue(undefined as never)
+  it("routes an owned photo_response error to the photo coordinator and drops non-owned ones", () => {
+    const errorSpy = jest.spyOn(phonePhotoCoordinator, "handlePhotoError").mockImplementation(() => {})
+    jest.spyOn(phonePhotoCoordinator, "owns").mockImplementation((requestId: string) => requestId === "owned")
+
+    // Non-owned responses used to relay to the Cloud V1 photo pipeline; they now drop.
     emitBluetoothSdkEvent("photo_response", {
       type: "photo_response",
       state: "success",
@@ -99,7 +103,17 @@ describe("DeviceEventRouter", () => {
       uploadUrl: "https://example.com/p.jpg",
       timestamp: 1,
     })
-    expect(sendSpy).toHaveBeenCalledWith(expect.objectContaining({requestId: "not-owned"}))
+    expect(errorSpy).not.toHaveBeenCalled()
+
+    emitBluetoothSdkEvent("photo_response", {
+      type: "photo_response",
+      state: "error",
+      requestId: "owned",
+      errorCode: "GLASSES_ERROR",
+      errorMessage: "boom",
+      timestamp: 2,
+    })
+    expect(errorSpy).toHaveBeenCalledWith("owned", "GLASSES_ERROR", "boom")
   })
 
   it("forwards button_press to local miniapps", () => {

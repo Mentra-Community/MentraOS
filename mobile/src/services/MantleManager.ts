@@ -1,8 +1,7 @@
-import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
-import * as Location from "expo-location"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
@@ -468,47 +467,10 @@ class MantleManager {
         }),
       )
 
-      this.subs.push(
-        BluetoothSdk.addListener("button_press", (event) => {
-          console.log("MANTLE: BUTTON_PRESS event received:", event)
-          this.handle_button_press(event)
-          // forwardEvent("button_press") -> local miniapps moved to island DeviceEventRouter
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("touch_event", (event) => {
-          socketComms.sendTouchEvent(event)
-          // forwardEvent("touch_event") -> local miniapps moved to island DeviceEventRouter
-        }),
-      )
-
-      // accel_event: moved to island DeviceEventRouter (started by toolkit.start())
-
-      this.subs.push(
-        BluetoothSdk.addListener("swipe_volume_status", (event) => {
-          const enabled = !!event.enabled
-          const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
-          socketComms.sendSwipeVolumeStatus(enabled, timestamp)
-          // TODO: remove
-          GlobalEventEmitter.emit("SWIPE_VOLUME_STATUS", {enabled, timestamp})
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("switch_status", (event) => {
-          const switchType = event.switchType ?? -1
-          const switchValue = event.switchValue ?? -1
-          const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
-          socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("rgb_led_control_response", (event) => {
-          socketComms.sendRgbLedControlResponse(event)
-        }),
-      )
+      // button_press / touch_event / accel_event: local-miniapp forwarding lives in
+      // island DeviceEventRouter (started by toolkit.start()). The Cloud V1 relays
+      // (button/touch/swipe/switch/rgb-led-response) were removed with Cloud V1 app
+      // end-of-life.
 
       this.subs.push(
         BluetoothSdk.addListener("pair_failure", (event) => {
@@ -614,11 +576,8 @@ class MantleManager {
       // local_transcription: moved to island DeviceEventRouter (started by toolkit.start());
       // its offline-captions display path was removed with the pseudo captions renderer.
 
-      this.subs.push(
-        BluetoothSdk.addListener("ws_text", (event) => {
-          socketComms.sendText(event.text)
-        }),
-      )
+      // ws_text: was a raw relay onto the Cloud V1 socket — removed with Cloud V1
+      // app end-of-life.
 
       this.subs.push(
         BluetoothSdk.addListener("mic_lc3", (event) => {
@@ -737,44 +696,12 @@ class MantleManager {
     }
   }
 
-  private async sendLocationUpdates() {
-    console.log("MANTLE: sendLocationUpdates()")
-    // const location = await Location.getCurrentPositionAsync()
-    // socketComms.sendLocationUpdate(location)
-  }
-
   // getLocationAccuracy + setLocationTier (+ the background location task) moved into
-  // island (PhoneLocationService). requestSingleLocation stays here for now — it's a
-  // one-shot that still forwards over v1 socketComms (deleted at v1 retirement).
-  public async requestSingleLocation(accuracy: string, correlationId: string) {
-    console.log("MANTLE: requestSingleLocation()")
-    // restComms.sendLocationData({tier})
-    try {
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: phoneLocationService.getLocationAccuracy(accuracy),
-      })
-      socketComms.sendLocationUpdate(
-        location.coords.latitude,
-        location.coords.longitude,
-        location.coords.accuracy ?? undefined,
-        correlationId,
-      )
-      // Direct forward to local miniapps subscribed to location_update.
-      localMiniappRuntime.forwardEvent("location_update", {
-        lat: location.coords.latitude,
-        lng: location.coords.longitude,
-        accuracy: location.coords.accuracy ?? undefined,
-        timestamp: location.timestamp,
-        correlationId,
-      })
-    } catch (error) {
-      console.log("MANTLE: Error requesting single location", error)
-    }
-  }
+  // island (PhoneLocationService). requestSingleLocation (a one-shot triggered only by
+  // the Cloud V1 request_single_location push) was removed with Cloud V1 app
+  // end-of-life.
 
   public async handle_head_up(isUp: boolean) {
-    socketComms.sendHeadPosition(isUp)
-
     // Only switch to dashboard view if contextual dashboard is enabled
     // Otherwise, always show main view regardless of head position
     const contextualDashboardEnabled = await useSettingsStore.getState().getSetting(SETTINGS.contextual_dashboard.key)
@@ -784,10 +711,6 @@ class MantleManager {
     } else {
       useDisplayStore.getState().setView("main")
     }
-  }
-
-  public async handle_button_press(event: ButtonPressEvent) {
-    socketComms.sendButtonPress(event.buttonId, event.pressType)
   }
 }
 
