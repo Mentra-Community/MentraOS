@@ -123,6 +123,21 @@ that asserts snapshot mutation never reaches the store, so the class dies.
 
 ### D. Remaining escape hatches (the next boundary campaign)
 
+> **Status (2026-07-03):** ✅ **Phase 4 (entry-point split) is done** on
+> `codex/island-entrypoint-split`:
+>
+> - [x] `@mentra/island` main = `toolkit` + contract/read-model types + pure
+>       helpers host UI renders with (judgment rule: read models, commands,
+>       pure functions, types = main; store/service-shaped = not main)
+> - [x] `@mentra/island/internal` = raw stores + service singletons; all
+>       `@/stores/*` / `@/utils/*` shims and host services repointed
+> - [x] `@mentra/island/devtools` = `miniappRunningRegistry`, `devServerBridge`
+> - [x] `toolkit.stores.*` deleted (its 2 remaining mentions were shim comments)
+> - [x] guardrail counts `/internal` (39 files) + `/devtools` (2 files)
+>       imports report-only; raw-store count unchanged at 41 files
+>
+> Phase 5 (per-store burn-down) remains open.
+
 The glasses/gallery discipline does not yet extend to the rest of the runtime
 state. Present today:
 
@@ -206,7 +221,7 @@ Actions, all behavior-safe:
 | 1 | C (snapshot copies) + F hygiene (import idiom, dead links, guardrail report-mode extension) + E delete-nows + commit WP9 audit doc | S | tsc + jest + boundary script |
 | 2 | A+B: OTA state machine into island (`OtaInstallCoordinator`), facade diet, unified snapshot types; characterization tests FIRST from the WP 8B/8C list; timers/durations copied verbatim | L | the new island tests + on-device OTA of both a ≥37 and a <37 build before deleting `progress-legacy` |
 | 3 | 8D: delete `progress-legacy.tsx` + `<37` branch + flat OTA helper exports | M | grep exit-criteria from the plan |
-| 4 | D: entry-point split (`/internal`, `/devtools`) + shims repointed + guardrail patterns armed | M | no runtime change at all — pure module topology |
+| 4 ✅ | D: entry-point split (`/internal`, `/devtools`) + shims repointed + guardrail patterns armed — done, see §D status note | M | no runtime change at all — pure module topology |
 | 5 | D burn-down per store (core → pairing; display → display.mirror; session; miniapps hooks; settings last) | L (mechanical) | per-store PRs, boundary script ratchets |
 
 Phase 2 is the one that needs real care: OTA is device-flashing. The plan's own

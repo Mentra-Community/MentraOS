@@ -57,19 +57,27 @@ echo "mobile runtime boundary check passed ($(wc -l <"$TMP_ACTUAL" | tr -d ' ') 
 report_count() {
   local label="$1" pattern="$2"
   local count
-  count="$(rg -l "$pattern" mobile/src \
+  # `|| true` keeps a zero-match counter from killing the script under
+  # `set -euo pipefail` (rg exits 1 when nothing matches).
+  count="$( (rg -l "$pattern" mobile/src \
     -g '*.ts' -g '*.tsx' \
     --glob '!**/__tests__/**' \
     --glob '!**/*.test.ts' \
     --glob '!**/*.test.tsx' \
     --glob '!**/test-utils/**' \
-    2>/dev/null | wc -l | tr -d ' ')"
+    2>/dev/null || true) | wc -l | tr -d ' ')"
   echo "  [report-only] ${label}: ${count} files"
 }
 
 echo "boundary burn-down (informational):"
-report_count "raw island stores (settings/core/display/connection/cloudClientStatus/appStatus)" \
+# Raw stores are only importable via @mentra/island/internal now (directly or
+# through the @/stores/* shims, which re-export from it). The hook-name
+# pattern counts every consumer regardless of route, so the number stays
+# comparable across the burn-down campaign.
+report_count "raw island stores via /internal + shims (settings/core/display/connection/cloudClientStatus/appStatus)" \
   'useSettingsStore|useCoreStore|useDisplayStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore'
-report_count "toolkit.stores escape hatch" 'toolkit\.stores\.'
+report_count "@mentra/island/internal importers" 'from "@mentra/island/internal"'
+report_count "@mentra/island/devtools importers" 'from "@mentra/island/devtools"'
+report_count "toolkit.stores escape hatch (deleted; should stay 0)" 'toolkit\.stores\.'
 report_count "bluetooth-sdk internal surface in host" '@mentra/bluetooth-sdk-internal|@mentra/bluetooth-sdk/internal'
 report_count "flat island OTA helpers in host" 'checkBesUpdate|findMatchingMtkPatch|fetchVersionInfo|getAsgOtaVersionUrl'
