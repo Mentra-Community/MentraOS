@@ -2103,7 +2103,7 @@ class G2 : SGCManager() {
             textContainers[newIndex].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         signalDisplayDirty()
-        rebuildPage()
+        requestPageRebuild()
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
@@ -2198,7 +2198,7 @@ class G2 : SGCManager() {
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
             if (!pageCreated) {
-                displayScope.launch { rebuildPage() }
+                if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { rebuildPage() }
             }
             return true
         } else {
@@ -2210,7 +2210,7 @@ class G2 : SGCManager() {
             signalDisplayDirty()
             Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
             // New container changes page structure: rebuild it, then the loop sends the pixels.
-            displayScope.launch { rebuildPage() }
+            if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { rebuildPage() }
         }
 
         return true
@@ -2225,6 +2225,65 @@ class G2 : SGCManager() {
     // updates go in place and moves recreate at the SAME container id.
     private val sceneTextByElement = mutableMapOf<String, Int>()
     private val sceneImageByElement = mutableMapOf<String, Int>()
+
+    // Scene-frame rebuild batching. A frame with several new containers must
+    // NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
+    // and 4-5 shutdown/recover cycles back-to-back are a firmware rebuild
+    // storm — the G2 punishes those by dropping the BLE link (same failure
+    // family as the mic-session incidents). While a frame is being applied,
+    // structural changes only mark the flag; applySceneFrame does ONE rebuild
+    // at the end. Both flags are only touched on displayScope (Dispatchers.Main).
+    private var sceneBatchActive = false
+    private var sceneStructuralPending = false
+
+    /** Rebuild now — or, inside an applySceneFrame batch, once at frame end. */
+    private suspend fun requestPageRebuild() {
+        if (sceneBatchActive) {
+            sceneStructuralPending = true
+            return
+        }
+        rebuildPage()
+    }
+
+    /**
+     * G2 override of the default paint-then-sweep: identical walk, but run as
+     * ONE displayScope coroutine with structural rebuilds coalesced to a single
+     * shutdown/rebuild per frame.
+     */
+    override fun applySceneFrame(frame: SceneFrame) {
+        displayScope.launch {
+            if (frame.replay) {
+                sceneTextByElement.clear()
+                sceneImageByElement.clear()
+            }
+            sceneBatchActive = true
+            sceneStructuralPending = false
+            try {
+                for (el in frame.elements) {
+                    if (!frame.replay && el.change == "unchanged") continue
+                    when (el.type) {
+                        "text" ->
+                            applySceneText(el.text ?: "", el.x, el.y, el.w, el.h, el.border, el.radius, el.id)
+                        "rect" ->
+                            applySceneText("", el.x, el.y, el.w, el.h, maxOf(1, el.border), el.radius, el.id)
+                        "image" ->
+                            el.data?.let { applySceneBitmap(it, el.x, el.y, el.w, el.h, el.id) }
+                        else -> Bridge.log("G2: applySceneFrame: unknown element type ${el.type}")
+                    }
+                }
+                for (id in frame.removed) {
+                    applySceneRemove(id)
+                }
+            } finally {
+                sceneBatchActive = false
+            }
+            if (sceneStructuralPending) {
+                sceneStructuralPending = false
+                Bridge.log("G2: applySceneFrame — structural changes, ONE page rebuild for the whole frame")
+                rebuildPage()
+            }
+        }
+    }
 
     override fun onSceneReplay(appId: String) {
         // A replay frame repaints from scratch through the create path; forget
@@ -2244,7 +2303,21 @@ class G2 : SGCManager() {
         elementId: String,
         layoutId: String?
     ) {
-        displayScope.launch {
+        displayScope.launch { applySceneText(text, x, y, width, height, borderWidth, borderRadius, elementId) }
+    }
+
+    /** Scene text upsert — runs on displayScope; rebuilds go through [requestPageRebuild]. */
+    private suspend fun applySceneText(
+        text: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        elementId: String
+    ) {
+        run {
             val content = if (text.isEmpty()) " " else text
             val existingId = sceneTextByElement[elementId]
             if (existingId != null) {
@@ -2261,7 +2334,7 @@ class G2 : SGCManager() {
                         c.content = content
                         c.pendingSends = 1 + EVEN_HUB_RESEND_COUNT
                         signalDisplayDirty()
-                        return@launch
+                        return@run
                     }
                     // Moved/restyled: recreate at the SAME container id (structural).
                     textContainers[idx] =
@@ -2279,8 +2352,8 @@ class G2 : SGCManager() {
                             pendingSends = 1 + EVEN_HUB_RESEND_COUNT
                         )
                     signalDisplayDirty()
-                    rebuildPage()
-                    return@launch
+                    requestPageRebuild()
+                    return@run
                 }
                 // Container got evicted underneath us — fall through to create.
                 sceneTextByElement.remove(elementId)
@@ -2318,6 +2391,16 @@ class G2 : SGCManager() {
         height: Int,
         elementId: String,
         layoutId: String?
+    ): Boolean = applySceneBitmap(base64ImageData, x, y, width, height, elementId)
+
+    /** Scene bitmap upsert — rebuilds go through the batch flag (see applySceneFrame). */
+    private fun applySceneBitmap(
+        base64ImageData: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        elementId: String
     ): Boolean {
         val existingId = sceneImageByElement[elementId]
         if (existingId != null) {
@@ -2352,7 +2435,12 @@ class G2 : SGCManager() {
     }
 
     override fun removeLayoutElement(elementId: String, layoutId: String?) {
-        displayScope.launch {
+        displayScope.launch { applySceneRemove(elementId) }
+    }
+
+    /** Scene element removal (blank-in-place) — runs on displayScope. */
+    private fun applySceneRemove(elementId: String) {
+        run {
             sceneTextByElement.remove(elementId)?.let { id ->
                 val idx = textContainers.indexOfFirst { it.id == id }
                 if (idx >= 0) {

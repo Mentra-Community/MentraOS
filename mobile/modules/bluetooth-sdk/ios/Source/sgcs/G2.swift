@@ -2207,7 +2207,7 @@ class G2: NSObject, SGCManager {
             textContainers[j].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         signalDisplayDirty()
-        await rebuildPage()
+        await requestPageRebuild()
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
@@ -2218,6 +2218,70 @@ class G2: NSObject, SGCManager {
     }
 
     // MARK: - Scene verbs (display.render() pipeline)
+
+    /// Scene-frame rebuild batching. A frame with several new containers must
+    /// NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
+    /// and 4-5 shutdown/recover cycles back-to-back are a firmware rebuild
+    /// storm — the G2 punishes those by dropping the BLE link (same failure
+    /// family as the mic-session incidents). While a frame is being applied,
+    /// structural changes only mark this flag; applySceneFrame does ONE rebuild
+    /// at the end.
+    private var sceneBatchDepth = 0
+    private var sceneStructuralPending = false
+
+    /// Rebuild now — or, inside an applySceneFrame batch, once at frame end.
+    private func requestPageRebuild() async {
+        if sceneBatchDepth > 0 {
+            sceneStructuralPending = true
+            return
+        }
+        await rebuildPage()
+    }
+
+    /// G2 override of the default paint-then-sweep: identical walk, but
+    /// structural rebuilds are coalesced to a single shutdown/rebuild per frame.
+    func applySceneFrame(_ frame: SceneFrame) async {
+        if frame.replay {
+            await onSceneReplay(frame.appId)
+        }
+        sceneBatchDepth += 1
+        sceneStructuralPending = false
+        for el in frame.elements {
+            if !frame.replay, el.change == "unchanged" { continue }
+            switch el.type {
+            case "text":
+                await drawLayoutText(
+                    el.text ?? "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: el.border, borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "rect":
+                await drawLayoutText(
+                    "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: max(1, el.border), borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "image":
+                if let data = el.data {
+                    _ = await drawLayoutBitmap(
+                        base64ImageData: data, x: el.x, y: el.y, width: el.w, height: el.h,
+                        elementId: el.id, layoutId: frame.appId
+                    )
+                }
+            default:
+                Bridge.log("G2: applySceneFrame: unknown element type \(el.type)")
+            }
+        }
+        for id in frame.removed {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            Bridge.log("G2: applySceneFrame — structural changes, ONE page rebuild for the whole frame")
+            await rebuildPage()
+        }
+    }
 
     func onSceneReplay(_: String) async {
         // A replay frame repaints from scratch through the create path; forget
@@ -2254,7 +2318,7 @@ class G2: NSObject, SGCManager {
                     pendingSends: 1 + EVEN_HUB_RESEND_COUNT
                 )
                 signalDisplayDirty()
-                await rebuildPage()
+                await requestPageRebuild()
                 return
             }
             // Container got evicted underneath us — fall through to create.
@@ -2513,7 +2577,7 @@ class G2: NSObject, SGCManager {
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
             if !pageCreated {
-                await rebuildPage()
+                await requestPageRebuild()
             }
         } else {
             let container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
@@ -2525,7 +2589,7 @@ class G2: NSObject, SGCManager {
                 "G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
             )
             // New container changes page structure: rebuild it, then the loop sends the pixels.
-            await rebuildPage()
+            await requestPageRebuild()
         }
         return true
     }
