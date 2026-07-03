@@ -51,8 +51,33 @@ import {BlobModule} from "./modules/blob"
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Typed display capabilities for the scene API. All limit fields are optional
+ * in the type because older hosts don't send them — treat absence as "unknown",
+ * not zero. Populated on the "ready" event (null in `start()`).
+ */
+export interface DisplayCapabilities {
+  /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
+  width?: number
+  height?: number
+  /** False ⇒ the device can't position elements; scenes degrade to text walls host-side. */
+  canPosition?: boolean
+  /** Element budgets. Rects share the text pool on container-based devices. */
+  maxTextElements?: number
+  maxImageElements?: number
+  /** Per-image dimension cap (box-level), when the device has one. */
+  maxImagePx?: {width: number; height: number}
+  shapes?: string[]
+  intensityLevels?: number
+  partialUpdate?: boolean
+  /** Legacy capability fields (resolution, isColor, maxTextLines, …) ride along. */
+  [key: string]: unknown
+}
+
 /** Minimal snapshot of the currently-connected glasses. Phone-provided. */
 export interface GlassesCapabilities {
+  /** Display block — null/absent on displayless devices (e.g. Mentra Live). */
+  display?: DisplayCapabilities | null
   [key: string]: unknown
 }
 

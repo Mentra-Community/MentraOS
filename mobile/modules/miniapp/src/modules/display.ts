@@ -28,7 +28,6 @@ export type LayoutType =
   | "bitmap_view"
   | "positioned_text"
   | "clear_view"
-  | "remove_element"
 
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
 
@@ -70,11 +69,6 @@ export interface BitmapView {
   width?: number
   /** Target container height. */
   height?: number
-  /** Retained-mode element id. Re-sending the same id updates that element in place;
-   * a new id creates one. Set automatically by `drawLayout`. */
-  id?: string
-  /** Layout/scene id this element belongs to. Set automatically by `drawLayout`. */
-  layoutId?: string
 }
 
 export interface PositionedText {
@@ -92,29 +86,10 @@ export interface PositionedText {
   borderWidth?: number
   /** Border corner radius (px). */
   borderRadius?: number
-  /** Retained-mode element id. Re-sending the same id updates that element in place;
-   * a new id creates one. Set automatically by `drawLayout`. */
-  id?: string
-  /** Layout/scene id this element belongs to. Set automatically by `drawLayout`. */
-  layoutId?: string
 }
 
 export interface ClearView {
   layoutType: "clear_view"
-}
-
-/**
- * Remove a single retained element (by id) from the current layout. Emitted on
- * the wire by `drawLayout` (from a `{op: "remove", id}` entry) and by
- * `removeElement`. The SGC deletes the element's canvas component; other
- * elements are untouched.
- */
-export interface RemoveElement {
-  layoutType: "remove_element"
-  /** id of the element to remove. */
-  id: string
-  /** Layout/scene id the element belongs to (optional; SGC falls back to the active layout). */
-  layoutId?: string
 }
 
 export type Layout =
@@ -125,26 +100,64 @@ export type Layout =
   | BitmapView
   | PositionedText
   | ClearView
-  | RemoveElement
 
-/** A drawable element inside a {@link LayoutSpec}, tagged with a stable retained-mode id. */
-export type LayoutElement = (BitmapView | PositionedText) & {id: string}
+// ============================================================================
+// render() — the scene API
+// ============================================================================
 
-/** An in-array remove instruction for {@link LayoutSpec.elements}. */
-export interface RemoveOp {
-  op: "remove"
-  id: string
+/** Pixel-space bounding box on the device's drawable canvas (see `capabilities.display`). */
+export interface RenderBox {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface RenderTextStyle {
+  /** Border width in px (0/absent = none). */
+  border?: number
+  /** Border corner radius in px. */
+  radius?: number
+  /** What happens to text that doesn't fit the box after wrapping. Default "clip". */
+  overflow?: "clip" | "ellipsis"
+  /** Line-break policy for wrapping (host wraps; the box carries pre-wrapped text). */
+  breakMode?: DisplayBreakMode
+}
+
+export interface RenderRectStyle {
+  border?: number
+  radius?: number
 }
 
 /**
- * A whole layout / scene: a stable `id` plus its elements. Sending a layout
- * with a NEW id clears the previously-shown layout first; re-sending the SAME
- * id diffs by element id (create / update in place). Elements you omit are left
- * untouched — remove them explicitly with a `{op: "remove", id}` entry.
+ * One element of a rendered scene. `id` is optional but recommended for
+ * anything that updates over time: elements with a stable id update in place on
+ * the glasses (no flicker); the host matches unnamed elements by geometry.
  */
-export interface LayoutSpec {
-  id: string
-  elements: (LayoutElement | RemoveOp)[]
+export type RenderElement =
+  | {type: "text"; id?: string; box: RenderBox; text: string; style?: RenderTextStyle}
+  | {type: "image"; id?: string; box: RenderBox; data: string}
+  | {type: "rect"; id?: string; box: RenderBox; style?: RenderRectStyle}
+
+export interface RenderOptions {
+  view?: ViewType
+  /** Auto-clear after this many ms (same semantics as legacy display options). */
+  durationMs?: number
+}
+
+/**
+ * Outcome of a render request, resolved when the host's display arbitration
+ * settles it. "displayed" = accepted and sent to the device — NOT a
+ * render confirmation. "blocked" = another app owns the display (or the
+ * request failed); `reason` says why.
+ */
+export interface RenderResult {
+  status: "displayed" | "blocked"
+  /** True when the host adjusted the scene (clamped boxes, dropped elements, degraded for the device). */
+  degraded?: boolean
+  /** Ids of elements the host dropped (budget/bounds/device limits) — dropped is never silent. */
+  dropped?: string[]
+  reason?: string
 }
 
 export interface DisplayOptions {
@@ -251,50 +264,45 @@ export class DisplayManager {
   }
 
   /**
-   * Draw a whole layout / scene in one call — retained-mode with element ids.
+   * Render a whole scene of positioned elements — replace-the-frame.
    *
-   * `layout.id` names the scene; each element carries a stable `id`. The SGC
-   * diffs against what's on the glasses:
-   *   • a NEW `layout.id` clears the previously-shown layout first;
-   *   • same `layout.id`, same element `id` → update that element in place;
-   *   • same `layout.id`, new element `id` → create it;
-   *   • an omitted element is left untouched — remove it explicitly with a
-   *     `{op: "remove", id}` entry (or {@link removeElement}).
+   * Each call describes everything that should be on screen; the host diffs it
+   * against the previous frame per device (elements with a stable `id` update
+   * in place; elements you stop sending are removed). There is no lifecycle to
+   * manage and no remove calls — `render([])` clears.
    *
-   * All the create/update/remove/clear logic runs on the SGC; this just sends
-   * each element tagged with the layout + element ids.
+   * Coordinates are raw pixels on the device's drawable canvas — read
+   * `session.capabilities.display` (populated on the "ready" event) for the
+   * real width/height and element budgets. Out-of-bounds boxes are clamped and
+   * over-budget elements are dropped tail-first; both are reported via the
+   * result, never silently.
+   *
+   * Awaiting is OPT-IN — a plain fire-and-forget call is fine. The returned
+   * promise never rejects.
    *
    * @example
-   * display.drawLayout({
-   *   id: "nav-hud",
-   *   elements: [
-   *     {id: "map",   layoutType: "bitmap_view",     data: mapPng,   x: 335, y: 14,  width: 150, height: 150},
-   *     {id: "arrow", layoutType: "bitmap_view",     data: arrowPng, x: 12,  y: 116, width: 38,  height: 38},
-   *     {id: "stats", layoutType: "positioned_text", text: "863 m  11 min", x: 12, y: 9, width: 200, height: 28},
-   *     {op: "remove", id: "maneuver"},
-   *   ],
-   * })
+   * const result = await session.display.render([
+   *   {type: "text",  id: "stats", box: {x: 12, y: 9, w: 200, h: 28}, text: "863 m  11 min"},
+   *   {type: "image", id: "map",   box: {x: 335, y: 14, w: 150, h: 150}, data: mapPng},
+   *   {type: "rect",  box: {x: 0, y: 0, w: 500, h: 220}, style: {radius: 4}},
+   * ])
+   * if (result.degraded) console.warn("dropped:", result.dropped)
    */
-  drawLayout(layout: LayoutSpec, options: DisplayOptions = {}): void {
-    for (const el of layout.elements) {
-      if ("op" in el && el.op === "remove") {
-        this.send({layoutType: "remove_element", id: el.id, layoutId: layout.id}, options)
-      } else {
-        // el is a BitmapView|PositionedText (both Layout members) with a required
-        // id; adding the optional layoutId keeps it a valid Layout. The cast just
-        // sidesteps TS's union-spread widening.
-        this.send({...el, layoutId: layout.id} as Layout, options)
-      }
-    }
-  }
-
-  /**
-   * Remove a single retained element by id from the current layout. Other
-   * elements are untouched. `layoutId` is optional — the SGC falls back to the
-   * active layout.
-   */
-  removeElement(id: string, layoutId?: string, options: DisplayOptions = {}): void {
-    this.send({layoutType: "remove_element", id, layoutId}, options)
+  render(elements: RenderElement[], options: RenderOptions = {}): Promise<RenderResult> {
+    return this.session
+      .sendRequest<RenderResult>({
+        type: MiniappRequestType.RENDER,
+        view: options.view ?? "main",
+        elements,
+        durationMs: options.durationMs,
+      })
+      .catch(err => ({
+        status: "blocked" as const,
+        reason:
+          typeof err === "object" && err !== null && "message" in err
+            ? String((err as {message: unknown}).message)
+            : String(err),
+      }))
   }
 }
 
