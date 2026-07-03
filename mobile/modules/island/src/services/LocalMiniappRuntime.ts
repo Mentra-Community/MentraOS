@@ -1595,6 +1595,14 @@ class LocalMiniappRuntime {
 
   private handleDisplay(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     try {
+      // Zombie-frame gate: a dying miniapp's last in-flight frame can arrive
+      // AFTER onUnmount cleared its display — repainting a dead app's UI (and
+      // poisoning the next boot's pre-boot restore snapshot). Killed mid-route
+      // nav reproduced this reliably; its 3s re-push raced the teardown.
+      if (!this.connectedApps.has(packageName)) {
+        console.log(`${LOG_TAG}: dropping display from unmounted app ${packageName}`)
+        return
+      }
       if (!payload.layout || typeof payload.layout !== "object") {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.INTERNAL,
@@ -1630,6 +1638,11 @@ class LocalMiniappRuntime {
    */
   private handleRender(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     try {
+      // Zombie-frame gate — see handleDisplay.
+      if (!this.connectedApps.has(packageName)) {
+        this.sendResult(packageName, requestId, true, {status: "blocked", reason: "app stopped"})
+        return
+      }
       if (!Array.isArray(payload.elements)) {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.INTERNAL,
@@ -1667,6 +1680,14 @@ class LocalMiniappRuntime {
    * host-side page concept); it's a recognized no-op so callers don't error.
    */
   private handleCanvas(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    // Zombie-frame gate — see handleDisplay.
+    if (!this.connectedApps.has(packageName)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "app stopped",
+      })
+      return
+    }
     try {
       const operation = payload.operation as CanvasOperation | undefined
       const options = (payload.options as Record<string, unknown> | undefined) ?? {}

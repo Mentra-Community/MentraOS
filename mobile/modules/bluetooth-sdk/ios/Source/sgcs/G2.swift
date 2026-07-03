@@ -3353,6 +3353,19 @@ class G2: NSObject, SGCManager {
                 ))
         }
 
+        // Page-composition dump: one line per container on every page create,
+        // so an on-glass artifact can be matched to exactly what we sent.
+        for c in textContainers {
+            Bridge.log(
+                "G2: page-comp text id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) border=\(c.borderWidth)/\(c.borderRadius) pad=\(c.paddingLength) contentLen=\(c.content.count)"
+            )
+        }
+        for c in imageContainers {
+            Bridge.log(
+                "G2: page-comp image id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) bytes=\(c.bmpData.count)"
+            )
+        }
+
         // iterate all image containers, remove any entrys with duplicate id's, and ensure the ids in the imageContainerIDPool is up-to-date:
         var seenIDs = Set<Int32>()
         imageContainers = imageContainers.filter { c in
