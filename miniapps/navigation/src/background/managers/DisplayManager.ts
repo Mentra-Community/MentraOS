@@ -21,7 +21,10 @@ export class DisplayManager {
   static readonly HUD = {
     map: {x: 335, y: 14, w: 150, h: 150},
     arrow: {x: 12, y: 116, w: 38, h: 38},
-    stats: {x: 12, y: 9, w: 200, h: 28},
+    // Stats box is one firmware text line tall — the fw font line is ~30px+,
+    // so a 28px box always overflowed (suspected trigger of the firmware's
+    // scroll-indicator tick). 40px fits one line with headroom.
+    stats: {x: 12, y: 9, w: 200, h: 40},
     maneuver: {x: 54, y: 115, w: 270, h: 64},
     message: {x: 12, y: 54, w: 310, h: 156},
   }

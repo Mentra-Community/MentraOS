@@ -1623,6 +1623,10 @@ class G2: NSObject, SGCManager {
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
 
+    /// One firmware text line (hardware-calibrated 2026-07-03: 28px overflows,
+    /// 40px clean). Text containers are silently grown to at least this.
+    private static let minTextContainerHeight: Int32 = 40
+
     /// Scene-verb registries (display.render() pipeline): element id → container
     /// id(s). Containers stay rect-keyed underneath — these pin element↔container
     /// so content updates go in place and moves recreate at the SAME container
@@ -2184,7 +2188,12 @@ class G2: NSObject, SGCManager {
         let rx = x ?? G2.defaultTextContainer.x
         let ry = y ?? G2.defaultTextContainer.y
         let rw = width ?? G2.defaultTextContainer.width
-        let rh = height ?? G2.defaultTextContainer.height
+        // Firmware guard (hardware-calibrated): a text container shorter than
+        // one firmware line (~40px; 28px overflowed) makes the fw draw its
+        // overflow-indicator tick. Silently grow to one line, clamped to the
+        // canvas. Content-independent so rect keys stay stable across updates.
+        let rhRequested = height ?? G2.defaultTextContainer.height
+        let rh = min(max(rhRequested, G2.minTextContainerHeight), 288 - ry)
         let borderWidth = borderWidth ?? G2.defaultTextContainer.borderWidth
         let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
         let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
@@ -2336,6 +2345,9 @@ class G2: NSObject, SGCManager {
         _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
         borderWidth: Int32, borderRadius: Int32, elementId: String, layoutId _: String?
     ) async {
+        // Same firmware min-height guard as sendTextAt, applied before the
+        // registry rect checks so grown rects stay consistent across calls.
+        let height = min(max(height, G2.minTextContainerHeight), 288 - y)
         let content = text.isEmpty ? " " : text
         if let existingId = sceneTextByElement[elementId] {
             if let i = textContainers.firstIndex(where: { $0.id == existingId }) {
@@ -2577,6 +2589,27 @@ class G2: NSObject, SGCManager {
             imageContainers[i].dirty = true
         }
         signalDisplayDirty()
+
+        // Purge scene HUD containers structurally: a blanked small box still
+        // renders the firmware's overflow tick (a "\n" husk is two empty lines
+        // in a one-line box) and corrupts whatever app draws next. Full-canvas
+        // containers stay blanked-in-place — the shipped caption-gap behavior,
+        // storm-safe (no rebuild on ordinary clears). Only when positioned HUD
+        // husks exist (app exit) do we drop them + rebuild ONCE.
+        let isFullCanvas: (TextContainer) -> Bool = {
+            $0.x == 0 && $0.y == 0 && $0.width >= G2.defaultTextContainer.width
+                && $0.height >= G2.defaultTextContainer.height
+        }
+        let huskIds = Set(textContainers.filter { !isFullCanvas($0) }.map { $0.id })
+        if !huskIds.isEmpty {
+            textContainers.removeAll { huskIds.contains($0.id) }
+            sceneTextByElement = sceneTextByElement.filter { !huskIds.contains($0.value) }
+            sceneImageByElement.removeAll()
+            Bridge.log("G2: clearDisplay() — purging \(huskIds.count) positioned husk container(s), one rebuild")
+            Task { [weak self] in
+                await self?.coalescedPageRebuild()
+            }
+        }
     }
 
     /// Send a bitmap to an image container as fragmented updateImageRawData packets.

@@ -1469,6 +1469,13 @@ class G2 : SGCManager() {
     private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
 
+    /**
+     * One firmware text line (hardware-calibrated 2026-07-03: 28px overflows —
+     * the fw draws its overflow-indicator tick — 40px is clean). Text
+     * containers are silently grown to at least this.
+     */
+    private val minTextContainerHeight = 40
+
     /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
     private val defaultImgX = 188
     private val defaultImgY = 44
@@ -2040,7 +2047,9 @@ class G2 : SGCManager() {
         val rx = x ?: defaultTextX
         val ry = y ?: defaultTextY
         val rw = width ?: defaultTextWidth
-        val rh = height ?: defaultTextHeight
+        // Firmware guard: grow to at least one fw line, clamped to the canvas.
+        // Content-independent so rect keys stay stable across updates.
+        val rh = minOf(maxOf(height ?: defaultTextHeight, minTextContainerHeight), 288 - ry)
         // Honor caller-provided border styling (scene rects render as bordered
         // empty containers — a border of 0-by-default here made them invisible).
         val rBorderWidth = borderWidth ?: defaultTextBorderWidth
@@ -2138,6 +2147,24 @@ class G2 : SGCManager() {
             }
         }
         signalDisplayDirty()
+
+        // Purge scene HUD containers structurally: a blanked small box still
+        // renders the firmware's overflow tick (a "\n" husk is two empty lines
+        // in a one-line box) and corrupts whatever app draws next. Full-canvas
+        // containers stay blanked-in-place — the shipped caption-gap behavior,
+        // storm-safe (no rebuild on ordinary clears). Only when positioned HUD
+        // husks exist (app exit) do we drop them + rebuild ONCE.
+        val huskIds = textContainers
+            .filter { !(it.x == 0 && it.y == 0 && it.width >= defaultTextWidth && it.height >= defaultTextHeight) }
+            .map { it.id }
+            .toSet()
+        if (huskIds.isNotEmpty()) {
+            textContainers.removeAll { it.id in huskIds }
+            sceneTextByElement.entries.removeAll { it.value in huskIds }
+            sceneImageByElement.clear()
+            Bridge.log("G2: clearDisplay() — purging ${huskIds.size} positioned husk container(s), one rebuild")
+            displayScope.launch { coalescedPageRebuild() }
+        }
     }
 
     /**
@@ -2360,6 +2387,10 @@ class G2 : SGCManager() {
         borderRadius: Int,
         elementId: String
     ) {
+        // Same firmware min-height guard as sendText2, applied before the
+        // registry rect checks so grown rects stay consistent across calls.
+        @Suppress("NAME_SHADOWING")
+        val height = minOf(maxOf(height, minTextContainerHeight), 288 - y)
         run {
             val content = if (text.isEmpty()) " " else text
             val existingId = sceneTextByElement[elementId]
