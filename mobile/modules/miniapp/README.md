@@ -35,8 +35,12 @@ import {MiniappSession} from "@mentra/miniapp"
 const session = new MiniappSession()
 await session.connect() // sends CONNECT, resolves on CONNECT_ACK
 
-session.display.showTextWall("hello")
-const unsub = session.transcription.on((d) => session.display.showTextWall(d.text))
+// render() replaces the whole frame; stable ids update in place, render([]) clears.
+const box = {x: 0, y: 0, w: 576, h: 288} // raw device px — see session.capabilities.display
+session.display.render([{type: "text", id: "hello", box, text: "hello"}])
+const unsub = session.transcription.on((d) =>
+  session.display.render([{type: "text", id: "hello", box, text: d.text}]),
+)
 // later: unsub()
 ```
 
@@ -106,7 +110,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 
 | Module                        | Methods                                                                                                                                  |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `session.display`             | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView`                            |
+| `session.display`             | `render(elements, opts?)` (scene API — diffed frames, `render([])` clears), plus legacy one-shots: `showTextWall`, `showBitmapView`, `clear`               |
 | `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (cloud streaming when connected, offline fallback), `stop()`, `onStateChange(handler)` |
 | `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                           |
 | `session.transcription`       | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |

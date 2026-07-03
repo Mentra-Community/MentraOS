@@ -1,86 +1,107 @@
 ---
 title: "Display"
-description: "Show text, cards, and images on the glasses."
+description: "Render scenes of positioned text, images, and shapes on the glasses."
 icon: "display"
 ---
 
-`session.display` draws to the glasses HUD. Every method is fire-and-forget: it
-returns `void`, sends one message to the phone, and doesn't wait for an ack. Call
-it again to replace what's on screen.
+`session.display.render()` draws to the glasses HUD. Each call describes the
+**whole frame** — everything that should be on screen. The phone diffs it
+against the previous frame, so elements with a stable `id` update in place
+(no flicker) and elements you stop sending are removed. There is no element
+lifecycle to manage and no remove calls: `render([])` clears the screen.
 
 ```typescript
-session.display.showTextWall("Hello from MentraOS");
+session.display.render([
+  {type: "text",  id: "stats", box: {x: 12, y: 9, w: 200, h: 40},   text: "863 m · 11 min"},
+  {type: "image", id: "map",   box: {x: 335, y: 14, w: 150, h: 150}, data: mapPng},
+  {type: "rect",  id: "frame", box: {x: 4, y: 4, w: 560, h: 280},   style: {border: 2, radius: 6}},
+]);
 ```
 
 Display needs no permission, but the glasses do need a screen. Declare a `DISPLAY`
 hardware requirement in your [manifest](/app-devs/core-concepts/miniapp-manifest)
 so the miniapp only installs on glasses that can show anything.
 
-## Layouts
+## Elements
+
+| Element | Fields | Shows |
+|---|---|---|
+| `{type: "text", box, text, style?, id?}` | `style`: `border`, `radius`, `overflow`, `breakMode` | Wrapped text inside the box. |
+| `{type: "image", box, data, id?}` | `data`: base64 PNG/JPEG | A bitmap, converted to the glasses' native format by the phone. |
+| `{type: "rect", box, style?, id?}` | `style`: `border`, `radius` | An empty bordered box. |
+
+`box` is `{x, y, w, h}` in **raw device pixels**. Read
+`session.capabilities.display` (populated on the `"ready"` event) for the real
+canvas size and element budgets — Even Realities G2 is 576×288, Mentra Display
+is 500×220. Out-of-bounds boxes are clamped and over-budget elements are
+dropped tail-first; both are reported in the result, never silently.
 
 ```typescript
-// One block of text, filling the view.
-session.display.showTextWall("Recording…");
-
-// Two stacked rows.
-session.display.showDoubleTextWall("Speaker 1", "Speaker 2");
-
-// A titled card.
-session.display.showReferenceCard("Next stop", "Powell St., 2 min");
-
-// A base64 PNG/JPEG. The phone converts it to the glasses' native format.
-session.display.showBitmapView(base64Png);
-
-// Clear the screen.
-session.display.clear();
+const d = session.capabilities?.display;
+session.display.render([
+  {type: "text", id: "caption", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+]);
 ```
+
+## Updating and clearing
+
+Give any element that changes over time a stable `id`. Re-rendering with the
+same id updates that element in place on the glasses; unchanged elements never
+re-cross Bluetooth. To take something off screen, stop including it in the next
+frame. To clear everything:
+
+```typescript
+session.display.render([]);
+```
+
+## Options and results
+
+`render(elements, options?)` takes `{view, durationMs}` — `view` picks
+`"main"` (default) or `"dashboard"`, and `durationMs` auto-clears the frame
+after that many milliseconds.
+
+Awaiting is opt-in — a plain fire-and-forget call is fine, and the returned
+promise never rejects:
+
+```typescript
+const result = await session.display.render(elements);
+// result.status   — "displayed" (sent to the device) or "blocked" (another
+//                   app owns the display; result.reason says why)
+// result.degraded — true when the host adjusted the scene for the device
+// result.dropped  — ids of elements the host had to drop
+```
+
+On glasses that can't position content (Even Realities G1, Vuzix Z100), the
+phone degrades the scene to a full-view text layout automatically — check
+`session.capabilities.display.canPosition` if your layout depends on
+positioning.
+
+## Legacy one-shot layouts
+
+The `show*` methods predate `render()` and remain for compatibility — the
+phone converts each into a single-element scene internally. Every one is
+fire-and-forget and `void`.
 
 | Method | Shows |
 |---|---|
-| `showTextWall(text, options?)` | A single block of text. |
-| `showDoubleTextWall(top, bottom, options?)` | Two stacked rows. |
-| `showReferenceCard(title, text, options?)` | A title and a body. |
-| `showBitmapView(data, options?)` | A base64-encoded PNG/JPEG. |
-| `showDashboardCard(left, right)` | A two-column card in the dashboard view. |
+| `showTextWall(text, options?)` | A single block of text filling the view. |
+| `showBitmapView(data, options?)` | A base64 PNG/JPEG; `options` may position it (`x`, `y`, `width`, `height`). |
 | `clear(view?)` | Clears `"main"` (default) or `"dashboard"`. |
 
-## Options
-
-Most methods take a `DisplayOptions` object:
-
-```typescript
-session.display.showTextWall("Saved", { durationMs: 2000 });
-```
+They take a `DisplayOptions` object:
 
 | Field | Type | What it does |
 |---|---|---|
 | `view` | `"main" \| "dashboard"` | Which surface to draw on. Defaults to `"main"`. |
 | `durationMs` | `number` | Auto-clear after this many milliseconds. |
-| `breakMode` | `"character" \| "character-no-hyphen" \| "word" \| "strict-word"` | How text wraps. Applies to the text-wall and reference-card layouts. |
+| `breakMode` | `"character" \| "character-no-hyphen" \| "word" \| "strict-word"` | How the text wall wraps. |
 
-## Positioned content (G2)
-
-On Even Realities G2, the display is a 576×288 canvas you can place content on by
-coordinate. `showBitmapView` and `showTextAt` take `x`, `y`, `width`, and
-`height` for the target container; omit them for default placement.
-
-```typescript
-// A 100×100 image pinned to the bottom-right corner.
-session.display.showBitmapView(base64Png, { x: 476, y: 188, width: 100, height: 100 });
-
-// A bordered label at the bottom-left.
-session.display.showTextAt("TEST", {
-  x: 0, y: 201, width: 120, height: 87, borderWidth: 2, borderRadius: 6,
-});
-```
-
-`showTextAt` is G2-only. On glasses without positioned containers, use the
-full-view layouts above. For drawing several positioned containers onto one page,
-see [`session.canvas`](/app-devs/core-concepts/canvas), the lower-level API the
-display layouts build on.
+New code should prefer `render()` — one API for the simple case (a single
+full-canvas text element) and the composed case (a HUD of text, images, and
+shapes), with in-place updates for free.
 
 ## Dashboard view
 
-`showDashboardCard` (and any method with `view: "dashboard"`) targets the
-dashboard view, the glasses' status view that the user brings up with a
-glasses-specific gesture (head-up on G1, a double-tap on others).
+Any call with `view: "dashboard"` targets the dashboard view, the glasses'
+status view that the user brings up with a glasses-specific gesture (head-up
+on G1, a double-tap on others).

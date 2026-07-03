@@ -224,23 +224,43 @@ emitted raw RGBA, never a BMP). Deltas and discoveries vs the spec as written:
   notification story.
 - **Zombie-frame gate**: display/render/canvas traffic drops for unmounted
   apps (a dying app's in-flight frame repainted after teardown).
+- **First-party migration (in-branch)**: captions 1.0.8, translation 1.0.9,
+  teleprompter 1.0.1, recorder 1.0.3, merge 0.1.26, navigation 1.1.14 now call
+  raw `display.render()` (full-canvas text element with a stable id;
+  `render([])` clears; merge keeps `durationMs` + `breakMode: "word"` via
+  RenderOptions/style). example-miniapp's GlassesController + DisplayPage
+  tester and the create-mentra-miniapp template lead with `render()`.
+  kawaii and mentra-ai deliberately untouched (they call `showTextWall`,
+  which stays).
+- **Unused sugar REMOVED from the SDK (in-branch)**: usage audit across all
+  monorepo miniapps + the external `Mentra-Community/Mentra-AI-Miniapp` (the
+  real Mentra AI; the monorepo copy is defunct) found zero callers of
+  `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard` (tester demo
+  buttons only) and `showTextAt` (nav only — its 4 sites migrated to a shared
+  full-canvas render element in 1.1.14). All four methods + their SDK types
+  deleted. KEPT: `showTextWall`, `showBitmapView`, `clear` — the external
+  Mentra AI uses all three. Hosts still accept the historical layout types
+  (`double_text_wall`, `reference_card`, `dashboard_card`, `positioned_text`)
+  on the wire — bundles packed with older SDKs send them.
 
 ## 13. Remaining work (TODO)
 
 Pre-PR (this branch):
-- [ ] Maneuver-box two-line fix verification on glasses (nav 1.1.13)
+- [x] Maneuver-box two-line fix verification on glasses (nav 1.1.13) —
+      confirmed on hardware ("turn right onto Gough Street", two lines)
+- [x] First-party miniapp migration to raw render() (see §12 last bullet)
+- [x] Docs rewrite: mintlify display pages, sdk/docs/display.md, fix the
+      `clearView` lie
 - [ ] **Android hardware pass** — all validation so far was iOS; G2 Android +
-      Mentra Display Android (tier-1) are compile-verified only
+      Mentra Display Android (tier-1) are compile-verified only (PR caveat)
 - [ ] Final sweep: prettier, full jest, gradle, iOS build; push + PR to dev
 
-Post-merge (spec §11 steps 9–10, gated on the hardware pass):
-- [ ] Fleet sugar migration to raw render(): captions, translation,
-      teleprompter, merge, kawaii, mentra-ai, recorder, example-miniapp,
-      template; `@deprecated` on sugar
-- [ ] Delete `everything` miniapp + canvas module + host handleCanvas +
-      showTextAt (everything is unbundled, unreferenced, sole canvas consumer)
-- [ ] Docs rewrite: mintlify display pages, sdk/docs/display.md, module
-      README, fix the `clearView` lie
+Post-merge (spec §11 steps 9–10, gated on Alex):
+- [ ] Remaining sugar retirement (`showTextWall` / `showBitmapView` / `clear`):
+      blocked on the external Mentra-AI-Miniapp migrating to render(); then
+      migrate kawaii + codex-kawaii-e2e one-liners and delete
+- [ ] Delete `everything` miniapp + canvas module + host handleCanvas
+      (everything is unbundled, unreferenced, sole canvas consumer)
 - [ ] `display.measure()` helper (reserved in the contract, unimplemented)
 
 Follow-ups:
