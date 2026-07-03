@@ -94,7 +94,7 @@ export function OnboardingGuide({
 }: OnboardingGuideProps) {
   const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const {theme} = useAppTheme()
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [debugOnboardingUi] = useSetting(SETTINGS.debug_onboarding_ui.key)
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [showNextButton, setShowNextButton] = useState(false)
@@ -749,7 +749,7 @@ export function OnboardingGuide({
       )
     }
 
-    if (superMode) {
+    if (debugOnboardingUi) {
       return renderDebugVideos()
     }
 
@@ -933,7 +933,7 @@ export function OnboardingGuide({
   const renderStepCheck = () => {
     const showCheck = step.waitFn && !waitState
 
-    const showDebug = superMode && waitState && step.waitFn
+    const showDebug = debugOnboardingUi && waitState && step.waitFn
     if (!showCheck && !showDebug) {
       // still show a small height if there is a waitFn so the text doesn't move around:
       // if (step.waitFn) {
@@ -941,7 +941,7 @@ export function OnboardingGuide({
       // }
     }
     return (
-      <View id="bottom" className={`flex justify-end h-12 ${superMode ? "bg-chart-4" : ""}`}>
+      <View id="bottom" className={`flex justify-end h-12 ${debugOnboardingUi ? "bg-chart-4" : ""}`}>
         {showCheck && (
           <View className="flex-1 justify-center">
             <View className="flex flex-row justify-center items-center">
@@ -1025,7 +1025,9 @@ export function OnboardingGuide({
 
           {hasStarted && (
             <View className="flex-row gap-4">
-              {superMode && !isFirstStep && <Button flex preset="secondary" tx="common:back" onPress={handleBack} />}
+              {debugOnboardingUi && !isFirstStep && (
+                <Button flex preset="secondary" tx="common:back" onPress={handleBack} />
+              )}
               {renderContinueButton()}
             </View>
           )}

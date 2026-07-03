@@ -96,6 +96,24 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Shows the onboarding/prep debug overlays (back button, step wait indicator,
+  // colored bottom bar, debug videos). Formerly gated behind super_mode.
+  debug_onboarding_ui: {
+    key: "debug_onboarding_ui",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  // Shows the OTA update debug overlay (live progress info + skip button).
+  // Formerly gated behind super_mode.
+  debug_ota_ui: {
+    key: "debug_ota_ui",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
   // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
   // captions render on glasses. Synced to the Bluetooth SDK via BLUETOOTH_SETTING_KEYS.

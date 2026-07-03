@@ -44,6 +44,8 @@ export default function DebugSettingsScreen() {
   const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
   const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
+  const [debugOnboardingUi, setDebugOnboardingUi] = useSetting(SETTINGS.debug_onboarding_ui.key)
+  const [debugOtaUi, setDebugOtaUi] = useSetting(SETTINGS.debug_ota_ui.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
@@ -111,6 +113,20 @@ export default function DebugSettingsScreen() {
               subtitle="Show the current boot state under the logo on the loading screen"
               value={appBootExtraInfo}
               onValueChange={(value) => setAppBootExtraInfo(value)}
+            />
+
+            <ToggleSetting
+              label="Onboarding Debug UI"
+              subtitle="Show onboarding debug overlays (back button, step wait indicator, debug videos)"
+              value={debugOnboardingUi}
+              onValueChange={(value) => setDebugOnboardingUi(value)}
+            />
+
+            <ToggleSetting
+              label="OTA Debug UI"
+              subtitle="Show OTA update debug overlay (live progress info + skip button)"
+              value={debugOtaUi}
+              onValueChange={(value) => setDebugOtaUi(value)}
             />
           </Group>
 

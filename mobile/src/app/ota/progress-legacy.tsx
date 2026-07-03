@@ -64,7 +64,7 @@ const OTA_COVER_VIDEO_URL = "https://mentra-videos-cdn.mentraglass.com/onboardin
 export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [debugOtaUi] = useSetting(SETTINGS.debug_ota_ui.key)
   const otaProgress = useGlassesStore((state) => state.otaProgress)
   const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
   const glassesConnected = useGlassesStore(selectGlassesConnected)
@@ -189,7 +189,7 @@ export default function OtaProgressScreen() {
         {id: "retry", enabled: true},
         {id: "change_wifi", enabled: true},
       ]
-      if (superMode) {
+      if (debugOtaUi) {
         states.push({id: "skip_super", enabled: true})
       }
       return states
@@ -207,7 +207,7 @@ export default function OtaProgressScreen() {
       ]
     }
     return []
-  }, [continueButtonDisabled, progressState, superMode])
+  }, [continueButtonDisabled, progressState, debugOtaUi])
 
   const trackButtonPress = useCallback(
     (buttonId: OtaButtonId) => {
@@ -1866,7 +1866,7 @@ export default function OtaProgressScreen() {
           <View className="gap-3">
             <Button preset="primary" text="Retry" flexContainer onPress={handleRetryFromFailure} />
             <Button preset="secondary" text="WiFi setup" flexContainer onPress={handleChangeWifi} />
-            {superMode && <Button preset="secondary" text="Skip (super)" onPress={handleSkipSuper} />}
+            {debugOtaUi && <Button preset="secondary" text="Skip (debug)" onPress={handleSkipSuper} />}
           </View>
         </>
       )
@@ -2048,8 +2048,8 @@ completed: [${completedUpdates.join(", ")}]`
     <Screen preset="fixed" safeAreaEdges={["bottom"]}>
       <Header RightActionComponent={<MentraLogoStandalone />} />
 
-      {/* DEBUG OVERLAY - Only shows in super mode */}
-      {superMode && (
+      {/* DEBUG OVERLAY - gated behind the OTA debug UI toggle in Debug Settings */}
+      {debugOtaUi && (
         <View
           style={{
             position: "absolute",

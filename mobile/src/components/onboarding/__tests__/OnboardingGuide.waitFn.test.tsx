@@ -48,7 +48,7 @@ jest.mock("@/stores/navigation", () => ({
 }))
 
 jest.mock("@/stores/settings", () => ({
-  SETTINGS: {super_mode: {key: "super_mode"}},
+  SETTINGS: {debug_onboarding_ui: {key: "debug_onboarding_ui"}},
   useSetting: () => [false, jest.fn()],
 }))
 
