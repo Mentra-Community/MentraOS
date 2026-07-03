@@ -6,84 +6,81 @@
  * DisplayManager. Callers decide when to push.
  */
 
-import type {LayoutElement, MiniappSession, RemoveOp} from "@mentra/miniapp"
+import type {MiniappSession, RenderElement} from "@mentra/miniapp"
 import {borderTestImageBase64} from "../lib/bmp"
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
-  // Retained-mode scene id for the whole nav HUD. Every HUD component (map,
-  // arrow, stats, maneuver) is sent under this id with a stable element id, so
-  // the SGC upserts each in place; a full clear() or a different layout id wipes
-  // the scene. Element ids:
-  private static readonly LAYOUT_ID = "nav-hud"
-  private static readonly EL = {
-    map: "map",
-    arrow: "arrow",
-    stats: "stats",
-    maneuver: "maneuver",
-    // Single-container states (welcome / "Starting…" / rerouting / arrived) render
-    // as this one element; it and the turn-by-turn elements remove each other.
-    message: "message",
-  } as const
-
   // ── Navigation HUD layout ────────────────────────────────────────────
-  // Rects on the 500×220 Mentra canvas, from the nav HUD mockup: a map bitmap
+  // Boxes on the 500×220 Mentra canvas, from the nav HUD mockup: a map bitmap
   // on the right, a turn-arrow bitmap on the left, trip stats along the top,
   // and the maneuver instruction below the arrow. The firmware draws the outer
   // rounded frame itself, so we only send these content slots. `message` shares
   // the arrow's left x and spans the content area (staying clear of the map).
   static readonly HUD = {
-    map: {x: 335, y: 14, width: 150, height: 150},
-    arrow: {x: 12, y: 116, width: 38, height: 38},
-    stats: {x: 12, y: 9, width: 200, height: 28},
-    maneuver: {x: 54, y: 115, width: 270, height: 64},
-    message: {x: 12, y: 54, width: 310, height: 156},
+    map: {x: 335, y: 14, w: 150, h: 150},
+    arrow: {x: 12, y: 116, w: 38, h: 38},
+    stats: {x: 12, y: 9, w: 200, h: 28},
+    maneuver: {x: 54, y: 115, w: 270, h: 64},
+    message: {x: 12, y: 54, w: 310, h: 156},
+  }
+
+  // ── HUD frame state ──────────────────────────────────────────────────
+  // render() replaces the whole frame, so this class caches the CONTENT of
+  // each slot (the arrow/map bitmaps are expensive to produce, not to resend —
+  // the host diffs frames and unchanged elements never re-cross BLE) and
+  // composes the full scene on every push. No element lifecycle, no removes:
+  // what's on screen is exactly what buildFrame() returns.
+  private mode: "hud" | "message" | null = null
+  private arrowBmp: string | null = null
+  private mapBmp: string | null = null
+  private stats: string | null = null
+  private maneuver: string | null = null
+  private message: string | null = null
+
+  private buildFrame(): RenderElement[] {
+    const els: RenderElement[] = []
+    if (this.mode === "hud") {
+      if (this.arrowBmp) els.push({type: "image", id: "arrow", box: DisplayManager.HUD.arrow, data: this.arrowBmp})
+      if (this.maneuver != null)
+        els.push({type: "text", id: "maneuver", box: DisplayManager.HUD.maneuver, text: this.maneuver})
+      if (this.stats != null) els.push({type: "text", id: "stats", box: DisplayManager.HUD.stats, text: this.stats})
+    } else if (this.mode === "message" && this.message != null) {
+      els.push({type: "text", id: "message", box: DisplayManager.HUD.message, text: this.message})
+    }
+    // The minimap rides along in both modes (it sits clear of the message box).
+    if (this.mapBmp) els.push({type: "image", id: "map", box: DisplayManager.HUD.map, data: this.mapBmp})
+    return els
+  }
+
+  private pushFrame(): void {
+    this.safeCall(() => void this.session.display.render(this.buildFrame()))
   }
 
   /**
-   * Push the turn-by-turn HUD frame in ONE call via `display.drawLayout`: the
-   * arrow bitmap (left), the maneuver text (bottom), and the trip stats (top),
-   * composed into a single layout batch. The map bitmap (right) is pushed
-   * separately by refreshMinimap() since it fetches roads async and throttles.
-   *
-   * `arrowBmp` is included only when the direction changed — the caller omits it
-   * on unchanged frames so we don't re-encode/re-send the BMP every tick.
+   * Turn-by-turn HUD frame: arrow bitmap (left), maneuver text (bottom), trip
+   * stats (top) — plus the cached minimap. Fields set to a value (including
+   * null) overwrite that slot; omitted fields keep their cached content, so the
+   * caller only re-encodes the arrow BMP when the direction changes.
    */
   showNavHud(frame: {arrowBmp?: string; stats?: string | null; maneuver?: string | null}): void {
-    const elements: (LayoutElement | RemoveOp)[] = []
-    if (frame.arrowBmp) {
-      elements.push({id: DisplayManager.EL.arrow, layoutType: "bitmap_view", data: frame.arrowBmp, ...DisplayManager.HUD.arrow})
-    }
-    if (frame.maneuver != null) {
-      elements.push({id: DisplayManager.EL.maneuver, layoutType: "positioned_text", text: frame.maneuver, ...DisplayManager.HUD.maneuver})
-    }
-    if (frame.stats != null) {
-      elements.push({id: DisplayManager.EL.stats, layoutType: "positioned_text", text: frame.stats, ...DisplayManager.HUD.stats})
-    }
-    if (elements.length === 0) return
-    // Turn-by-turn replaces any single-container message.
-    elements.push({op: "remove", id: DisplayManager.EL.message})
-    this.safeCall(() => this.session.display.drawLayout({id: DisplayManager.LAYOUT_ID, elements}))
+    this.mode = "hud"
+    if (frame.arrowBmp !== undefined) this.arrowBmp = frame.arrowBmp
+    if (frame.stats !== undefined) this.stats = frame.stats
+    if (frame.maneuver !== undefined) this.maneuver = frame.maneuver
+    this.pushFrame()
   }
 
   /**
-   * Single-container state (welcome / "Starting…" / rerouting / arrived): render
-   * `text` as the "message" element at the arrow's left x, and remove the
-   * turn-by-turn elements so they don't linger under it.
+   * Single-message state (welcome / "Starting…" / rerouting / arrived): the
+   * whole frame becomes the message (plus minimap). Turn-by-turn slots simply
+   * stop being rendered — render() replaces the frame, nothing to remove.
    */
   showNavMessage(text: string): void {
-    this.safeCall(() =>
-      this.session.display.drawLayout({
-        id: DisplayManager.LAYOUT_ID,
-        elements: [
-          {id: DisplayManager.EL.message, layoutType: "positioned_text", text, ...DisplayManager.HUD.message},
-          {op: "remove", id: DisplayManager.EL.arrow},
-          {op: "remove", id: DisplayManager.EL.stats},
-          {op: "remove", id: DisplayManager.EL.maneuver},
-        ],
-      }),
-    )
+    this.mode = "message"
+    this.message = text
+    this.pushFrame()
   }
 
   // ── Display sends ────────────────────────────────────────────────────
@@ -130,24 +127,20 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    // The minimap is the "map" element of the nav-hud layout — same scene as the
-    // arrow/stats/maneuver, upserted in place by the SGC on each frame.
-    this.enqueue("minimap", () =>
-      this.session.display.drawLayout({
-        id: DisplayManager.LAYOUT_ID,
-        elements: [{id: DisplayManager.EL.map, layoutType: "bitmap_view", data: base64Bmp, ...DisplayManager.HUD.map}],
-      }),
-    )
+    // The minimap is the "map" slot of the HUD frame — refreshMinimap runs on
+    // its own async cadence, so it updates the cache and re-pushes whatever
+    // frame is current (host diff keeps unchanged slots off BLE).
+    this.mapBmp = base64Bmp
+    this.pushFrame()
   }
 
   /**
-   * Remove the minimap element (e.g. when switching to the swipe-up large map,
-   * which lives at a different rect and wouldn't otherwise overwrite it).
+   * Drop the minimap slot (e.g. when switching to the swipe-up large map, which
+   * renders at a different rect).
    */
   clearMinimap(): void {
-    this.safeCall(() =>
-      this.session.display.removeElement(DisplayManager.EL.map, DisplayManager.LAYOUT_ID),
-    )
+    this.mapBmp = null
+    this.pushFrame()
   }
 
   /**
@@ -292,8 +285,14 @@ export class DisplayManager {
     })
   }
 
-  /** Wipe whatever's on the glasses. */
+  /** Wipe whatever's on the glasses (and forget the cached frame slots). */
   clear(): void {
+    this.mode = null
+    this.arrowBmp = null
+    this.mapBmp = null
+    this.stats = null
+    this.maneuver = null
+    this.message = null
     this.safeCall(() => this.session.display.clear())
   }
 

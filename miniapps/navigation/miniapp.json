@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "name": "Mentra Maps",
   "description": "Turn-by-turn walking navigation with compass and Google Maps.",
   "icon": "icon.png",
@@ -13,16 +13,26 @@
     "ui": "ui/index.html"
   },
   "permissions": [
-    {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"},
-    {"type": "BACKGROUND_LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
+    {
+      "type": "LOCATION",
+      "description": "Used for live position, compass heading, and turn-by-turn directions"
+    },
+    {
+      "type": "BACKGROUND_LOCATION",
+      "description": "Used for live position, compass heading, and turn-by-turn directions"
+    }
   ],
   "hardwareRequirements": [
-    {"type": "DISPLAY", "level": "REQUIRED", "description": "Shows next maneuver and distance on glasses"}
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Shows next maneuver and distance on glasses"
+    }
   ],
   "actions": [
     {
       "id": "start_navigation",
-      "description": "Start turn-by-turn navigation to a destination and show directions on the glasses. Use when the user wants to go somewhere — e.g. 'navigate to Blue Bottle Coffee', 'directions to the airport', 'take me home'. Give the destination as a place name or address in `query` (it gets looked up near the user's current location); only pass latitude/longitude instead if you already have exact coordinates. Defaults to walking directions.",
+      "description": "Start turn-by-turn navigation to a destination and show directions on the glasses. Use when the user wants to go somewhere \u2014 e.g. 'navigate to Blue Bottle Coffee', 'directions to the airport', 'take me home'. Give the destination as a place name or address in `query` (it gets looked up near the user's current location); only pass latitude/longitude instead if you already have exact coordinates. Defaults to walking directions.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -44,7 +54,12 @@
           },
           "travel_mode": {
             "type": "string",
-            "enum": ["walking", "driving", "cycling", "two_wheeler"],
+            "enum": [
+              "walking",
+              "driving",
+              "cycling",
+              "two_wheeler"
+            ],
             "description": "How the user is traveling. Defaults to 'walking'."
           }
         }

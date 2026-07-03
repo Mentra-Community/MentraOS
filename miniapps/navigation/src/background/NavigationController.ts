@@ -54,12 +54,10 @@ export class NavigationController {
   private started = false
   private logSeq = 0
   private lastHudKey = ""
-  // Direction key of the last arrow bitmap pushed — re-render/re-send the arrow
-  // only when the turn direction changes (BMP encode + BLE chunks are costly).
+  // Direction key of the last arrow bitmap pushed — re-ENCODE the arrow only
+  // when the turn direction changes (rasterizing the BMP is the cost; resending
+  // is free — the host diffs frames and unchanged elements never re-cross BLE).
   private lastArrowKey = ""
-  // Whether the 4-slot turn-by-turn HUD (arrow/map/stats/maneuver) is currently
-  // shown, so a transition to a single-container state can blank the arrow slot.
-  private navHudShown = false
   // Timestamp of the last HUD push, so we can periodically re-push the maneuver
   // text even when unchanged (recovers from G2 EvenHub page teardowns).
   private lastHudAt = 0
@@ -1568,9 +1566,8 @@ export class NavigationController {
       // cleared but no replacement HUD was ever pushed.
       if (this.lastHudKey !== "") {
         this.lastHudKey = ""
-        // clear() wipes the whole canvas (incl. arrow/map bitmaps); reset the
-        // HUD-bitmap trackers so the next turn-by-turn frame re-pushes them.
-        this.navHudShown = false
+        // clear() wipes the glasses AND the DisplayManager's cached frame
+        // slots; reset the arrow-encode memo so the next frame re-encodes.
         this.lastArrowKey = ""
         try {
           this.display.clear()
@@ -1604,11 +1601,10 @@ export class NavigationController {
       const forced = unchanged // unchanged but >3s: periodic re-push (page teardown recovery)
       this.lastHudAt = nowHud
       this.lastHudKey = key
-      this.navHudShown = true
 
-      // Compose the whole HUD frame in one drawLayout call. The arrow bitmap is
-      // included only when the direction changes (or on a forced re-push, so a
-      // torn-down page gets it back too) — re-encoding it every tick is costly.
+      // Compose the whole HUD frame in one render() call. The arrow bitmap is
+      // re-ENCODED only when the direction changes (or on a forced re-push);
+      // DisplayManager caches it, so it's present in every frame regardless.
       const arrowChanged = forced || maneuverArrow !== this.lastArrowKey
       if (arrowChanged) this.lastArrowKey = maneuverArrow ?? ""
       this.display.showNavHud({
@@ -1620,12 +1616,8 @@ export class NavigationController {
     }
 
     // Single-container state (welcome / rerouting / arrived / off-route / "Starting…").
-    // Leaving the 4-slot HUD: reset the arrow dedup so the arrow re-sends when
-    // turn-by-turn resumes (showNavMessage removes the arrow element below).
-    if (this.navHudShown) {
-      this.navHudShown = false
-      this.lastArrowKey = ""
-    }
+    // No HUD bookkeeping needed: render() replaces the frame, and the cached
+    // arrow/map slots survive in DisplayManager for when turn-by-turn resumes.
 
     // Stack the maneuver block over the stats line, blank line between, or just
     // one if the other is absent.
@@ -1641,9 +1633,9 @@ export class NavigationController {
     this.lastHudAt = nowHud
     this.lastHudKey = key
 
-    // Render as the "message" element of the nav-hud layout (positioned at the
-    // arrow's left x), which also removes the arrow/stats/maneuver elements so
-    // they don't linger under it. Returning to turn-by-turn removes the message.
+    // Render as the "message" frame (positioned at the arrow's left x). The
+    // frame replaces turn-by-turn entirely; returning to turn-by-turn replaces
+    // it back. Nothing lingers — render() is the whole screen.
     this.display.showNavMessage(combined)
   }
 
