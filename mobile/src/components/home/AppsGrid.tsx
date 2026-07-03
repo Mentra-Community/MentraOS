@@ -784,6 +784,13 @@ export function AppsGrid({
 
   const renderItem = useCallback(
     ({item}: {item: MasonryAppItem}) => {
+      // Synthetic @empty slots exist only to pad the grid / hold drag positions.
+      // Render them as blank spacers: an AppIcon with an empty logoUrl falls back
+      // to the first-letter tile, which paints a faint "@" (from "@emptyN") in
+      // every unoccupied slot.
+      if (item.packageName.startsWith("@empty")) {
+        return <View className="flex-1" />
+      }
       return (
         <TouchableOpacity
           ref={(ref) => {
