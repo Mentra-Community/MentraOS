@@ -2235,7 +2235,24 @@ class G2: NSObject, SGCManager {
             sceneStructuralPending = true
             return
         }
-        await rebuildPage()
+        await coalescedPageRebuild()
+    }
+
+    /// Structural change: tear down + rebuild ONLY when the page is actually
+    /// live. When the page is already down (mid-recovery, or a prior frame's
+    /// rebuild in flight), sending another SHUTDOWN_PAGE restarts the firmware
+    /// recovery cycle — frames arriving faster than recovery completes then
+    /// keep the page down FOREVER (nothing renders, image fragments all fail).
+    /// A down page just needs the dirty signal: the reconcile loop resurrects
+    /// it once, with the full current container list, which already includes
+    /// every structural change accumulated while it was down.
+    private func coalescedPageRebuild() async {
+        if pageCreated {
+            await rebuildPage()
+        } else {
+            Bridge.log("G2: structural change while page down — deferring to reconcile rebuild (no extra shutdown)")
+            signalDisplayDirty()
+        }
     }
 
     /// G2 override of the default paint-then-sweep: identical walk, but
@@ -2278,8 +2295,8 @@ class G2: NSObject, SGCManager {
         sceneBatchDepth -= 1
         if sceneStructuralPending {
             sceneStructuralPending = false
-            Bridge.log("G2: applySceneFrame — structural changes, ONE page rebuild for the whole frame")
-            await rebuildPage()
+            Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+            await coalescedPageRebuild()
         }
     }
 

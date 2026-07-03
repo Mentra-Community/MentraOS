@@ -2198,7 +2198,7 @@ class G2 : SGCManager() {
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
             if (!pageCreated) {
-                if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { rebuildPage() }
+                if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { coalescedPageRebuild() }
             }
             return true
         } else {
@@ -2210,7 +2210,7 @@ class G2 : SGCManager() {
             signalDisplayDirty()
             Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
             // New container changes page structure: rebuild it, then the loop sends the pixels.
-            if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { rebuildPage() }
+            if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { coalescedPageRebuild() }
         }
 
         return true
@@ -2242,7 +2242,26 @@ class G2 : SGCManager() {
             sceneStructuralPending = true
             return
         }
-        rebuildPage()
+        coalescedPageRebuild()
+    }
+
+    /**
+     * Structural change: tear down + rebuild ONLY when the page is actually
+     * live. When the page is already down (mid-recovery, or a prior frame's
+     * rebuild in flight), sending another SHUTDOWN_PAGE restarts the firmware
+     * recovery cycle — frames arriving faster than recovery completes then keep
+     * the page down FOREVER (nothing renders, image fragments all fail). A down
+     * page just needs the dirty signal: the reconcile loop resurrects it once,
+     * with the full current container list, which already includes every
+     * structural change accumulated while it was down.
+     */
+    private suspend fun coalescedPageRebuild() {
+        if (pageCreated) {
+            rebuildPage()
+        } else {
+            Bridge.log("G2: structural change while page down — deferring to reconcile rebuild (no extra shutdown)")
+            signalDisplayDirty()
+        }
     }
 
     /**
@@ -2279,8 +2298,8 @@ class G2 : SGCManager() {
             }
             if (sceneStructuralPending) {
                 sceneStructuralPending = false
-                Bridge.log("G2: applySceneFrame — structural changes, ONE page rebuild for the whole frame")
-                rebuildPage()
+                Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+                coalescedPageRebuild()
             }
         }
     }
