@@ -28,6 +28,7 @@ export type LayoutType =
   | "bitmap_view"
   | "positioned_text"
   | "clear_view"
+  | "remove_element"
 
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
 
@@ -69,6 +70,11 @@ export interface BitmapView {
   width?: number
   /** Target container height. */
   height?: number
+  /** Retained-mode element id. Re-sending the same id updates that element in place;
+   * a new id creates one. Set automatically by `drawLayout`. */
+  id?: string
+  /** Layout/scene id this element belongs to. Set automatically by `drawLayout`. */
+  layoutId?: string
 }
 
 export interface PositionedText {
@@ -86,10 +92,29 @@ export interface PositionedText {
   borderWidth?: number
   /** Border corner radius (px). */
   borderRadius?: number
+  /** Retained-mode element id. Re-sending the same id updates that element in place;
+   * a new id creates one. Set automatically by `drawLayout`. */
+  id?: string
+  /** Layout/scene id this element belongs to. Set automatically by `drawLayout`. */
+  layoutId?: string
 }
 
 export interface ClearView {
   layoutType: "clear_view"
+}
+
+/**
+ * Remove a single retained element (by id) from the current layout. Emitted on
+ * the wire by `drawLayout` (from a `{op: "remove", id}` entry) and by
+ * `removeElement`. The SGC deletes the element's canvas component; other
+ * elements are untouched.
+ */
+export interface RemoveElement {
+  layoutType: "remove_element"
+  /** id of the element to remove. */
+  id: string
+  /** Layout/scene id the element belongs to (optional; SGC falls back to the active layout). */
+  layoutId?: string
 }
 
 export type Layout =
@@ -100,6 +125,27 @@ export type Layout =
   | BitmapView
   | PositionedText
   | ClearView
+  | RemoveElement
+
+/** A drawable element inside a {@link LayoutSpec}, tagged with a stable retained-mode id. */
+export type LayoutElement = (BitmapView | PositionedText) & {id: string}
+
+/** An in-array remove instruction for {@link LayoutSpec.elements}. */
+export interface RemoveOp {
+  op: "remove"
+  id: string
+}
+
+/**
+ * A whole layout / scene: a stable `id` plus its elements. Sending a layout
+ * with a NEW id clears the previously-shown layout first; re-sending the SAME
+ * id diffs by element id (create / update in place). Elements you omit are left
+ * untouched — remove them explicitly with a `{op: "remove", id}` entry.
+ */
+export interface LayoutSpec {
+  id: string
+  elements: (LayoutElement | RemoveOp)[]
+}
 
 export interface DisplayOptions {
   view?: ViewType
@@ -202,6 +248,53 @@ export class DisplayManager {
   /** Clear the specified view. */
   clear(view: ViewType = "main"): void {
     this.send({layoutType: "clear_view"}, {view})
+  }
+
+  /**
+   * Draw a whole layout / scene in one call — retained-mode with element ids.
+   *
+   * `layout.id` names the scene; each element carries a stable `id`. The SGC
+   * diffs against what's on the glasses:
+   *   • a NEW `layout.id` clears the previously-shown layout first;
+   *   • same `layout.id`, same element `id` → update that element in place;
+   *   • same `layout.id`, new element `id` → create it;
+   *   • an omitted element is left untouched — remove it explicitly with a
+   *     `{op: "remove", id}` entry (or {@link removeElement}).
+   *
+   * All the create/update/remove/clear logic runs on the SGC; this just sends
+   * each element tagged with the layout + element ids.
+   *
+   * @example
+   * display.drawLayout({
+   *   id: "nav-hud",
+   *   elements: [
+   *     {id: "map",   layoutType: "bitmap_view",     data: mapPng,   x: 335, y: 14,  width: 150, height: 150},
+   *     {id: "arrow", layoutType: "bitmap_view",     data: arrowPng, x: 12,  y: 116, width: 38,  height: 38},
+   *     {id: "stats", layoutType: "positioned_text", text: "863 m  11 min", x: 12, y: 9, width: 200, height: 28},
+   *     {op: "remove", id: "maneuver"},
+   *   ],
+   * })
+   */
+  drawLayout(layout: LayoutSpec, options: DisplayOptions = {}): void {
+    for (const el of layout.elements) {
+      if ("op" in el && el.op === "remove") {
+        this.send({layoutType: "remove_element", id: el.id, layoutId: layout.id}, options)
+      } else {
+        // el is a BitmapView|PositionedText (both Layout members) with a required
+        // id; adding the optional layoutId keeps it a valid Layout. The cast just
+        // sidesteps TS's union-spread widening.
+        this.send({...el, layoutId: layout.id} as Layout, options)
+      }
+    }
+  }
+
+  /**
+   * Remove a single retained element by id from the current layout. Other
+   * elements are untouched. `layoutId` is optional — the SGC falls back to the
+   * active layout.
+   */
+  removeElement(id: string, layoutId?: string, options: DisplayOptions = {}): void {
+    this.send({layoutType: "remove_element", id, layoutId}, options)
   }
 }
 

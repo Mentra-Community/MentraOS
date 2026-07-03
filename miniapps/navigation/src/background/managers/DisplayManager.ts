@@ -6,16 +6,85 @@
  * DisplayManager. Callers decide when to push.
  */
 
-import type {MiniappSession} from "@mentra/miniapp"
-import {borderTestImageBase64, encodeBmpBase64} from "../lib/bmp"
-
-// A solid-white 100×100 bitmap — pushed to the minimap rect to ERASE the
-// minimap in place (the G2 reuses the same-rect container, overwriting it)
-// instead of a full-view clear(). White blends into the map background.
-const BLANK_MINIMAP_BMP = encodeBmpBase64(new Uint8Array(100 * 100).fill(255), 100, 100)
+import type {LayoutElement, MiniappSession, RemoveOp} from "@mentra/miniapp"
+import {borderTestImageBase64} from "../lib/bmp"
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
+
+  // Retained-mode scene id for the whole nav HUD. Every HUD component (map,
+  // arrow, stats, maneuver) is sent under this id with a stable element id, so
+  // the SGC upserts each in place; a full clear() or a different layout id wipes
+  // the scene. Element ids:
+  private static readonly LAYOUT_ID = "nav-hud"
+  private static readonly EL = {
+    map: "map",
+    arrow: "arrow",
+    stats: "stats",
+    maneuver: "maneuver",
+    // Single-container states (welcome / "Starting…" / rerouting / arrived) render
+    // as this one element; it and the turn-by-turn elements remove each other.
+    message: "message",
+  } as const
+
+  // ── Navigation HUD layout ────────────────────────────────────────────
+  // Rects on the 500×220 Mentra canvas, from the nav HUD mockup: a map bitmap
+  // on the right, a turn-arrow bitmap on the left, trip stats along the top,
+  // and the maneuver instruction below the arrow. The firmware draws the outer
+  // rounded frame itself, so we only send these content slots. `message` shares
+  // the arrow's left x and spans the content area (staying clear of the map).
+  static readonly HUD = {
+    map: {x: 335, y: 14, width: 150, height: 150},
+    arrow: {x: 12, y: 116, width: 38, height: 38},
+    stats: {x: 12, y: 9, width: 200, height: 28},
+    maneuver: {x: 54, y: 115, width: 270, height: 64},
+    message: {x: 12, y: 54, width: 310, height: 156},
+  }
+
+  /**
+   * Push the turn-by-turn HUD frame in ONE call via `display.drawLayout`: the
+   * arrow bitmap (left), the maneuver text (bottom), and the trip stats (top),
+   * composed into a single layout batch. The map bitmap (right) is pushed
+   * separately by refreshMinimap() since it fetches roads async and throttles.
+   *
+   * `arrowBmp` is included only when the direction changed — the caller omits it
+   * on unchanged frames so we don't re-encode/re-send the BMP every tick.
+   */
+  showNavHud(frame: {arrowBmp?: string; stats?: string | null; maneuver?: string | null}): void {
+    const elements: (LayoutElement | RemoveOp)[] = []
+    if (frame.arrowBmp) {
+      elements.push({id: DisplayManager.EL.arrow, layoutType: "bitmap_view", data: frame.arrowBmp, ...DisplayManager.HUD.arrow})
+    }
+    if (frame.maneuver != null) {
+      elements.push({id: DisplayManager.EL.maneuver, layoutType: "positioned_text", text: frame.maneuver, ...DisplayManager.HUD.maneuver})
+    }
+    if (frame.stats != null) {
+      elements.push({id: DisplayManager.EL.stats, layoutType: "positioned_text", text: frame.stats, ...DisplayManager.HUD.stats})
+    }
+    if (elements.length === 0) return
+    // Turn-by-turn replaces any single-container message.
+    elements.push({op: "remove", id: DisplayManager.EL.message})
+    this.safeCall(() => this.session.display.drawLayout({id: DisplayManager.LAYOUT_ID, elements}))
+  }
+
+  /**
+   * Single-container state (welcome / "Starting…" / rerouting / arrived): render
+   * `text` as the "message" element at the arrow's left x, and remove the
+   * turn-by-turn elements so they don't linger under it.
+   */
+  showNavMessage(text: string): void {
+    this.safeCall(() =>
+      this.session.display.drawLayout({
+        id: DisplayManager.LAYOUT_ID,
+        elements: [
+          {id: DisplayManager.EL.message, layoutType: "positioned_text", text, ...DisplayManager.HUD.message},
+          {op: "remove", id: DisplayManager.EL.arrow},
+          {op: "remove", id: DisplayManager.EL.stats},
+          {op: "remove", id: DisplayManager.EL.maneuver},
+        ],
+      }),
+    )
+  }
 
   // ── Display sends ────────────────────────────────────────────────────
   // Sends are INSTANT — each show fires immediately, no spacing/throttle.
@@ -61,24 +130,23 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    // Minimap goes through the SAME queue as the text boxes, keyed "minimap".
-    // refreshHUD enqueues minimap → maneuver → stats in that order, so the G2
-    // receives them in a fixed sequence ≥200ms apart (no cross-pipeline race).
+    // The minimap is the "map" element of the nav-hud layout — same scene as the
+    // arrow/stats/maneuver, upserted in place by the SGC on each frame.
     this.enqueue("minimap", () =>
-      this.session.display.showBitmapView(base64Bmp, {x: 576 - 100, y: 0, width: 100, height: 100}),
+      this.session.display.drawLayout({
+        id: DisplayManager.LAYOUT_ID,
+        elements: [{id: DisplayManager.EL.map, layoutType: "bitmap_view", data: base64Bmp, ...DisplayManager.HUD.map}],
+      }),
     )
   }
 
   /**
-   * Erase the minimap bitmap IN PLACE by overwriting its rect with a blank
-   * white tile — same container the live minimap uses, so the G2 reuses it
-   * (no full-view clear(), no async teardown race). Used when switching to the
-   * large map: the large map is a different rect, so it wouldn't otherwise
-   * overwrite the top-right minimap, which would linger.
+   * Remove the minimap element (e.g. when switching to the swipe-up large map,
+   * which lives at a different rect and wouldn't otherwise overwrite it).
    */
   clearMinimap(): void {
     this.safeCall(() =>
-      this.session.display.showBitmapView(BLANK_MINIMAP_BMP, {x: 576 - 100, y: 0, width: 100, height: 100}),
+      this.session.display.removeElement(DisplayManager.EL.map, DisplayManager.LAYOUT_ID),
     )
   }
 
@@ -121,11 +189,13 @@ export class DisplayManager {
   // SINGLE-CONTAINER HUD: the whole frame (maneuver block + trip stats) is now
   // crammed into THIS one container, spanning the full canvas so all the lines
   // fit. There is no longer a separate stats box below it.
-  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 576, height: 288}
+  // Full 500×220 Mentra canvas — used by the single-container states
+  // (welcome / rerouting / arrived / off-route), which don't use the 4-slot split.
+  private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 500, height: 220}
   // Kept only so showTripStats()/showManeuver() signatures still resolve; the
   // single-container HUD routes everything through showManeuver now. Same rect
   // as MANEUVER_REGION so a stray stats push can't land in a different spot.
-  private static readonly STATS_REGION = {x: 0, y: 0, width: 576, height: 288}
+  private static readonly STATS_REGION = {x: 0, y: 0, width: 500, height: 220}
 
   /**
    * Maneuver / direction text in the TOP region of the canvas (its own G2 text

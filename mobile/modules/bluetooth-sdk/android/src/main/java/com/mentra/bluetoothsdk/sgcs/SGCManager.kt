@@ -91,6 +91,38 @@ abstract class SGCManager {
             borderWidth: Int = 0,
             borderRadius: Int = 0
     ) {}
+
+    /**
+     * Retained-mode layout element (bitmap). Like [displayBitmap] but tagged with a stable
+     * [elementId] within a [layoutId] scene, so an SGC that supports it (Nex) can diff:
+     * same id -> update in place, new id -> create, new layoutId -> clear the previous scene.
+     * Default: ignore the ids and behave exactly like [displayBitmap].
+     */
+    open fun drawLayoutBitmap(
+            base64ImageData: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            elementId: String,
+            layoutId: String?
+    ): Boolean = displayBitmap(base64ImageData, x, y, width, height)
+
+    /** Retained-mode layout element (text). Default: behave like [sendPositionedText]. */
+    open fun drawLayoutText(
+            text: String,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int,
+            elementId: String,
+            layoutId: String?
+    ) = sendPositionedText(text, x, y, width, height, borderWidth, borderRadius)
+
+    /** Remove a retained layout element by id. Default: no-op (SGC doesn't support layouts). */
+    open fun removeLayoutElement(elementId: String, layoutId: String?) {}
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

@@ -28,6 +28,7 @@ import {LocationManager} from "./managers/LocationManager"
 import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
+import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
 import {bearingDeg, distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
@@ -53,6 +54,12 @@ export class NavigationController {
   private started = false
   private logSeq = 0
   private lastHudKey = ""
+  // Direction key of the last arrow bitmap pushed — re-render/re-send the arrow
+  // only when the turn direction changes (BMP encode + BLE chunks are costly).
+  private lastArrowKey = ""
+  // Whether the 4-slot turn-by-turn HUD (arrow/map/stats/maneuver) is currently
+  // shown, so a transition to a single-container state can blank the arrow slot.
+  private navHudShown = false
   // Timestamp of the last HUD push, so we can periodically re-push the maneuver
   // text even when unchanged (recovers from G2 EvenHub page teardowns).
   private lastHudAt = 0
@@ -1421,6 +1428,12 @@ export class NavigationController {
 
     let next: string | null = null
     let durationMs: number | undefined
+    // Structured maneuver split for the new 4-slot HUD (arrow bitmap + maneuver
+    // text box). Populated only on the normal next-turn frame; when set (and
+    // running), refreshHUD sends the split layout instead of the single-container
+    // text frame used by the welcome/rerouting/arrived/off-route states.
+    let maneuverArrow: string | null = null
+    let maneuverBody: string | null = null
 
     // The next-turn display, derived from the live `maneuver` event via the
     // SHARED helper the phone OrientationCard also uses. Computed once here
@@ -1490,31 +1503,31 @@ export class NavigationController {
       // 1:1 with the phone, while the maneuver event's own distance lagged). So
       // we compute the top-line distance HERE from the live position, with the
       // same fallback chain the bottom box uses, instead of trusting md's
-      // (possibly frozen) value. Layout: arrow, distance, instruction.
+      // (possibly frozen) value. The DIRECTIONS box shows the turn instruction;
+      // distance/ETA now live in the TOP stats box, so we no longer put
+      // "In X m" / "Arriving in X m" here.
       //
-      //   ←|→|↑                          ← arrow from maneuver.maneuverType
-      //   In 198 m  | Now | Arriving in 65 m
+      //   Now                            ← only at the turn (urgency cue, not distance)
       //   Turn left onto Market St       ← Mapbox's verbatim instruction
       if (md.arriving) {
-        // Arrival leg: distance to the DESTINATION, live (same as bottom box).
-        const dDest = remainingRouteMeters(me, this.trip.routePoints) ?? md.distanceMeters
-        const distLine =
-          dDest != null ? `Arriving in ${formatDistance(dDest, this.unitSystem)}` : "Arriving"
-        next = `↑\n${distLine}`
+        // Final leg: show the arrival directions (distance is in the top stats box).
+        maneuverArrow = "↑"
+        maneuverBody = md.instruction || "Arriving"
+        next = maneuverBody
       } else {
-        // DISTANCE shown comes from the live position (smooth). But the ARROW
-        // and the "Now" state come from `md`, whose atTurn is gated on the
-        // EVENT's distance — NOT the live one. This avoids the wrong-arrow flash:
-        // `md.arrow`/`md.atTurn` always belong to the same turn as `md.kind`, so
-        // the glyph can't briefly point the wrong way as you pass a turn (the
-        // live distance can already be measuring the NEXT turn). See
-        // deriveManeuverDisplay for the full rationale.
+        // Directions box: NEXT-TURN distance + instruction (mockup: "56 m" /
+        // "Turn left onto the walkway"). This next-turn distance is distinct from
+        // the top box's distance-to-destination, so it belongs here. "Now"
+        // replaces the distance right at the turn. The ARROW and atTurn come from
+        // `md` (gated on the EVENT distance), so the glyph/cue always match md.kind.
         const dTurn = liveDist ?? md.distanceMeters
         const distLine = md.atTurn
           ? "Now"
           : dTurn != null
-            ? `In ${formatDistance(dTurn, this.unitSystem)}`
+            ? formatDistance(dTurn, this.unitSystem)
             : null
+        maneuverArrow = md.arrow || "↑"
+        maneuverBody = [distLine, md.instruction].filter(Boolean).join("\n")
         next = [md.arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
       }
     } else if (running) {
@@ -1555,6 +1568,10 @@ export class NavigationController {
       // cleared but no replacement HUD was ever pushed.
       if (this.lastHudKey !== "") {
         this.lastHudKey = ""
+        // clear() wipes the whole canvas (incl. arrow/map bitmaps); reset the
+        // HUD-bitmap trackers so the next turn-by-turn frame re-pushes them.
+        this.navHudShown = false
+        this.lastArrowKey = ""
         try {
           this.display.clear()
         } catch {
@@ -1572,28 +1589,62 @@ export class NavigationController {
     // Mapbox reroutes.
     const showStats = running && !(this.offRouteAdvisory && status !== "rerouting" && status !== "arrived")
     const stats = showStats ? this.buildTripStats() : null
+
+    // ── New 4-slot HUD ──────────────────────────────────────────────────
+    // On the normal next-turn frame, send the arrow bitmap (left) + maneuver
+    // text box (bottom) + trip-stats box (top) as separate canvas components.
+    // The minimap (right) was pushed by refreshMinimap() above. Special states
+    // (welcome/rerouting/arrived/off-route) have no arrow/stats split and fall
+    // through to the single-container text frame below.
+    if (maneuverBody != null && running) {
+      const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}`
+      const nowHud = Date.now()
+      const unchanged = key === this.lastHudKey
+      if (unchanged && nowHud - this.lastHudAt <= 3000) return
+      const forced = unchanged // unchanged but >3s: periodic re-push (page teardown recovery)
+      this.lastHudAt = nowHud
+      this.lastHudKey = key
+      this.navHudShown = true
+
+      // Compose the whole HUD frame in one drawLayout call. The arrow bitmap is
+      // included only when the direction changes (or on a forced re-push, so a
+      // torn-down page gets it back too) — re-encoding it every tick is costly.
+      const arrowChanged = forced || maneuverArrow !== this.lastArrowKey
+      if (arrowChanged) this.lastArrowKey = maneuverArrow ?? ""
+      this.display.showNavHud({
+        arrowBmp: arrowChanged ? renderManeuverArrowBmp(maneuverArrow) : undefined,
+        maneuver: maneuverBody,
+        stats: stats ?? "",
+      })
+      return
+    }
+
+    // Single-container state (welcome / rerouting / arrived / off-route / "Starting…").
+    // Leaving the 4-slot HUD: reset the arrow dedup so the arrow re-sends when
+    // turn-by-turn resumes (showNavMessage removes the arrow element below).
+    if (this.navHudShown) {
+      this.navHudShown = false
+      this.lastArrowKey = ""
+    }
+
     // Stack the maneuver block over the stats line, blank line between, or just
     // one if the other is absent.
     const combined = [next, stats].filter(Boolean).join("\n\n")
 
     // Coalesce on the combined frame so we don't re-push identical content.
-    const key = `${combined}${durationMs ?? 0}`
+    // Prefixed "msg|" so a message frame never collides with a "hud|" key.
+    const key = `msg|${combined}${durationMs ?? 0}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
     if (key === this.lastHudKey && nowHud - this.lastHudAt <= 3000) return
     this.lastHudAt = nowHud
-
     this.lastHudKey = key
 
-    // Single full-canvas container: push the WHOLE combined frame (maneuver
-    // block + trip stats) through showManeuver, which spans the full canvas and
-    // REPLACES whatever text was there (incl. the "Welcome…" frame) in place. We
-    // deliberately do NOT clear() before this: showManeuver overwrites the same
-    // container, and clear() is an async full-view teardown that would race this
-    // draw (the "old frame lingers under the new one" glitch). clear() is
-    // reserved for genuine teardown (trip end / dispose), not routine updates.
-    this.display.showManeuver(combined)
+    // Render as the "message" element of the nav-hud layout (positioned at the
+    // arrow's left x), which also removes the arrow/stats/maneuver elements so
+    // they don't linger under it. Returning to turn-by-turn removes the message.
+    this.display.showNavMessage(combined)
   }
 
   /**
@@ -1622,13 +1673,14 @@ export class NavigationController {
       remainingRouteMeters(me, this.trip.routePoints) ??
       undefined
     if (distM == null || distM < 0) return null
-    // Glasses stats line shows ETA only — the total remaining distance was
-    // dropped to keep the left text compact (distM is still used as the ETA
-    // fallback when the SDK hasn't sent a remaining-time value).
+    // Top stats slot: total remaining distance + ETA, e.g. "863 m  11 min"
+    // (matches the HUD mockup). distM also feeds the ETA fallback when the SDK
+    // hasn't sent a remaining-time value.
     const etaS =
       this.trip.maneuver?.timeToDestinationSeconds ??
       distM / this.FALLBACK_WALKING_M_PER_S
-    return etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
+    const dist = formatDistance(distM, this.unitSystem)
+    return etaS >= 0 ? `${dist}  ${formatDuration(etaS)}` : dist
   }
 
   /**

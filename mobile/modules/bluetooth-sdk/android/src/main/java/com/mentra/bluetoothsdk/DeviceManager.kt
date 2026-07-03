@@ -629,10 +629,12 @@ class DeviceManager {
     }
 
     private fun statesEqual(s1: ViewState, s2: ViewState): Boolean {
+        // Include the retained-mode element id so distinct components of one layout
+        // (which may share text/data) aren't collapsed into a single "unchanged" frame.
         val state1 =
-            "${s1.layoutType}${s1.text}${s1.topText}${s1.bottomText}${s1.title}${s1.data ?: ""}"
+            "${s1.layoutType}${s1.text}${s1.topText}${s1.bottomText}${s1.title}${s1.data ?: ""}${s1.elementId ?: ""}"
         val state2 =
-            "${s2.layoutType}${s2.text}${s2.topText}${s2.bottomText}${s2.title}${s2.data ?: ""}"
+            "${s2.layoutType}${s2.text}${s2.topText}${s2.bottomText}${s2.title}${s2.data ?: ""}${s2.elementId ?: ""}"
         return state1 == state2
     }
 
@@ -658,7 +660,11 @@ class DeviceManager {
         var bmpHeight: Int? = null,
         // Optional positioned_text border (used by G2; ignored by others).
         var borderWidth: Int? = null,
-        var borderRadius: Int? = null
+        var borderRadius: Int? = null,
+        // Retained-mode layout ids (Nex canvas): layoutId = scene, elementId = component.
+        // When present, the SGC diffs create/update/remove; a new layoutId clears the last one.
+        var layoutId: String? = null,
+        var elementId: String? = null
     )
     // MARK: - End Unique
 
@@ -922,27 +928,59 @@ class DeviceManager {
 
             "bitmap_view" -> {
                 currentViewState.data?.let { data ->
-                    sgc?.displayBitmap(
-                        data,
-                        currentViewState.bmpX,
-                        currentViewState.bmpY,
-                        currentViewState.bmpWidth,
-                        currentViewState.bmpHeight
-                    )
+                    val elId = currentViewState.elementId
+                    if (elId != null) {
+                        // Retained-mode: tagged with a layout/element id so the SGC diffs.
+                        sgc?.drawLayoutBitmap(
+                            data,
+                            currentViewState.bmpX ?: 0,
+                            currentViewState.bmpY ?: 0,
+                            currentViewState.bmpWidth ?: 0,
+                            currentViewState.bmpHeight ?: 0,
+                            elId,
+                            currentViewState.layoutId
+                        )
+                    } else {
+                        sgc?.displayBitmap(
+                            data,
+                            currentViewState.bmpX,
+                            currentViewState.bmpY,
+                            currentViewState.bmpWidth,
+                            currentViewState.bmpHeight
+                        )
+                    }
                 }
             }
 
             "positioned_text" -> {
-                sgc?.sendPositionedText(
-                    currentViewState.text,
-                    currentViewState.bmpX ?: 0,
-                    currentViewState.bmpY ?: 0,
-                    currentViewState.bmpWidth ?: 576,
-                    currentViewState.bmpHeight ?: 288,
-                    currentViewState.borderWidth ?: 0,
-                    currentViewState.borderRadius ?: 0
-                )
+                val elId = currentViewState.elementId
+                if (elId != null) {
+                    sgc?.drawLayoutText(
+                        currentViewState.text,
+                        currentViewState.bmpX ?: 0,
+                        currentViewState.bmpY ?: 0,
+                        currentViewState.bmpWidth ?: 576,
+                        currentViewState.bmpHeight ?: 288,
+                        currentViewState.borderWidth ?: 0,
+                        currentViewState.borderRadius ?: 0,
+                        elId,
+                        currentViewState.layoutId
+                    )
+                } else {
+                    sgc?.sendPositionedText(
+                        currentViewState.text,
+                        currentViewState.bmpX ?: 0,
+                        currentViewState.bmpY ?: 0,
+                        currentViewState.bmpWidth ?: 576,
+                        currentViewState.bmpHeight ?: 288,
+                        currentViewState.borderWidth ?: 0,
+                        currentViewState.borderRadius ?: 0
+                    )
+                }
             }
+
+            "remove_element" ->
+                sgc?.removeLayoutElement(currentViewState.elementId ?: "", currentViewState.layoutId)
 
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1381,6 +1419,10 @@ class DeviceManager {
         val borderWidth = (layout["borderWidth"] as? Number)?.toInt()
         val borderRadius = (layout["borderRadius"] as? Number)?.toInt()
 
+        // Retained-mode layout/element ids (Nex canvas). Absent for legacy pushes.
+        val layoutId = layout["layoutId"] as? String
+        val elementId = layout["id"] as? String
+
         var newViewState =
             ViewState(
                 topText,
@@ -1395,7 +1437,9 @@ class DeviceManager {
                 bmpWidth,
                 bmpHeight,
                 borderWidth,
-                borderRadius
+                borderRadius,
+                layoutId,
+                elementId
             )
 
         val currentState = viewStates[stateIndex]

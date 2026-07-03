@@ -62,8 +62,13 @@ export type {
   DisplayOptions,
   DoubleTextWall,
   Layout,
+  LayoutElement,
+  LayoutSpec,
   LayoutType,
+  PositionedText,
   ReferenceCard,
+  RemoveElement,
+  RemoveOp,
   TextWall,
   ViewType,
 } from "./modules/display"

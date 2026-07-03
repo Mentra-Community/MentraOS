@@ -103,19 +103,13 @@ class MentraNex : SGCManager() {
         private const val MAIN_TASK_HANDLER_CODE_BATTERY_QUERY: Int = 620
         private const val MAIN_TASK_HANDLER_CODE_HEART_BEAT: Int = 630
 
-        // Canvas bitmap component for the image. The id must be in the firmware's bitmap id pool
-        // (10..13); we use a single fixed slot since each bitmap replaces the last. The component
-        // is created at a fixed 200x200.
-        private const val BITMAP_COMPONENT_ID: Int = 10
-        private const val BITMAP_COMPONENT_SIZE: Int = 200
-
         // Fixed rect for the live-captions box (G2-style): a single full-canvas text container
         // reused across caption updates, so each caption is an in-place text change that coexists
-        // with any bitmap/other components. Matches the 576x288 canvas (Even Realities G2 default).
+        // with any bitmap/other components. Matches the 500x220 Mentra display canvas.
         private const val CAPTION_BOX_X: Int = 0
         private const val CAPTION_BOX_Y: Int = 0
-        private const val CAPTION_BOX_W: Int = 576
-        private const val CAPTION_BOX_H: Int = 288
+        private const val CAPTION_BOX_W: Int = 500
+        private const val CAPTION_BOX_H: Int = 220
     }
 
     private var heartbeatCount: Int = 0;
@@ -517,13 +511,10 @@ class MentraNex : SGCManager() {
 
     override fun clearDisplay() {
         Bridge.log("Nex: clearDisplay() - clearing canvas + caption");
-        // Tear down any canvas components (bitmap + positioned text) and forget the slot mapping,
-        // then clear the caption text path too so either kind of screen is wiped.
-        canvasTextSlots.clear()
-        canvasBitmapX = null
-        canvasBitmapY = null
-        canvasBitmapW = null
-        canvasBitmapH = null
+        // Tear down any canvas components (bitmap + positioned text) and forget the element mapping
+        // + active layout, then clear the caption text path too so either kind of screen is wiped.
+        canvasElements.clear()
+        currentLayoutId = null
         sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
         sendProtobuf(clearDisplayPackets, 10)
@@ -560,86 +551,151 @@ class MentraNex : SGCManager() {
     // component (a navigation screen = minimap + several text boxes shown together). Components
     // are keyed by their rect+border and reused so repeated updates don't recreate the LVGL
     // object; ids come from the firmware's text pool (1..6) with oldest-out eviction.
-    private data class CanvasTextSlot(
-        val id: Int, val x: Int, val y: Int, val w: Int, val h: Int,
-        val borderWidth: Int, val borderRadius: Int
-    )
-    private val canvasTextSlots: MutableList<CanvasTextSlot> = mutableListOf()
+    // Retained-mode canvas registry: elementId -> firmware component. The layout path (nav HUD)
+    // passes explicit element ids; legacy callers (captions, one-off bitmaps) synthesize an id from
+    // their rect, so reuse/update works for them through the same path. Text ids come from the
+    // firmware pool 1..6, bitmaps from 10..13.
+    private data class CanvasElement(val firmwareId: Int, val isBitmap: Boolean, val rect: String)
+    private val canvasElements = LinkedHashMap<String, CanvasElement>()
     private val canvasTextIdPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
-    // Current rect of the bitmap component (id 10) on the canvas, or null if it doesn't exist.
-    // Repeated frames at the same rect skip the create; a move or resize recreates. Reset on clear.
-    private var canvasBitmapX: Int? = null
-    private var canvasBitmapY: Int? = null
-    private var canvasBitmapW: Int? = null
-    private var canvasBitmapH: Int? = null
+    private val canvasBitmapIdPool: List<Int> = listOf(10, 11, 12, 13)
+    // Active layout/scene id. A display call carrying a DIFFERENT layoutId clears the previous scene
+    // first (retained-mode contract); legacy calls (null layoutId) leave it untouched.
+    private var currentLayoutId: String? = null
 
+    /** Wipe the previous scene when a new layout id arrives. */
+    private fun ensureLayout(layoutId: String?) {
+        if (layoutId != null && layoutId != currentLayoutId) {
+            canvasElements.clear()
+            sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
+            currentLayoutId = layoutId
+        }
+    }
+
+    /** Lowest free firmware id in the type's pool, or null when the pool (6 text / 4 bitmap) is full. */
+    private fun allocFirmwareId(isBitmap: Boolean): Int? {
+        val pool = if (isBitmap) canvasBitmapIdPool else canvasTextIdPool
+        val used = canvasElements.values.filter { it.isBitmap == isBitmap }.map { it.firmwareId }.toSet()
+        return pool.firstOrNull { it !in used }
+    }
+
+    // Legacy positioned text: identity is the rect, so repeated updates reuse the component.
     override fun sendPositionedText(
         text: String, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
     ) {
-        Bridge.log("Nex: sendPositionedText() rect=$x,$y ${width}x$height border=$borderWidth/$borderRadius")
-
-        // Reuse a slot with the same geometry — only the text changes (no recreate, no flicker).
-        val existing = canvasTextSlots.firstOrNull {
-            it.x == x && it.y == y && it.w == width && it.h == height &&
-                it.borderWidth == borderWidth && it.borderRadius == borderRadius
-        }
-        if (existing != null) {
-            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.id, text))
-            return
-        }
-
-        // Allocate the lowest free id; evict the oldest slot when the pool is exhausted.
-        if (canvasTextSlots.size >= canvasTextIdPool.size) {
-            val evicted = canvasTextSlots.removeAt(0)
-            sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(evicted.id))
-        }
-        val used = canvasTextSlots.map { it.id }.toSet()
-        val id = canvasTextIdPool.firstOrNull { it !in used } ?: canvasTextIdPool[0]
-        canvasTextSlots.add(CanvasTextSlot(id, x, y, width, height, borderWidth, borderRadius))
-
-        sendProtobuf(
-            NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
-                id, x, y, width, height, borderWidth, borderRadius
-            )
-        )
-        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(id, text))
+        upsertText("text@$x,$y,${width}x$height,$borderWidth,$borderRadius", null,
+            text, x, y, width, height, borderWidth, borderRadius)
     }
 
-    override fun displayBitmap(
-            base64ImageData: String,
-            x: Int?,
-            y: Int?,
-            width: Int?,
-            height: Int?
-    ): Boolean {
-        try {
-            val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
+    override fun drawLayoutText(
+        text: String, x: Int, y: Int, width: Int, height: Int,
+        borderWidth: Int, borderRadius: Int, elementId: String, layoutId: String?
+    ) {
+        upsertText(elementId, layoutId, text, x, y, width, height, borderWidth, borderRadius)
+    }
+
+    private fun upsertText(
+        elementId: String, layoutId: String?, text: String,
+        x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${width}x$height,$borderWidth,$borderRadius"
+        val existing = canvasElements[elementId]
+        if (existing != null && !existing.isBitmap) {
+            if (existing.rect != rect) {
+                // Geometry moved/resized — recreate the box at the SAME firmware id, then set text.
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+                    existing.firmwareId, x, y, width, height, borderWidth, borderRadius))
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.firmwareId, text))
+            return
+        }
+        val fid = allocFirmwareId(false)
+        if (fid == null) {
+            Bridge.log("Nex: text pool full (>6) — dropping element '$elementId'")
+            return
+        }
+        canvasElements[elementId] = CanvasElement(fid, false, rect)
+        sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+            fid, x, y, width, height, borderWidth, borderRadius))
+        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(fid, text))
+    }
+
+    override fun removeLayoutElement(elementId: String, layoutId: String?) {
+        val slot = canvasElements.remove(elementId) ?: return
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(slot.firmwareId))
+    }
+
+    private data class NexBmp(val data: ByteArray, val w: Int, val h: Int)
+
+    /**
+     * Decode a base64 image to the glasses-native 1-bit BMP at the requested size. The panel is
+     * 1-bpp and renders white-on-black, so we scale to the rect, invert, then Floyd–Steinberg dither
+     * (preserving gradients as dot patterns instead of a hard 50% threshold) before the 1-bit encode.
+     */
+    private fun decodeBitmapForNex(base64ImageData: String, width: Int?, height: Int?): NexBmp? {
+        return try {
+            val bmpData = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
-                Log.e(TAG, "Failed to decode base64 image data");
-                return false;
+                Log.e(TAG, "Failed to decode base64 image data")
+                return null
             }
             val bmp = BitmapFactory.decodeByteArray(bmpData, 0, bmpData.size)
-
-            // The glasses are a 1-bpp display and the firmware decoder only accepts 1-bit BMPs.
-            // Scale to the requested rect (default 200x200), invert (the Nex panel renders
-            // white-on-black), then Floyd-Steinberg dither so gradients/fine detail survive as dot
-            // patterns instead of a hard 50% threshold. The dither output is already pure
-            // black/white, so the 1-bit encode threshold passes it through losslessly.
-            val w = width ?: BITMAP_COMPONENT_SIZE
-            val h = height ?: BITMAP_COMPONENT_SIZE
-            val scaled = Bitmap.createScaledBitmap(bmp, w, h, true)
+            val destW = width ?: bmp.width
+            val destH = height ?: bmp.height
+            val scaled = Bitmap.createScaledBitmap(bmp, destW, destH, true)
             val inverted = invertBitmap(scaled)
             val dithered = floydSteinbergDither(inverted)
-            val oneBitBmp = BitmapJavaUtils.convertBitmapTo1BitBmpBytes(dithered, false)
-
-            displayBitmapImageForNexGlasses(oneBitBmp, x ?: 0, y ?: 0, w, h)
-            return true
-
+            NexBmp(BitmapJavaUtils.convertBitmapTo1BitBmpBytes(dithered, false), destW, destH)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in displaying bitmap: " + e.message);
-            return false
+            Log.e(TAG, "Error decoding bitmap: " + e.message)
+            null
         }
+    }
 
+    // Legacy one-off bitmap: identity is the rect (no layout scene).
+    override fun displayBitmap(
+            base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap("bmp@${x ?: 0},${y ?: 0},${nb.w}x${nb.h}", null, nb.data, x ?: 0, y ?: 0, nb.w, nb.h)
+        return true
+    }
+
+    override fun drawLayoutBitmap(
+            base64ImageData: String, x: Int, y: Int, width: Int, height: Int,
+            elementId: String, layoutId: String?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap(elementId, layoutId, nb.data, x, y, nb.w, nb.h)
+        return true
+    }
+
+    private fun upsertBitmap(
+        elementId: String, layoutId: String?, bmpData: ByteArray, x: Int, y: Int, w: Int, h: Int
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${w}x$h"
+        val existing = canvasElements[elementId]
+        val fid: Int
+        if (existing != null && existing.isBitmap) {
+            fid = existing.firmwareId
+            if (existing.rect != rect) {
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+        } else {
+            val alloc = allocFirmwareId(true)
+            if (alloc == null) {
+                Bridge.log("Nex: bitmap pool full (>4) — dropping element '$elementId'")
+                return
+            }
+            fid = alloc
+            canvasElements[elementId] = CanvasElement(fid, true, rect)
+            sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+        }
+        streamBitmapPixels(fid, bmpData)
     }
     override fun showDashboard() {
         exit()
@@ -1404,51 +1460,26 @@ class MentraNex : SGCManager() {
         return out
     }
 
-    private fun displayBitmapImageForNexGlasses(bmpData: ByteArray, x: Int, y: Int, w: Int, h: Int) {
-        Bridge.log("Starting BMP display process at ($x,$y) ${w}x$h")
-
+    /** Stream 1-bit BMP pixels into an already-created canvas bitmap component [componentId]. */
+    private fun streamBitmapPixels(componentId: Int, bmpData: ByteArray) {
         try {
             if (bmpData.isEmpty()) {
-                Log.e(TAG,"Invalid BMP data provided")
+                Log.e(TAG, "Invalid BMP data provided")
                 return
             }
-
-            Bridge.log("Processing BMP data, size: ${bmpData.size} bytes")
-
-            // Generate proper 2-byte hex stream ID (e.g., "002A") as per protobuf specification
+            // 4-digit hex stream id per the canvas image protocol.
             val totalChunks = (bmpData.size + bmpChunkSize - 1) / bmpChunkSize
-            val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
+            val streamId = "%04X".format(random.nextInt(0x10000))
 
-            // Create the canvas bitmap component at the requested rect; recreate only when it first
-            // appears, moves, or resizes. Otherwise subsequent frames just stream new pixels into
-            // the same component (no recreate, no buffer churn). The firmware acks OOM if it cannot fit.
-            if (canvasBitmapX != x || canvasBitmapY != y || canvasBitmapW != w || canvasBitmapH != h) {
-                val createBytes = NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(
-                    BITMAP_COMPONENT_ID, x, y, w, h)
-                sendProtobuf(createBytes)
-                canvasBitmapX = x
-                canvasBitmapY = y
-                canvasBitmapW = w
-                canvasBitmapH = h
-            }
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateImageCommandBytes(
+                componentId, streamId, totalChunks))
 
-            val startImageSendingBytes = NexProtobufUtils.generateCanvasUpdateImageCommandBytes(
-                BITMAP_COMPONENT_ID, streamId, totalChunks)
-            sendProtobuf(startImageSendingBytes)
-
-            // Send all chunks with proper stream ID parsing
             val chunks = NexProtobufUtils.createBmpChunksForNexGlasses(streamId, bmpData, totalChunks, bmpChunkSize)
             currentImageChunks.clear()
             currentImageChunks.addAll(chunks)
             sendDataSequentially(chunks)
-
-            // Note: The following are commented out in the original
-            // sendBmpEndCommand()
-            // sendBmpCRC(bmpData)
-            // lastThingDisplayedWasAnImage = true
-
         } catch (e: Exception) {
-            Log.e(TAG,"Error in displayBitmapImage: ${e.message}")
+            Log.e(TAG, "Error streaming bitmap pixels: ${e.message}")
         }
     }
 
