@@ -1,160 +1,17 @@
-// Services
-export {default as webviewBridge} from "./services/WebviewBridge"
-export {miniappRunningRegistry} from "./services/MiniappRunningRegistry"
-export {
-  default as appRegistry,
-  normalizeManifestPermissions,
-  normalizeManifestActions,
-  buildHardwareRequirements,
-  saveLocalAppRunningState,
-  registerDevApp,
-  unregisterDevApp,
-  getDevAppRecords,
-  getDevAppSourcePackage,
-  getDevAppAttestation,
-  DEV_APP_PACKAGE_NAME,
-  type DevAppRecord,
-} from "./services/AppRegistry"
-export {default as devServerBridge} from "./services/DevServerBridge"
-export {default as displayProcessor} from "./services/DisplayProcessor"
-export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
-export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
-export {miniappLauncher, type LaunchHints, type LaunchResult, type ResolvedBundle} from "./services/MiniappLauncher"
-export {
-  MentraJSRouter,
-  type MentraJSCrustBinding,
-  type OutboundMessagePayload as MentraJSOutboundMessage,
-  type RouterLogger as MentraJSRouterLogger,
-} from "./services/MentraJSRouter"
-export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
-export {MentraUIRouter, type MentraUICrustBinding} from "./services/MentraUIRouter"
-export {
-  MentraJSCrashController,
-  type CrashState,
-  type CrashOutcome,
-  type CrashControllerOptions,
-} from "./services/MentraJSCrashController"
-export {ensureMiniappEngine, getMiniappEngine, type MiniappEngine} from "./services/MiniappEngine"
-export {
-  redactSecrets,
-  MentraJSLogThrottle,
-  MentraJSLogRingBuffer,
-  type ThrottleOptions,
-} from "./services/MentraJSLogPipeline"
-export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
-export {default as micStateCoordinator} from "./services/MicStateCoordinator"
-export {default as navigationService} from "./services/NavigationService"
-export {default as audioPlaybackService} from "./services/AudioPlaybackService"
-// Phone GPS — the background location task + tier control moved into island (was the
-// host locationTier hook + a MantleManager defineTask). Exported so the barrel load
-// registers the background task at @mentra/island import time.
-export {phoneLocationService, stopPhoneLocation} from "./services/PhoneLocationService"
-// Clock-skew utils (used by OTA + the host gallery sync) moved into island.
-export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
-// OTA manifest-URL resolution (dev-override/legacy-build/env/prod) moved into island.
-// Re-exported through the host @/services/asg/asgOtaVersionUrl shim.
-export {getAsgOtaVersionUrl} from "./services/asgOtaVersionUrl"
-export {
-  fetchVersionInfo,
-  checkVersionUpdateAvailable,
-  getLatestVersionInfo,
-  findMatchingMtkPatch,
-  checkBesUpdate,
-  checkForOtaUpdate,
-  checkCurrentGlassesForUpdate,
-  type VersionInfo,
-  type MtkPatch,
-  type BesFirmware,
-  type VersionJson,
-  type OtaCheckResult,
-  type OtaCheckCurrentGlassesResult,
-  type OtaCheckCurrentGlassesOptions,
-} from "./services/OtaUpdateCheckService"
-// OTA install policy (watchdog timings + failure copy) + display-state derivation —
-// moved into island with the OtaInstallCoordinator (WP 8B). Re-exported so the host
-// shim (mobile/src/app/ota/otaProgressTimeouts.ts), the legacy progress route and the
-// OTA UI tests import them from @mentra/island.
-export {
-  MINIMUM_OTA_STATUS_BUILD,
-  MAX_RETRIES,
-  RETRY_INTERVAL_MS,
-  PROGRESS_TIMEOUT_MS,
-  DOWNLOAD_STUCK_TIMEOUT_MS,
-  MTK_INSTALL_TIMEOUT_MS,
-  GLOBAL_OTA_TIMEOUT_MS,
-  POST_APK_OTA_START_DELAY_MS,
-  PING_INTERVAL_MS,
-  QUERY_REPLY_TIMEOUT_MS,
-  OtaProgressMessages,
-} from "./services/otaInstallPolicy"
-export {deriveDisplayState} from "./services/otaDisplayState"
-export type {DisplayState} from "./services/otaDisplayState"
-// OTA read-model types for host OTA UI (progress screen, error mapping, progress
-// section) — imported from @mentra/island instead of the SDK internal surface.
-export type {
-  OtaProgress,
-  OtaProgressStatus,
-  OtaStatus,
-  OtaUpdateInfo,
-  OtaSnapshot,
-  OtaInstallSnapshot,
-} from "./facades/ota"
-export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
-// Gallery cluster — the sync orchestrator + glasses-camera HTTP API + media/storage,
-// moved into island. Host Gallery UI + tests import these from @mentra/island.
-export {gallerySyncService} from "./services/asg/gallerySyncService"
-export {asgCameraApi} from "./services/asg/asgCameraApi"
-export {localStorageService} from "./services/asg/localStorageService"
-export {mediaProcessingQueue} from "./services/asg/mediaProcessingQueue"
-export {gallerySettingsService} from "./services/asg/gallerySettingsService"
-export {
-  INVALID_DOWNLOADED_MEDIA,
-  validateCaptureMetadataForDownload,
-  validateDownloadedMediaFile,
-} from "./services/asg/galleryMediaValidation"
-export {
-  emitGalleryNotice,
-  onGalleryNotice,
-  type GalleryNotice,
-  type GalleryNoticeCode,
-} from "./services/asg/galleryNotices"
-export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
-export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
-export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
-export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
-export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
-export {
-  default as sttModelManager,
-  STTModelManager,
-  type LanguageInfo as SttLanguageInfo,
-  type LanguageConfig as SttLanguageConfig,
-  type DownloadProgress as SttDownloadProgress,
-  type ExtractionProgress as SttExtractionProgress,
-} from "./services/STTModelManager"
-export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
-export {
-  default as offlineSpeechModelService,
-  type DownloadStatus as OfflineModelDownloadStatus,
-  type DownloadStage as OfflineModelDownloadStage,
-} from "./services/OfflineSpeechModelService"
-export {
-  isGlassesConnected,
-  isGlassesReady,
-  isGlassesLinkLayerBusy,
-  waitForGlassesReady,
-  type GlassesConnectionStatus,
-  type WaitForGlassesReadyOptions,
-} from "./services/GlassesReadiness"
-export {
-  decideReconnect,
-  decideConnectButtonAction,
-  type ReconnectDecision,
-  type ReconnectDecisionInput,
-  type ConnectButtonAction,
-} from "./services/ConnectionCoordinator"
+/**
+ * `@mentra/island` — the OEM-facing main entry.
+ *
+ * The `toolkit` namespace (configure/start/stop + typed domain facades), the
+ * public contract/read-model types, and the pure helpers host UI legitimately
+ * renders with (decision functions, sort/order helpers, policy constants,
+ * capability tables, timers). Judgment rule: read models, commands, pure
+ * functions and types belong here; anything that mutates runtime state or
+ * exposes a raw store/service lives on `@mentra/island/internal`
+ * (migration-era surface) or `@mentra/island/devtools` (debug-only) instead.
+ * See cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
+ */
 
-// The namespaced OEM-facing toolkit API (the "(A) host API"). Additive — grows one
-// facade at a time alongside the flat exports below. See ./island.
+// The namespaced OEM-facing toolkit API (the "(A) host API"). See ./island.
 export {toolkit} from "./island"
 export type {
   ReportAttachmentInput,
@@ -176,55 +33,90 @@ export type {
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
-// Display/mirror store — also moved into island; re-exported through the host's
-// @/stores/display shim (and toolkit.displayStore). Read it via toolkit.display.mirror.
-export {useDisplayStore} from "./stores/display"
-// More runtime stores moved into island (re-exported via host shims +
-// toolkit.stores.* while their typed facades mature). WebSocketStatus was relocated
-// off host modules.
-export {useCoreStore} from "./stores/core"
-export {useConnectionStore, WebSocketStatus} from "./stores/connection"
-// Cloud-client runtime status store + secure credential store — moved into
-// island as part of owning the cloud-v2 client. Re-exported via host shims
-// (@/stores/cloudClientStatus, @/utils/cloudClient/MmkvSecureStore).
-export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
-export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
-export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
-// The cloud-client singleton now lives in island (keystone #5). Construction and
-// live runtime surfaces happen here; the host's @/services/cloudClient is a thin
-// delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
-export {cloudClientService} from "./services/CloudClientService"
-export {logBuffer, type LogEntry} from "./utils/devLogging"
-// Settings store + RestComms — the mutually-coupled v1-comms pair, moved into
-// island together (settings needs RestComms for cloud-sync; RestComms needs
-// settings for the backend URL). Re-exported via host shims (@/stores/settings,
-// @/services/RestComms). v1-transitional: deleted in place when v1 retires.
-export {SETTINGS, OFFLINE_APPLETS, useSettingsStore, useSetting} from "./stores/settings"
-export {default as restComms} from "./services/RestComms"
-
-// Bluetooth SDK internal compatibility passthrough. The island package uses the
-// declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK
-// build output directly. Prefer an island facade when one exists; this remains
-// an internal escape hatch for app-only compatibility needs.
-export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
-export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
-
-// Runtime-shared constants and DTOs
-export {
-  ISLAND_SETTINGS_KEYS,
-  configureRuntime,
-  getRuntimeHooks,
-  type CloudClientStatusSnapshot,
-  type MiniappAuthToken,
-  type InteropAuditEvent,
-  type RuntimeHooks,
-  type TtsSynthesisResult,
-  type WifiSetupAdapter,
+// Runtime-shared constants and contract DTOs (configureRuntime itself is internal).
+export {ISLAND_SETTINGS_KEYS} from "./runtime/config"
+export type {
+  CloudClientStatusSnapshot,
+  MiniappAuthToken,
+  InteropAuditEvent,
+  RuntimeHooks,
+  TtsSynthesisResult,
+  WifiSetupAdapter,
 } from "./runtime/config"
 
-// Stores
+// Pure readiness predicates over glasses connection state.
 export {
-  useAppStatusStore,
+  isGlassesConnected,
+  isGlassesReady,
+  isGlassesLinkLayerBusy,
+  waitForGlassesReady,
+  type GlassesConnectionStatus,
+  type WaitForGlassesReadyOptions,
+} from "./services/GlassesReadiness"
+// Pure connect/reconnect decision helpers (host UI renders the outcome).
+export {
+  decideReconnect,
+  decideConnectButtonAction,
+  type ReconnectDecision,
+  type ReconnectDecisionInput,
+  type ConnectButtonAction,
+} from "./services/ConnectionCoordinator"
+
+// OTA read-model types for host OTA UI (progress screen, error mapping,
+// progress section) — the check/install machinery itself is internal.
+export type {
+  VersionInfo,
+  MtkPatch,
+  BesFirmware,
+  VersionJson,
+  OtaCheckResult,
+  OtaCheckCurrentGlassesResult,
+  OtaCheckCurrentGlassesOptions,
+} from "./services/OtaUpdateCheckService"
+// OTA install policy (watchdog timings + failure copy) + display-state
+// derivation, consumed by the OTA screens and their tests.
+export {
+  MINIMUM_OTA_STATUS_BUILD,
+  MAX_RETRIES,
+  RETRY_INTERVAL_MS,
+  PROGRESS_TIMEOUT_MS,
+  DOWNLOAD_STUCK_TIMEOUT_MS,
+  MTK_INSTALL_TIMEOUT_MS,
+  GLOBAL_OTA_TIMEOUT_MS,
+  POST_APK_OTA_START_DELAY_MS,
+  PING_INTERVAL_MS,
+  QUERY_REPLY_TIMEOUT_MS,
+  OtaProgressMessages,
+} from "./services/otaInstallPolicy"
+export {deriveDisplayState} from "./services/otaDisplayState"
+export type {DisplayState} from "./services/otaDisplayState"
+export type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStatus,
+  OtaUpdateInfo,
+  OtaSnapshot,
+  OtaInstallSnapshot,
+} from "./facades/ota"
+
+// Gallery read models: toolkit.gallery.onNotice payload types, the media
+// permission helper + display-name derivation host gallery UI uses, and the
+// glasses-camera DTO types (re-exported through the host @/types/asg shim).
+export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
+export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
+export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
+export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
+
+// Bluetooth SDK event types host UI subscribes to via toolkit facades (the
+// BluetoothSdk singleton passthrough itself is internal).
+export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
+
+// Cloud connection status enum (read model; the connection store is internal).
+export {WebSocketStatus} from "./stores/connection"
+
+// App-list hook layer + pure list helpers (the raw useAppStatusStore and
+// installAppStoreHooks wiring are internal).
+export {
   DUMMY_APPLET,
   saveAppsOrder,
   getAppsOrder,
@@ -241,7 +133,6 @@ export {
   useStopAll,
   useInstall,
   useUninstall,
-  installAppStoreHooks,
   useActiveApps,
   useActiveBackgroundApps,
   useBackgroundApps,
@@ -249,28 +140,14 @@ export {
   useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
-  type AppStoreHooks,
   type StartOptions,
   type OrderMap,
 } from "./stores/apps"
 
-// Utils
-export {
-  buildMiniappGlobalsScript,
-  getCapsuleMenuRect,
-  type BuildMiniappGlobalsOptions,
-  type CapsuleMenuRect,
-  type MiniappColorScheme,
-  type MiniappSafeArea,
-} from "./utils/miniappGlobals"
+// Pure dev-miniapp launch-route decision (registration itself is internal).
 export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
-export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
-export {storage, printDirectory} from "./utils/storage"
-// Process-wide event bus — one shared instance for island services + host
-// (re-exported via the @/utils/GlobalEventEmitter shim).
-export {default as GlobalEventEmitter} from "./utils/GlobalEventEmitter"
 
 // Types (copied from @mentra/types — keep in sync with cloud/packages/types/src)
 export {

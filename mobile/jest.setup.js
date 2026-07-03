@@ -589,13 +589,6 @@ const mockIslandEntries = () => {
         sync: jest.fn(() => Promise.resolve()),
         cancel: jest.fn(() => Promise.resolve()),
       },
-      stores: {
-        display: realDisplay.useDisplayStore,
-        core: realCore.useCoreStore,
-        connection: realConnection.useConnectionStore,
-        cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
-        settings: realSettings.useSettingsStore,
-      },
     },
     MediaLibraryPermissions: {
       checkPermission: jest.fn(() => Promise.resolve(true)),
@@ -869,14 +862,7 @@ const mockIslandEntries = () => {
   return mockIslandEntriesCache
 }
 
-// The main entry still re-exports the internal + devtools surfaces until the
-// index.ts slim lands; main is spread last so its explicit keys (e.g. the
-// simplified readiness predicates) win, matching the pre-split mock's key order.
-jest.mock("@mentra/island", () => ({
-  ...mockIslandEntries().internal,
-  ...mockIslandEntries().devtools,
-  ...mockIslandEntries().main,
-}))
+jest.mock("@mentra/island", () => mockIslandEntries().main)
 jest.mock("@mentra/island/internal", () => mockIslandEntries().internal)
 jest.mock("@mentra/island/devtools", () => mockIslandEntries().devtools)
 
