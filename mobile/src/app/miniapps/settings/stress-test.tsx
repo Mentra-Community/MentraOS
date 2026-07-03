@@ -16,7 +16,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useStressTestStore} from "@/stores/stressTest"
 import {buildDummyMiniappHtml} from "@/utils/stressTest/dummyHtml"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {miniappRunningRegistry, toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/island"
+import {miniappRunningRegistry} from "@mentra/island/devtools"
 
 const POLL_MS = 1000
 

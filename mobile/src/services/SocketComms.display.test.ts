@@ -1,5 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor as MockDisplayProcessor} from "@mentra/island"
+import {displayProcessor as MockDisplayProcessor} from "@mentra/island/internal"
 
 import {useDisplayStore} from "@/stores/display"
 

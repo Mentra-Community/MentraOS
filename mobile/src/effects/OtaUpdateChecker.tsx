@@ -16,7 +16,7 @@ export {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkForOtaUpdate,
-} from "@mentra/island"
+} from "@mentra/island/internal"
 
 function areGlassesConnectedNow(): boolean {
   return toolkit.ota.snapshot().connected

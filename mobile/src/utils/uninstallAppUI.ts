@@ -1,4 +1,5 @@
-import {useAppStatusStore, type ClientApp} from "@mentra/island"
+import {type ClientApp} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"

@@ -36,7 +36,7 @@ import {offlineAppRegistry} from "@/components/miniapp/offlineAppRegistry"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
-import {useAppStatusStore} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 interface OfflineAppHostProps {
   packageName: string

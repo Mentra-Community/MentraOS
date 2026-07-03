@@ -1,5 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor} from "@mentra/island"
+import {displayProcessor} from "@mentra/island/internal"
 
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
