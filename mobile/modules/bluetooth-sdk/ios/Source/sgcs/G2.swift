@@ -4233,6 +4233,35 @@ class G2: NSObject, SGCManager {
         default: cmdName = "cmd_\(cmd)"
         }
         Bridge.log("G2: NOTIFICATION service — \(cmdName)\(detail)")
+
+        // Pipe NOTIFICATION_IOS up as a phone_notification event — the same
+        // path Android's NotificationListenerService feeds. iOS can't read
+        // other apps' notifications, but the glasses CAN (ANCS) and report the
+        // source app here; title/content are empty because this packet only
+        // carries app identity.
+        if cmd == 2, let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            if !appID.isEmpty {
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                Bridge.sendTypedMessage(
+                    "phone_notification",
+                    body: [
+                        "notificationId": "ancs-\(appID)-\(now)",
+                        "app": name.isEmpty ? appID : name,
+                        "title": "",
+                        "content": "",
+                        "priority": "0",
+                        "timestamp": now,
+                        "packageName": appID,
+                    ]
+                )
+            }
+        }
     }
 
     /// EvenAI service (0x07). Logs the decoded EvenAIDataPackage so we can read the

@@ -186,3 +186,76 @@ Per Alex: **one big PR to dev** (structured commits inside for reviewability —
 9. **Fleet migration off sugar** (after hardware validation, low risk — same path): captions, translation, teleprompter, merge, kawaii, mentra-ai, recorder, `everything`, example-miniapp + template. Goldens re-run against the migrated apps' raw `render()` calls (same invariant: G1/Z100 output byte-identical to today).
 10. **Docs**: mintlify miniapp display pages + `sdk/docs/display.md` + module README rewritten around `render()`/`measure()`/capabilities; sugar absent from the docs (deprecation note only); the `clearView` lie fixed.
 11. Monday, Yash: walkthrough; flag the stale fw geometry comment, the proto-merge/renumber risk, and the commit-verb suggestion — all his domain, zero dependencies from us.
+
+---
+
+## 12. As-built addendum (2026-07-03, post hardware validation)
+
+Everything in §1–§11 shipped on `aisraelov/display-render-v1` and was
+hardware-validated on **G2 iOS** (captions, nav HUD, tiled minimap, reconnect,
+kill/teardown) and **Mentra Display iOS** (captions + maps, tier-2 incl. the
+pb.swift regen and a rewritten 1-bit BMP encoder — the old iOS conversion
+emitted raw RGBA, never a BMP). Deltas and discoveries vs the spec as written:
+
+- **Sugar converts to scenes HOST-side** (LocalDisplayManager.sendNow), not
+  SDK-side — old zips and cloud-shaped layouts ride the scene path for free;
+  the G1/Z100 legacy path is literally unchanged code.
+- **G2 firmware image envelope**: transfers into containers beyond ~200×100 are
+  refused (IMAGE_RAW_DATA_FAILED). Instead of a host `maxImagePx` cap, the G2
+  SGC **tiles** larger images (ceil(w/200)×ceil(h/100) grid from one grayscale
+  render, one container per tile, 4-container pool bound).
+- **Page-lifecycle rules learned on hardware**: one coalesced rebuild per
+  frame (per-create rebuilds = firmware storm = BLE drop); never send
+  SHUTDOWN_PAGE while the page is down (recovery loop starves the page
+  forever); removed elements must leave the page **structurally** (a blanked
+  husk still renders — see next point).
+- **The firmware overflow tick**: a text container shorter than its content
+  makes the firmware draw a cursor-like indicator. One firmware line needs
+  **≥40px** of container height (28px ticks; hardware-bisected). Fixes: SGC
+  min-height guard (≥40px, content-independent), G2 profile
+  `lineHeightPx: 40` (host height-clipping active), clearDisplay purges
+  positioned scene husks with one coalesced rebuild.
+- **isEventCapture** is required for touch (removing it kills the touchbar)
+  and is NOT the tick source. A dedicated 1×1 container id 0 carries it.
+- **G2 notification channel decoded** (service 4, NotificationDataPackage):
+  iOS notifications reach the G2 via ANCS; the glasses report the source app.
+  Piped up as `phone_notification` (empty title/content) into the same path
+  Android's NotificationListenerService feeds — the iOS half of the
+  notification story.
+- **Zombie-frame gate**: display/render/canvas traffic drops for unmounted
+  apps (a dying app's in-flight frame repainted after teardown).
+
+## 13. Remaining work (TODO)
+
+Pre-PR (this branch):
+- [ ] Maneuver-box two-line fix verification on glasses (nav 1.1.13)
+- [ ] **Android hardware pass** — all validation so far was iOS; G2 Android +
+      Mentra Display Android (tier-1) are compile-verified only
+- [ ] Final sweep: prettier, full jest, gradle, iOS build; push + PR to dev
+
+Post-merge (spec §11 steps 9–10, gated on the hardware pass):
+- [ ] Fleet sugar migration to raw render(): captions, translation,
+      teleprompter, merge, kawaii, mentra-ai, recorder, example-miniapp,
+      template; `@deprecated` on sugar
+- [ ] Delete `everything` miniapp + canvas module + host handleCanvas +
+      showTextAt (everything is unbundled, unreferenced, sole canvas consumer)
+- [ ] Docs rewrite: mintlify display pages, sdk/docs/display.md, module
+      README, fix the `clearView` lie
+- [ ] `display.measure()` helper (reserved in the contract, unimplemented)
+
+Follow-ups:
+- [ ] Remove nav's 3s re-push crutch once host replay is explicitly verified
+      (`LOCAL_DISPLAY: replayCurrent` observed on a reconnect)
+- [ ] Confirm the 40px G2 line constant with Even; ask about the overflow
+      indicator and a per-container delete verb
+- [ ] Pairing screens call BluetoothSdk.forget() on ENTRY — wipes the default
+      wearable if the user backs out; move forget to new-device commit
+      (separate small PR)
+- [ ] Yash handoff: firmware proto merge timing (field-renumber risk while
+      canvas lives on his branch), stale 576×288 comment in mos_display.c,
+      batch/commit verb suggestion, CanvasResult self-heal deepening
+- [ ] Notification relay build-out: G2-only today; other iOS glasses need
+      their own ANCS-report path; Android relay = none needed
+      (NotificationListenerService)
+- [ ] NIMO adapter (Yash — whole-frame handler contract ready); future `list`
+      element on G2 ListContainer / Mentra Display SCROLL_TEXTBOX
