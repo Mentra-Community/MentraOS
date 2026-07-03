@@ -2124,7 +2124,7 @@ class G2 : SGCManager() {
         // loop pushes the blanked text on a live page, and a dead page is only resurrected for
         // meaningful (non-blank) content, so a clear can't churn it back up.
         for (i in textContainers.indices) {
-            textContainers[i].content = ""
+            textContainers[i].content = "\n"
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         for (i in imageContainers.indices) {
@@ -2580,7 +2580,7 @@ class G2 : SGCManager() {
                 if (idx >= 0) {
                     // Blank in place — G2 has no per-container delete, and
                     // shutdownPage is the mic-coupled footgun (see clearDisplay).
-                    textContainers[idx].content = ""
+                    textContainers[idx].content = "\n"
                     textContainers[idx].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
                     signalDisplayDirty()
                 }
