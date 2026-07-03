@@ -584,19 +584,19 @@ function PhotoDetailsCard({
     <>
       <Pressable onPress={onToggle} style={styles.detailsHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>PHOTO DETAILS</Text>
-          <Text style={styles.detailsSummary}>{photoDetailsSummary(details)}</Text>
+          <Text selectable style={styles.eyebrow}>PHOTO DETAILS</Text>
+          <Text selectable style={styles.detailsSummary}>{photoDetailsSummary(details)}</Text>
         </View>
-        <Text style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
+        <Text selectable style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
       </Pressable>
       {expanded ? (
         <View style={styles.detailsBody}>
-          {rows.map((row) => (
-            <View key={row.label} style={styles.detailsRow}>
-              <Text style={[styles.detailsLabel, row.tone === 'warning' && styles.detailsLabelWarning]}>
+          {rows.map((row, index) => (
+            <View key={`${row.label}-${index}`} style={styles.detailsRow}>
+              <Text selectable style={[styles.detailsLabel, row.tone === 'warning' && styles.detailsLabelWarning]}>
                 {row.label}
               </Text>
-              <Text style={[styles.detailsValue, row.tone === 'warning' && styles.detailsValueWarning]}>
+              <Text selectable style={[styles.detailsValue, row.tone === 'warning' && styles.detailsValueWarning]}>
                 {row.value}
               </Text>
             </View>
@@ -844,17 +844,17 @@ function VideoDetailsCard({
     <View style={styles.videoDetailsPanel}>
       <Pressable onPress={onToggle} style={styles.detailsHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>VIDEO DETAILS</Text>
-          <Text style={styles.detailsSummary}>{videoDetailsSummary(details)}</Text>
+          <Text selectable style={styles.eyebrow}>VIDEO DETAILS</Text>
+          <Text selectable style={styles.detailsSummary}>{videoDetailsSummary(details)}</Text>
         </View>
-        <Text style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
+        <Text selectable style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
       </Pressable>
       {expanded ? (
         <View style={styles.detailsBody}>
-          {rows.map((row) => (
-            <View key={row.label} style={styles.detailsRow}>
-              <Text style={styles.detailsLabel}>{row.label}</Text>
-              <Text style={styles.detailsValue}>{row.value}</Text>
+          {rows.map((row, index) => (
+            <View key={`${row.label}-${index}`} style={styles.detailsRow}>
+              <Text selectable style={styles.detailsLabel}>{row.label}</Text>
+              <Text selectable style={styles.detailsValue}>{row.value}</Text>
             </View>
           ))}
         </View>
@@ -1662,6 +1662,7 @@ function photoDetailsSummary(details: PhotoPreviewDetails | null) {
 
 type DetailRow = {label: string; value: string};
 type DetailRowTone = 'default' | 'warning';
+const GLASSES_TO_PHONE_CLOCK_OFFSET_MS = 0;
 
 function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (!details) {
@@ -1688,6 +1689,8 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
     rows.push({label: 'Bluetooth fallback', value: details.bleFallbackMessage, tone: 'warning'});
   }
   if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
+  addPhotoClockAdjustmentRow(rows, details.timeline);
+  addPhotoTimelineRows(rows, details.timeline);
   if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
   if (details.width && details.height) rows.push({label: 'Dimensions', value: `${details.width} x ${details.height}`});
   if (details.estimatedFov) rows.push({label: 'Estimated FOV', value: formatFovEstimate(details.estimatedFov)});
@@ -1699,7 +1702,12 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (details.contentType) rows.push({label: 'Content type', value: details.contentType});
   if (details.uploadUrl) rows.push({label: 'Upload URL', value: details.uploadUrl});
   if (details.previewUrl) rows.push({label: 'Preview URL', value: details.previewUrl});
-  if (details.timestamp) rows.push({label: 'SDK timestamp', value: new Date(details.timestamp).toLocaleTimeString()});
+  if (details.timestamp) {
+    rows.push({
+      label: 'SDK timestamp',
+      value: formatClockTimeWithMillis(details.timestamp),
+    });
+  }
   if (details.uploadedAt) rows.push({label: 'Uploaded at', value: details.uploadedAt});
   if (details.error) rows.push({label: 'Error', value: details.error});
   return rows;
@@ -1860,6 +1868,87 @@ function formatDurationMs(ms: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60).toString().padStart(2, '0');
   return `${minutes}:${remainder}`;
+}
+
+function addPhotoTimelineRows(rows: DetailRow[], timeline: PhotoPreviewDetails['timeline']) {
+  if (!timeline?.length) {
+    return;
+  }
+  const startTimestamp = photoTimelineStart(timeline);
+  for (const event of timeline) {
+    rows.push({
+      label: photoTimelineLabel(event),
+      value: formatPhotoTimelineTimestamp(photoTimelineDisplayTimestamp(event), startTimestamp),
+    });
+  }
+}
+
+function addPhotoClockAdjustmentRow(rows: DetailRow[], timeline: PhotoPreviewDetails['timeline']) {
+  const hasDeviceTimestamp = timeline?.some((event) => event.deviceTimestamp != null);
+  if (!hasDeviceTimestamp) {
+    return;
+  }
+  rows.push({
+    label: 'Clock adjustment',
+    value: `Glasses timestamps +${formatOffsetSeconds(GLASSES_TO_PHONE_CLOCK_OFFSET_MS)} to phone clock`,
+  });
+}
+
+function photoTimelineStart(timeline: PhotoPreviewDetails['timeline']) {
+  const requestEvent = timeline?.find((event) => event.source === 'request');
+  if (requestEvent) {
+    return requestEvent.timestamp;
+  }
+  return timeline?.[0] ? photoTimelineDisplayTimestamp(timeline[0]) : undefined;
+}
+
+function photoTimelineDisplayTimestamp(event: NonNullable<PhotoPreviewDetails['timeline']>[number]) {
+  return event.deviceTimestamp != null
+    ? event.deviceTimestamp + GLASSES_TO_PHONE_CLOCK_OFFSET_MS
+    : event.timestamp;
+}
+
+function photoTimelineLabel(event: NonNullable<PhotoPreviewDetails['timeline']>[number]) {
+  switch (event.source) {
+    case 'request':
+      return 'Requested';
+    case 'photo_status':
+      return `Status ${event.status?.replace(/_/g, ' ') ?? 'received'}`;
+    case 'photo_response':
+      return 'Photo uploaded';
+    default:
+      return 'Photo event';
+  }
+}
+
+function formatPhotoTimelineTimestamp(timestamp: number, startTimestamp?: number) {
+  const formattedTime = formatClockTimeWithMillis(timestamp);
+  if (startTimestamp == null) {
+    return formattedTime;
+  }
+  return `${formattedTime} (${formatTimelineDelta(timestamp - startTimestamp)})`;
+}
+
+function formatClockTimeWithMillis(timestamp: number) {
+  const date = new Date(timestamp);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const millis = date.getMilliseconds().toString().padStart(3, '0');
+  return `${hours}:${minutes}:${seconds}.${millis}`;
+}
+
+function formatTimelineDelta(deltaMs: number) {
+  const sign = deltaMs < 0 ? '-' : '+';
+  const absoluteMs = Math.abs(deltaMs);
+  if (absoluteMs < 1000) {
+    return `${sign}${Math.round(absoluteMs)}ms`;
+  }
+  return `${sign}${(absoluteMs / 1000).toFixed(3)}s`;
+}
+
+function formatOffsetSeconds(ms: number) {
+  return `${(Math.abs(ms) / 1000).toFixed(3)}s`;
 }
 
 function formatFovEstimate(fov: NonNullable<PhotoPreviewDetails['estimatedFov']>) {
