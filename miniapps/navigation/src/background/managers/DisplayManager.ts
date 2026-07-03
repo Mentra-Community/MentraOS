@@ -19,7 +19,12 @@ export class DisplayManager {
   // rounded frame itself, so we only send these content slots. `message` shares
   // the arrow's left x and spans the content area (staying clear of the map).
   static readonly HUD = {
-    map: {x: 335, y: 14, w: 150, h: 150},
+    // 100x100 for the minimap: hardware-verified (2026-07-03) that G2 firmware
+    // refuses image transfers into containers beyond ~200x100 (the mockup's
+    // 150x150 map failed IMAGE_RAW_DATA_FAILED on every fragment; 100x100
+    // streams clean). G2's maxImagePx capability now encodes this; a bigger map
+    // needs the quad-mode transfer the legacy docs hint at — future RE work.
+    map: {x: 476, y: 0, w: 100, h: 100},
     arrow: {x: 12, y: 116, w: 38, h: 38},
     stats: {x: 12, y: 9, w: 200, h: 28},
     maneuver: {x: 54, y: 115, w: 270, h: 64},

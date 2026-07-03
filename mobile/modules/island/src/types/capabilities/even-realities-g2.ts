@@ -35,6 +35,13 @@ export const evenRealitiesG2: Capabilities = {
     canPosition: true,
     maxTextElements: 6, // firmware text-container pool (rects share it)
     maxImageElements: 4, // firmware image-container pool
+    // Hardware-verified 2026-07-03: image raw-data transfers into containers
+    // beyond ~200x100 are refused by firmware (IMAGE_RAW_DATA_FAILED on
+    // fragment 0 — a 150x150 minimap failed, 100x100 works). 200x100 is also
+    // the firmware's default image container and the old SDK docs' "quad mode"
+    // boundary. Host drops + reports larger images instead of silent on-glass
+    // failure.
+    maxImagePx: { width: 200, height: 100 },
     shapes: ["rect"], // bordered empty container ≈ rect
     intensityLevels: 2,
     partialUpdate: true,
