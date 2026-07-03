@@ -1304,6 +1304,9 @@ class MentraLive: NSObject, SGCManager {
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
+        // Clear saved device name so the pairing filter is not bypassed on rescan
+        UserDefaults.standard.removeObject(forKey: PREFS_DEVICE_NAME)
+
         // Stop scanning first
         if isScanning {
             stopScan()

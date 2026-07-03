@@ -30,6 +30,7 @@ export default function GlassesPairingLoadingScreen() {
   const showGlassesBootingRef = useRef(false)
   const hasSubmittedTimeoutIncidentRef = useRef(false)
   const hasNavigatedRef = useRef(false)
+  const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
   const pairingInfoRef = useRef<boolean | null>(null)
@@ -37,6 +38,7 @@ export default function GlassesPairingLoadingScreen() {
   const [pairingInfoReceived, setPairingInfoReceived] = useState(false)
   const [pairingInfoTimedOut, setPairingInfoTimedOut] = useState(false)
   const wipePromptShownRef = useRef(false)
+  const galleryCheckInFlightRef = useRef(false)
   const isMentraLive = deviceModel === DeviceTypes.LIVE
 
   useEffect(() => {
@@ -66,12 +68,6 @@ export default function GlassesPairingLoadingScreen() {
     }
   }, [isMentraLive])
 
-  focusEffectPreventBack()
-
-  const handleGoBack = useCallback(() => {
-    goBack()
-  }, [goBack])
-
   const abortPairingTransfer = useCallback(async () => {
     try {
       await BluetoothSdk.abortPairingTransfer()
@@ -85,6 +81,14 @@ export default function GlassesPairingLoadingScreen() {
       {text: translate("common:ok")},
     ])
   }, [deviceModel, replace])
+
+  const handleGoBack = useCallback(() => {
+    if (isMentraLive && pairingInfoRef.current === true && !pairingResolved) {
+      void abortPairingTransfer()
+      return
+    }
+    goBack()
+  }, [goBack, isMentraLive, pairingResolved, abortPairingTransfer])
 
   const confirmMediaWipe = useCallback(async () => {
     try {
@@ -124,19 +128,23 @@ export default function GlassesPairingLoadingScreen() {
   }, [abortPairingTransfer, confirmMediaWipe])
 
   const checkGalleryAndHandleOwnershipTransfer = useCallback(async () => {
+    if (galleryCheckInFlightRef.current) {
+      return
+    }
+    galleryCheckInFlightRef.current = true
     try {
       const galleryStatus = await BluetoothSdk.queryGalleryStatus()
       if (galleryStatus.total > 0) {
         promptMediaWipe()
       } else {
-        // Gallery is already empty — finalize silently, no wipe needed
         await BluetoothSdk.finalizePairingTransfer()
         setPairingResolved(true)
       }
     } catch (error) {
       console.error("Failed to query gallery status during pairing transfer:", error)
-      // Fallback: show wipe prompt so user can decide
       promptMediaWipe()
+    } finally {
+      galleryCheckInFlightRef.current = false
     }
   }, [promptMediaWipe])
 
@@ -222,6 +230,22 @@ export default function GlassesPairingLoadingScreen() {
     }
   }, [isMentraLive, glassesFullyBooted, pairingInfoReceived, pairingInfoTimedOut])
 
+  // Dedicated effect: if pairing_info with had_previous_bond=true arrives at any point
+  // (even after the fallback timer has fired), cancel any pending success navigation
+  // and trigger the ownership transfer check.
+  useEffect(() => {
+    if (!isMentraLive || !pairingInfoReceived || pairingInfoRef.current !== true || pairingResolved) {
+      return
+    }
+    // Cancel any in-progress navigation to success
+    if (navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current)
+      navigationTimerRef.current = null
+      hasNavigatedRef.current = false
+    }
+    void checkGalleryAndHandleOwnershipTransfer()
+  }, [isMentraLive, pairingInfoReceived, pairingResolved, checkGalleryAndHandleOwnershipTransfer])
+
   useEffect(() => {
     if (!glassesFullyBooted) {
       return
@@ -234,14 +258,14 @@ export default function GlassesPairingLoadingScreen() {
       if (!pairingInfoReceived && !pairingInfoTimedOut) {
         return
       }
+      // had_previous_bond=true is handled by the dedicated effect above
       if (pairingInfoReceived && pairingInfoRef.current === true && !pairingResolved) {
-        void checkGalleryAndHandleOwnershipTransfer()
         return
       }
     }
 
     hasNavigatedRef.current = true
-    setTimeout(() => {
+    navigationTimerRef.current = setTimeout(() => {
       replace("/pairing/success", {deviceModel: deviceModel})
     }, 1000)
   }, [
@@ -252,8 +276,9 @@ export default function GlassesPairingLoadingScreen() {
     pairingInfoReceived,
     pairingInfoTimedOut,
     pairingResolved,
-    checkGalleryAndHandleOwnershipTransfer,
   ])
+
+  focusEffectPreventBack()
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>

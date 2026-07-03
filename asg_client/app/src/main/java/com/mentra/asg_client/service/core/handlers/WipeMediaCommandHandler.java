@@ -79,7 +79,7 @@ public class WipeMediaCommandHandler implements ICommandHandler {
 
         File[] children = directory.listFiles();
         if (children == null) {
-            return true;
+            return false;
         }
 
         boolean allDeleted = true;

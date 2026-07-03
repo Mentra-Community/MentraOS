@@ -145,7 +145,7 @@ const en = {
     livePairingModeInfo:
       "If nothing appears in the next step, press the power button 5 times quickly. The LED will flash and the glasses will read out a code.",
     noGlassesFound: "No glasses found",
-    noGlassesFoundHint: "Make sure you held both buttons for 10 seconds, then try again.",
+    noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
     tryAgain: "Try Again",
     wipeMediaTitle: "Delete previous owner media?",
     wipeMediaMessage:
