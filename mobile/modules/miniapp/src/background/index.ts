@@ -98,7 +98,21 @@ export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 // the author's own `Channels` registry; background is where these enums show
 // up as method args.
 export type {LedColor, LedControlOptions} from "../modules/led"
-export type {ViewType, LayoutType, Layout, DisplayOptions, TextWall, BitmapView, ClearView} from "../modules/display"
+export type {
+  ViewType,
+  LayoutType,
+  Layout,
+  DisplayOptions,
+  TextWall,
+  BitmapView,
+  ClearView,
+  RenderBox,
+  RenderElement,
+  RenderOptions,
+  RenderRectStyle,
+  RenderResult,
+  RenderTextStyle,
+} from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
