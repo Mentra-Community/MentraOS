@@ -5,8 +5,9 @@ import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
-import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
+import {toolkit} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -17,7 +18,9 @@ export const VersionInfo = () => {
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
-  const audioTransport = useCloudClientStatusStore((state) => state.audioTransport)
+  const audioTransport = useToolkitSnapshot(toolkit.session.status, (onChange) =>
+    toolkit.session.onStatus(onChange),
+  ).audioTransport
 
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)

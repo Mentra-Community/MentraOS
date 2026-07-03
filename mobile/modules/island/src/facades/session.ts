@@ -12,6 +12,8 @@
 import restComms from "../services/RestComms"
 import {cloudClientService} from "../services/CloudClientService"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
+import {useConnectionStore} from "../stores/connection"
+import type {WebSocketStatus} from "../stores/connection"
 import type {CloudClientStatusSnapshot} from "../runtime/config"
 
 function project(): CloudClientStatusSnapshot {
@@ -36,6 +38,23 @@ export const session = {
   },
   /** Whether the live-session handshake has completed. */
   isConnected: (): boolean => cloudClientService.isConnected(),
+
+  /**
+   * Legacy Cloud-V1 websocket status (the cloud-SDK-app bridge socket, fed by the
+   * host WebSocketManager into the island-owned connection store). This is a
+   * different socket than `status()` (the cloud-v2 runtime); the host connection
+   * banners render this one.
+   */
+  legacyWebsocketStatus: (): WebSocketStatus => useConnectionStore.getState().status,
+  /** Subscribe to legacy websocket status changes; fires only when it changes. Returns an unsubscribe. */
+  onLegacyWebsocketStatus: (cb: (status: WebSocketStatus) => void): (() => void) => {
+    let last = useConnectionStore.getState().status
+    return useConnectionStore.subscribe((state) => {
+      if (state.status === last) return
+      last = state.status
+      cb(state.status)
+    })
+  },
 
   /** Identity / account operations (island-owned RestComms). */
   account: {

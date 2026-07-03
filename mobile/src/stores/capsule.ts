@@ -9,7 +9,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import { BgTimer, useAppStatusStore } from "@mentra/island"
+import { BgTimer, toolkit } from "@mentra/island"
 
 export interface CapsuleRegistration {
   packageName: string
@@ -79,9 +79,9 @@ export function useRegisterCapsule({
       if (shouldGoBack) {
         goBack()
       }
-      useAppStatusStore.getState().clearForeground()
+      toolkit.miniapps.clearForeground()
       // Stop the app after a short delay to ensure the screenshot is captured and navigation went smooth:
-      useAppStatusStore.getState().stop(packageName)
+      toolkit.miniapps.stop(packageName)
     },
     [packageName, viewShotRef, goBack],
   )
@@ -94,7 +94,7 @@ export function useRegisterCapsule({
       if (shouldGoBack) {
         goBack()
       }
-      useAppStatusStore.getState().clearForeground()
+      toolkit.miniapps.clearForeground()
     },
     [packageName, viewShotRef, goBack],
   )
