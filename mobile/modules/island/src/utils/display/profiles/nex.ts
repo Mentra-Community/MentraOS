@@ -123,9 +123,12 @@ export const NEX_PROFILE: DisplayProfile = {
   id: "mentra-nex",
   name: "Mentra Nex",
 
-  // Display dimensions — 576x288 canvas (matches the firmware virtual screen / Even Realities G2).
-  displayWidthPx: 576,
-  displayHeightPx: 288,
+  // Display dimensions — 500x220 usable region centered in the 640x480 A6N
+  // panel (firmware mos_display_config.c: margins 70/130). Canvas coordinates
+  // are relative to this virtual screen; the physical panel is bigger, 500x220
+  // is the public drawable canvas.
+  displayWidthPx: 500,
+  displayHeightPx: 220,
   maxLines: 8,
 
   maxPayloadBytes: 450, // Matches firmware MAX_TEXT_LEN / DisplayText.text cap; delivered via fragmented BLE transport

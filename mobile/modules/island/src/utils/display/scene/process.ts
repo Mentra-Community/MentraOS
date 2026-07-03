@@ -1,0 +1,188 @@
+/**
+ * Scene processing — validate → clamp → budget → wrap. Everything here is
+ * generic; device variation enters only through the capabilities block and the
+ * display profile (data, not code). Spec §5.
+ *
+ * Never rejects a frame: offending elements are dropped per-element and
+ * reported via `dropped` / `degraded` (design doc §3.4.6; spec §4 refines the
+ * design doc's image "reject" to per-element drop).
+ */
+
+import {TextMeasurer} from "../measurer/TextMeasurer"
+import {TextWrapper} from "../wrapper/TextWrapper"
+import type {DisplayProfile} from "../profiles/types"
+import type {DiffableElement} from "./differ"
+import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextStyle} from "./types"
+import {elementContentHash} from "./types"
+
+export interface ProcessedScene {
+  elements: DiffableElement[]
+  degraded: boolean
+  dropped: string[]
+}
+
+/** Reporting id for an element the app may not have named. */
+function reportId(el: SceneElementInput, index: number): string {
+  return el.id ?? `${el.type}[${index}]`
+}
+
+function clampBox(box: SceneBox, width: number, height: number): SceneBox | null {
+  const x1 = Math.max(0, Math.floor(box.x))
+  const y1 = Math.max(0, Math.floor(box.y))
+  const x2 = Math.min(width, Math.floor(box.x) + Math.max(0, Math.floor(box.w)))
+  const y2 = Math.min(height, Math.floor(box.y) + Math.max(0, Math.floor(box.h)))
+  if (x2 <= x1 || y2 <= y1) return null
+  return {x: x1, y: y1, w: x2 - x1, h: y2 - y1}
+}
+
+function boxShrunk(orig: SceneBox, clamped: SceneBox): boolean {
+  return (
+    clamped.x !== Math.floor(orig.x) ||
+    clamped.y !== Math.floor(orig.y) ||
+    clamped.w !== Math.floor(orig.w) ||
+    clamped.h !== Math.floor(orig.h)
+  )
+}
+
+/**
+ * Line height for box-height→line-count math. Optional profile override wins;
+ * otherwise derived from the profile's own full-canvas numbers (per Alex: use
+ * the data we already have, no new measurement program).
+ */
+export function profileLineHeightPx(profile: DisplayProfile, canvasHeight: number): number {
+  if (profile.lineHeightPx) return profile.lineHeightPx
+  const h = profile.displayHeightPx ?? canvasHeight
+  return Math.max(1, Math.floor(h / Math.max(1, profile.maxLines)))
+}
+
+/**
+ * Process a raw scene against a device's capabilities + profile. Output is
+ * diff-ready (text pre-wrapped, boxes clamped, content hashed) and reflects
+ * exactly what will be sent — the diff baseline is post-processed by design
+ * (spec §4).
+ */
+export function processScene(
+  input: readonly SceneElementInput[],
+  caps: SceneDisplayCapabilities,
+  profile: DisplayProfile,
+): ProcessedScene {
+  const dropped: string[] = []
+  let degraded = false
+
+  const wrapper = new TextWrapper(new TextMeasurer(profile))
+  const lineHeight = profileLineHeightPx(profile, caps.height)
+
+  // Validate + dedupe explicit ids (first occurrence wins; dupes are dev error).
+  const seenIds = new Set<string>()
+  const valid: {el: SceneElementInput; index: number}[] = []
+  input.forEach((el, index) => {
+    if (!el || typeof el !== "object" || !el.box) {
+      dropped.push(reportId(el ?? ({type: "text"} as SceneElementInput), index))
+      degraded = true
+      return
+    }
+    if (el.id) {
+      const key = `${el.type}:${el.id}`
+      if (seenIds.has(key)) {
+        dropped.push(reportId(el, index))
+        degraded = true
+        return
+      }
+      seenIds.add(key)
+    }
+    valid.push({el, index})
+  })
+
+  // Clamp + per-type limits, then budget in array order.
+  let textBudget = caps.maxTextElements
+  let imageBudget = caps.maxImageElements
+  const out: DiffableElement[] = []
+
+  for (const {el, index} of valid) {
+    const clamped = clampBox(el.box, caps.width, caps.height)
+    if (!clamped) {
+      dropped.push(reportId(el, index))
+      degraded = true
+      continue
+    }
+    const shrunk = boxShrunk(el.box, clamped)
+    if (shrunk) degraded = true
+
+    if (el.type === "image") {
+      // Images: a shrunk box can't be honored (we don't crop pixels host-side)
+      // and per-image device limits are box-level (the firmware allocates the
+      // component from the box). SGCs scale pixels to the box (phone-side
+      // scaling — never on glasses).
+      if (shrunk) {
+        dropped.push(reportId(el, index))
+        continue
+      }
+      if (caps.maxImagePx && (clamped.w > caps.maxImagePx.width || clamped.h > caps.maxImagePx.height)) {
+        dropped.push(reportId(el, index))
+        degraded = true
+        continue
+      }
+      if (imageBudget <= 0) {
+        dropped.push(reportId(el, index))
+        degraded = true
+        continue
+      }
+      imageBudget--
+      out.push({
+        id: el.id,
+        type: "image",
+        box: clamped,
+        data: el.data,
+        contentHash: elementContentHash({type: "image", data: el.data}),
+      })
+      continue
+    }
+
+    // text + rect share the text-container budget (design doc §3.4.6).
+    if (textBudget <= 0) {
+      dropped.push(reportId(el, index))
+      degraded = true
+      continue
+    }
+    textBudget--
+
+    if (el.type === "rect") {
+      out.push({
+        id: el.id,
+        type: "rect",
+        box: clamped,
+        style: el.style,
+        contentHash: elementContentHash({type: "rect", style: el.style}),
+      })
+      continue
+    }
+
+    // Text: wrap on the phone into the (clamped) box. The box then carries
+    // pre-wrapped text; firmware in-box wrap is a fallback, not the mechanism.
+    const style: SceneTextStyle = el.style ?? {}
+    const maxLines = Math.max(1, Math.floor(clamped.h / lineHeight))
+    const result = wrapper.wrap(el.text ?? "", {
+      maxWidthPx: clamped.w,
+      maxLines,
+      ...(style.breakMode ? {breakMode: style.breakMode} : {}),
+    })
+    let lines = result.lines
+    if (result.truncated) {
+      degraded = true
+      if (style.overflow === "ellipsis" && lines.length > 0) {
+        lines = [...lines.slice(0, -1), `${lines[lines.length - 1]}…`]
+      }
+    }
+    const wrappedText = lines.join("\n")
+    out.push({
+      id: el.id,
+      type: "text",
+      box: clamped,
+      text: wrappedText,
+      style: el.style,
+      contentHash: elementContentHash({type: "text", text: wrappedText, style: el.style}),
+    })
+  }
+
+  return {elements: out, degraded, dropped}
+}

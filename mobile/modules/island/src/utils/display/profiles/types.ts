@@ -18,6 +18,12 @@ export interface DisplayProfile {
   /** Maximum number of lines that can be displayed */
   maxLines: number
 
+  /**
+   * Line height in px for box-height→line-count math (scene pipeline).
+   * Optional: derived as displayHeightPx / maxLines when absent.
+   */
+  lineHeightPx?: number
+
   /** Maximum safe payload size in bytes (for BLE transmission) */
   maxPayloadBytes: number
 
