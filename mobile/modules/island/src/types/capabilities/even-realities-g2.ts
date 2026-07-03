@@ -28,6 +28,16 @@ export const evenRealitiesG2: Capabilities = {
     fieldOfView: { horizontal: 25 },
     maxTextLines: 8,
     adjustBrightness: true,
+
+    // Scene display API — EvenHub retained containers.
+    width: 576,
+    height: 288,
+    canPosition: true,
+    maxTextElements: 6, // firmware text-container pool (rects share it)
+    maxImageElements: 4, // firmware image-container pool
+    shapes: ["rect"], // bordered empty container ≈ rect
+    intensityLevels: 2,
+    partialUpdate: true,
   },
 
   // Microphone capabilities - G2 has one microphone (right side), LC3 codec

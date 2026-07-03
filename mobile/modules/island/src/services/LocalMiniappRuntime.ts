@@ -937,6 +937,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.DISPLAY:
         this.handleDisplay(packageName, payload, requestId)
         break
+      case MiniappRequestType.RENDER:
+        this.handleRender(packageName, payload, requestId)
+        break
       case MiniappRequestType.CANVAS:
         this.handleCanvas(packageName, payload, requestId)
         break
@@ -1614,6 +1617,41 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Display error",
+      })
+    }
+  }
+
+  /**
+   * Scene render (session.display.render()). Same arbitration as DISPLAY, but
+   * the payload is a whole frame of positioned elements and the caller may be
+   * awaiting the outcome: LocalDisplayManager guarantees the resolver fires
+   * exactly once (displayed/blocked, with degraded/dropped reporting), and that
+   * becomes the REQUEST_RESULT data.
+   */
+  private handleRender(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    try {
+      if (!Array.isArray(payload.elements)) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "render request missing elements array",
+        })
+        return
+      }
+
+      localDisplayManager.request(
+        packageName,
+        {
+          view: (payload.view as DisplayPayload["view"]) ?? "main",
+          scene: payload.elements as DisplayPayload["scene"],
+          durationMs: payload.durationMs as number | undefined,
+        },
+        result => this.sendResult(packageName, requestId, true, result),
+      )
+    } catch (err) {
+      console.error(`${LOG_TAG}: render error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Render error",
       })
     }
   }

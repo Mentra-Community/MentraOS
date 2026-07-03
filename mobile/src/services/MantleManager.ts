@@ -31,6 +31,7 @@ import {
   configureRuntime,
   getRuntimeHooks,
   displayProcessor,
+  localDisplayManager,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
@@ -372,6 +373,11 @@ class MantleManager {
     // silently no-op'd. Re-attach now that hooks are wired so captions are wrapped with
     // the correct profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
     displayProcessor.attachToRuntime()
+
+    // Same late-attach for the local display manager's reconnect-replay hook:
+    // after a glasses reconnect it re-pushes the current owner's frame (scenes
+    // replay from retained state — apps never re-send on reconnect).
+    localDisplayManager.attachToRuntime()
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.

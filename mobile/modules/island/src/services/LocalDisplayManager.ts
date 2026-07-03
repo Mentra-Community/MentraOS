@@ -28,7 +28,9 @@
  */
 
 import displayProcessor from "./DisplayProcessor"
+import sceneRenderer from "./SceneRenderer"
 import {getRuntimeHooks} from "../runtime/config"
+import type {SceneElementInput} from "../utils/display/scene"
 import {BgTimer} from "../utils/timers"
 
 // =============================================================================
@@ -37,13 +39,28 @@ import {BgTimer} from "../utils/timers"
 
 export interface DisplayPayload {
   view?: "main" | "dashboard" | string
-  layout: {layoutType: string; [key: string]: unknown}
+  /** Legacy layout (sugar / old bundles / cloud shapes). Either this or `scene`. */
+  layout?: {layoutType: string; [key: string]: unknown}
+  /** Scene elements from display.render(). Either this or `layout`. */
+  scene?: SceneElementInput[]
   durationMs?: number
 }
+
+/** Outcome delivered to an awaiting render() call (REQUEST_RESULT payload). */
+export interface DisplayRequestResult {
+  status: "displayed" | "blocked"
+  degraded?: boolean
+  dropped?: string[]
+  reason?: string
+}
+
+export type DisplayRequestResolver = (result: DisplayRequestResult) => void
 
 interface ActiveDisplay {
   packageName: string
   processedEvent: Record<string, unknown>
+  /** Set when this display is a scene — restore goes through SceneRenderer replay. */
+  scene?: SceneElementInput[]
   expiresAt: number | null
 }
 
@@ -91,9 +108,14 @@ class LocalDisplayManager {
   private backgroundLock: BackgroundLock | null = null
 
   private bootingApp: BootingApp | null = null
-  private bootQueue: Map<string, DisplayPayload> = new Map()
+  private bootQueue: Map<string, {payload: DisplayPayload; resolve?: DisplayRequestResolver}> = new Map()
 
   private expiryTimerId: number | null = null
+
+  /** Reconnect-replay subscription state (attachToRuntime). */
+  private runtimeAttached = false
+  private glassesWasConnected = false
+  private unsubscribeGlassesStatus: (() => void) | null = null
 
   /** Injectable for tests. */
   private now: () => number = () => Date.now()
@@ -179,7 +201,11 @@ class LocalDisplayManager {
     if (this.bootingApp?.packageName === packageName) {
       this.cancelBoot()
     }
+    this.bootQueue.get(packageName)?.resolve?.({status: "blocked", reason: "app stopped"})
     this.bootQueue.delete(packageName)
+
+    // Forget the app's retained scenes — nothing left to replay for it.
+    sceneRenderer.clearApp(packageName)
 
     // Release bg lock if this app held it.
     if (this.backgroundLock?.packageName === packageName) {
@@ -213,33 +239,39 @@ class LocalDisplayManager {
    * A miniapp requested a display. Routes through boot queue, arbitration,
    * and throttle. This is the only public entry point for miniapp display
    * traffic on the local path.
+   *
+   * `resolve`, when provided (render() requests), is guaranteed to be called
+   * exactly once with the request's outcome — including for requests parked in
+   * the boot queue (resolved when drained or superseded).
    */
-  public request(packageName: string, payload: DisplayPayload): void {
+  public request(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     // Dashboard view: pass straight through (no throttle/arbitration). Local
     // dashboard rendering is currently a stub on the phone anyway.
     if (payload.view === "dashboard") {
-      this.sendNow(packageName, payload)
+      this.sendNow(packageName, payload, resolve)
       return
     }
 
     // During boot, any app's requests go into the queue. If the booting app
     // itself makes its first display call, end boot early and drain.
     if (this.bootingApp) {
-      this.bootQueue.set(packageName, payload)
+      const superseded = this.bootQueue.get(packageName)
+      superseded?.resolve?.({status: "blocked", reason: "superseded by a newer frame"})
+      this.bootQueue.set(packageName, {payload, resolve})
       if (this.bootingApp.packageName === packageName) {
         this.endBoot(/* triggeredByFirstDisplay */ true)
       }
       return
     }
 
-    this.arbitrateAndSend(packageName, payload)
+    this.arbitrateAndSend(packageName, payload, resolve)
   }
 
   // ===========================================================================
   // Internals — arbitration
   // ===========================================================================
 
-  private arbitrateAndSend(packageName: string, payload: DisplayPayload): void {
+  private arbitrateAndSend(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     const now = this.now()
 
     // Expire a stale bg lock before arbitrating.
@@ -254,6 +286,7 @@ class LocalDisplayManager {
       this.coreAppDisplay = {
         packageName,
         processedEvent: {}, // filled by sendNow
+        scene: payload.scene,
         expiresAt: payload.durationMs ? now + payload.durationMs : null,
       }
 
@@ -265,6 +298,7 @@ class LocalDisplayManager {
         this.currentDisplay &&
         this.currentDisplay.packageName === this.backgroundLock.packageName
       if (bgHoldsAndDisplays) {
+        resolve?.({status: "blocked", reason: "a background app holds the display"})
         return
       }
 
@@ -274,13 +308,14 @@ class LocalDisplayManager {
         this.backgroundLock = null
       }
 
-      this.sendNow(packageName, payload)
+      this.sendNow(packageName, payload, resolve)
       return
     }
 
     // Non-core: this is a background app.
     if (this.backgroundLock && this.backgroundLock.packageName !== packageName) {
       // Another bg app already holds the lock — drop.
+      resolve?.({status: "blocked", reason: "another background app holds the display"})
       return
     }
 
@@ -297,33 +332,99 @@ class LocalDisplayManager {
       this.backgroundLock.expiresAt = now + BACKGROUND_LOCK_TIMEOUT_MS
     }
 
-    this.sendNow(packageName, payload)
+    this.sendNow(packageName, payload, resolve)
   }
 
   // ===========================================================================
   // Internals — send
   // ===========================================================================
 
-  private sendNow(packageName: string, payload: DisplayPayload): void {
-    const rawEvent: Record<string, unknown> = {
-      view: payload.view ?? "main",
-      layout: payload.layout,
-    }
-    if (payload.durationMs !== undefined) {
-      rawEvent.durationMs = payload.durationMs
-    }
+  private sendNow(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
-    this.sendToNative(packageName, rawEvent, expiresAt)
+    const view = (payload.view === "dashboard" ? "dashboard" : "main") as "main" | "dashboard"
+
+    // Scene requests — and legacy layouts a positioning device can render as a
+    // scene (sugar, old bundles) — go through the scene pipeline. Everything
+    // else stays on the legacy path.
+    let sceneElements = payload.scene ?? null
+    if (!sceneElements && payload.layout) {
+      const caps = sceneRenderer.currentCapabilities()
+      if (caps?.canPosition) {
+        sceneElements = sceneRenderer.convertLegacyLayout(payload.layout, caps)
+      }
+    }
+
+    if (sceneElements) {
+      this.sendScene(packageName, view, sceneElements, expiresAt, resolve)
+    } else if (payload.layout) {
+      const rawEvent: Record<string, unknown> = {
+        view: payload.view ?? "main",
+        layout: payload.layout,
+      }
+      if (payload.durationMs !== undefined) {
+        rawEvent.durationMs = payload.durationMs
+      }
+      this.sendToNative(packageName, rawEvent, expiresAt)
+      resolve?.({status: "displayed"})
+    } else {
+      // A scene payload on a device with no display block at all.
+      resolve?.({status: "blocked", reason: "no display connected"})
+      return
+    }
 
     // If core app fired, refresh the saved snapshot with the actual processed
-    // event so restore uses the wrapped text.
+    // event so restore uses the wrapped text (legacy) / the retained scene.
     if (packageName === this.coreApp && this.currentDisplay) {
       this.coreAppDisplay = {
         packageName,
         processedEvent: this.currentDisplay.processedEvent,
+        scene: this.currentDisplay.scene,
         expiresAt: this.currentDisplay.expiresAt,
       }
     }
+  }
+
+  /**
+   * Send a scene through SceneRenderer. On positioning devices this emits a
+   * SceneFrame; on degrade devices SceneRenderer hands back a legacy layout
+   * that rides the existing (unchanged) DisplayProcessor path.
+   */
+  private sendScene(
+    packageName: string,
+    view: "main" | "dashboard",
+    elements: SceneElementInput[],
+    expiresAt: number | null,
+    resolve?: DisplayRequestResolver,
+  ): void {
+    const result = sceneRenderer.emitScene(packageName, view, elements)
+
+    if (result.kind === "no-display") {
+      resolve?.({status: "blocked", reason: "no display connected"})
+      return
+    }
+
+    if (result.kind === "legacy") {
+      if (result.layout) {
+        this.sendToNative(packageName, {view, layout: result.layout}, expiresAt)
+      } else {
+        // Scene degraded to nothing (e.g. all-image scene on a text-only
+        // device). render() replaces the frame, so nothing means clear.
+        this.sendClear()
+      }
+      resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
+      return
+    }
+
+    this.currentDisplay = {packageName, processedEvent: {}, scene: elements, expiresAt}
+    this.clearExpiryTimer()
+    if (expiresAt !== null) {
+      const delay = Math.max(0, expiresAt - this.now())
+      this.expiryTimerId = BgTimer.setTimeout(() => {
+        this.expiryTimerId = null
+        this.handleExpiry(packageName)
+      }, delay)
+    }
+    resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
   }
 
   private sendToNative(packageName: string, rawEvent: Record<string, unknown>, expiresAt: number | null): void {
@@ -389,7 +490,7 @@ class LocalDisplayManager {
     const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
     this.sendNow(saved.packageName, {
       view: "main",
-      layout: saved.processedEvent.layout as DisplayPayload["layout"],
+      ...(saved.scene ? {scene: saved.scene} : {layout: saved.processedEvent.layout as DisplayPayload["layout"]}),
       durationMs: remaining,
     })
   }
@@ -426,11 +527,11 @@ class LocalDisplayManager {
 
     const corePayload = this.coreApp ? queued.find(([pkg]) => pkg === this.coreApp) : undefined
     if (corePayload) {
-      this.arbitrateAndSend(corePayload[0], corePayload[1])
+      this.arbitrateAndSend(corePayload[0], corePayload[1].payload, corePayload[1].resolve)
     }
-    for (const [pkg, payload] of queued) {
+    for (const [pkg, entry] of queued) {
       if (pkg === this.coreApp) continue
-      this.arbitrateAndSend(pkg, payload)
+      this.arbitrateAndSend(pkg, entry.payload, entry.resolve)
     }
 
     // Boot ended on the timeout with nothing queued and no first display — the
@@ -460,9 +561,57 @@ class LocalDisplayManager {
     const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
     this.sendNow(saved.packageName, {
       view: "main",
-      layout: saved.processedEvent.layout as DisplayPayload["layout"],
+      ...(saved.scene ? {scene: saved.scene} : {layout: saved.processedEvent.layout as DisplayPayload["layout"]}),
       durationMs: remaining,
     })
+  }
+
+  // ===========================================================================
+  // Reconnect replay (design doc §3.4.7 — recovery = replay, host-driven)
+  // ===========================================================================
+
+  /**
+   * Subscribe to glasses connection state so the current owner's frame is
+   * replayed after a reconnect. Safe to call repeatedly; attaches once. Wired
+   * from MantleManager next to displayProcessor.attachToRuntime().
+   */
+  public attachToRuntime(): void {
+    if (this.runtimeAttached) return
+    const hooks = getRuntimeHooks()
+    if (!hooks.subscribeGlassesStatus) return
+
+    this.glassesWasConnected = hooks.glassesStatus?.get()?.connected === true
+    this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus(changed => {
+      if (changed.connected === undefined) return
+      const connected = changed.connected === true
+      const reconnected = connected && !this.glassesWasConnected
+      this.glassesWasConnected = connected
+      if (reconnected) {
+        this.replayCurrent()
+      }
+    })
+    this.runtimeAttached = true
+  }
+
+  /**
+   * Re-push the current on-glasses frame after a device recovery. Scenes replay
+   * from SceneRenderer's retained state (create-based, epoch-bumped); legacy
+   * frames re-send their processed event. Expired frames don't come back.
+   */
+  public replayCurrent(): void {
+    const current = this.currentDisplay
+    if (!current) return
+    if (current.expiresAt !== null && this.now() >= current.expiresAt) return
+
+    console.log(`${LOG_TAG}: replayCurrent(${current.packageName})`)
+    if (current.scene) {
+      if (!sceneRenderer.replayApp(current.packageName, "main")) {
+        // Retained state gone (app stopped between disconnect and reconnect).
+        this.sendClear()
+      }
+    } else if (current.processedEvent.layout) {
+      this.sendToNative(current.packageName, current.processedEvent, current.expiresAt)
+    }
   }
 
   // ===========================================================================
@@ -495,6 +644,11 @@ class LocalDisplayManager {
     this.backgroundLock = null
     this.bootQueue.clear()
     this.now = () => Date.now()
+    this.unsubscribeGlassesStatus?.()
+    this.unsubscribeGlassesStatus = null
+    this.runtimeAttached = false
+    this.glassesWasConnected = false
+    sceneRenderer._resetForTest()
   }
 
   /** Read-only state snapshot — tests only. */
