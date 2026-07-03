@@ -123,6 +123,23 @@ export default function GlassesPairingLoadingScreen() {
     ])
   }, [abortPairingTransfer, confirmMediaWipe])
 
+  const checkGalleryAndHandleOwnershipTransfer = useCallback(async () => {
+    try {
+      const galleryStatus = await BluetoothSdk.queryGalleryStatus()
+      if (galleryStatus.total > 0) {
+        promptMediaWipe()
+      } else {
+        // Gallery is already empty — finalize silently, no wipe needed
+        await BluetoothSdk.finalizePairingTransfer()
+        setPairingResolved(true)
+      }
+    } catch (error) {
+      console.error("Failed to query gallery status during pairing transfer:", error)
+      // Fallback: show wipe prompt so user can decide
+      promptMediaWipe()
+    }
+  }, [promptMediaWipe])
+
   const handlePairFailure = useCallback(
     (error: string) => {
       BluetoothSdk.forget()
@@ -218,7 +235,7 @@ export default function GlassesPairingLoadingScreen() {
         return
       }
       if (pairingInfoReceived && pairingInfoRef.current === true && !pairingResolved) {
-        promptMediaWipe()
+        void checkGalleryAndHandleOwnershipTransfer()
         return
       }
     }
@@ -235,7 +252,7 @@ export default function GlassesPairingLoadingScreen() {
     pairingInfoReceived,
     pairingInfoTimedOut,
     pairingResolved,
-    promptMediaWipe,
+    checkGalleryAndHandleOwnershipTransfer,
   ])
 
   return (
