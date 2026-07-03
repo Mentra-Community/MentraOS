@@ -1219,16 +1219,22 @@ class MentraLive: NSObject, SGCManager {
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
     private let mentraManufacturerId: UInt16 = 0xB822
+    // Payload-relative offset of the pairing flag, matching Android's index into the
+    // company-id-stripped manufacturer data from getManufacturerSpecificData().
     private let advManufPairingFlagOffset = 5
+    // CoreBluetooth returns manufacturer data with the 2-byte company id prefix still attached,
+    // whereas Android strips it. Skip the prefix so both platforms read the same payload byte.
+    private let advManufCompanyIdLength = 2
     private let advPairingDiscoverable: UInt8 = 0x01
 
     private func isPairingDiscoverable(_ advertisementData: [String: Any]) -> Bool {
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
         guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufData.count > advManufPairingFlagOffset
+              manufData.count > flagIndex
         else {
             return false
         }
-        return manufData[advManufPairingFlagOffset] == advPairingDiscoverable
+        return manufData[flagIndex] == advPairingDiscoverable
     }
 
     // Field firmware does not advertise the Mentra manufacturer pairing flag. Its absence means
@@ -1239,8 +1245,9 @@ class MentraLive: NSObject, SGCManager {
     // matches before trusting the flag byte — otherwise unrelated manufacturer data would wrongly
     // hide a legacy unit.
     private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
         guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufData.count > advManufPairingFlagOffset
+              manufData.count > flagIndex
         else {
             return false
         }
