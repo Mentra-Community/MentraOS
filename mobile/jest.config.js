@@ -7,6 +7,11 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    // Island entry points resolve to source (like bluetooth-sdk-internal above)
+    // so resolution never depends on stale build/ output; jest.setup.js mocks
+    // both subpaths alongside the main "@mentra/island" mock.
+    "^@mentra/island/internal$": "<rootDir>/modules/island/src/internal.ts",
+    "^@mentra/island/devtools$": "<rootDir>/modules/island/src/devtools.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",
