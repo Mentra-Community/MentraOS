@@ -169,7 +169,11 @@ export class PhonePhotoCoordinator {
         ),
       )
     }, CAPTURE_TIMEOUT_MS)
-    void outcome.finally(() => clearTimeout(captureWatchdog))
+    // Clear the watchdog on BOTH arms. Not `.finally()`: that would mint a new
+    // promise that re-rejects unobserved whenever the photo fails (the caller
+    // only awaits `outcome` itself), i.e. an unhandled rejection per failure.
+    const clearWatchdog = () => clearTimeout(captureWatchdog)
+    void outcome.then(clearWatchdog, clearWatchdog)
 
     // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
