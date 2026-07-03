@@ -2481,14 +2481,19 @@ class G2: NSObject, SGCManager {
     }
 
     func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
+        // STRUCTURAL removal: blanked-in-place containers still RENDER (the
+        // firmware draws a cursor-like mark at a whitespace container's content
+        // origin — the long-hunted stray tick; legacy never saw it because its
+        // only container's origin sat above the visible eyebox). So a removed
+        // element leaves the page entirely: blank it for the live page, drop it
+        // from the tracked list (freeing the pool id), and mark the frame
+        // structural — the batched frame-end rebuild recreates the page without
+        // it. Never a per-remove shutdown (mic coupling).
         if let id = sceneTextByElement.removeValue(forKey: elementId),
            let i = textContainers.firstIndex(where: { $0.id == id })
         {
-            // Blank in place — G2 has no per-container delete, and shutdownPage
-            // is the mic-coupled footgun (see clearDisplay).
-            textContainers[i].content = "\n"
-            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
-            signalDisplayDirty()
+            textContainers.remove(at: i)
+            await requestPageRebuild()
         }
         if let ids = sceneImageByElement.removeValue(forKey: elementId) {
             for id in ids {
@@ -2500,6 +2505,22 @@ class G2: NSObject, SGCManager {
                 }
             }
             signalDisplayDirty()
+            await requestPageRebuild()
+        }
+    }
+
+    /// Sweep a set of scene elements as ONE batched structural change (called
+    /// by DeviceManager on scene→legacy and cross-app transitions, outside any
+    /// applySceneFrame batch — without batching, each remove would rebuild).
+    func clearSceneElements(_ elementIds: [String]) async {
+        sceneBatchDepth += 1
+        for id in elementIds {
+            await removeLayoutElement(id, layoutId: nil)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            await coalescedPageRebuild()
         }
     }
 

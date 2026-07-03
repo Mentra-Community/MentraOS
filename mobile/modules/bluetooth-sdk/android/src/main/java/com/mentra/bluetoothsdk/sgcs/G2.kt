@@ -2572,28 +2572,52 @@ class G2 : SGCManager() {
         displayScope.launch { applySceneRemove(elementId) }
     }
 
-    /** Scene element removal (blank-in-place) — runs on displayScope. */
-    private fun applySceneRemove(elementId: String) {
-        run {
-            sceneTextByElement.remove(elementId)?.let { id ->
-                val idx = textContainers.indexOfFirst { it.id == id }
-                if (idx >= 0) {
-                    // Blank in place — G2 has no per-container delete, and
-                    // shutdownPage is the mic-coupled footgun (see clearDisplay).
-                    textContainers[idx].content = "\n"
-                    textContainers[idx].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
-                    signalDisplayDirty()
+    /**
+     * Scene element removal — STRUCTURAL. Blanked-in-place containers still
+     * RENDER (the firmware draws a cursor-like mark at a whitespace container's
+     * content origin — the stray tick; legacy never saw it because its only
+     * container's origin sat above the visible eyebox). A removed element
+     * leaves the page: drop it from the tracked list (freeing the pool id) and
+     * mark the frame structural — the batched frame-end rebuild recreates the
+     * page without it. Never a per-remove shutdown (mic coupling).
+     */
+    private suspend fun applySceneRemove(elementId: String) {
+        sceneTextByElement.remove(elementId)?.let { id ->
+            val idx = textContainers.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                textContainers.removeAt(idx)
+                requestPageRebuild()
+            }
+        }
+        sceneImageByElement.remove(elementId)?.let { ids ->
+            for (id in ids) {
+                val idx = imageContainers.indexOfFirst { it.id == id }
+                if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
+                    imageContainers[idx].bmpData = ByteArray(0)
+                    imageContainers[idx].dirty = true
                 }
             }
-            sceneImageByElement.remove(elementId)?.let { ids ->
-                for (id in ids) {
-                    val idx = imageContainers.indexOfFirst { it.id == id }
-                    if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
-                        imageContainers[idx].bmpData = ByteArray(0)
-                        imageContainers[idx].dirty = true
-                    }
-                }
-                signalDisplayDirty()
+            signalDisplayDirty()
+            requestPageRebuild()
+        }
+    }
+
+    /**
+     * Sweep a set of scene elements as ONE batched structural change (called by
+     * DeviceManager on scene→legacy and cross-app transitions, outside any
+     * applySceneFrame batch — without batching, each remove would rebuild).
+     */
+    override fun clearSceneElements(elementIds: List<String>) {
+        displayScope.launch {
+            sceneBatchActive = true
+            try {
+                for (id in elementIds) applySceneRemove(id)
+            } finally {
+                sceneBatchActive = false
+            }
+            if (sceneStructuralPending) {
+                sceneStructuralPending = false
+                coalescedPageRebuild()
             }
         }
     }
