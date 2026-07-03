@@ -88,6 +88,8 @@ export default function SelectGlassesBluetoothScreen() {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
       if (!hasLocationPermission) {
+        // Reset so the scan timeout can fire and the auto-connect effect can retry.
+        connectingRef.current = false
         showAlert(
           "Location Permission Required",
           "Location permission is required to scan for and connect to smart glasses on Android. This is a requirement of the Android Bluetooth system.",
@@ -100,6 +102,8 @@ export default function SelectGlassesBluetoothScreen() {
     const hasMicPermission = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
 
     if (!hasMicPermission) {
+      // Reset so the scan timeout can fire and the auto-connect effect can retry.
+      connectingRef.current = false
       showAlert(
         "Microphone Permission Required",
         "Microphone permission is required to connect to smart glasses. Voice control and audio features are essential for the AR experience.",

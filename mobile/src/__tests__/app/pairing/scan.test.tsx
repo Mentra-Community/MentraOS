@@ -134,7 +134,7 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-import {render, waitFor} from "@testing-library/react-native"
+import {act, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
@@ -224,5 +224,34 @@ describe("pairing scan screen", () => {
         deviceName: "NOTREQUIREDSKIP",
       })
     })
+  })
+
+  it("still times out when Mentra Live auto-connect is blocked by a denied permission", async () => {
+    jest.useFakeTimers()
+    try {
+      setPlatformOS("android")
+      ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
+      useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: false})
+      useCoreStore.setState({
+        searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
+      })
+
+      const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+      // Let the denied-permission promise chain settle so connectingRef resets.
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      // The 15s scan timeout must still fire because connectingRef was reset on the early return.
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+
+      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
