@@ -1624,12 +1624,37 @@ class G2: NSObject, SGCManager {
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
 
     /// Scene-verb registries (display.render() pipeline): element id → container
-    /// id. Containers stay rect-keyed underneath — these pin element↔container
+    /// id(s). Containers stay rect-keyed underneath — these pin element↔container
     /// so content updates go in place and moves recreate at the SAME container
-    /// id. At most one app's ids are live at a time (DeviceManager sweeps the
-    /// previous app's elements on an app switch).
+    /// id. Images map to an ARRAY of containers: firmware refuses image
+    /// transfers into containers beyond ~200x100, so bigger images tile across
+    /// multiple containers (e.g. 400x100 → two side-by-side, 150x150 → two
+    /// stacked). At most one app's ids are live at a time (DeviceManager sweeps
+    /// the previous app's elements on an app switch).
     private var sceneTextByElement: [String: Int32] = [:]
-    private var sceneImageByElement: [String: Int32] = [:]
+    private var sceneImageByElement: [String: [Int32]] = [:]
+
+    /// Max image-container size the firmware accepts pixels for
+    /// (hardware-verified 2026-07-03: 150x150 refused, 100x100 clean; 200x100
+    /// is the firmware default container and the old docs' boundary).
+    private static let maxImageTileW: Int32 = 200
+    private static let maxImageTileH: Int32 = 100
+
+    /// Tile rects (relative to the element box) covering w×h with tiles the
+    /// firmware will accept. Row-major.
+    private static func imageTileRects(w: Int32, h: Int32) -> [(dx: Int32, dy: Int32, w: Int32, h: Int32)] {
+        let cols = Int((w + maxImageTileW - 1) / maxImageTileW)
+        let rows = Int((h + maxImageTileH - 1) / maxImageTileH)
+        var rects: [(Int32, Int32, Int32, Int32)] = []
+        for r in 0 ..< rows {
+            for c in 0 ..< cols {
+                let dx = Int32(c) * maxImageTileW
+                let dy = Int32(r) * maxImageTileH
+                rects.append((dx, dy, min(maxImageTileW, w - dx), min(maxImageTileH, h - dy)))
+            }
+        }
+        return rects
+    }
     private static let defaultImgContainer = (
         x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100)
     )
@@ -2363,34 +2388,96 @@ class G2: NSObject, SGCManager {
         base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
         elementId: String, layoutId _: String?
     ) async -> Bool {
-        if let existingId = sceneImageByElement[elementId] {
-            if let i = imageContainers.firstIndex(where: { $0.id == existingId }) {
-                if !imageContainers[i].matches(x: x, y: y, width: width, height: height) {
-                    // Moved: blacken the old rect in place (no per-container
-                    // delete on G2) and let the normal path place the new rect.
-                    if !imageContainers[i].bmpData.isEmpty {
+        let tiles = G2.imageTileRects(w: width, h: height)
+        guard tiles.count <= imageContainerIDPool.count else {
+            Bridge.log(
+                "G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) needs \(tiles.count) tiles — exceeds the \(imageContainerIDPool.count)-container pool, dropping"
+            )
+            return false
+        }
+
+        // Element moved or re-tiled: blacken any containers whose rects no
+        // longer belong to this element's tile set, then let the tile upserts
+        // reuse/place the rest.
+        if let existing = sceneImageByElement[elementId] {
+            let wantedRects = tiles.map { t in (x + t.dx, y + t.dy, t.w, t.h) }
+            for cid in existing {
+                if let i = imageContainers.firstIndex(where: { $0.id == cid }) {
+                    let c = imageContainers[i]
+                    let stillWanted = wantedRects.contains { $0 == (c.x, c.y, c.width, c.height) }
+                    if !stillWanted, !c.bmpData.isEmpty {
                         imageContainers[i].bmpData = Data()
                         imageContainers[i].dirty = true
                         signalDisplayDirty()
                     }
-                    sceneImageByElement.removeValue(forKey: elementId)
                 }
-            } else {
-                sceneImageByElement.removeValue(forKey: elementId)
             }
         }
+        sceneImageByElement.removeValue(forKey: elementId)
 
-        let ok = await displayBitmap(
-            base64ImageData: base64ImageData, x: x, y: y, width: width, height: height
-        )
-        if ok, let i = imageContainers.firstIndex(where: {
-            $0.matches(x: x, y: y, width: width, height: height)
-        }) {
-            let cid = imageContainers[i].id
-            sceneImageByElement = sceneImageByElement.filter { $0.value != cid }
-            sceneImageByElement[elementId] = cid
+        var cids: [Int32] = []
+        if tiles.count == 1 {
+            // Single container — the existing path (decode, aspect-fit, encode).
+            let ok = await displayBitmap(
+                base64ImageData: base64ImageData, x: x, y: y, width: width, height: height
+            )
+            guard ok,
+                  let i = imageContainers.firstIndex(where: {
+                      $0.matches(x: x, y: y, width: width, height: height)
+                  })
+            else { return false }
+            cids = [imageContainers[i].id]
+        } else {
+            // Tiled: render the whole image to grayscale ONCE at the element
+            // size, then slice per-tile rows into their own 4-bit BMPs, one
+            // firmware container per tile.
+            guard let rawData = Data(base64Encoded: base64ImageData) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to decode base64")
+                return false
+            }
+            guard let gray = renderG2Grayscale(rawData, targetWidth: Int(width), targetHeight: Int(height)) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to render grayscale")
+                return false
+            }
+            Bridge.log("G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) → \(tiles.count) tiles")
+            for t in tiles {
+                var tilePixels = Data(capacity: Int(t.w * t.h))
+                for row in 0 ..< Int(t.h) {
+                    let start = (Int(t.dy) + row) * Int(width) + Int(t.dx)
+                    tilePixels.append(gray.subdata(in: (gray.startIndex + start)..<(gray.startIndex + start + Int(t.w))))
+                }
+                guard let bmp = build4BitBmp(grayscalePixels: tilePixels, width: Int(t.w), height: Int(t.h)) else {
+                    Bridge.log("G2: drawLayoutBitmap - tile encode failed")
+                    return false
+                }
+                let tx = x + t.dx
+                let ty = y + t.dy
+                if let i = imageContainers.firstIndex(where: { $0.matches(x: tx, y: ty, width: t.w, height: t.h) }) {
+                    imageContainers[i].bmpData = bmp
+                    imageContainers[i].dirty = true
+                    cids.append(imageContainers[i].id)
+                } else {
+                    let container = addImageContainer(x: tx, y: ty, width: t.w, height: t.h, bmpData: bmp)
+                    if let j = imageContainers.firstIndex(where: { $0.id == container.id }) {
+                        imageContainers[j].dirty = true
+                    }
+                    cids.append(container.id)
+                    await requestPageRebuild()
+                }
+            }
+            signalDisplayDirty()
         }
-        return ok
+
+        // Container ids may have been LRU-recycled from other elements.
+        let taken = Set(cids)
+        for (key, value) in sceneImageByElement where value.contains(where: taken.contains) {
+            sceneImageByElement[key] = value.filter { !taken.contains($0) }
+            if sceneImageByElement[key]?.isEmpty == true {
+                sceneImageByElement.removeValue(forKey: key)
+            }
+        }
+        sceneImageByElement[elementId] = cids
+        return true
     }
 
     func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
@@ -2403,14 +2490,52 @@ class G2: NSObject, SGCManager {
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
             signalDisplayDirty()
         }
-        if let id = sceneImageByElement.removeValue(forKey: elementId),
-           let i = imageContainers.firstIndex(where: { $0.id == id }),
-           !imageContainers[i].bmpData.isEmpty
-        {
-            imageContainers[i].bmpData = Data()
-            imageContainers[i].dirty = true
+        if let ids = sceneImageByElement.removeValue(forKey: elementId) {
+            for id in ids {
+                if let i = imageContainers.firstIndex(where: { $0.id == id }),
+                   !imageContainers[i].bmpData.isEmpty
+                {
+                    imageContainers[i].bmpData = Data()
+                    imageContainers[i].dirty = true
+                }
+            }
             signalDisplayDirty()
         }
+    }
+
+    /// Decode an image and render it to raw 8-bit grayscale at target size
+    /// (aspect-fit, centered on black) — the front half of `convertToG2Bmp`,
+    /// exposed for the tiler which encodes per-tile BMPs from one render.
+    private func renderG2Grayscale(_ data: Data, targetWidth: Int, targetHeight: Int) -> Data? {
+        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
+        let scale = min(
+            Double(targetWidth) / Double(cgImage.width), Double(targetHeight) / Double(cgImage.height)
+        )
+        let scaledW = max(1, Int(Double(cgImage.width) * scale))
+        let scaledH = max(1, Int(Double(cgImage.height) * scale))
+        let offsetX = (targetWidth - scaledW) / 2
+        let offsetY = (targetHeight - scaledH) / 2
+
+        var pixels = Data(count: targetWidth * targetHeight)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buf in
+            guard
+                let ctx = CGContext(
+                    data: buf.baseAddress,
+                    width: targetWidth,
+                    height: targetHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: targetWidth,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                )
+            else { return false }
+            ctx.setFillColor(gray: 0, alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+            ctx.interpolationQuality = .high
+            ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
+            return true
+        }
+        return drawn ? pixels : nil
     }
 
     func clearDisplay() {
@@ -3200,17 +3325,30 @@ class G2: NSObject, SGCManager {
     // MARK: - Private Display Helpers
 
     private func createPageWithContainers() {
-        // build the page's text containers from the live tracked list.
-        // iterate by index not using map:
-        var textContainerProps: [Data] = []
-        for (index, c) in textContainers.enumerated() {
+        // Dedicated event-capture container: id 0, 1x1, borderless, empty — the
+        // designated event-capture slot per the RE demos ("container 0 is
+        // event-capture"). Touch events keep flowing through it, and no REAL
+        // container carries the flag: marking whichever container happened to
+        // be first (the old behavior) painted a visible artifact once pages
+        // stopped being one full-screen box — the stray line Alex saw
+        // persisting across miniapps.
+        var textContainerProps: [Data] = [
+            EvenHubProto.textContainerProperty(
+                x: 0, y: 0, width: 1, height: 1,
+                borderWidth: 0, borderColor: 0, borderRadius: 0,
+                paddingLength: 0, containerID: 0,
+                containerName: "evt-0", isEventCapture: true,
+                content: ""
+            ),
+        ]
+        for c in textContainers {
             textContainerProps.append(
                 EvenHubProto.textContainerProperty(
                     x: c.x, y: c.y, width: c.width, height: c.height,
                     borderWidth: c.borderWidth, borderColor: c.borderColor,
                     borderRadius: c.borderRadius,
                     paddingLength: c.paddingLength, containerID: c.id,
-                    containerName: c.name, isEventCapture: index == 0,  // the first container is the event capture container
+                    containerName: c.name, isEventCapture: false,
                     content: c.content
                 ))
         }

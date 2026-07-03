@@ -206,10 +206,18 @@ describe("processScene", () => {
     expect(lines.length).toBeGreaterThan(1)
   })
 
-  it("bounds line count by box height / line height", () => {
-    const lineHeight = profileLineHeightPx(NEX_PROFILE, CAPS.height)
-    const oneLineBox = textEl("t", 0, 0, 120, lineHeight, "many words that would wrap onto lots and lots of lines")
-    const {elements, degraded} = processScene([oneLineBox], CAPS, NEX_PROFILE)
+  it("bounds line count by box height ONLY with a calibrated lineHeightPx", () => {
+    // Uncalibrated profile: no host-side height clipping — the firmware clips
+    // in-box (legacy behavior; hardware showed derived line heights clip real
+    // content).
+    const tall = textEl("t", 0, 0, 120, 27, "many words that would wrap onto lots and lots of lines")
+    const uncalibrated = processScene([tall], CAPS, NEX_PROFILE)
+    expect((uncalibrated.elements[0].text ?? "").split("\n").length).toBeGreaterThan(1)
+
+    // Calibrated profile: box height ÷ lineHeightPx bounds the line count.
+    const calibrated = {...NEX_PROFILE, lineHeightPx: 27}
+    expect(profileLineHeightPx(calibrated, CAPS.height)).toBe(27)
+    const {elements, degraded} = processScene([tall], CAPS, calibrated)
     expect((elements[0].text ?? "").split("\n")).toHaveLength(1)
     expect(degraded).toBe(true)
   })
@@ -218,11 +226,11 @@ describe("processScene", () => {
     const el: SceneElementInput = {
       type: "text",
       id: "t",
-      box: {x: 0, y: 0, w: 120, h: profileLineHeightPx(NEX_PROFILE, CAPS.height)},
+      box: {x: 0, y: 0, w: 120, h: 27},
       text: "many words that would wrap onto lots and lots of lines",
       style: {overflow: "ellipsis"},
     }
-    const {elements} = processScene([el], CAPS, NEX_PROFILE)
+    const {elements} = processScene([el], CAPS, {...NEX_PROFILE, lineHeightPx: 27})
     expect(elements[0].text?.endsWith("…")).toBe(true)
   })
 

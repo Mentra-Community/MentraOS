@@ -2224,7 +2224,31 @@ class G2 : SGCManager() {
     // still rect-keyed underneath — the maps pin element↔container so content
     // updates go in place and moves recreate at the SAME container id.
     private val sceneTextByElement = mutableMapOf<String, Int>()
-    private val sceneImageByElement = mutableMapOf<String, Int>()
+
+    // Images map to an ARRAY of containers: firmware refuses image transfers
+    // into containers beyond ~200x100 (hardware-verified 2026-07-03), so bigger
+    // images tile across multiple containers (400x100 → two side-by-side,
+    // 150x150 → two stacked).
+    private val sceneImageByElement = mutableMapOf<String, List<Int>>()
+
+    private data class ImageTile(val dx: Int, val dy: Int, val w: Int, val h: Int)
+
+    /** Tile rects (relative to the element box) with firmware-acceptable sizes. Row-major. */
+    private fun imageTileRects(w: Int, h: Int): List<ImageTile> {
+        val maxW = 200
+        val maxH = 100
+        val cols = (w + maxW - 1) / maxW
+        val rows = (h + maxH - 1) / maxH
+        val out = ArrayList<ImageTile>(cols * rows)
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val dx = c * maxW
+                val dy = r * maxH
+                out.add(ImageTile(dx, dy, minOf(maxW, w - dx), minOf(maxH, h - dy)))
+            }
+        }
+        return out
+    }
 
     // Scene-frame rebuild batching. A frame with several new containers must
     // NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
@@ -2410,10 +2434,15 @@ class G2 : SGCManager() {
         height: Int,
         elementId: String,
         layoutId: String?
-    ): Boolean = applySceneBitmap(base64ImageData, x, y, width, height, elementId)
+    ): Boolean {
+        // applySceneBitmap is suspend (tile encodes + batched rebuilds); legacy
+        // per-element callers fire it on displayScope like every other verb.
+        displayScope.launch { applySceneBitmap(base64ImageData, x, y, width, height, elementId) }
+        return true
+    }
 
     /** Scene bitmap upsert — rebuilds go through the batch flag (see applySceneFrame). */
-    private fun applySceneBitmap(
+    private suspend fun applySceneBitmap(
         base64ImageData: String,
         x: Int,
         y: Int,
@@ -2421,36 +2450,122 @@ class G2 : SGCManager() {
         height: Int,
         elementId: String
     ): Boolean {
-        val existingId = sceneImageByElement[elementId]
-        if (existingId != null) {
-            val idx = imageContainers.indexOfFirst { it.id == existingId }
-            if (idx >= 0) {
-                val c = imageContainers[idx]
-                if (!c.matches(x, y, width, height)) {
-                    // Moved: blacken the old rect in place (no per-container
-                    // delete on G2) and let the normal path place the new rect.
-                    if (c.bmpData.isNotEmpty()) {
+        val tiles = imageTileRects(width, height)
+        if (tiles.size > imageContainerIDPool.size) {
+            Bridge.log(
+                "G2: applySceneBitmap '$elementId' ${width}x$height needs ${tiles.size} tiles — exceeds the ${imageContainerIDPool.size}-container pool, dropping"
+            )
+            return false
+        }
+
+        // Element moved or re-tiled: blacken any containers whose rects no
+        // longer belong to this element's tile set.
+        sceneImageByElement[elementId]?.let { existing ->
+            val wantedRects = tiles.map { listOf(x + it.dx, y + it.dy, it.w, it.h) }.toSet()
+            for (cid in existing) {
+                val idx = imageContainers.indexOfFirst { it.id == cid }
+                if (idx >= 0) {
+                    val c = imageContainers[idx]
+                    val stillWanted = listOf(c.x, c.y, c.width, c.height) in wantedRects
+                    if (!stillWanted && c.bmpData.isNotEmpty()) {
                         c.bmpData = ByteArray(0)
                         c.dirty = true
                         signalDisplayDirty()
                     }
-                    sceneImageByElement.remove(elementId)
                 }
-            } else {
-                sceneImageByElement.remove(elementId)
             }
+        }
+        sceneImageByElement.remove(elementId)
+
+        val cids = mutableListOf<Int>()
+        if (tiles.size == 1) {
+            // Single container — the existing path (decode, aspect-fit, encode).
+            if (!displayBitmap(base64ImageData, x, y, width, height)) return false
+            val idx = imageContainers.indexOfFirst { it.matches(x, y, width, height) }
+            if (idx < 0) return false
+            cids.add(imageContainers[idx].id)
+        } else {
+            // Tiled: render the whole image to grayscale ONCE at the element
+            // size, then slice per-tile rows into their own 4-bit BMPs, one
+            // firmware container per tile.
+            val rawData = Base64.decode(base64ImageData, Base64.DEFAULT) ?: return false
+            val gray = renderG2Grayscale(rawData, width, height) ?: run {
+                Bridge.log("G2: applySceneBitmap - failed to render grayscale")
+                return false
+            }
+            Bridge.log("G2: applySceneBitmap '$elementId' ${width}x$height → ${tiles.size} tiles")
+            for (t in tiles) {
+                val tilePixels = ByteArray(t.w * t.h)
+                for (row in 0 until t.h) {
+                    System.arraycopy(gray, (t.dy + row) * width + t.dx, tilePixels, row * t.w, t.w)
+                }
+                val bmp = build4BitBmp(tilePixels, t.w, t.h) ?: run {
+                    Bridge.log("G2: applySceneBitmap - tile encode failed")
+                    return false
+                }
+                val tx = x + t.dx
+                val ty = y + t.dy
+                val idx = imageContainers.indexOfFirst { it.matches(tx, ty, t.w, t.h) }
+                if (idx >= 0) {
+                    imageContainers[idx].bmpData = bmp
+                    imageContainers[idx].dirty = true
+                    cids.add(imageContainers[idx].id)
+                } else {
+                    val container = addImageContainer(tx, ty, t.w, t.h, bmp)
+                    val j = imageContainers.indexOfFirst { it.id == container.id }
+                    if (j >= 0) imageContainers[j].dirty = true
+                    cids.add(container.id)
+                    requestPageRebuild()
+                }
+            }
+            signalDisplayDirty()
         }
 
-        val ok = displayBitmap(base64ImageData, x, y, width, height)
-        if (ok) {
-            val idx = imageContainers.indexOfFirst { it.matches(x, y, width, height) }
-            if (idx >= 0) {
-                val cid = imageContainers[idx].id
-                sceneImageByElement.entries.removeAll { it.value == cid }
-                sceneImageByElement[elementId] = cid
+        // Container ids may have been LRU-recycled from other elements.
+        val taken = cids.toSet()
+        val keys = sceneImageByElement.keys.toList()
+        for (key in keys) {
+            val remaining = sceneImageByElement[key]?.filter { it !in taken } ?: continue
+            if (remaining.isEmpty()) sceneImageByElement.remove(key) else sceneImageByElement[key] = remaining
+        }
+        sceneImageByElement[elementId] = cids
+        return true
+    }
+
+    /**
+     * Decode an image and render it to raw 8-bit grayscale at target size
+     * (aspect-fit, centered on black) — the front half of [convertToG2Bmp],
+     * exposed for the tiler which encodes per-tile BMPs from one render.
+     */
+    private fun renderG2Grayscale(data: ByteArray, targetWidth: Int, targetHeight: Int): ByteArray? {
+        val srcBitmap = BitmapFactory.decodeByteArray(data, 0, data.size) ?: return null
+        val scale = minOf(targetWidth.toDouble() / srcBitmap.width, targetHeight.toDouble() / srcBitmap.height)
+        val scaledW = maxOf(1, (srcBitmap.width * scale).toInt())
+        val scaledH = maxOf(1, (srcBitmap.height * scale).toInt())
+        val offsetX = (targetWidth - scaledW) / 2
+        val offsetY = (targetHeight - scaledH) / 2
+
+        val destBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(destBitmap)
+        canvas.drawColor(Color.BLACK)
+        canvas.drawBitmap(
+            srcBitmap,
+            Rect(0, 0, srcBitmap.width, srcBitmap.height),
+            Rect(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH),
+            Paint(Paint.FILTER_BITMAP_FLAG)
+        )
+
+        val gray = ByteArray(targetWidth * targetHeight)
+        for (yy in 0 until targetHeight) {
+            for (xx in 0 until targetWidth) {
+                val pixel = destBitmap.getPixel(xx, yy)
+                val v = (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+                gray[yy * targetWidth + xx] = v.toByte()
             }
         }
-        return ok
+        srcBitmap.recycle()
+        destBitmap.recycle()
+        return gray
     }
 
     override fun removeLayoutElement(elementId: String, layoutId: String?) {
@@ -2470,13 +2585,15 @@ class G2 : SGCManager() {
                     signalDisplayDirty()
                 }
             }
-            sceneImageByElement.remove(elementId)?.let { id ->
-                val idx = imageContainers.indexOfFirst { it.id == id }
-                if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
-                    imageContainers[idx].bmpData = ByteArray(0)
-                    imageContainers[idx].dirty = true
-                    signalDisplayDirty()
+            sceneImageByElement.remove(elementId)?.let { ids ->
+                for (id in ids) {
+                    val idx = imageContainers.indexOfFirst { it.id == id }
+                    if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
+                        imageContainers[idx].bmpData = ByteArray(0)
+                        imageContainers[idx].dirty = true
+                    }
                 }
+                signalDisplayDirty()
             }
         }
     }
@@ -2951,10 +3068,30 @@ class G2 : SGCManager() {
     // ---------- Private Display Helpers ----------
 
     private fun createPageWithContainers() {
-        // build the page's text containers from the live tracked list.
-        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size).apply {
-            for (i in textContainers.indices) {
-                val c = textContainers[i]
+        // Dedicated event-capture container: id 0, 1x1, borderless, empty — the
+        // designated event-capture slot per the RE demos ("container 0 is
+        // event-capture"). Touch events keep flowing through it, and no REAL
+        // container carries the flag: marking whichever container happened to
+        // be first painted a visible artifact once pages stopped being one
+        // full-screen box (the stray persistent line).
+        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size + 1).apply {
+            add(
+                EvenHubProto.textContainerProperty(
+                    x = 0,
+                    y = 0,
+                    width = 1,
+                    height = 1,
+                    borderWidth = 0,
+                    borderColor = 0,
+                    borderRadius = 0,
+                    paddingLength = 0,
+                    containerID = 0,
+                    containerName = "evt-0",
+                    isEventCapture = true,
+                    content = ""
+                )
+            )
+            for (c in textContainers) {
                 add(
                     EvenHubProto.textContainerProperty(
                         x = c.x,
@@ -2967,7 +3104,7 @@ class G2 : SGCManager() {
                         paddingLength = c.paddingLength,
                         containerID = c.id,
                         containerName = c.name,
-                        isEventCapture = i == 0,// the first container is the event capture container
+                        isEventCapture = false,
                         content = c.content
                     )
                 )

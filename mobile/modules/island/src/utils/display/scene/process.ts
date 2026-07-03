@@ -45,14 +45,16 @@ function boxShrunk(orig: SceneBox, clamped: SceneBox): boolean {
 }
 
 /**
- * Line height for box-height→line-count math. Optional profile override wins;
- * otherwise derived from the profile's own full-canvas numbers (per Alex: use
- * the data we already have, no new measurement program).
+ * Line height for box-height→line-count math — ONLY when the profile declares
+ * a calibrated `lineHeightPx`. Deriving one from full-canvas numbers proved
+ * wrong on hardware (288/8=36px clipped the G2 nav instruction to one line;
+ * the real container line height is smaller). Without calibration we return
+ * null and the wrap step skips host-side height clipping entirely — text wraps
+ * to the box WIDTH and the firmware clips vertically in-box, which is exactly
+ * the legacy behavior.
  */
-export function profileLineHeightPx(profile: DisplayProfile, canvasHeight: number): number {
-  if (profile.lineHeightPx) return profile.lineHeightPx
-  const h = profile.displayHeightPx ?? canvasHeight
-  return Math.max(1, Math.floor(h / Math.max(1, profile.maxLines)))
+export function profileLineHeightPx(profile: DisplayProfile, _canvasHeight: number): number | null {
+  return profile.lineHeightPx ?? null
 }
 
 /**
@@ -159,8 +161,10 @@ export function processScene(
 
     // Text: wrap on the phone into the (clamped) box. The box then carries
     // pre-wrapped text; firmware in-box wrap is a fallback, not the mechanism.
+    // Height clipping only applies with a CALIBRATED line height — otherwise
+    // the firmware clips vertically in-box (legacy behavior).
     const style: SceneTextStyle = el.style ?? {}
-    const maxLines = Math.max(1, Math.floor(clamped.h / lineHeight))
+    const maxLines = lineHeight ? Math.max(1, Math.floor(clamped.h / lineHeight)) : profile.maxLines
     const result = wrapper.wrap(el.text ?? "", {
       maxWidthPx: clamped.w,
       maxLines,
