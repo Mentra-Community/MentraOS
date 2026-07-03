@@ -25,7 +25,9 @@ export class DisplayManager {
     // so a 28px box always overflowed (suspected trigger of the firmware's
     // scroll-indicator tick). 40px fits one line with headroom.
     stats: {x: 12, y: 9, w: 200, h: 40},
-    maneuver: {x: 54, y: 115, w: 270, h: 64},
+    // Two full 40px G2 lines (lineHeightPx calibration clips to floor(h/40)
+    // lines — 64px was silently clipping the street name to one line).
+    maneuver: {x: 54, y: 115, w: 270, h: 84},
     message: {x: 12, y: 54, w: 310, h: 156},
   }
 
