@@ -97,7 +97,7 @@ class SceneRenderer {
         return [
           {
             type: "text",
-            id: "~wall",
+            id: "sugar:wall",
             box: {x: 0, y: 0, w: W, h: H},
             text: String(layout.text ?? ""),
             ...(breakMode ? {style: {breakMode}} : {}),
@@ -108,14 +108,14 @@ class SceneRenderer {
         return [
           {
             type: "text",
-            id: "~left",
+            id: "sugar:left",
             box: {x: 0, y: 0, w: half, h: H},
             text: String(layout.topText ?? ""),
             ...(breakMode ? {style: {breakMode}} : {}),
           },
           {
             type: "text",
-            id: "~right",
+            id: "sugar:right",
             box: {x: half, y: 0, w: W - half, h: H},
             text: String(layout.bottomText ?? ""),
             ...(breakMode ? {style: {breakMode}} : {}),
@@ -125,10 +125,10 @@ class SceneRenderer {
       case "reference_card": {
         const titleH = Math.max(24, Math.floor(H / 5))
         return [
-          {type: "text", id: "~title", box: {x: 0, y: 0, w: W, h: titleH}, text: String(layout.title ?? "")},
+          {type: "text", id: "sugar:title", box: {x: 0, y: 0, w: W, h: titleH}, text: String(layout.title ?? "")},
           {
             type: "text",
-            id: "~body",
+            id: "sugar:body",
             box: {x: 0, y: titleH, w: W, h: H - titleH},
             text: String(layout.text ?? ""),
             ...(breakMode ? {style: {breakMode}} : {}),
@@ -141,7 +141,7 @@ class SceneRenderer {
         return [
           {
             type: "image",
-            id: "~bmp",
+            id: "sugar:bmp",
             box: {x: (layout.x as number | undefined) ?? 0, y: (layout.y as number | undefined) ?? 0, w, h},
             data: String(layout.data ?? ""),
           },
@@ -153,7 +153,7 @@ class SceneRenderer {
         return [
           {
             type: "text",
-            id: "~pos",
+            id: "sugar:pos",
             box: {
               x: (layout.x as number | undefined) ?? 0,
               y: (layout.y as number | undefined) ?? 0,

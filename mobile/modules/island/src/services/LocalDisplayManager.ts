@@ -487,13 +487,7 @@ class LocalDisplayManager {
       return
     }
     // Re-send the core's saved display.
-    const saved = this.coreAppDisplay
-    const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
-    this.sendNow(saved.packageName, {
-      view: "main",
-      ...(saved.scene ? {scene: saved.scene} : {layout: saved.processedEvent.layout as DisplayPayload["layout"]}),
-      durationMs: remaining,
-    })
+    this.restoreDisplay(this.coreAppDisplay)
   }
 
   private sendClear(): void {
@@ -560,9 +554,33 @@ class LocalDisplayManager {
    */
   private restoreDisplay(saved: ActiveDisplay): void {
     const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
+
+    // Scene restores must REPLAY (create-based, epoch-bumped): re-emitting the
+    // scene through the normal diff would come back all-"unchanged" and the
+    // device would skip every element (spec §4 — replay is always create-based).
+    if (saved.scene) {
+      const expiresAt = remaining !== undefined ? this.now() + remaining : null
+      if (sceneRenderer.replayApp(saved.packageName, "main")) {
+        this.currentDisplay = {packageName: saved.packageName, processedEvent: {}, scene: saved.scene, expiresAt}
+        this.clearExpiryTimer()
+        if (expiresAt !== null) {
+          const delay = Math.max(0, expiresAt - this.now())
+          this.expiryTimerId = BgTimer.setTimeout(() => {
+            this.expiryTimerId = null
+            this.handleExpiry(saved.packageName)
+          }, delay)
+        }
+      } else {
+        // Retained state gone (app stopped since) — re-render the saved
+        // elements as a fresh scene instead.
+        this.sendNow(saved.packageName, {view: "main", scene: saved.scene, durationMs: remaining})
+      }
+      return
+    }
+
     this.sendNow(saved.packageName, {
       view: "main",
-      ...(saved.scene ? {scene: saved.scene} : {layout: saved.processedEvent.layout as DisplayPayload["layout"]}),
+      layout: saved.processedEvent.layout as DisplayPayload["layout"],
       durationMs: remaining,
     })
   }
