@@ -92,14 +92,7 @@ export interface ClearView {
   layoutType: "clear_view"
 }
 
-export type Layout =
-  | TextWall
-  | DoubleTextWall
-  | ReferenceCard
-  | DashboardCard
-  | BitmapView
-  | PositionedText
-  | ClearView
+export type Layout = TextWall | DoubleTextWall | ReferenceCard | DashboardCard | BitmapView | PositionedText | ClearView
 
 // ============================================================================
 // render() — the scene API
@@ -252,10 +245,7 @@ export class DisplayManager {
    */
   showTextAt(text: string, options: TextAtOptions = {}): void {
     const {x, y, width, height, borderWidth, borderRadius, ...display} = options
-    this.send(
-      {layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius},
-      display,
-    )
+    this.send({layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius}, display)
   }
 
   /** Clear the specified view. */
@@ -296,7 +286,7 @@ export class DisplayManager {
         elements,
         durationMs: options.durationMs,
       })
-      .catch(err => ({
+      .catch((err) => ({
         status: "blocked" as const,
         reason:
           typeof err === "object" && err !== null && "message" in err
@@ -307,5 +297,9 @@ export class DisplayManager {
 }
 
 function supportsBreakMode(layout: Layout): layout is TextWall | DoubleTextWall | ReferenceCard {
-  return layout.layoutType === "text_wall" || layout.layoutType === "double_text_wall" || layout.layoutType === "reference_card"
+  return (
+    layout.layoutType === "text_wall" ||
+    layout.layoutType === "double_text_wall" ||
+    layout.layoutType === "reference_card"
+  )
 }

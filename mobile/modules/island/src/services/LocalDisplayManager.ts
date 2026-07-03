@@ -582,7 +582,7 @@ class LocalDisplayManager {
     if (!hooks.subscribeGlassesStatus) return
 
     this.glassesWasConnected = hooks.glassesStatus?.get()?.connected === true
-    this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus(changed => {
+    this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus((changed) => {
       if (changed.connected === undefined) return
       const connected = changed.connected === true
       const reconnected = connected && !this.glassesWasConnected

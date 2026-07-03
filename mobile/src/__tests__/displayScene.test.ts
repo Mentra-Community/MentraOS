@@ -122,8 +122,8 @@ describe("diffScene", () => {
       diffable({type: "text", box: {...box, y: 60}, text: "b"}),
     ]
     const {elements, removed} = diffScene(prev, next, synth)
-    expect(elements.map(e => e.id)).toEqual(["~1", "~2"])
-    expect(elements.map(e => e.change)).toEqual(["moved", "moved"])
+    expect(elements.map((e) => e.id)).toEqual(["~1", "~2"])
+    expect(elements.map((e) => e.change)).toEqual(["moved", "moved"])
     expect(removed).toEqual([])
   })
 
@@ -326,7 +326,7 @@ describe("SceneStore", () => {
     const frame = store.buildReplayFrame("app", "main")
     expect(frame?.replay).toBe(true)
     expect(frame?.sceneEpoch).toBe(epochBefore + 1)
-    expect(frame?.elements.map(e => e.change)).toEqual(["created", "created"])
+    expect(frame?.elements.map((e) => e.change)).toEqual(["created", "created"])
     expect(frame?.removed).toEqual([])
   })
 

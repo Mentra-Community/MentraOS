@@ -67,8 +67,7 @@ class SceneRenderer {
     if (!display) return null
     return {
       width: display.width ?? display.resolution?.width ?? displayProcessor.getProfile().displayWidthPx,
-      height:
-        display.height ?? display.resolution?.height ?? displayProcessor.getProfile().displayHeightPx ?? 288,
+      height: display.height ?? display.resolution?.height ?? displayProcessor.getProfile().displayHeightPx ?? 288,
       canPosition: display.canPosition === true,
       maxTextElements: display.maxTextElements ?? 6,
       maxImageElements: display.maxImageElements ?? 0,
@@ -88,10 +87,7 @@ class SceneRenderer {
    * Returns null for layouts that must stay on the legacy path (dashboard_card,
    * clear_view, unknown types). Sugar semantics: full-canvas / split boxes.
    */
-  public convertLegacyLayout(
-    layout: LegacyLayout,
-    caps: SceneDisplayCapabilities,
-  ): SceneElementInput[] | null {
+  public convertLegacyLayout(layout: LegacyLayout, caps: SceneDisplayCapabilities): SceneElementInput[] | null {
     const W = caps.width
     const H = caps.height
     const breakMode = layout.breakMode as SceneBreakMode | undefined
@@ -233,7 +229,7 @@ class SceneRenderer {
     try {
       const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
       if (sendDisplayEvent) {
-        void Promise.resolve(sendDisplayEvent({view: frame.view, scene: frame})).catch(err => {
+        void Promise.resolve(sendDisplayEvent({view: frame.view, scene: frame})).catch((err) => {
           console.error(`${LOG_TAG}: native scene send failed:`, err)
         })
       }

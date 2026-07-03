@@ -124,6 +124,6 @@ export function diffScene(
     }
   })
 
-  const removed = [...prevUnmatched].map(j => prev[j].id)
+  const removed = [...prevUnmatched].map((j) => prev[j].id)
   return {elements, removed}
 }

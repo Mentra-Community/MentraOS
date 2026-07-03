@@ -67,8 +67,8 @@ export function degradeScene(input: readonly SceneElementInput[]): DegradedScene
   // overflow per the device profile.
   const ordered = [...texts].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x)
   const text = ordered
-    .map(t => t.text ?? "")
-    .filter(t => t.length > 0)
+    .map((t) => t.text ?? "")
+    .filter((t) => t.length > 0)
     .join("\n\n")
   return {layout: {layoutType: "text_wall", text}, degraded, dropped}
 }
