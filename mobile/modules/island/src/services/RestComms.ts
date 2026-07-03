@@ -1,7 +1,6 @@
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletInterface} from "../types"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useConnectionStore} from "../stores/connection"
 import {WebSocketStatus} from "../stores/connection"
@@ -198,21 +197,6 @@ class RestComms {
     return res.map((response) => response.data)
   }
 
-  public checkAppHealthStatus(packageName: string): AsyncResult<boolean, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: "/api/app-uptime/app-pkg-health-check",
-      data: {packageName},
-    }
-
-    interface Response {
-      success: boolean
-    }
-
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map((response) => response.success)
-  }
-
   public retry<T>(fn: () => AsyncResult<T, Error>, attempts: number, delayMs: number = 0): AsyncResult<T, Error> {
     return Res.try_async(async () => {
       let lastError: Error | null = null
@@ -229,83 +213,6 @@ class RestComms {
       }
       throw lastError
     })
-  }
-
-  public getApplets(): AsyncResult<AppletInterface[], Error> {
-    interface Response {
-      success: boolean
-      data: AppletInterface[]
-    }
-    const config: RequestConfig = {
-      method: "GET",
-      endpoint: "/api/client/apps",
-    }
-    let res = this.authenticatedRequest<Response>(config)
-    let data = res.map((response) => response.data)
-    return data
-  }
-
-  public startApp(packageName: string): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: `/apps/${packageName}/start`,
-    }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
-
-  public stopApp(packageName: string): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: `/apps/${packageName}/stop`,
-    }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
-
-  public uninstallApp(packageName: string): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: `/api/apps/uninstall/${packageName}`,
-    }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map(() => undefined)
-  }
-
-  // App Settings
-  public getAppSettings(appName: string): AsyncResult<any, Error> {
-    const config: RequestConfig = {
-      method: "GET",
-      endpoint: `/appsettings/${appName}`,
-    }
-    const res = this.authenticatedRequest<any>(config)
-    return res
-  }
-
-  public updateAppSetting(appName: string, update: {key: string; value: any}): AsyncResult<void, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: `/appsettings/${appName}`,
-      data: update,
-    }
-    interface Response {
-      success: boolean
-      data: any
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map((response) => response.data)
   }
 
   public exchangeToken(token: string): AsyncResult<string, Error> {
@@ -330,35 +237,6 @@ class RestComms {
       this.setCoreToken(coreToken)
       return Res.ok(coreToken)
     })
-  }
-
-  public generateWebviewToken(
-    packageName: string,
-    endpoint: string = "generate-webview-token",
-  ): AsyncResult<string, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: `/api/auth/${endpoint}`,
-      data: {packageName},
-    }
-    interface Response {
-      token: string
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map((response) => response.token)
-  }
-
-  public hashWithApiKey(stringToHash: string, packageName: string): AsyncResult<string, Error> {
-    const config: RequestConfig = {
-      method: "POST",
-      endpoint: "/api/auth/hash-with-api-key",
-      data: {stringToHash, packageName},
-    }
-    interface Response {
-      hash: string
-    }
-    const res = this.authenticatedRequest<Response>(config)
-    return res.map((response) => response.hash)
   }
 
   // Account Management

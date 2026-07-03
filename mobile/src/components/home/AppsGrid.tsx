@@ -621,14 +621,9 @@ export function AppsGrid({
         await setForeground(app.packageName)
       } else if (app.offlineRoute) {
         push(app.offlineRoute, {transition: "fade"})
-      } else if (app.webviewUrl && app.healthy) {
-        push("/applet/webview", {
-          webviewURL: app.webviewUrl,
-          appName: app.name,
-          packageName: app.packageName,
-          transition: "fade",
-        })
       }
+      // (Cloud V1 apps opened /applet/webview here; removed with Cloud V1 app
+      // end-of-life. Installed apps are local/offline-hosted.)
 
       onOpenApp?.(app)
     },

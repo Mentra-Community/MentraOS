@@ -368,13 +368,15 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
   },
 
-  // Universal app link routes (for apps.mentra.glass)
+  // Universal app link routes (for apps.mentra.glass). The /applet/webview
+  // target for Cloud V1 apps is gone (Cloud V1 app end-of-life); app links
+  // land on the installed app's info screen instead.
   {
     pattern: "/apps/:packageName",
     handler: async (url: string, params: Record<string, string>) => {
       const nav = useNavigationStore.getState()
       const {packageName} = params
-      nav.push(`/applet/webview?packageName=${packageName}`)
+      nav.push(`/applet/settings?packageName=${packageName}`)
     },
     requiresAuth: true,
   },
