@@ -119,6 +119,22 @@ export default function DisplayPage() {
   // from a bad invoke() lands in lastError and surfaces in the UI.
   const {invoke, lastError} = useTester("display")
   const [text, setText] = useState("Hello from MentraJS!")
+  // render() scene press count — each press re-renders the same scene with
+  // updated content, exercising in-place element updates (stable ids).
+  const [sceneCount, setSceneCount] = useState(0)
+
+  const pushScene = () => {
+    const next = sceneCount + 1
+    setSceneCount(next)
+    invoke("render", [
+      [
+        {type: "text", id: "title", box: {x: 12, y: 9, w: 300, h: 40}, text: `${text} #${next}`},
+        {type: "text", id: "footer", box: {x: 12, y: 240, w: 300, h: 40}, text: `render() frame ${next}`},
+        {type: "image", id: "badge", box: {x: 440, y: 14, w: 100, h: 100}, data: makeBitmap(100, 100, `${next}`)},
+        {type: "rect", id: "frame", box: {x: 4, y: 4, w: 568, h: 280}, style: {border: 2, radius: 6}},
+      ],
+    ]).catch(() => {})
+  }
   // Per-corner press counts. 0 = not yet pressed (first press shows the code).
   const [counts, setCounts] = useState<Record<CornerCode, number>>({
     TL: 0,
@@ -152,15 +168,32 @@ export default function DisplayPage() {
       <MiniappHeader title="session.display" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Render text on the glasses display. Tap a button to invoke the corresponding `session.display.*` method in
-          background.
+          `render(elements)` — the scene API. Each call describes the whole frame; the host diffs it against the
+          previous one, so elements with a stable `id` update in place and elements you stop sending are removed. Repeat
+          presses update the scene's text and badge without rebuilding the frame; `render([])` clears.
         </p>
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
+          <Button onClick={pushScene}>
+            render(scene) — {sceneCount === 0 ? "text + image + rect" : `frame ${sceneCount}`}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              setSceneCount(0)
+              invoke("render", [[]]).catch(() => {})
+            }}>
+            render([]) — clear
+          </Button>
+        </div>
+
+        <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
+          Legacy one-shot layouts. The host converts these to single-element scenes internally; they remain for
+          compatibility.
+        </p>
+        <div className="flex flex-col gap-2">
           <Button onClick={() => invoke("showTextWall", [text]).catch(() => {})}>showTextWall(text)</Button>
-          <Button onClick={() => invoke("showReferenceCard", ["Title", text]).catch(() => {})}>showReferenceCard(title, text)</Button>
-          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text]).catch(() => {})}>showDoubleTextWall(top, bottom)</Button>
         </div>
 
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
@@ -182,7 +215,10 @@ export default function DisplayPage() {
           <Button
             onClick={() => {
               let next = incrementCount("CE")
-              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}]).catch(() => {})
+              invoke("showBitmapView", [
+                makeBitmap(100, 100, `CE ${next}`),
+                {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100},
+              ]).catch(() => {})
             }}>
             Center
           </Button>

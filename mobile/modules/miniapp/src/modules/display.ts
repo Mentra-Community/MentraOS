@@ -20,14 +20,13 @@ import {MiniappSession} from "../session"
 
 export type ViewType = "main" | "dashboard"
 
-export type LayoutType =
-  | "text_wall"
-  | "double_text_wall"
-  | "reference_card"
-  | "dashboard_card"
-  | "bitmap_view"
-  | "positioned_text"
-  | "clear_view"
+/**
+ * Layout types this SDK still EMITS. Hosts accept a wider historical set
+ * (double_text_wall, reference_card, dashboard_card, positioned_text) from
+ * older bundles; those methods were removed from the SDK surface once nothing
+ * first-party or known-external called them.
+ */
+export type LayoutType = "text_wall" | "bitmap_view" | "clear_view"
 
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
 
@@ -35,26 +34,6 @@ export interface TextWall {
   layoutType: "text_wall"
   text: string
   breakMode?: DisplayBreakMode
-}
-
-export interface DoubleTextWall {
-  layoutType: "double_text_wall"
-  topText: string
-  bottomText: string
-  breakMode?: DisplayBreakMode
-}
-
-export interface ReferenceCard {
-  layoutType: "reference_card"
-  title: string
-  text: string
-  breakMode?: DisplayBreakMode
-}
-
-export interface DashboardCard {
-  layoutType: "dashboard_card"
-  leftText: string
-  rightText: string
 }
 
 export interface BitmapView {
@@ -71,28 +50,11 @@ export interface BitmapView {
   height?: number
 }
 
-export interface PositionedText {
-  layoutType: "positioned_text"
-  text: string
-  /** Top-left x of the text container on the 576×288 canvas. Omit for default placement. */
-  x?: number
-  /** Top-left y of the text container on the 576×288 canvas. */
-  y?: number
-  /** Container width. */
-  width?: number
-  /** Container height. */
-  height?: number
-  /** Border stroke width (px). 0 = no border. */
-  borderWidth?: number
-  /** Border corner radius (px). */
-  borderRadius?: number
-}
-
 export interface ClearView {
   layoutType: "clear_view"
 }
 
-export type Layout = TextWall | DoubleTextWall | ReferenceCard | DashboardCard | BitmapView | PositionedText | ClearView
+export type Layout = TextWall | BitmapView | ClearView
 
 // ============================================================================
 // render() — the scene API
@@ -170,21 +132,6 @@ export interface BitmapOptions extends DisplayOptions {
   height?: number
 }
 
-export interface TextAtOptions extends DisplayOptions {
-  /** Top-left x of the text container on the 576×288 canvas. */
-  x?: number
-  /** Top-left y of the text container on the 576×288 canvas. */
-  y?: number
-  /** Container width. */
-  width?: number
-  /** Container height. */
-  height?: number
-  /** Border stroke width (px). 0 = no border. */
-  borderWidth?: number
-  /** Border corner radius (px). */
-  borderRadius?: number
-}
-
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
@@ -204,21 +151,6 @@ export class DisplayManager {
     this.send({layoutType: "text_wall", text}, options)
   }
 
-  /** Two stacked text rows — top and bottom. */
-  showDoubleTextWall(topText: string, bottomText: string, options: DisplayOptions = {}): void {
-    this.send({layoutType: "double_text_wall", topText, bottomText}, options)
-  }
-
-  /** Reference card — title plus body text. */
-  showReferenceCard(title: string, text: string, options: DisplayOptions = {}): void {
-    this.send({layoutType: "reference_card", title, text}, options)
-  }
-
-  /** Dashboard card — two-column layout for sections that appear in the OS dashboard. */
-  showDashboardCard(leftText: string, rightText: string): void {
-    this.send({layoutType: "dashboard_card", leftText, rightText}, {view: "dashboard"})
-  }
-
   /**
    * Show a bitmap. Phone SGC handles conversion to glasses-native format.
    *
@@ -232,20 +164,6 @@ export class DisplayManager {
   showBitmapView(data: string, options: BitmapOptions = {}): void {
     const {x, y, width, height, ...display} = options
     this.send({layoutType: "bitmap_view", data, x, y, width, height}, display)
-  }
-
-  /**
-   * Show text inside a positioned container (G2 only). Unlike `showTextWall`,
-   * which fills the whole view, this places the text at an arbitrary x/y with an
-   * optional rounded border — e.g. a label next to a bitmap.
-   *
-   * @example
-   * // Label pinned to the bottom-left of the 576×288 canvas, with a rounded border
-   * display.showTextAt("TEST", {x: 0, y: 201, width: 120, height: 87, borderWidth: 2, borderRadius: 6})
-   */
-  showTextAt(text: string, options: TextAtOptions = {}): void {
-    const {x, y, width, height, borderWidth, borderRadius, ...display} = options
-    this.send({layoutType: "positioned_text", text, x, y, width, height, borderWidth, borderRadius}, display)
   }
 
   /** Clear the specified view. */
@@ -296,10 +214,6 @@ export class DisplayManager {
   }
 }
 
-function supportsBreakMode(layout: Layout): layout is TextWall | DoubleTextWall | ReferenceCard {
-  return (
-    layout.layoutType === "text_wall" ||
-    layout.layoutType === "double_text_wall" ||
-    layout.layoutType === "reference_card"
-  )
+function supportsBreakMode(layout: Layout): layout is TextWall {
+  return layout.layoutType === "text_wall"
 }

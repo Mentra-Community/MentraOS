@@ -104,9 +104,7 @@ export class DisplayManager {
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
-    this.enqueue("wall", () =>
-      this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined),
-    )
+    this.enqueue("wall", () => this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined))
   }
 
   showTextTest(): void {
@@ -179,7 +177,6 @@ export class DisplayManager {
     this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
   }
 
-
   // ── Two stacked text containers ──────────────────────────────────────
   // The G2's single full-screen (576×288) text wall only fits ~5 lines. To get
   // more usable vertical text we split into two stacked positioned-text
@@ -190,10 +187,18 @@ export class DisplayManager {
   // Full 500×220 Mentra canvas — used by the single-container states
   // (welcome / rerouting / arrived / off-route), which don't use the 4-slot split.
   private static readonly MANEUVER_REGION = {x: 0, y: 0, width: 500, height: 220}
-  // Kept only so showTripStats()/showManeuver() signatures still resolve; the
-  // single-container HUD routes everything through showManeuver now. Same rect
-  // as MANEUVER_REGION so a stray stats push can't land in a different spot.
-  private static readonly STATS_REGION = {x: 0, y: 0, width: 500, height: 220}
+
+  /**
+   * Single full-canvas message element shared by the single-container states
+   * (maneuver text, loading messages, trip stats). One stable id + one
+   * geometry means every push is a content-only update — the same last-wins
+   * behavior as the positioned_text sends it replaces. Replaces the whole
+   * frame; these states never coexist with the 4-slot HUD.
+   */
+  private renderRegionText(text: string): void {
+    const r = DisplayManager.MANEUVER_REGION
+    void this.session.display.render([{type: "text", id: "msg", box: {x: r.x, y: r.y, w: r.width, h: r.height}, text}])
+  }
 
   /**
    * Maneuver / direction text in the TOP region of the canvas (its own G2 text
@@ -201,9 +206,7 @@ export class DisplayManager {
    */
   showManeuver(text: string): void {
     // Queued under "maneuver" — drains after "minimap", before "stats".
-    this.enqueue("maneuver", () =>
-      this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}),
-    )
+    this.enqueue("maneuver", () => this.renderRegionText(text))
   }
 
   /**
@@ -215,12 +218,12 @@ export class DisplayManager {
    * clear() has just purged the queue anyway.
    */
   showLoadingMessage(text: string): void {
-    this.safeCall(() => this.session.display.showTextAt(text, {...DisplayManager.MANEUVER_REGION}))
+    this.safeCall(() => this.renderRegionText(text))
   }
 
   /** Blank the top-left loading message (overwrite its region with empty text). */
   clearLoadingMessage(): void {
-    this.safeCall(() => this.session.display.showTextAt("", {...DisplayManager.MANEUVER_REGION}))
+    this.safeCall(() => this.renderRegionText(""))
   }
 
   /**
@@ -229,9 +232,9 @@ export class DisplayManager {
    */
   showTripStats(text: string): void {
     // Queued under "stats" — drains last, after "minimap" and "maneuver".
-    this.enqueue("stats", () =>
-      this.session.display.showTextAt(text, {...DisplayManager.STATS_REGION}),
-    )
+    // STATS_REGION === MANEUVER_REGION (single-container HUD), so this rides
+    // the same shared message element.
+    this.enqueue("stats", () => this.renderRegionText(text))
   }
 
   /**

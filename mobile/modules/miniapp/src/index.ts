@@ -59,13 +59,9 @@ export type {Transport, TransportDisconnectHandler, TransportMessageHandler} fro
 export type {
   BitmapView,
   ClearView,
-  DashboardCard,
   DisplayOptions,
-  DoubleTextWall,
   Layout,
   LayoutType,
-  PositionedText,
-  ReferenceCard,
   RenderBox,
   RenderElement,
   RenderOptions,
