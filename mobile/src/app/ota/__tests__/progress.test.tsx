@@ -34,10 +34,9 @@ jest.mock("@/components/brands/MentraLogoStandalone", () => ({
   MentraLogoStandalone: () => null,
 }))
 
-jest.mock("@/utils/GlobalEventEmitter", () => {
-  const {EventEmitter} = require("events")
-  return {__esModule: true, default: new EventEmitter()}
-})
+// NOTE: @/utils/GlobalEventEmitter is intentionally NOT re-mocked here — the shim
+// resolves to the shared island emitter instance, which is the one the island
+// OtaInstallCoordinator listens on for ota_start_ack / mtk_update_complete.
 
 jest.mock("@/components/ignite", () => {
   const {View, Text: RNText, TouchableOpacity} = require("react-native")

@@ -1,6 +1,4 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
-
-import {deriveDisplayState, type DisplayState} from "@/app/ota/deriveOtaDisplayState"
+import {deriveDisplayState, type DisplayState, type OtaProgress, type OtaStatus} from "@mentra/island"
 
 type DeriveArgs = Parameters<typeof deriveDisplayState>[0]
 

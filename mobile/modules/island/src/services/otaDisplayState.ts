@@ -1,11 +1,12 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 
 export type DisplayState = "starting" | "updating" | "complete" | "failed" | "disconnected" | "restarting"
 
 /**
  * Pure derivation of the OTA progress UI state from the glasses data in the
  * Zustand store plus a couple of genuinely-local inputs. See
- * mobile/src/app/ota/progress.tsx for the component that consumes this.
+ * OtaInstallCoordinator.ts for the state machine that consumes this (the host
+ * progress screen renders its snapshot).
  *
  * Priority-ordered rules (first match wins):
  *   1. errorMsg !== ""                                          -> "failed"

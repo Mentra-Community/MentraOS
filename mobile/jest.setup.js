@@ -267,6 +267,13 @@ jest.mock("@mentra/island", () => {
   const realGallerySyncClock = jest.requireActual("./modules/island/src/services/gallerySyncClock")
   const realAsgOtaVersionUrl = jest.requireActual("./modules/island/src/services/asgOtaVersionUrl")
   const realOtaUpdateCheck = jest.requireActual("./modules/island/src/services/OtaUpdateCheckService")
+  // OTA install policy constants + display-state derivation + the install state
+  // machine (WP 8B) — real implementations so the host shim
+  // (@/app/ota/otaProgressTimeouts), the OTA screens and their tests exercise the
+  // moved behavior where it now lives.
+  const realOtaInstallPolicy = jest.requireActual("./modules/island/src/services/otaInstallPolicy")
+  const realOtaDisplayState = jest.requireActual("./modules/island/src/services/otaDisplayState")
+  const realOtaInstallCoordinator = jest.requireActual("./modules/island/src/services/OtaInstallCoordinator")
   const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
@@ -331,6 +338,10 @@ jest.mock("@mentra/island", () => {
     // OTA manifest-URL resolution (real, pure) — consumed by the host OTA screens via
     // the @/services/asg/asgOtaVersionUrl shim.
     getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
+    // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
+    // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
+    ...realOtaInstallPolicy,
+    deriveDisplayState: realOtaDisplayState.deriveDisplayState,
     fetchVersionInfo: realOtaUpdateCheck.fetchVersionInfo,
     checkVersionUpdateAvailable: realOtaUpdateCheck.checkVersionUpdateAvailable,
     getLatestVersionInfo: realOtaUpdateCheck.getLatestVersionInfo,
@@ -581,9 +592,18 @@ jest.mock("@mentra/island", () => {
         // Thin passthroughs — delegate to the shared bluetoothSdkMock so btsdk-call
         // assertions (e.g. ota/progress.test) keep working.
         install: jest.fn((...a) => bluetoothSdkMock.startOtaUpdate(...a)),
-        queryStatus: jest.fn((...a) => bluetoothSdkMock.sendOtaQueryStatus(...a)),
         ping: jest.fn((...a) => bluetoothSdkMock.ping(...a)),
         retry: jest.fn((...a) => bluetoothSdkMock.retryOtaVersionCheck(...a)),
+        // The REAL install state machine (OtaInstallCoordinator) so the progress
+        // screen tests exercise the moved watchdog/retry/reconnect behavior.
+        installSession: {
+          attach: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.attach()),
+          detach: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.detach()),
+          retry: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.retry()),
+          finish: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.finish()),
+          snapshot: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.snapshot()),
+          onSnapshot: jest.fn((cb) => realOtaInstallCoordinator.otaInstallCoordinator.onSnapshot(cb)),
+        },
       },
       gallery: {
         status: jest.fn(() => ({})),

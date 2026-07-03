@@ -4,14 +4,15 @@
  * exposes the snapshot + change subscriptions the host renders its update prompt and
  * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
  *
- * Availability checks live in toolkit. Install orchestration and UI retry
- * decisions still stay in the host progress screen until that behavior can move
- * without changing the OTA flow.
+ * Availability checks live in toolkit. Install orchestration lives in island too:
+ * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
+ * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
+import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {getAsgOtaVersionUrl} from "../services/asgOtaVersionUrl"
+import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
 import {
   checkCurrentGlassesForUpdate,
   type OtaCheckCurrentGlassesOptions,
@@ -37,7 +38,15 @@ function projectSnapshot() {
 }
 
 export type OtaSnapshot = ReturnType<typeof projectSnapshot>
-export type {OtaProgress, OtaStatus, OtaUpdateInfo, OtaCheckCurrentGlassesOptions, OtaCheckCurrentGlassesResult}
+export type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStatus,
+  OtaUpdateInfo,
+  OtaInstallSnapshot,
+  OtaCheckCurrentGlassesOptions,
+  OtaCheckCurrentGlassesResult,
+}
 
 export const ota = {
   // --- actions ---
@@ -55,9 +64,10 @@ export const ota = {
   // versionName/updates/totalSize. Keep that behavior unchanged until the whole rich
   // availability check moves into island.
   // retry: () => BluetoothSdk.checkForOtaUpdate(),
-  /** Ask glasses for their active OTA session/status after reconnect or remount. */
-  queryStatus: () => BluetoothSdk.sendOtaQueryStatus(),
-  /** Keep glasses awake while an OTA session is actively progressing. */
+  /**
+   * Keep glasses awake while an OTA session is actively progressing.
+   * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
+   */
   ping: () => BluetoothSdk.ping(),
   /** Resolve and compare the current glasses against the OTA manifest, then update the OTA snapshot. */
   checkForUpdates: (options?: OtaCheckCurrentGlassesOptions) => checkCurrentGlassesForUpdate(options),
@@ -73,6 +83,7 @@ export const ota = {
    * Replace the pending update sequence after an in-flow firmware revalidation.
    * Kept as a named OTA policy operation so host screens do not mutate the raw
    * glasses store.
+   * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
    */
   replacePendingUpdateSequence: (updates: OtaUpdateInfo["updates"]): OtaUpdateInfo | null => {
     const store = useGlassesStore.getState()
@@ -86,13 +97,37 @@ export const ota = {
    * Clear stale build metadata before returning to the update-check screen.
    * This forces the next version_info event through both the native observable
    * store and the island projection after an APK reboot.
+   * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
    */
   clearBuildNumberForNextCheck: () => {
     BluetoothSdk.updateGlasses({buildNumber: ""})
     useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
   },
-  /** Mark MTK as already applied during this app session until the glasses reboot/disconnect. */
+  /**
+   * Mark MTK as already applied during this app session until the glasses reboot/disconnect.
+   * @deprecated Legacy progress route (build < 37) only — removed with WP 8D.
+   */
   markMtkUpdatedThisSession: (updated: boolean) => useGlassesStore.getState().setMtkUpdatedThisSession(updated),
+
+  /**
+   * The OTA install state machine (unified `ota_status` sessions, build >= 37).
+   * The host progress screen attaches on mount, detaches on unmount, and renders
+   * the snapshot; every watchdog/retry/reconnect rule lives in the coordinator.
+   */
+  installSession: {
+    /** Bind the machine to the mounted progress screen. Idempotent per attach/detach cycle. */
+    attach: () => otaInstallCoordinator.attach(),
+    /** Unbind on unmount: clears all timers/listeners and resets session state. */
+    detach: () => otaInstallCoordinator.detach(),
+    /** Retry after a failure: clear state and re-send ota_start (if connected). */
+    retry: () => otaInstallCoordinator.retry(),
+    /** Terminal cleanup for Continue/Done (navigation stays in the screen). */
+    finish: () => otaInstallCoordinator.finish(),
+    /** Current install read model (displayState/errorMsg/lockout + glasses OTA data). */
+    snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),
+    /** Subscribe to install snapshot changes (deduped on projected JSON). Returns an unsubscribe. */
+    onSnapshot: (cb: (snapshot: OtaInstallSnapshot) => void): (() => void) => otaInstallCoordinator.onSnapshot(cb),
+  },
 
   /** Current available-update info (versionName/updates/totalSize), or null. */
   updateAvailable: (): OtaUpdateInfo | null => useGlassesStore.getState().otaUpdateAvailable,

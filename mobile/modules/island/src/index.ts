@@ -70,6 +70,35 @@ export {
   type OtaCheckCurrentGlassesResult,
   type OtaCheckCurrentGlassesOptions,
 } from "./services/OtaUpdateCheckService"
+// OTA install policy (watchdog timings + failure copy) + display-state derivation —
+// moved into island with the OtaInstallCoordinator (WP 8B). Re-exported so the host
+// shim (mobile/src/app/ota/otaProgressTimeouts.ts), the legacy progress route and the
+// OTA UI tests import them from @mentra/island.
+export {
+  MINIMUM_OTA_STATUS_BUILD,
+  MAX_RETRIES,
+  RETRY_INTERVAL_MS,
+  PROGRESS_TIMEOUT_MS,
+  DOWNLOAD_STUCK_TIMEOUT_MS,
+  MTK_INSTALL_TIMEOUT_MS,
+  GLOBAL_OTA_TIMEOUT_MS,
+  POST_APK_OTA_START_DELAY_MS,
+  PING_INTERVAL_MS,
+  QUERY_REPLY_TIMEOUT_MS,
+  OtaProgressMessages,
+} from "./services/otaInstallPolicy"
+export {deriveDisplayState} from "./services/otaDisplayState"
+export type {DisplayState} from "./services/otaDisplayState"
+// OTA read-model types for host OTA UI (progress screen, error mapping, progress
+// section) — imported from @mentra/island instead of the SDK internal surface.
+export type {
+  OtaProgress,
+  OtaProgressStatus,
+  OtaStatus,
+  OtaUpdateInfo,
+  OtaSnapshot,
+  OtaInstallSnapshot,
+} from "./facades/ota"
 export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
 // Gallery cluster — the sync orchestrator + glasses-camera HTTP API + media/storage,
 // moved into island. Host Gallery UI + tests import these from @mentra/island.
