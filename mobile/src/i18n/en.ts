@@ -143,7 +143,7 @@ const en = {
     livePairingModeTitle: "Ready to pair",
     livePairingModeSubtitle: "New glasses pair automatically when powered on.",
     livePairingModeInfo:
-      "If nothing appears in the next step, hold the power and camera buttons together for 10 seconds until the LED flashes and the glasses read out a code.",
+      "If nothing appears in the next step, press the power button 5 times quickly. The LED will flash and the glasses will read out a code.",
     noGlassesFound: "No glasses found",
     noGlassesFoundHint: "Make sure you held both buttons for 10 seconds, then try again.",
     tryAgain: "Try Again",
