@@ -134,7 +134,7 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-import {render, fireEvent, waitFor} from "@testing-library/react-native"
+import {render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
@@ -186,13 +186,11 @@ describe("pairing scan screen", () => {
       ],
     })
 
-    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+    render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
       expect(BluetoothSdk.startScan).toHaveBeenCalledWith("Mentra Live")
     })
-
-    fireEvent.press(getByText("001"))
 
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/btclassic")

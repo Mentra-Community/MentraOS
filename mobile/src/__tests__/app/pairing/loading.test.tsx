@@ -135,6 +135,9 @@ describe("pairing loading screen", () => {
     const first = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
+      emitBluetoothSdkEvent("pairing_info", {had_previous_bond: false})
+    })
+    act(() => {
       useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
     act(() => {
