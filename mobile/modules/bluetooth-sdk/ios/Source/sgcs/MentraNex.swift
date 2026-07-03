@@ -84,20 +84,24 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         await sendTextWall("\(top)\n\(bottom)")
     }
 
-    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width: Int32? = nil, height: Int32? = nil) async -> Bool {
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {
             Bridge.log("NEX: Failed to decode base64 image payload")
             return false
         }
-        guard let bmpData = convertUIImageToBmpData(image) else {
-            Bridge.log("NEX: Failed to convert UIImage to bitmap bytes")
+        // Same glasses-native pipeline as the canvas path: scale to the target
+        // size when given, invert + dither, encode a real 1-bit BMP (the old
+        // conversion emitted raw RGBA the firmware couldn't decode).
+        let pixelWidth = width ?? Int32(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let pixelHeight = height ?? Int32(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        let scaled = scaledImage(image, toWidth: pixelWidth, height: pixelHeight)
+        guard let bmpData = convertImageToNex1BitBmp(scaled) else {
+            Bridge.log("NEX: Failed to convert UIImage to 1-bit BMP")
             return false
         }
-        let pixelWidth = image.cgImage?.width ?? Int(image.size.width * image.scale)
-        let pixelHeight = image.cgImage?.height ?? Int(image.size.height * image.scale)
-        displayBitmapData(bmpData, width: pixelWidth, height: pixelHeight)
+        displayBitmapData(bmpData, width: Int(pixelWidth), height: Int(pixelHeight))
         return true
     }
 
@@ -227,11 +231,12 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             Bridge.log("NEX: drawLayoutBitmap failed to decode base64 image")
             return false
         }
-        // Scale phone-side to the component box (never on glasses), then use
-        // the existing 1-bit BMP conversion. (Android additionally inverts +
-        // Floyd–Steinberg dithers — visual parity TODO once hardware-checked.)
+        // Scale phone-side to the component box (never on glasses), then run
+        // the glasses-native pipeline: invert → Floyd–Steinberg dither → real
+        // 1-bit BMP encode (Android parity; the old convertUIImageToBmpData
+        // emitted raw RGBA, which the firmware BMP decoder can't read).
         let scaled = scaledImage(image, toWidth: width, height: height)
-        guard let bmpData = convertUIImageToBmpData(scaled) else {
+        guard let bmpData = convertImageToNex1BitBmp(scaled) else {
             Bridge.log("NEX: drawLayoutBitmap failed to convert image")
             return false
         }
@@ -1442,6 +1447,112 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
 
         return pixelData
+    }
+
+    // MARK: - Glasses-native 1-bit BMP pipeline (parity with Android's decodeBitmapForNex)
+
+    /**
+     Decode → invert → Floyd–Steinberg dither → 1-bit BMP encode, mirroring
+     Android's `decodeBitmapForNex` + `BitmapJavaUtils.convertBitmapTo1BitBmpBytes`.
+
+     The panel is 1-bpp and renders white-on-black; the firmware BMP decoder
+     normalises palette polarity, so the only way to flip the on-glass result is
+     to invert the actual pixel content. Dithering preserves gradients as dot
+     patterns instead of a hard 50% threshold. Output byte layout matches the
+     Android encoder exactly: 14-byte file header + 40-byte BITMAPINFOHEADER +
+     8-byte palette (index 0 = white, 1 = black), rows padded to 4 bytes,
+     bottom-to-top, bit set when the (post-invert, post-dither) pixel is dark.
+     */
+    private func convertImageToNex1BitBmp(_ image: UIImage) -> Data? {
+        guard let cgImage = image.cgImage else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 0, height > 0 else { return nil }
+
+        // RGBA readback.
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        guard
+            let context = CGContext(
+                data: &rgba,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Luminance (Rec. 601), INVERTED — same order as Android (invert, then dither).
+        var lum = [Float](repeating: 0, count: width * height)
+        for i in 0 ..< (width * height) {
+            let r = Float(rgba[i * 4])
+            let g = Float(rgba[i * 4 + 1])
+            let b = Float(rgba[i * 4 + 2])
+            lum[i] = 255.0 - (0.299 * r + 0.587 * g + 0.114 * b)
+        }
+
+        // Floyd–Steinberg error diffusion (7/3/5/1 over 16, right/below neighbours).
+        var dark = [Bool](repeating: false, count: width * height)
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                let idx = y * width + x
+                let old = lum[idx]
+                let newVal: Float = old < 128 ? 0 : 255
+                let err = old - newVal
+                dark[idx] = newVal < 128
+                if x + 1 < width { lum[idx + 1] += err * 7 / 16 }
+                if y + 1 < height {
+                    if x >= 1 { lum[idx + width - 1] += err * 3 / 16 }
+                    lum[idx + width] += err * 5 / 16
+                    if x + 1 < width { lum[idx + width + 1] += err * 1 / 16 }
+                }
+            }
+        }
+
+        // 1-bpp BMP encode (Android layout, invert=false palette).
+        let rowSizeBytes = ((width + 31) / 32) * 4
+        let imageSize = rowSizeBytes * height
+        let dataOffset = 62
+        var bmp = Data(capacity: dataOffset + imageSize)
+
+        func putU16(_ v: UInt16) {
+            bmp.append(UInt8(v & 0xFF)); bmp.append(UInt8(v >> 8))
+        }
+        func putU32(_ v: UInt32) {
+            bmp.append(UInt8(v & 0xFF)); bmp.append(UInt8((v >> 8) & 0xFF))
+            bmp.append(UInt8((v >> 16) & 0xFF)); bmp.append(UInt8((v >> 24) & 0xFF))
+        }
+
+        bmp.append(UInt8(ascii: "B")); bmp.append(UInt8(ascii: "M"))
+        putU32(UInt32(dataOffset + imageSize)) // file size
+        putU16(0); putU16(0) // reserved
+        putU32(UInt32(dataOffset)) // pixel data offset
+        putU32(40) // DIB header size
+        putU32(UInt32(width))
+        putU32(UInt32(height)) // positive => bottom-to-top
+        putU16(1) // planes
+        putU16(1) // bits per pixel
+        putU32(0) // BI_RGB
+        putU32(UInt32(imageSize))
+        putU32(2835); putU32(2835) // 72 DPI
+        putU32(2) // palette colors
+        putU32(0) // important colors
+        // Palette: index 0 = white, index 1 = black (Android invert=false).
+        bmp.append(contentsOf: [0xFF, 0xFF, 0xFF, 0x00])
+        bmp.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        var row = [UInt8](repeating: 0, count: rowSizeBytes)
+        for y in 0 ..< height {
+            let py = height - 1 - y // BMP rows are bottom-to-top
+            for i in 0 ..< rowSizeBytes { row[i] = 0 }
+            for x in 0 ..< width where dark[py * width + x] {
+                row[x / 8] |= UInt8(0x80 >> (x % 8))
+            }
+            bmp.append(contentsOf: row)
+        }
+        return bmp
     }
 
     // MARK: - Display Control Commands
