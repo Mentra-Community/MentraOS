@@ -1,6 +1,6 @@
 import {describe, expect, it} from "bun:test"
 
-import {extForMime, sanitizeSegment, shareFileName} from "./blobPaths"
+import {extForMime, sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
 
 describe("sanitizeSegment", () => {
   it("keeps safe chars, replaces the rest", () => {
@@ -56,6 +56,20 @@ describe("shareFileName", () => {
     const out = shareFileName({name: "b".repeat(500), fileName: "x", mimeType: "audio/wav"})
     expect(out.length).toBeLessThanOrEqual(120)
     expect(out.endsWith(".wav")).toBe(true)
+  })
+})
+
+describe("withDiskExt", () => {
+  it("attaches the mime-derived extension to a generated id (the Recorder playback case)", () => {
+    // iOS AVPlayer can't open a local file without a path extension, so the
+    // stored WAV must land on disk as *.wav for session.speaker.play to work.
+    expect(withDiskExt("mr46hl98-huglgjvzmt8e", "audio/wav")).toBe("mr46hl98-huglgjvzmt8e.wav")
+  })
+  it("leaves a name that already has an extension untouched", () => {
+    expect(withDiskExt("mr46hl98.wav", "audio/wav")).toBe("mr46hl98.wav")
+  })
+  it("leaves the name untouched when the mime is unknown", () => {
+    expect(withDiskExt("mr46hl98-huglgjvzmt8e", "application/octet-stream")).toBe("mr46hl98-huglgjvzmt8e")
   })
 })
 

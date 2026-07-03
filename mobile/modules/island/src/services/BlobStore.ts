@@ -18,8 +18,10 @@
  *   bytes:    Paths.document/mentra_blobs/{userId}/{packageName}/{fileName}
  *   metadata: MMKV key  mentraos_blobmeta_{userId}_{packageName}_{key}  → StoredBlobMeta JSON
  *
- * The on-disk file name is a generated id; the logical `key` (caller-chosen) is
- * the MMKV key. This decouples the filesystem from arbitrary caller keys.
+ * The on-disk file name is a generated id plus a mime-derived extension (iOS
+ * AVPlayer keys a local file's format off the path extension, so blobs played
+ * via `session.speaker.play` must carry one); the logical `key` (caller-chosen)
+ * is the MMKV key. This decouples the filesystem from arbitrary caller keys.
  *
  * expo-file-system's new API is synchronous (create/writeBytes/md5/size), so
  * streaming chunk writes do no async work.
@@ -31,7 +33,7 @@ import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 
 import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
-import {sanitizeSegment, shareFileName} from "./blobPaths"
+import {sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
@@ -204,6 +206,18 @@ export class BlobStore {
     name: string | undefined,
     extraMeta: Record<string, string | number | boolean> | undefined,
   ) {
+    // Attach a mime-derived extension to the on-disk name. Consumers that key
+    // format off the path — iOS AVPlayer under `session.speaker.play` — cannot
+    // open an extension-less file, even though the bytes are valid.
+    const named = withDiskExt(fileName, mimeType)
+    if (named !== fileName) {
+      try {
+        this.fileFor(packageName, fileName).rename(named)
+        fileName = named
+      } catch {
+        /* keep the extension-less name — the blob still stores and shares fine */
+      }
+    }
     const prior = this.readMeta(packageName, key)
     if (prior && prior.fileName !== fileName) {
       this.deleteFileQuiet(packageName, prior.fileName)
@@ -582,12 +596,13 @@ export class BlobStore {
       })
       return
     }
-    // The on-disk blob name is a generated, extension-less id. react-native-share
-    // derives the shared file's name + extension from the URL's path (its
-    // `filename` option only applies to base64/data payloads, not file:// URLs),
-    // so sharing `file.uri` directly hands the recipient an extension-less file.
-    // Copy to a temp file that carries the real display name + extension, share
-    // that, then clean it up.
+    // The on-disk blob name is a generated id (mime extension attached at
+    // commit; legacy blobs may lack it). react-native-share derives the shared
+    // file's name + extension from the URL's path (its `filename` option only
+    // applies to base64/data payloads, not file:// URLs), so sharing `file.uri`
+    // directly would hand the recipient a machine-named file. Copy to a temp
+    // file that carries the real display name + extension, share that, then
+    // clean it up.
     const shareName = shareFileName(meta)
     // Copy into a per-share unique subdir so two concurrent shares that resolve
     // to the same display name can't clobber each other's temp file while

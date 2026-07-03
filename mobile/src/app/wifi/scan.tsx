@@ -1,6 +1,6 @@
 import {toolkit, type WifiSearchResult} from "@mentra/island"
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect, useMemo, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
@@ -22,6 +22,8 @@ export default function WifiScanScreen() {
   const {theme} = useAppTheme()
 
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
+  const networksRef = useRef(networks)
+  networksRef.current = networks
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
   const wifiStatus = useToolkitSnapshot(toolkit.glasses.wifi.status, (onChange) =>
@@ -76,7 +78,24 @@ export default function WifiScanScreen() {
   useEffect(() => {
     refreshSavedNetworks()
     startScan()
+
+    // The glasses stream networks one by one while the scan runs; show them as
+    // they arrive instead of waiting for the final requestWifiScan() result.
+    const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
+      if (event.networks.length > 0) {
+        setNetworks(mapNetworks(event.networks))
+      }
+    })
+    return () => sub.remove()
   }, [refreshSavedNetworks])
+
+  const mapNetworks = (scanResults: WifiSearchResult[]): WifiSearchResult[] =>
+    scanResults.map((network) => ({
+      ssid: network.ssid || "",
+      requiresPassword: network.requiresPassword !== false,
+      signalStrength: network.signalStrength || -100,
+      frequency: network.frequency,
+    }))
 
   const startScan = async () => {
     console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
@@ -86,22 +105,19 @@ export default function WifiScanScreen() {
     try {
       const scanResults = await toolkit.glasses.wifi.scan()
       console.log(`WIFI_SCAN: Received ${scanResults.length} WiFi scan results`)
-      setNetworks(
-        scanResults.map((network) => ({
-          ssid: network.ssid || "",
-          requiresPassword: network.requiresPassword !== false,
-          signalStrength: network.signalStrength || -100,
-          frequency: network.frequency,
-        })),
-      )
+      setNetworks(mapNetworks(scanResults))
       setIsScanning(false)
     } catch (error) {
       console.error("WIFI_SCAN: Error scanning for WiFi networks:", error)
       setIsScanning(false)
-      Toast.show({
-        type: "error",
-        text1: "Failed to scan for WiFi networks",
-      })
+      // Networks that streamed in before the failure are still shown; only
+      // surface the error when the user would otherwise see an empty list.
+      if (networksRef.current.length === 0) {
+        Toast.show({
+          type: "error",
+          text1: "Failed to scan for WiFi networks",
+        })
+      }
     }
   }
 
@@ -244,18 +260,23 @@ export default function WifiScanScreen() {
 
         {/* Content - flex-1 makes it take remaining space, flex-shrink allows it to shrink */}
         <View className="flex-1 flex-shrink min-h-0 pb-4">
-          {isScanning ? (
-            <View className="flex-1 justify-center items-center py-12">
-              <ActivityIndicator size="large" color={theme.colors.foreground} />
-              <Text className="mt-4 text-base text-text-dim" tx="wifi:scanningForNetworks" />
-            </View>
-          ) : networks.length > 0 ? (
+          {networks.length > 0 ? (
             <>
               {/* <Text className="text-sm font-semibold text-text mb-2" tx="wifi:networks" /> */}
               <ScrollView className="flex-1 px-5 -mx-5" contentContainerClassName="pb-4">
                 <Group>{sortedNetworks.map(renderNetworkItem)}</Group>
+                {isScanning && (
+                  <View className="flex-row justify-center items-center py-4">
+                    <ActivityIndicator size="small" color={theme.colors.foreground} />
+                  </View>
+                )}
               </ScrollView>
             </>
+          ) : isScanning ? (
+            <View className="flex-1 justify-center items-center py-12">
+              <ActivityIndicator size="large" color={theme.colors.foreground} />
+              <Text className="mt-4 text-base text-text-dim" tx="wifi:scanningForNetworks" />
+            </View>
           ) : (
             <View className="flex-1 justify-center items-center py-12">
               <Text className="text-base text-text-dim mb-6 text-center" tx="wifi:noNetworksFound" />
