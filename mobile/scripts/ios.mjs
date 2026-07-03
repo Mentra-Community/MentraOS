@@ -85,8 +85,15 @@ console.log(`Using device: ${deviceName} (${deviceUdid})`)
 // "TypeError: Cannot convert object to primitive value" against current iOS.
 // So we drive the build with xcodebuild and install/launch with Apple's
 // `devicectl` — the same tool the device-detection above already relies on.
-const WORKSPACE = "ios/Mentra.xcworkspace"
-const SCHEME = "Mentra"
+// The workspace/scheme follow the app name from app.config.ts (variant
+// dependent — "MentraOS" on this branch), so derive them from what prebuild
+// actually generated instead of hardcoding a name that goes stale on rename.
+const workspaces = await glob("ios/*.xcworkspace", {onlyDirectories: true})
+if (workspaces.length !== 1) {
+  throw new Error(`Expected exactly one ios/*.xcworkspace after prebuild, found: ${workspaces.join(", ") || "none"}`)
+}
+const WORKSPACE = workspaces[0]
+const SCHEME = path.basename(WORKSPACE, ".xcworkspace")
 const BUNDLE_ID = "com.mentra.mentra"
 const derivedData = "ios/build"
 
