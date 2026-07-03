@@ -2767,6 +2767,11 @@ class G2: NSObject, SGCManager {
         // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
         for i in textContainers.indices where textContainers[i].pendingSends > 0 {
             let container = textContainers[i]
+            // Byte-exact content log (debugDescription escapes \n and non-ASCII)
+            // — artifact forensics: match on-glass rendering to what was sent.
+            Bridge.log(
+                "G2: updateText id=\(container.id) rect=\(container.x),\(container.y) \(container.width)x\(container.height) bytes=\(container.content.utf8.count) content=\(container.content.debugDescription)"
+            )
             let msg = EvenHubProto.updateTextMessage(
                 containerID: container.id,
                 contentOffset: 0,
