@@ -52,8 +52,8 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
 
         Log.d(TAG, "Initializing service lifecycle");
 
-        // Initialize managers (K900CommandHandler required for BesOtaManager on Mentra Live)
-        serviceManager.initialize(commandProcessor.getK900CommandHandler());
+        // Initialize managers (K900CommandHandler set on serviceManager before initialize())
+        serviceManager.initialize();
 
         // Recovery sidecar is the crash watchdog — start before other delayed init work.
         recoveryWorkerManager.initialize();

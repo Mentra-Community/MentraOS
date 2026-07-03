@@ -230,4 +230,18 @@ public interface IHardwareManager {
      * @param brightness Brightness level (0-255, where 255 is maximum brightness)
      */
     void setRgbLedSolidWhite(int durationMs, int brightness);
+
+    // ============================================
+    // Camera Hardware Control
+    // ============================================
+
+    /**
+     * Apply a camera field-of-view configuration to the hardware ISP.
+     * No-op on devices that do not support hardware FOV adjustment.
+     *
+     * @param fov FOV mode index (device-specific values)
+     * @param roiPosition ROI alignment position (device-specific values)
+     * @return true if FOV was applied to hardware, false if unsupported or unavailable
+     */
+    boolean setCameraFov(int fov, int roiPosition);
 }

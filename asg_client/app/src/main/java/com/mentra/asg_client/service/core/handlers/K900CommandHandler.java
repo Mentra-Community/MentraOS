@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
+import com.mentra.asg_client.io.peripheral.IMcuCommander;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.McuEventParser;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -23,7 +24,7 @@ import org.json.JSONObject;
  * <p>This class still owns the BES log session and the outgoing (MTK -> BES) command builders, which
  * are request/response flows rather than inbound events.
  */
-public class K900CommandHandler {
+public class K900CommandHandler implements IMcuCommander {
     private static final String TAG = "K900CommandHandler";
 
     private final AsgClientServiceManager serviceManager;
@@ -42,6 +43,11 @@ public class K900CommandHandler {
         this.stateManager = stateManager;
         this.communicationManager = communicationManager;
         this.peripheralBus = peripheralBus;
+    }
+
+    @Override
+    public void processVendorProtocolCommand(JSONObject json) {
+        processK900Command(json);
     }
 
     /**
@@ -123,6 +129,7 @@ public class K900CommandHandler {
      * @param context application context
      * @param configManager provides coreToken for backend auth
      */
+    @Override
     public void requestBesLogs(
             String incidentId, Context context, IConfigurationManager configManager) {
         requestBesLogs(incidentId, context, configManager, "", null);
@@ -136,6 +143,7 @@ public class K900CommandHandler {
      * @param apiBaseUrl backend base URL from the phone (e.g. from sendIncidentId JSON); empty or
      *     null to use glasses' own ServerConfigUtil
      */
+    @Override
     public void requestBesLogs(
             String incidentId,
             Context context,
@@ -148,6 +156,7 @@ public class K900CommandHandler {
      * BLE-relay variant: assembled BES logs are delivered to {@code relayFirmwareJson} instead of
      * being uploaded over HTTP.
      */
+    @Override
     public void requestBesLogs(
             String incidentId,
             Context context,
@@ -226,6 +235,7 @@ public class K900CommandHandler {
         }
     }
 
+    @Override
     public boolean requestBesLogsForTrace(
             Context context,
             IConfigurationManager configManager,
@@ -284,6 +294,7 @@ public class K900CommandHandler {
      * <p>This ensures version info is cached before phone connects, making it available for OTA
      * patch matching and version_info messages to the phone.
      */
+    @Override
     public void requestSystemVersion() {
         Log.i(TAG, "🔧 Requesting BES system version (sh_syvr)");
 
@@ -328,6 +339,7 @@ public class K900CommandHandler {
      * Send request to BES chip to get BT MAC address (cs_btaddr) Call this on startup/UART
      * connection to retrieve the unique device identifier
      */
+    @Override
     public void requestBtMacAddress() {
         Log.i(TAG, "📋 Requesting BT MAC address from BES chip");
 

@@ -10,14 +10,17 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900ProtocolStrategy;
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -73,7 +76,14 @@ public class CommandProcessorRoutingIntegrationTest {
                 mock(RgbLedCommandHandler.class),
                 mock(OtaCommandHandler.class),
                 peripheralBus,
-                strategies);
+                strategies,
+                new K900CommandHandler(
+                        serviceManager,
+                        mock(IStateManager.class),
+                        mock(ICommunicationManager.class),
+                        peripheralBus),
+                new BesTracePoller(),
+                mock(IHardwareManager.class));
     }
 
     private static byte[] bytes(JSONObject json) {

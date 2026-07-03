@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.peripheral.IMcuCommander;
 import com.mentra.asg_client.reporting.GlassesLogBuffer;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -51,7 +52,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
 
     private final Context mContext;
     private final IConfigurationManager mConfigurationManager;
-    private final K900CommandHandler mK900CommandHandler;
+    private final IMcuCommander mK900CommandHandler;
     private final IStateManager mStateManager;
 
     /**
@@ -65,7 +66,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     public UploadIncidentLogsCommandHandler(
             Context context,
             IConfigurationManager configurationManager,
-            K900CommandHandler k900CommandHandler,
+            IMcuCommander k900CommandHandler,
             IStateManager stateManager,
             AsgClientServiceManager serviceManager) {
         mContext = context;

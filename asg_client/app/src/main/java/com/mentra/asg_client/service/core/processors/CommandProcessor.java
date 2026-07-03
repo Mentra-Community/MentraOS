@@ -2,8 +2,10 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.content.Context;
 import android.util.Log;
-import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.peripheral.IBesTracePoller;
+import com.mentra.asg_client.io.peripheral.IMcuCommander;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.core.ReportManager;
@@ -16,7 +18,6 @@ import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
@@ -72,8 +73,9 @@ public class CommandProcessor {
     private final CommandHandlerRegistry commandHandlerRegistry;
     private final CommandParser commandParser;
     private final CommandProtocolDetector protocolDetector;
-    private final K900CommandHandler k900CommandHandler;
-    private final BesTracePoller besTracePoller;
+    private final IMcuCommander mcuCommander;
+    private final IBesTracePoller besTracePoller;
+    private final IHardwareManager hardwareManager;
     private final ResponseSender responseSender;
     private final ChunkReassembler chunkReassembler;
     private final RgbLedCommandHandler rgbLedCommandHandler;
@@ -92,7 +94,10 @@ public class CommandProcessor {
             RgbLedCommandHandler rgbLedCommandHandler,
             OtaCommandHandler otaCommandHandler,
             IPeripheralBus peripheralBus,
-            Set<CommandProtocolDetector.ProtocolDetectionStrategy> extraProtocolStrategies) {
+            Set<CommandProtocolDetector.ProtocolDetectionStrategy> extraProtocolStrategies,
+            IMcuCommander mcuCommander,
+            IBesTracePoller besTracePoller,
+            IHardwareManager hardwareManager) {
         Log.d(TAG, "🔧 Initializing CommandProcessor with dependencies");
         this.context = context;
         this.communicationManager = communicationManager;
@@ -110,10 +115,9 @@ public class CommandProcessor {
         this.commandHandlerRegistry = new CommandHandlerRegistry();
         this.commandParser = new CommandParser();
         this.protocolDetector = new CommandProtocolDetector();
-        this.k900CommandHandler =
-                new K900CommandHandler(
-                        serviceManager, stateManager, communicationManager, peripheralBus);
-        this.besTracePoller = new BesTracePoller();
+        this.mcuCommander = mcuCommander;
+        this.besTracePoller = besTracePoller;
+        this.hardwareManager = hardwareManager;
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
 
@@ -135,8 +139,8 @@ public class CommandProcessor {
         Log.i(TAG, "✅ CommandProcessor initialization completed successfully");
     }
 
-    public K900CommandHandler getK900CommandHandler() {
-        return k900CommandHandler;
+    public IMcuCommander getMcuCommander() {
+        return mcuCommander;
     }
 
     /**
@@ -260,7 +264,7 @@ public class CommandProcessor {
                 case K900_PROTOCOL:
                     Log.i(TAG, "🎯 Processing K900 protocol command");
                     // Handle K900 format using dedicated handler
-                    k900CommandHandler.processK900Command(json);
+                    mcuCommander.processVendorProtocolCommand(json);
                     // K900 command processed successfully
                     return null; // K900 commands are handled directly
 
@@ -402,7 +406,7 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(
                     new SettingsCommandHandler(
-                            serviceManager, communicationManager, responseBuilder));
+                            serviceManager, communicationManager, responseBuilder, hardwareManager));
             Log.d(TAG, "✅ Registered SettingsCommandHandler");
 
             commandHandlerRegistry.registerHandler(otaCommandHandler);
@@ -442,7 +446,7 @@ public class CommandProcessor {
                     new UploadIncidentLogsCommandHandler(
                             context,
                             configurationManager,
-                            k900CommandHandler,
+                            mcuCommander,
                             stateManager,
                             serviceManager));
             Log.d(TAG, "✅ Registered UploadIncidentLogsCommandHandler");
@@ -545,10 +549,10 @@ public class CommandProcessor {
     public void requestSystemVersion() {
         Log.d(TAG, "📤 requestSystemVersion() called");
 
-        if (k900CommandHandler != null) {
-            k900CommandHandler.requestSystemVersion();
+        if (mcuCommander != null) {
+            mcuCommander.requestSystemVersion();
         } else {
-            Log.w(TAG, "⚠️ K900CommandHandler not available - cannot request BES system version");
+            Log.w(TAG, "⚠️ MCU commander not available - cannot request BES system version");
         }
     }
 
@@ -560,16 +564,16 @@ public class CommandProcessor {
             String incidentId,
             android.content.Context context,
             IConfigurationManager configManager) {
-        if (k900CommandHandler != null) {
-            k900CommandHandler.requestBesLogs(incidentId, context, configManager);
+        if (mcuCommander != null) {
+            mcuCommander.requestBesLogs(incidentId, context, configManager);
         } else {
-            Log.w(TAG, "⚠️ K900CommandHandler not available — cannot request BES logs");
+            Log.w(TAG, "⚠️ MCU commander not available — cannot request BES logs");
         }
     }
 
     public void setBesTracePollingEnabled(boolean enabled, long intervalMs) {
         if (enabled) {
-            besTracePoller.start(k900CommandHandler, context, configurationManager, intervalMs);
+            besTracePoller.start(mcuCommander, context, configurationManager, intervalMs);
         } else {
             besTracePoller.stop();
         }
@@ -586,10 +590,10 @@ public class CommandProcessor {
     public void requestBtMacAddress() {
         Log.d(TAG, "📤 requestBtMacAddress() called");
 
-        if (k900CommandHandler != null) {
-            k900CommandHandler.requestBtMacAddress();
+        if (mcuCommander != null) {
+            mcuCommander.requestBtMacAddress();
         } else {
-            Log.w(TAG, "⚠️ K900CommandHandler not available - cannot request BT MAC address");
+            Log.w(TAG, "⚠️ MCU commander not available - cannot request BT MAC address");
         }
     }
 

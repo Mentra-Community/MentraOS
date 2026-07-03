@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.hardware.managers;
 
 import android.content.Context;
 import android.util.Log;
+import com.dev.api.DevApi;
 import com.mentra.asg_client.audio.I2SAudioController;
 import com.mentra.asg_client.hardware.K900LedController;
 import com.mentra.asg_client.hardware.K900RgbLedController;
@@ -499,6 +500,17 @@ public class K900HardwareManager extends BaseHardwareManager {
                             durationMs, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available");
+        }
+    }
+
+    @Override
+    public boolean setCameraFov(int fov, int roiPosition) {
+        try {
+            DevApi.setCameraFov(fov, roiPosition);
+            return true;
+        } catch (UnsatisfiedLinkError e) {
+            Log.w(TAG, "DevApi.setCameraFov not available on this device: " + e.getMessage());
+            return false;
         }
     }
 

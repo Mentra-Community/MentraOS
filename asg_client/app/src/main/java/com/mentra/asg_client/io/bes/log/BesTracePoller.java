@@ -5,8 +5,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.io.peripheral.IBesTracePoller;
+import com.mentra.asg_client.io.peripheral.IMcuCommander;
 import com.mentra.asg_client.logging.BleTraceLogger;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 
 import org.json.JSONObject;
@@ -15,7 +16,7 @@ import org.json.JSONObject;
  * Debug-only helper that pulls the BES trace ring buffer at a short interval and
  * emits only newly observed lines into the MentraBleTrace log stream.
  */
-public class BesTracePoller {
+public class BesTracePoller implements IBesTracePoller {
   private static final String TAG = "BesTracePoller";
   private static final long DEFAULT_INTERVAL_MS = 5000;
   private static final long MIN_INTERVAL_MS = 3000;
@@ -26,7 +27,7 @@ public class BesTracePoller {
 
   private final Handler mHandler = new Handler(Looper.getMainLooper());
 
-  private K900CommandHandler mK900CommandHandler;
+  private IMcuCommander mK900CommandHandler;
   private Context mContext;
   private IConfigurationManager mConfigurationManager;
   private long mIntervalMs = DEFAULT_INTERVAL_MS;
@@ -37,7 +38,8 @@ public class BesTracePoller {
 
   private final Runnable mPollRunnable = this::pollOnce;
 
-  public synchronized void start(K900CommandHandler k900CommandHandler,
+  @Override
+  public synchronized void start(IMcuCommander k900CommandHandler,
                                  Context context,
                                  IConfigurationManager configurationManager,
                                  long intervalMs) {
@@ -53,6 +55,7 @@ public class BesTracePoller {
     mHandler.post(mPollRunnable);
   }
 
+  @Override
   public synchronized void stop() {
     if (!mRunning) {
       return;
