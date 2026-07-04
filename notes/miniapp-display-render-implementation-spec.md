@@ -262,6 +262,11 @@ Also done in-branch (2026-07-03 round 2):
       the real Mentra AI lives in Mentra-Community/Mentra-AI-Miniapp)
 - [x] render() migration PR opened on Mentra-Community/Mentra-AI-Miniapp —
       NOT merged; gated on host render() rollout (MentraOS PR #3341)
+- [x] Canvas module DELETED end to end: session.canvas + CanvasManager +
+      CanvasOperation + CANVAS wire type + host handleCanvas + tester
+      CanvasPage + docs page (redirected to display/layouts). Zero consumers
+      existed once `everything` was gone; no shipped bundle ever sent
+      miniapp_canvas.
 
 Post-merge (gated on Alex):
 - [ ] Remaining SDK sugar retirement (`showTextWall` / `showBitmapView` /
@@ -271,8 +276,6 @@ Post-merge (gated on Alex):
 - [ ] Host WIRE support for legacy DISPLAY layouts must OUTLIVE the SDK
       methods — registry bundles packed with older SDKs and cloud-SDK apps
       still send them; needs a deprecation window, not a delete
-- [ ] Delete canvas module + host handleCanvas (zero consumers now that
-      `everything` is gone)
 - [ ] `display.measure()` helper (reserved in the contract, unimplemented)
 
 Follow-ups:

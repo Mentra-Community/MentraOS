@@ -20,7 +20,6 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./proto
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
-import {CanvasManager} from "./modules/canvas"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
@@ -197,7 +196,6 @@ type SessionEmitterEvents = {
 
 export class MiniappSession {
   public readonly auth: AuthModule
-  public readonly canvas: CanvasManager
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -307,7 +305,6 @@ export class MiniappSession {
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
-    this.canvas = new CanvasManager(this)
     this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
