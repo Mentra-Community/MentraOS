@@ -2,7 +2,6 @@ import {HashRouter, Navigate, Route, Routes} from "react-router-dom"
 
 import CaptionsPage from "./pages/CaptionsPage"
 import CameraPage from "./pages/tester/CameraPage"
-import CanvasPage from "./pages/tester/CanvasPage"
 import DisplayPage from "./pages/tester/DisplayPage"
 import StreamingPage from "./pages/tester/StreamingPage"
 import GlassesPage from "./pages/tester/GlassesPage"
@@ -26,7 +25,6 @@ export default function App() {
         <Route path="/" element={<TesterMenu />} />
         <Route path="/captions" element={<CaptionsPage />} />
         <Route path="/tester/display" element={<DisplayPage />} />
-        <Route path="/tester/canvas" element={<CanvasPage />} />
         <Route path="/tester/speaker" element={<SpeakerPage />} />
         <Route path="/tester/mic" element={<MicrophonePage />} />
         <Route path="/tester/transcription" element={<TranscriptionPage />} />

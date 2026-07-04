@@ -38,13 +38,15 @@ function DeviceSettings() {
     if (result === 1) {
       try {
         await toolkit.glasses.controller.forget()
+        // give us a second to forget the glasses before going back
+        setTimeout(() => {
+          goBack()
+        }, 500)
       } catch (e) {
-        console.log(e)
+        // Unpair failed — stay on the screen (dismissing would imply success
+        // while the controller is still paired).
+        console.warn("controller: forget failed:", e)
       }
-      // give us a second to forget the glasses before going back
-      setTimeout(() => {
-        goBack()
-      }, 500)
     }
   }
 

@@ -102,11 +102,15 @@ class SocketComms {
       processedEvent = msg
     }
 
-    // Match LocalDisplayManager.sendToNative: a native rejection must not leak an
-    // unhandled promise rejection into websocket message handling.
-    void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+    // Match LocalDisplayManager.sendToNative: neither a synchronous throw nor a
+    // native rejection may leak out of websocket message handling.
+    try {
+      void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+        console.error("SOCKET: native display failed:", err)
+      })
+    } catch (err) {
       console.error("SOCKET: native display failed:", err)
-    })
+    }
     const displayEventStr = JSON.stringify(processedEvent)
     useDisplayStore.getState().setDisplayEvent(displayEventStr)
   }
@@ -129,6 +133,10 @@ class SocketComms {
       case "app_state_change":
       case "app_started":
       case "app_stopped":
+      // The V1 cloud announces mic requirements per session for cloud-SDK
+      // apps; with those apps end-of-life the payload is always "no mic
+      // needed" and local mic policy is island MicStateCoordinator's job.
+      case "microphone_state_change":
         // Legacy cloud-v1 message types — ignored.
         break
 

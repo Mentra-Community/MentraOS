@@ -7,9 +7,10 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
-    // Island entry points resolve to source (like bluetooth-sdk-internal above)
-    // so resolution never depends on stale build/ output; jest.setup.js mocks
-    // both subpaths alongside the main "@mentra/island" mock.
+    // Mirror metro: the @mentra/island entry points resolve to SOURCE, not the
+    // (stale) build/ output — tests must exercise the same code the app
+    // bundles. jest.setup.js mocks all three entries.
+    "^@mentra/island$": "<rootDir>/modules/island/src/index.ts",
     "^@mentra/island/internal$": "<rootDir>/modules/island/src/internal.ts",
     "^@mentra/island/devtools$": "<rootDir>/modules/island/src/devtools.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",

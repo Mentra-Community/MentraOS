@@ -353,6 +353,7 @@ const mockIslandEntries = () => {
       }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
+        hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         forget: jest.fn(() => Promise.resolve()),
         connect: jest.fn(() => Promise.resolve()),
@@ -791,7 +792,14 @@ const mockIslandEntries = () => {
       attachToRuntime: jest.fn(),
       processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
     },
-    localDisplayManager: {},
+    localDisplayManager: {
+      attachToRuntime: jest.fn(),
+      replayCurrent: jest.fn(),
+      request: jest.fn(),
+      onMount: jest.fn(),
+      onUnmount: jest.fn(),
+      onCoreAppChange: jest.fn(),
+    },
     phonePhotoCoordinator: {
       owns: jest.fn(() => false),
       handlePhotoError: jest.fn(),

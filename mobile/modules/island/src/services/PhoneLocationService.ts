@@ -47,9 +47,17 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
     timestamp: first.timestamp,
   })
   // Await after the miniapp push (send order unchanged) so the task callback
-  // spans the upload and failures are visible instead of silently dropped.
-  const result = await sendResult
-  if (result.is_error()) {
+  // spans the upload and failures are visible instead of silently dropped —
+  // but bounded: RestComms has no request timeout, and an OS background task
+  // must not hang indefinitely on an unresponsive server.
+  const UPLOAD_WAIT_MS = 15_000
+  const result = await Promise.race([
+    sendResult,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), UPLOAD_WAIT_MS)),
+  ])
+  if (result === null) {
+    console.warn(`ISLAND: LOCATION: cloud upload still pending after ${UPLOAD_WAIT_MS}ms; not blocking the task`)
+  } else if (result.is_error()) {
     console.warn("ISLAND: LOCATION: failed to send location to cloud:", result.error)
   }
 })
