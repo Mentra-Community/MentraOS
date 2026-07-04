@@ -160,8 +160,13 @@ jobs:
       - name: Package unsigned IPA
         working-directory: examples/ios
         run: |
+          app_path=$(find build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$app_path" ]; then
+            echo "No .app bundle found in build/Build/Products/Debug-iphoneos" >&2
+            exit 1
+          fi
           mkdir Payload
-          cp -R "build/Build/Products/Debug-iphoneos/MentraExample.app" Payload/
+          cp -R "$app_path" Payload/
           zip -qry mentra-example-ios-unsigned.ipa Payload
 
       - name: Upload IPA artifact
