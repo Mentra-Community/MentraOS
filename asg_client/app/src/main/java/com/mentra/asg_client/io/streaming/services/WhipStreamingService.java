@@ -34,13 +34,14 @@ import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
 import org.webrtc.DataChannel;
 import org.webrtc.DefaultVideoDecoderFactory;
-import org.webrtc.DefaultVideoEncoderFactory;
 import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.MediaConstraints;
 import org.webrtc.MediaStream;
+import org.webrtc.MediaStreamTrack;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
+import org.webrtc.RtpCapabilities;
 import org.webrtc.RtpParameters;
 import org.webrtc.RtpReceiver;
 import org.webrtc.RtpSender;
@@ -392,7 +393,7 @@ public class WhipStreamingService extends Service {
     mPeerConnectionFactory = PeerConnectionFactory.builder()
         .setOptions(factoryOptions)
         .setVideoEncoderFactory(
-            new DefaultVideoEncoderFactory(mEglBase.getEglBaseContext(), true, false))
+            new HardwareFirstVideoEncoderFactory(mEglBase.getEglBaseContext()))
         .setVideoDecoderFactory(
             new DefaultVideoDecoderFactory(mEglBase.getEglBaseContext()))
         .createPeerConnectionFactory();
@@ -464,8 +465,10 @@ public class WhipStreamingService extends Service {
       transceiver.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY);
     }
 
+    preferHardwareVideoCodec();
+
     // Apply bitrate cap and degradation preference to reduce encoder thermal load.
-    // Without this, the hardware encoder runs uncapped and overheats the SoC.
+    // Without this, the encoder runs uncapped and overheats the SoC.
     applyBitrateConstraints();
 
     MediaConstraints sdpConstraints = new MediaConstraints();
@@ -501,6 +504,44 @@ public class WhipStreamingService extends Service {
   }
 
   /**
+   * Move H.264 to the front of the video codec preference list. The SDP offer follows
+   * this order and WHIP servers generally answer with the first offered codec they
+   * support. H.264 is the only codec with a hardware encoder on Mentra Live; VP8/VP9/AV1
+   * only exist as software encoders (libvpx/libaom) that burn CPU and heat the SoC.
+   * VP8 and friends stay in the list as a fallback for servers without H.264 support.
+   */
+  private void preferHardwareVideoCodec() {
+    RtpCapabilities capabilities = mPeerConnectionFactory.getRtpSenderCapabilities(
+        MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO);
+
+    List<RtpCapabilities.CodecCapability> h264 = new ArrayList<>();
+    List<RtpCapabilities.CodecCapability> others = new ArrayList<>();
+    for (RtpCapabilities.CodecCapability codec : capabilities.codecs) {
+      if ("H264".equalsIgnoreCase(codec.name)) {
+        h264.add(codec);
+      } else {
+        others.add(codec);
+      }
+    }
+
+    if (h264.isEmpty()) {
+      Log.w(TAG, "No H264 sender capability, keeping default codec order");
+      return;
+    }
+
+    List<RtpCapabilities.CodecCapability> preferred = new ArrayList<>(h264);
+    preferred.addAll(others);
+
+    for (RtpTransceiver transceiver : mPeerConnection.getTransceivers()) {
+      if (transceiver.getMediaType() == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO) {
+        transceiver.setCodecPreferences(preferred);
+      }
+    }
+    Log.i(TAG, "Video codec preference: H264 first ("
+        + h264.size() + " H264 entries, " + others.size() + " others)");
+  }
+
+  /**
    * Cap the video encoder bitrate via RTP sender parameters and set degradation
    * preference to MAINTAIN_FRAMERATE so WebRTC drops quality-per-frame instead of
    * frame rate when thermals get tight.
@@ -529,8 +570,52 @@ public class WhipStreamingService extends Service {
   // WHIP HTTP signaling
   // -----------------------------------------------------------------------
 
+  /**
+   * Extracts the codec name of the first payload in the SDP's m=video line — the codec
+   * the far end selected. Diagnostic only: on Mentra Live "H264" means hardware encode,
+   * "VP8"/"VP9"/"AV1" mean software encode on the CPU.
+   */
+  private static String firstVideoCodecFromSdp(String sdp) {
+    String firstPayloadType = null;
+    for (String line : sdp.split("\r?\n")) {
+      if (line.startsWith("m=video")) {
+        // m=video 9 UDP/TLS/RTP/SAVPF 102 103 ... — first payload type is index 3
+        String[] parts = line.trim().split(" ");
+        if (parts.length > 3) {
+          firstPayloadType = parts[3];
+        }
+      } else if (firstPayloadType != null
+          && line.startsWith("a=rtpmap:" + firstPayloadType + " ")) {
+        return line.substring(("a=rtpmap:" + firstPayloadType + " ").length());
+      }
+    }
+    return "unknown";
+  }
+
+  /**
+   * Logs the m=video line plus its rtpmap/fmtp attributes. Codec negotiation problems
+   * (e.g. an H264 profile mismatch making the encoder factory silently return null)
+   * are invisible without seeing what each side actually put on the wire.
+   */
+  private static void logSdpVideoSection(String label, String sdp) {
+    StringBuilder section = new StringBuilder();
+    boolean inVideo = false;
+    for (String line : sdp.split("\r?\n")) {
+      if (line.startsWith("m=")) {
+        inVideo = line.startsWith("m=video");
+        if (inVideo) {
+          section.append(line).append('\n');
+        }
+      } else if (inVideo && (line.startsWith("a=rtpmap:") || line.startsWith("a=fmtp:"))) {
+        section.append(line).append('\n');
+      }
+    }
+    Log.i(TAG, label + " video section:\n" + section);
+  }
+
   private void postOfferToWhip(SessionDescription offer) {
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
+    logSdpVideoSection("Offer", offer.description);
 
     RequestBody body = RequestBody.create(
         offer.description, MediaType.parse("application/sdp"));
@@ -585,6 +670,7 @@ public class WhipStreamingService extends Service {
           Log.d(TAG, "WHIP resource URL: " + mWhipResourceUrl);
         }
 
+        logSdpVideoSection("Answer", answerSdp);
         SessionDescription answer = new SessionDescription(
             SessionDescription.Type.ANSWER, answerSdp);
 
@@ -605,7 +691,8 @@ public class WhipStreamingService extends Service {
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
             startBatteryMonitoring();
-            Log.d(TAG, "Streaming started via WHIP");
+            Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
+                + firstVideoCodecFromSdp(answerSdp));
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
               mHardwareManager.setRecordingLedOn();
             }
