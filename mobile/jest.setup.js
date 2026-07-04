@@ -903,3 +903,12 @@ jest.mock("@mentra/crust", () => ({
 
 // Silence the warning: Animated: `useNativeDriver` is not supported
 global.__reanimatedWorkletInit = jest.fn()
+
+// The @mentra/island mock above delegates toolkit.ota.installSession to the REAL
+// OtaInstallCoordinator singleton. attach() is idempotent (`if (this.attached)
+// return`), so a test that leaves it attached would leak its timers, store
+// subscription, and session state into the next test in the same file. detach()
+// after every test (a no-op when not attached) so each test starts clean.
+afterEach(() => {
+  jest.requireActual("./modules/island/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
+})

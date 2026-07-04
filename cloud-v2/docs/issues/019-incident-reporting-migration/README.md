@@ -1,6 +1,6 @@
 # 019 - Reports Migration
 
-**Status:** Implemented in branch
+**Status:** Implemented / partial
 
 ## Goal
 

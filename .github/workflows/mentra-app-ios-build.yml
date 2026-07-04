@@ -219,7 +219,9 @@ jobs:
           # cache and reinstall fresh. Happy path is unchanged.
           pod install || {
             echo "::warning::pod install failed (likely a stale/corrupt prebuilt cache) — clearing caches and retrying"
-            rm -rf Pods Podfile.lock
+            # Keep Podfile.lock: the retry must resolve the same pod versions as the
+            # repository lockfile, not drift to whatever currently satisfies the Podfile.
+            rm -rf Pods
             pod cache clean --all || true
             pod install --repo-update
           }
