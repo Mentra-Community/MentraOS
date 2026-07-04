@@ -254,6 +254,11 @@ class MantleManager {
 
     await socketComms.cleanup()
     restComms.goodbye()
+
+    // Allow a later init() to rebuild everything this cleanup tore down — the
+    // logout→login-in-the-same-process path and the dev backend-URL
+    // cleanup()→init() cycle both depend on init() re-running after cleanup().
+    this.initialized = false
   }
 
   private async initServices() {

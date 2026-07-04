@@ -50,8 +50,20 @@ export interface IslandConfigureOptions {
 let options: IslandConfigureOptions | null = null
 let started = false
 
-/** Hand island its auth + config + analytics. Call once, before `start()`. */
+/**
+ * Hand island its auth + config + analytics. Call once, before `start()`.
+ *
+ * Reconfiguring a RUNNING runtime is not supported: services capture pieces of
+ * this config as they build (e.g. the cloud client's endpoints), so swapping the
+ * options mid-run would split-brain the runtime (`getAuth()`/`getConfigValues()`
+ * report values the running services never consumed). Ignored with a warning
+ * while started; after `stop()`, `configure()` + `start()` begin a fresh cycle.
+ */
 export function configure(opts: IslandConfigureOptions): void {
+  if (started) {
+    console.warn("toolkit.configure() called after toolkit.start(); ignored — stop() the runtime before reconfiguring")
+    return
+  }
   options = opts
 }
 

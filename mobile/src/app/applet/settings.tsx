@@ -1,6 +1,7 @@
 import {useLocalSearchParams} from "expo-router"
-import {useMemo, useRef, useState} from "react"
+import {useEffect, useMemo, useRef, useState} from "react"
 import {Animated, Platform, TextStyle, View, ViewStyle} from "react-native"
+import Toast from "react-native-toast-message"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Header, Icon, Screen, Text} from "@/components/ignite"
@@ -49,6 +50,23 @@ export default function AppSettings() {
   const appInfo = useMemo(() => {
     return applets.find((app) => app.packageName === packageName) || null
   }, [applets, packageName])
+
+  // Universal /apps/:packageName links can land here for packages that aren't
+  // installed. Once the app list has loaded and the package was NEVER found,
+  // fall back to home with a toast instead of a blank screen. `everFound` keeps
+  // the normal uninstall flow (appInfo disappears after a successful uninstall)
+  // out of this fallback.
+  const everFoundRef = useRef(false)
+  if (appInfo) {
+    everFoundRef.current = true
+  }
+  const appsLoaded = applets.length > 0
+  useEffect(() => {
+    if (appsLoaded && !appInfo && !everFoundRef.current) {
+      Toast.show({type: "error", text1: "App not installed", text2: packageName})
+      replaceAll("/home")
+    }
+  }, [appsLoaded, appInfo, packageName, replaceAll])
 
   const uninstallable = !SYSTEM_APPS.includes(packageName)
 

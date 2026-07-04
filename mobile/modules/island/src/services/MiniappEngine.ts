@@ -116,6 +116,11 @@ export function ensureMiniappEngine(): MiniappEngine {
 export async function stopMiniappEngine(): Promise<void> {
   const current = engine
   if (!current) return
+  // Null the singleton BEFORE the async teardown below: a concurrent
+  // ensureMiniappEngine() must construct fresh instead of re-starting (and
+  // re-subscribing) the router that is mid-teardown, which would leak a zombie
+  // Crust subscription once this function finishes.
+  engine = null
 
   devServerBridge.clearRespawnBackgroundHandler()
   current.router.stop()
@@ -130,7 +135,6 @@ export async function stopMiniappEngine(): Promise<void> {
       }
     }),
   )
-  engine = null
 }
 
 /** Returns the engine singletons if already constructed, else null. */
