@@ -26,6 +26,18 @@ export const glassesWifi = {
   },
 
   /**
+   * Subscribe to streamed scan results: the glasses report networks one by one
+   * while a scan runs, so callers can render them as they arrive instead of
+   * waiting for the final `scan()` result. Returns an unsubscribe.
+   */
+  onScanResult(cb: (networks: WifiSearchResult[]) => void): () => void {
+    const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
+      cb(event.networks)
+    })
+    return () => sub.remove()
+  },
+
+  /**
    * Send wifi credentials to the glasses. Resolves on success; rejects with the
    * bluetooth-sdk coded error (`bluetooth_powered_off`, `request_timeout`, …) on
    * failure, propagated unchanged for the caller to map.

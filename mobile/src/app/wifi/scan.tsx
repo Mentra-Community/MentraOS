@@ -81,12 +81,12 @@ export default function WifiScanScreen() {
 
     // The glasses stream networks one by one while the scan runs; show them as
     // they arrive instead of waiting for the final requestWifiScan() result.
-    const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
-      if (event.networks.length > 0) {
-        setNetworks(mapNetworks(event.networks))
+    const unsubscribe = toolkit.glasses.wifi.onScanResult((scanned) => {
+      if (scanned.length > 0) {
+        setNetworks(mapNetworks(scanned))
       }
     })
-    return () => sub.remove()
+    return unsubscribe
   }, [refreshSavedNetworks])
 
   const mapNetworks = (scanResults: WifiSearchResult[]): WifiSearchResult[] =>

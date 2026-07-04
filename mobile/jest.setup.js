@@ -404,6 +404,7 @@ jest.mock("@mentra/island", () => {
         onTouchGesture: subscribeVia("touch_event"),
         wifi: {
           scan: jest.fn(() => Promise.resolve([])),
+          onScanResult: jest.fn(() => () => {}),
           connect: jest.fn(() => Promise.resolve()),
           forget: jest.fn(() => Promise.resolve()),
           status: jest.fn(() => ({state: "disconnected"})),
