@@ -6,6 +6,7 @@
  */
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { userAuth } from "../middleware/user-auth.middleware";
 import { InvalidRequest } from "../../types/oauth.types";
@@ -29,29 +30,24 @@ const logEntrySchema = z.object({
   message: z.string(),
   source: z.string().optional(),
 });
-const reportTriggerSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("manual"),
-    source: nonEmptyStringSchema,
-    reason: nonEmptyStringSchema,
-    sourceAppletPackageName: optionalNonEmptyStringSchema,
-    sourceAppletName: optionalNonEmptyStringSchema,
-  }),
-  z.object({
-    type: z.literal("automatic"),
-    source: nonEmptyStringSchema,
-    reason: nonEmptyStringSchema,
-    sourceAppletPackageName: optionalNonEmptyStringSchema,
-    sourceAppletName: optionalNonEmptyStringSchema,
-  }),
-]);
-const automaticReportTriggerSchema = z.object({
-  type: z.literal("automatic"),
+const reportTriggerFields = {
   source: nonEmptyStringSchema,
   reason: nonEmptyStringSchema,
   sourceAppletPackageName: optionalNonEmptyStringSchema,
   sourceAppletName: optionalNonEmptyStringSchema,
+};
+const manualReportTriggerSchema = z.object({
+  type: z.literal("manual"),
+  ...reportTriggerFields,
 });
+const automaticReportTriggerSchema = z.object({
+  type: z.literal("automatic"),
+  ...reportTriggerFields,
+});
+const reportTriggerSchema = z.discriminatedUnion("type", [
+  manualReportTriggerSchema,
+  automaticReportTriggerSchema,
+]);
 const reportDetailsSchema = z.object({
   actualBehavior: nonEmptyStringSchema,
   expectedBehavior: optionalNonEmptyStringSchema,
@@ -91,6 +87,32 @@ const logsArtifactSchema = z.object({
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// The feedback UI attaches at most 5 screenshots, and the cloud-client sends
+// them in a single multipart call.
+const MAX_ATTACHMENT_FILES = 5;
+// Router-wide request-body ceiling: the full attachment budget plus slack for
+// multipart framing. Also bounds the JSON routes (submit, logs).
+const MAX_REQUEST_BODY_BYTES =
+  MAX_ATTACHMENT_BYTES * MAX_ATTACHMENT_FILES + 1024 * 1024;
+
+// Reject oversized request bodies before the handlers buffer them: bodyLimit
+// fails fast on Content-Length and otherwise caps the stream as it is read.
+// The custom onError keeps the RFC error shape instead of bodyLimit's default
+// HTTPException, which the app-level error handler would report as a 500.
+reportsApp.use(
+  "*",
+  bodyLimit({
+    maxSize: MAX_REQUEST_BODY_BYTES,
+    onError: (c) =>
+      c.json(
+        {
+          error: "invalid_request",
+          error_description: `request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes`,
+        },
+        413,
+      ),
+  }),
+);
 
 reportsApp.post("/", userAuth, postSubmitReport);
 reportsApp.post("/:reportId/artifacts", userAuth, postReportArtifacts);
@@ -173,8 +195,10 @@ async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
-  } catch {
-    // fall through to InvalidRequest
+  } catch (error) {
+    // Only malformed JSON falls through to InvalidRequest; anything else
+    // (e.g. the bodyLimit cap tripping mid-read) must keep its own status.
+    if (!(error instanceof SyntaxError)) throw error;
   }
   throw new InvalidRequest("request body must be a JSON object");
 }
@@ -188,14 +212,18 @@ async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput
   const files: ReportAttachmentInput[] = [];
   for (const value of values) {
     if (typeof value === "string") continue;
-    const bytes = new Uint8Array(await value.arrayBuffer());
-    if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+    if (files.length >= MAX_ATTACHMENT_FILES) {
+      throw new InvalidRequest(`too many artifact files (max ${MAX_ATTACHMENT_FILES})`);
+    }
+    // Enforce the per-file limit on the parsed size BEFORE buffering the file
+    // into its own array, so an oversized upload is rejected without copies.
+    if (value.size > MAX_ATTACHMENT_BYTES) {
       throw new InvalidRequest(`artifact ${value.name || "file"} exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
     }
     files.push({
       filename: value.name || `artifact-${Date.now()}`,
       contentType: value.type || "application/octet-stream",
-      bytes,
+      bytes: new Uint8Array(await value.arrayBuffer()),
     });
   }
 
