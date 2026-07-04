@@ -193,7 +193,10 @@ export function processScene(
         while (last.length > 0 && !measurer.fitsInWidth(`${last}…`, clamped.w)) {
           last = last.slice(0, -1)
         }
-        lines = [...lines.slice(0, -1), `${last}…`]
+        // A box narrower than the ellipsis glyph itself gets an empty line —
+        // never emit a line wider than the clamped box.
+        const ellipsized = last.length > 0 || measurer.fitsInWidth("…", clamped.w) ? `${last}…` : ""
+        lines = [...lines.slice(0, -1), ellipsized]
       }
     }
     const wrappedText = lines.join("\n")

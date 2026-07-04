@@ -30,7 +30,16 @@ import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {bearingDeg, distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
+import {
+  bearingDeg,
+  distanceToPolylineMeters,
+  haversineMeters,
+  nextSegmentBearing,
+  remainingRoutePoints,
+  remainingRouteMeters,
+  sideOfFinalSegment,
+  type LatLng,
+} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {borderTestImageBase64} from "./lib/bmp"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
@@ -533,9 +542,7 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
     this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
 
-    this.unsubs.push(
-      this.ui.handle("places:autocomplete", ({query, near}) => this.places.autocomplete(query, near)),
-    )
+    this.unsubs.push(this.ui.handle("places:autocomplete", ({query, near}) => this.places.autocomplete(query, near)))
     this.unsubs.push(this.ui.handle("places:details", ({placeId}) => this.places.details(placeId)))
     this.unsubs.push(
       this.ui.handle("places:reverse-geocode", ({lat, lng}) => this.navigation.reverseGeocode({lat, lng})),
@@ -557,7 +564,9 @@ export class NavigationController {
    * if the native start fails. Resolves `{ok, error?}` for the action; the UI
    * listener ignores the return.
    */
-  private async beginTrip(opts: StartNavigationOptions & {destinationName?: string}): Promise<{ok: boolean; error?: string}> {
+  private async beginTrip(
+    opts: StartNavigationOptions & {destinationName?: string},
+  ): Promise<{ok: boolean; error?: string}> {
     // Re-entrancy guard: ignore a second start while one is already in flight
     // (the duplicate's start() would stop() the session the first just created
     // and freeze the puck).
@@ -671,9 +680,7 @@ export class NavigationController {
    */
   private registerActions(): void {
     try {
-      this.unsubs.push(
-        this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)),
-      )
+      this.unsubs.push(this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)))
     } catch (err) {
       // actions module unavailable on this host, or already registered — the
       // miniapp still runs, it just can't be started via the action.
@@ -978,8 +985,7 @@ export class NavigationController {
         } catch (err) {
           this.appendLog(`dev-settings forward failed: ${err instanceof Error ? err.message : String(err)}`)
         }
-        const rawJustEnabled =
-          partial.useRawInstructions === true && !this.devSettings.useRawInstructions
+        const rawJustEnabled = partial.useRawInstructions === true && !this.devSettings.useRawInstructions
         this.devSettings = next
         this.ui.send("nav:dev-settings-update", this.devSettings)
         // Flipping the toggle changes what the maneuver card / HUD
@@ -1020,9 +1026,10 @@ export class NavigationController {
         if (show === this.showMinimap) return
         this.showMinimap = show
         if (!show) {
-          // Wipe whatever bitmap is on the glasses and reset the dedup
-          // cache so toggling back on re-pushes the next frame.
-          this.display.clear()
+          // Drop just the minimap slot — the HUD frame re-renders without it
+          // (clear() would blank the whole HUD until the next nav tick).
+          // Reset the dedup cache so toggling back on re-pushes the frame.
+          this.display.clearMinimap()
           this.lastMinimapPng = null
           this.lastHudKey = ""
         } else {
@@ -1147,9 +1154,7 @@ export class NavigationController {
   private async renderOsmMap(reason: string): Promise<{ok: boolean; error?: string}> {
     const {lat, lng} = this.osmMapCenter
     const SIZE = this.OSM_MAP_SIZE
-    console.log(
-      `[OSM-MAP] 🗺️  ${reason} — fetching roads around ${lat.toFixed(6)},${lng.toFixed(6)} (${SIZE}×${SIZE})`,
-    )
+    console.log(`[OSM-MAP] 🗺️  ${reason} — fetching roads around ${lat.toFixed(6)},${lng.toFixed(6)} (${SIZE}×${SIZE})`)
     const t0 = Date.now()
     try {
       const base64 = await buildOsmLineMap({
@@ -1347,8 +1352,10 @@ export class NavigationController {
         lat: (Math.min(...lats) + Math.max(...lats)) / 2,
         lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
       }
-      const halfH = haversineMeters({lat: Math.min(...lats), lng: center.lng}, {lat: Math.max(...lats), lng: center.lng}) / 2
-      const halfW = haversineMeters({lat: center.lat, lng: Math.min(...lngs)}, {lat: center.lat, lng: Math.max(...lngs)}) / 2
+      const halfH =
+        haversineMeters({lat: Math.min(...lats), lng: center.lng}, {lat: Math.max(...lats), lng: center.lng}) / 2
+      const halfW =
+        haversineMeters({lat: center.lat, lng: Math.min(...lngs)}, {lat: center.lat, lng: Math.max(...lngs)}) / 2
       const fetchRadius = Math.max(halfH, halfW) * 1.3 + 50
       this.osmFetchInFlight = true
       fetchOsmRoads(center, fetchRadius)
@@ -1446,13 +1453,7 @@ export class NavigationController {
     const liveDist =
       maneuver?.maneuverType === "ARRIVE"
         ? remainingRouteMeters(me, this.trip.routePoints)
-        : liveDistanceToNextTurn(
-            me,
-            this.trip.routePoints,
-            this.trip.routeSteps,
-            remainingRouteMeters,
-            haversineMeters,
-          )
+        : liveDistanceToNextTurn(me, this.trip.routePoints, this.trip.routeSteps, remainingRouteMeters, haversineMeters)
     const md = deriveManeuverDisplay(maneuver, status, liveDist)
 
     // Mirrors the phone-side OrientationCard's pickDisplay() — same
@@ -1519,11 +1520,7 @@ export class NavigationController {
         // replaces the distance right at the turn. The ARROW and atTurn come from
         // `md` (gated on the EVENT distance), so the glyph/cue always match md.kind.
         const dTurn = liveDist ?? md.distanceMeters
-        const distLine = md.atTurn
-          ? "Now"
-          : dTurn != null
-            ? formatDistance(dTurn, this.unitSystem)
-            : null
+        const distLine = md.atTurn ? "Now" : dTurn != null ? formatDistance(dTurn, this.unitSystem) : null
         maneuverArrow = md.arrow || "↑"
         maneuverBody = [distLine, md.instruction].filter(Boolean).join("\n")
         next = [md.arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
@@ -1545,7 +1542,8 @@ export class NavigationController {
       if (stuck && firstStep) {
         const arrow = arrowFor(firstStep.maneuver, null)
         const onto = isRealRoadName(firstStep.road)
-        const dist = firstStep.distanceMeters > 0 ? `In ${formatDistance(firstStep.distanceMeters, this.unitSystem)}` : null
+        const dist =
+          firstStep.distanceMeters > 0 ? `In ${formatDistance(firstStep.distanceMeters, this.unitSystem)}` : null
         next = [arrow, onto ? `Onto ${onto}` : null, dist].filter(Boolean).join("\n") || `Starting…`
       } else {
         next = `Starting…`
@@ -1661,16 +1659,12 @@ export class NavigationController {
   private buildTripStats(): string | null {
     const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
     const distM =
-      this.trip.maneuver?.distanceToDestinationMeters ??
-      remainingRouteMeters(me, this.trip.routePoints) ??
-      undefined
+      this.trip.maneuver?.distanceToDestinationMeters ?? remainingRouteMeters(me, this.trip.routePoints) ?? undefined
     if (distM == null || distM < 0) return null
     // Top stats slot: total remaining distance + ETA, e.g. "863 m  11 min"
     // (matches the HUD mockup). distM also feeds the ETA fallback when the SDK
     // hasn't sent a remaining-time value.
-    const etaS =
-      this.trip.maneuver?.timeToDestinationSeconds ??
-      distM / this.FALLBACK_WALKING_M_PER_S
+    const etaS = this.trip.maneuver?.timeToDestinationSeconds ?? distM / this.FALLBACK_WALKING_M_PER_S
     const dist = formatDistance(distM, this.unitSystem)
     return etaS >= 0 ? `${dist}  ${formatDuration(etaS)}` : dist
   }
@@ -1744,9 +1738,7 @@ export class NavigationController {
     // Re-fetch roads if we have none yet, or the user has wandered far from the
     // cached center. Fetch is async + best-effort; we render with whatever roads
     // we currently have (possibly empty on the very first tick).
-    const movedFar =
-      !this.osmRoadsCenter ||
-      haversineMeters(me, this.osmRoadsCenter) > this.OSM_REFETCH_THRESHOLD_M
+    const movedFar = !this.osmRoadsCenter || haversineMeters(me, this.osmRoadsCenter) > this.OSM_REFETCH_THRESHOLD_M
     if (movedFar && !this.osmFetchInFlight) {
       this.osmFetchInFlight = true
       const fetchCenter = me
@@ -1754,7 +1746,9 @@ export class NavigationController {
         .then((roads) => {
           this.osmRoadsCache = roads
           this.osmRoadsCenter = fetchCenter
-          console.log(`[OSM-MINIMAP] fetched ${roads.length} roads around ${fetchCenter.lat.toFixed(5)},${fetchCenter.lng.toFixed(5)}`)
+          console.log(
+            `[OSM-MINIMAP] fetched ${roads.length} roads around ${fetchCenter.lat.toFixed(5)},${fetchCenter.lng.toFixed(5)}`,
+          )
           this.refreshMinimap() // redraw now that roads are in
         })
         .catch((err) => console.log("[OSM-MINIMAP] fetch failed:", err))
@@ -1800,9 +1794,7 @@ export class NavigationController {
     // Falls back to perpendicular route distance when the SDK hasn't populated
     // distanceToDestinationMeters yet. Deduped on content.
     const distM =
-      this.trip.maneuver?.distanceToDestinationMeters ??
-      remainingRouteMeters(me, this.trip.routePoints) ??
-      undefined
+      this.trip.maneuver?.distanceToDestinationMeters ?? remainingRouteMeters(me, this.trip.routePoints) ?? undefined
     // ETA: prefer the SDK's mode-aware remaining time; fall back to a
     // walking-speed estimate from the distance so the time still shows when the
     // SDK value isn't in yet.
@@ -1877,11 +1869,10 @@ export class NavigationController {
   /** Start the recurring minimap watchdog (no-op if already running). */
   private startMinimapWatchdog(): void {
     if (this.minimapWatchdogTimer != null) return
-    console.log(`[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`)
-    this.minimapWatchdogTimer = setInterval(
-      () => this.minimapWatchdogTick(),
-      this.MINIMAP_WATCHDOG_INTERVAL_MS,
+    console.log(
+      `[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`,
     )
+    this.minimapWatchdogTimer = setInterval(() => this.minimapWatchdogTick(), this.MINIMAP_WATCHDOG_INTERVAL_MS)
   }
 
   /** Stop the minimap watchdog (no-op if not running). */
@@ -2070,9 +2061,7 @@ export class NavigationController {
 
     const alongRouteArrived = remaining <= ARRIVAL_REMAINING_M
     const nearPinArrived =
-      straightLineToPin != null &&
-      straightLineToPin <= ARRIVAL_NEAR_PIN_M &&
-      remaining <= ARRIVAL_NEAR_END_M
+      straightLineToPin != null && straightLineToPin <= ARRIVAL_NEAR_PIN_M && remaining <= ARRIVAL_NEAR_END_M
     if (!alongRouteArrived && !nearPinArrived) return
 
     const side = sideOfFinalSegment(route, this.trip.activeDestination)
@@ -2186,9 +2175,7 @@ export class NavigationController {
         const merged = live.map((s, i) => ({
           ...s,
           instruction:
-            this.cachedInstructions && i < this.cachedInstructions.length
-              ? this.cachedInstructions[i] || null
-              : null,
+            this.cachedInstructions && i < this.cachedInstructions.length ? this.cachedInstructions[i] || null : null,
         }))
         this.trip = {...this.trip, routeSteps: merged}
         this.ui.send("nav:route", {points: this.trip.routePoints ?? [], steps: merged})
@@ -2385,9 +2372,7 @@ function cleanInstruction(raw: string | null | undefined): string {
   // Remove "Destination will be on the left/right" (with or without
   // a preceding " | " or ". " delimiter). Trim trailing whitespace
   // and stray punctuation left behind by the removal.
-  return raw
-    .replace(/\s*[|.]?\s*(?:your\s+)?destination will be on the (left|right)\s*\.?\s*$/i, "")
-    .trim()
+  return raw.replace(/\s*[|.]?\s*(?:your\s+)?destination will be on the (left|right)\s*\.?\s*$/i, "").trim()
 }
 
 /**
