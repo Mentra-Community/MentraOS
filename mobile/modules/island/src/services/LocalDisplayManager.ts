@@ -358,6 +358,12 @@ class LocalDisplayManager {
     if (sceneElements) {
       this.sendScene(packageName, view, sceneElements, expiresAt, resolve)
     } else if (payload.layout) {
+      // This layout bypasses the scene pipeline (clear_view, dashboard_card,
+      // unknown types, or a non-positioning device). If this (app, view) had a
+      // retained scene, the glasses no longer match it — reset the diff
+      // baseline so the next render() repaints from empty instead of skipping
+      // "unchanged" elements.
+      sceneRenderer.resetBaseline(packageName, view)
       const rawEvent: Record<string, unknown> = {
         view: payload.view ?? "main",
         layout: payload.layout,

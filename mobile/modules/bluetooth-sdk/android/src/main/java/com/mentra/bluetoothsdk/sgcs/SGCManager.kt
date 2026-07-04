@@ -185,6 +185,14 @@ abstract class SGCManager {
         if (frame.replay) {
             onSceneReplay(frame.appId)
         }
+        // An id in `removed` that ALSO appears in `elements` is a type change
+        // (the differ keys matches by type:id). Its removal must run BEFORE the
+        // paint — registries key by id, so a post-paint sweep would delete the
+        // just-painted replacement.
+        val paintedIds = frame.elements.mapTo(HashSet()) { it.id }
+        for (id in frame.removed) {
+            if (id in paintedIds) removeLayoutElement(id, frame.appId)
+        }
         for (el in frame.elements) {
             if (!frame.replay && el.change == "unchanged") continue
             when (el.type) {
@@ -198,7 +206,7 @@ abstract class SGCManager {
             }
         }
         for (id in frame.removed) {
-            removeLayoutElement(id, frame.appId)
+            if (id !in paintedIds) removeLayoutElement(id, frame.appId)
         }
     }
 

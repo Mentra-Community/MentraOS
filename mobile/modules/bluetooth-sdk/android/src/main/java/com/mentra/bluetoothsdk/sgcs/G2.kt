@@ -2045,7 +2045,9 @@ class G2 : SGCManager() {
         }
 
         val rx = x ?: defaultTextX
-        val ry = y ?: defaultTextY
+        // Legacy callers can hand us y beyond the canvas — clamp it first so
+        // the height formula below can't go negative/below one fw line.
+        val ry = minOf(maxOf(y ?: defaultTextY, 0), 288 - minTextContainerHeight)
         val rw = width ?: defaultTextWidth
         // Firmware guard: grow to at least one fw line, clamped to the canvas.
         // Content-independent so rect keys stay stable across updates.
@@ -2329,6 +2331,13 @@ class G2 : SGCManager() {
             sceneBatchActive = true
             sceneStructuralPending = false
             try {
+                // Type-changed ids (removed AND re-painted this frame) must be
+                // removed BEFORE the paint — post-paint removal would delete
+                // the just-painted replacement (registries key by id).
+                val paintedIds = frame.elements.mapTo(HashSet()) { it.id }
+                for (id in frame.removed) {
+                    if (id in paintedIds) applySceneRemove(id)
+                }
                 for (el in frame.elements) {
                     if (!frame.replay && el.change == "unchanged") continue
                     when (el.type) {
@@ -2342,15 +2351,18 @@ class G2 : SGCManager() {
                     }
                 }
                 for (id in frame.removed) {
-                    applySceneRemove(id)
+                    if (id !in paintedIds) applySceneRemove(id)
                 }
             } finally {
+                // Flush inside finally: a mid-frame exception must not strand
+                // a pending structural rebuild (the page would sit stale until
+                // the next frame happened to be structural).
                 sceneBatchActive = false
-            }
-            if (sceneStructuralPending) {
-                sceneStructuralPending = false
-                Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
-                coalescedPageRebuild()
+                if (sceneStructuralPending) {
+                    sceneStructuralPending = false
+                    Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+                    coalescedPageRebuild()
+                }
             }
         }
     }
@@ -2389,6 +2401,8 @@ class G2 : SGCManager() {
     ) {
         // Same firmware min-height guard as sendText2, applied before the
         // registry rect checks so grown rects stay consistent across calls.
+        @Suppress("NAME_SHADOWING")
+        val y = minOf(maxOf(y, 0), 288 - minTextContainerHeight)
         @Suppress("NAME_SHADOWING")
         val height = minOf(maxOf(height, minTextContainerHeight), 288 - y)
         run {

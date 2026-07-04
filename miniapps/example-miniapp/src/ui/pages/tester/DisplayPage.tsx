@@ -199,6 +199,10 @@ export default function DisplayPage() {
             variant="destructive"
             onClick={() => {
               setSceneCount(0)
+              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
+              countsRef.current = zero
+              setCounts(zero)
+              bitmapSceneRef.current.clear()
               invoke("render", [[]]).catch(() => {})
             }}>
             render([]) — clear
@@ -236,19 +240,6 @@ export default function DisplayPage() {
           </Button>
         </div>
 
-        <div className="mt-5 flex flex-col gap-2">
-          <Button
-            variant="destructive"
-            onClick={() => {
-              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
-              countsRef.current = zero
-              setCounts(zero)
-              bitmapSceneRef.current.clear()
-              invoke("render", [[]]).catch(() => {})
-            }}>
-            render([]) — clear bitmaps
-          </Button>
-        </div>
         <ErrorRow event={lastError} />
       </div>
     </Shell>

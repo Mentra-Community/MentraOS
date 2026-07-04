@@ -136,13 +136,21 @@ class SceneRenderer {
         ]
       }
       case "bitmap_view": {
-        const w = (layout.width as number | undefined) ?? W
-        const h = (layout.height as number | undefined) ?? H
+        // Dimensionless legacy bitmaps historically landed in the device's
+        // default ~200×100 container (G2 seeded 200×100 at 188,44) — NOT the
+        // full canvas, which would tile a small image across the whole frame.
+        const w = (layout.width as number | undefined) ?? Math.min(200, W)
+        const h = (layout.height as number | undefined) ?? Math.min(100, H)
         return [
           {
             type: "image",
             id: "sugar:bmp",
-            box: {x: (layout.x as number | undefined) ?? 0, y: (layout.y as number | undefined) ?? 0, w, h},
+            box: {
+              x: (layout.x as number | undefined) ?? Math.max(0, Math.round((W - w) / 2)),
+              y: (layout.y as number | undefined) ?? Math.max(0, Math.round((H - h) / 4)),
+              w,
+              h,
+            },
             data: String(layout.data ?? ""),
           },
         ]
@@ -223,6 +231,18 @@ class SceneRenderer {
   /** Forget an app's retained scenes (app stop). */
   public clearApp(appId: string): void {
     this.store.clear(appId)
+  }
+
+  /**
+   * Reset the diff baseline for (app, view) without touching the device.
+   * Used when a legacy layout bypasses the scene path (clear_view /
+   * dashboard_card / unknown layoutTypes go to native raw): after that, the
+   * retained frame no longer matches the glasses, so the next render() must
+   * diff from empty — otherwise "unchanged" elements would be skipped and
+   * never repainted.
+   */
+  public resetBaseline(appId: string, view: "main" | "dashboard"): void {
+    this.store.commit(appId, view, [])
   }
 
   private sendFrame(frame: SceneFrame): void {

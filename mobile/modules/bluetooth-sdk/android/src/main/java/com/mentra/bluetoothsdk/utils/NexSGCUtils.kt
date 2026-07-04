@@ -253,13 +253,15 @@ object NexProtobufUtils {
      * via [generateCanvasUpdateImageCommandBytes] + the 0xB0 chunk stream.
      */
     fun generateCanvasCreateBitmapCommandBytes(id: Int, x: Int, y: Int, width: Int, height: Int): ByteArray {
+        // Negative geometry would serialize as a huge unsigned varint on the
+        // wire — clamp to the drawable range before it reaches the firmware.
         val create = CanvasCreateComponent.newBuilder()
             .setId(id)
             .setType(CanvasComponentType.CANVAS_BITMAP)
-            .setX(x)
-            .setY(y)
-            .setWidth(width)
-            .setHeight(height)
+            .setX(x.coerceAtLeast(0))
+            .setY(y.coerceAtLeast(0))
+            .setWidth(width.coerceAtLeast(1))
+            .setHeight(height.coerceAtLeast(1))
             .build()
         val phoneToGlasses = PhoneToGlasses.newBuilder()
             .setCanvasCreateComponent(create)

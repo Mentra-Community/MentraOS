@@ -2186,7 +2186,9 @@ class G2: NSObject, SGCManager {
         }
 
         let rx = x ?? G2.defaultTextContainer.x
-        let ry = y ?? G2.defaultTextContainer.y
+        // Legacy callers can hand us y beyond the canvas — clamp it first so
+        // the height formula below can't go negative/below one fw line.
+        let ry = min(max(y ?? G2.defaultTextContainer.y, 0), 288 - G2.minTextContainerHeight)
         let rw = width ?? G2.defaultTextContainer.width
         // Firmware guard (hardware-calibrated): a text container shorter than
         // one firmware line (~40px; 28px overflowed) makes the fw draw its
@@ -2297,6 +2299,13 @@ class G2: NSObject, SGCManager {
         }
         sceneBatchDepth += 1
         sceneStructuralPending = false
+        // Type-changed ids (removed AND re-painted this frame) must be removed
+        // BEFORE the paint — post-paint removal would delete the just-painted
+        // replacement (registries key by id).
+        let paintedIds = Set(frame.elements.map { $0.id })
+        for id in frame.removed where paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
         for el in frame.elements {
             if !frame.replay, el.change == "unchanged" { continue }
             switch el.type {
@@ -2323,7 +2332,7 @@ class G2: NSObject, SGCManager {
                 Bridge.log("G2: applySceneFrame: unknown element type \(el.type)")
             }
         }
-        for id in frame.removed {
+        for id in frame.removed where !paintedIds.contains(id) {
             await removeLayoutElement(id, layoutId: frame.appId)
         }
         sceneBatchDepth -= 1
@@ -2347,6 +2356,8 @@ class G2: NSObject, SGCManager {
     ) async {
         // Same firmware min-height guard as sendTextAt, applied before the
         // registry rect checks so grown rects stay consistent across calls.
+        // y is clamped first so the height term can't go negative.
+        let y = min(max(y, 0), 288 - G2.minTextContainerHeight)
         let height = min(max(height, G2.minTextContainerHeight), 288 - y)
         let content = text.isEmpty ? " " : text
         if let existingId = sceneTextByElement[elementId] {

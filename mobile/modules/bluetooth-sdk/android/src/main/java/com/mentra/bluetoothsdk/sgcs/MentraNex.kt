@@ -879,6 +879,12 @@ class MentraNex : SGCManager() {
             }
 
             private fun handleConnectionFailure(gatt: BluetoothGatt, status: Int) {
+                // Same as handleDisconnection: the glasses lose their canvas —
+                // forget the component registry so post-reconnect frames take
+                // the CREATE path (fw silently drops updates to dead ids).
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before connection failure
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before connection failure: $microphoneStateBeforeDisconnection")

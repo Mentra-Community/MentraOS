@@ -19,8 +19,11 @@ export interface DisplayProfile {
   maxLines: number
 
   /**
-   * Line height in px for box-height→line-count math (scene pipeline).
-   * Optional: derived as displayHeightPx / maxLines when absent.
+   * CALIBRATED line height in px for box-height→line-count math (scene
+   * pipeline). When absent, host-side height clipping is skipped entirely and
+   * text wraps to the box width with the firmware clipping vertically in-box
+   * (legacy behavior) — it is deliberately NOT derived from canvas math, which
+   * proved wrong on hardware (see profileLineHeightPx in scene/process.ts).
    */
   lineHeightPx?: number
 

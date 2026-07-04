@@ -94,8 +94,12 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Same glasses-native pipeline as the canvas path: scale to the target
         // size when given, invert + dither, encode a real 1-bit BMP (the old
         // conversion emitted raw RGBA the firmware couldn't decode).
-        let pixelWidth = width ?? Int32(image.cgImage?.width ?? Int(image.size.width * image.scale))
-        let pixelHeight = height ?? Int32(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        // Legacy callers can hand us zero/negative dims — clamp to the canvas
+        // so the scale/encode path can't divide by zero or allocate garbage.
+        let rawWidth = width ?? Int32(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let rawHeight = height ?? Int32(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        let pixelWidth = min(max(rawWidth, 1), 500)
+        let pixelHeight = min(max(rawHeight, 1), 220)
         let scaled = scaledImage(image, toWidth: pixelWidth, height: pixelHeight)
         guard let bmpData = convertImageToNex1BitBmp(scaled) else {
             Bridge.log("NEX: Failed to convert UIImage to 1-bit BMP")

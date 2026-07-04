@@ -37,7 +37,13 @@ export function degradeScene(input: readonly SceneElementInput[]): DegradedScene
 
   const texts: TextEl[] = []
   input.forEach((el, index) => {
-    if (!el || typeof el !== "object" || !el.box) return
+    if (!el || typeof el !== "object" || !el.box) {
+      // Malformed element — report it like the positioning pipeline does
+      // instead of silently pretending the render was clean.
+      dropped.push((el as {id?: string} | null)?.id ?? `element[${index}]`)
+      degraded = true
+      return
+    }
     if (el.type === "text") {
       texts.push(el)
     } else if (el.type === "image") {

@@ -272,6 +272,14 @@ extension SGCManager {
         if frame.replay {
             await onSceneReplay(frame.appId)
         }
+        // An id in `removed` that ALSO appears in `elements` is a type change
+        // (the differ keys matches by type:id). Its removal must run BEFORE the
+        // paint — registries key by id, so a post-paint sweep would delete the
+        // just-painted replacement.
+        let paintedIds = Set(frame.elements.map { $0.id })
+        for id in frame.removed where paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
         for el in frame.elements {
             if !frame.replay, el.change == "unchanged" { continue }
             switch el.type {
@@ -298,7 +306,7 @@ extension SGCManager {
                 Bridge.log("SGC: applySceneFrame: unknown element type \(el.type)")
             }
         }
-        for id in frame.removed {
+        for id in frame.removed where !paintedIds.contains(id) {
             await removeLayoutElement(id, layoutId: frame.appId)
         }
     }

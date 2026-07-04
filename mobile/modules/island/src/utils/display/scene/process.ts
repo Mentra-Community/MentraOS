@@ -71,18 +71,31 @@ export function processScene(
   const dropped: string[] = []
   let degraded = false
 
-  const wrapper = new TextWrapper(new TextMeasurer(profile))
+  const measurer = new TextMeasurer(profile)
+  const wrapper = new TextWrapper(measurer)
   const lineHeight = profileLineHeightPx(profile, caps.height)
 
   // Validate + dedupe explicit ids (first occurrence wins; dupes are dev error).
   const seenIds = new Set<string>()
   const valid: {el: SceneElementInput; index: number}[] = []
-  input.forEach((el, index) => {
-    if (!el || typeof el !== "object" || !el.box) {
-      dropped.push(reportId(el ?? ({type: "text"} as SceneElementInput), index))
+  input.forEach((raw, index) => {
+    if (!raw || typeof raw !== "object" || !raw.box) {
+      dropped.push(reportId(raw ?? ({type: "text"} as SceneElementInput), index))
       degraded = true
       return
     }
+    // Non-finite box numbers (NaN/±Infinity/non-number) would survive the
+    // Math.* clamp below and poison the frame all the way to native ints.
+    const b = raw.box
+    if (![b.x, b.y, b.w, b.h].every((n) => typeof n === "number" && Number.isFinite(n))) {
+      dropped.push(reportId(raw, index))
+      degraded = true
+      return
+    }
+    // Leading "~" is the differ's synthetic-id namespace — an app id there
+    // would never match across frames (re-created every push). Normalize by
+    // stripping; the rewrite is deterministic, so diffing stays stable.
+    const el = raw.id?.startsWith("~") ? {...raw, id: raw.id.replace(/^~+/, "") || undefined} : raw
     if (el.id) {
       const key = `${el.type}:${el.id}`
       if (seenIds.has(key)) {
@@ -174,7 +187,13 @@ export function processScene(
     if (result.truncated) {
       degraded = true
       if (style.overflow === "ellipsis" && lines.length > 0) {
-        lines = [...lines.slice(0, -1), `${lines[lines.length - 1]}…`]
+        // Trim the last line until it fits WITH the ellipsis appended —
+        // otherwise the extra glyph can overflow the clamped box width.
+        let last = lines[lines.length - 1]
+        while (last.length > 0 && !measurer.fitsInWidth(`${last}…`, clamped.w)) {
+          last = last.slice(0, -1)
+        }
+        lines = [...lines.slice(0, -1), `${last}…`]
       }
     }
     const wrappedText = lines.join("\n")
