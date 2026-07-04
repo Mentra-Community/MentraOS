@@ -12,6 +12,13 @@ name: Example App Builds
 permissions:
   contents: read
 
+# Newest run per ref wins: cancels superseded PR builds and prevents an
+# older main run from finishing after a newer one and rolling back the
+# per-SDK-version release assets.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CI: true
   GSTREAMER_VERSION: 1.28.2
@@ -64,7 +71,9 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+          # build-tools;34.0.0 is the AGP 8.7 default; install it up front so
+          # Gradle does not have to auto-install it mid-build.
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0" "ndk;27.1.12297006"
 
       - name: Cache GStreamer Android SDK
         uses: actions/cache@v4
@@ -188,7 +197,7 @@ jobs:
       - name: Read Bluetooth SDK version
         id: sdk-version
         run: |
-          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native/package.json | tr -d '^~')
+          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native/package.json | sed 's/^[^0-9]*//')
           if [ -z "$version" ] || [ "$version" = "null" ]; then
             echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
             exit 1
@@ -281,7 +290,7 @@ jobs:
       - name: Read Bluetooth SDK version
         id: sdk-version
         run: |
-          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native-elevenlabs-audio/package.json | tr -d '^~')
+          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native-elevenlabs-audio/package.json | sed 's/^[^0-9]*//')
           if [ -z "$version" ] || [ "$version" = "null" ]; then
             echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
             exit 1
