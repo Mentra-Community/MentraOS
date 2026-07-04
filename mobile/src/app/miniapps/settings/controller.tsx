@@ -37,7 +37,7 @@ function DeviceSettings() {
     })
     if (result === 1) {
       try {
-        toolkit.glasses.controller.forget()
+        await toolkit.glasses.controller.forget()
       } catch (e) {
         console.log(e)
       }
@@ -57,7 +57,11 @@ function DeviceSettings() {
     })
 
     if (result === 1) {
-      toolkit.glasses.controller.disconnect()
+      try {
+        await toolkit.glasses.controller.disconnect()
+      } catch (e) {
+        console.log(e)
+      }
     }
   }
 

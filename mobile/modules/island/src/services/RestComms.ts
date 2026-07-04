@@ -40,11 +40,8 @@ class RestComms {
   public setCoreToken(token: string | null): void {
     this.coreToken = token
     const tokenLen = token?.length ?? 0
-    console.log(
-      `${this.TAG}: Core token ${token ? "set" : "cleared"} - Length: ${tokenLen} - First 20 chars: ${
-        token?.substring(0, 20) || "null"
-      }`,
-    )
+    // Log presence/length only — never token bytes (they'd end up in log pipelines).
+    console.log(`${this.TAG}: Core token ${token ? "set" : "cleared"} - Length: ${tokenLen}`)
 
     // This is the legacy Cloud V1 token. Cloud V2 glasses/report auth is synced
     // by CloudClientService so V1 cannot overwrite the native Bluetooth slot.

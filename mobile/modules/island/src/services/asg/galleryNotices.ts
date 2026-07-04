@@ -32,7 +32,15 @@ const listeners = new Set<Listener>()
 
 /** Emit a notice to all subscribers; returns how many received it (0 = nobody listening). */
 export function emitGalleryNotice(notice: GalleryNotice): number {
-  listeners.forEach((l) => l(notice))
+  listeners.forEach((l) => {
+    // Isolate listeners: one throwing host handler must not break delivery to the
+    // others or bubble an exception into the gallery sync.
+    try {
+      l(notice)
+    } catch (error) {
+      console.error("galleryNotices: onNotice listener threw:", error)
+    }
+  })
   return listeners.size
 }
 

@@ -25,14 +25,19 @@ export const LOCATION_TASK_NAME = "handleLocationUpdates"
 // Background location task — sends each fix to the v2 cloud (RestComms) + local
 // miniapps. (The v1 SocketComms leg was already removed/commented before the move.)
 TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NAME, async ({data, error}) => {
-  if (error) return
+  if (error) {
+    // OS-level failure (permission revoked, GPS unavailable, …) — log it so
+    // background location dropouts are diagnosable.
+    console.warn("ISLAND: LOCATION: background task error:", error)
+    return
+  }
   const locs = data?.locations ?? []
   if (locs.length === 0) {
     console.log("ISLAND: LOCATION: No locations received")
     return
   }
   const first = locs[0]!
-  restComms.sendLocationData(first)
+  const sendResult = restComms.sendLocationData(first)
   // Cloud path (relayMessageToApps) never reaches __phone__, so local miniapps rely
   // on this direct push.
   localMiniappRuntime.forwardEvent("location_update", {
@@ -41,6 +46,12 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
     accuracy: first.coords.accuracy ?? undefined,
     timestamp: first.timestamp,
   })
+  // Await after the miniapp push (send order unchanged) so the task callback
+  // spans the upload and failures are visible instead of silently dropped.
+  const result = await sendResult
+  if (result.is_error()) {
+    console.warn("ISLAND: LOCATION: failed to send location to cloud:", result.error)
+  }
 })
 
 /** Map a MentraOS location tier/accuracy string to an expo-location accuracy. */

@@ -110,10 +110,18 @@ await $({stdio: "inherit"})`xcodebuild \
 // The bundle is named after PRODUCT_NAME ("Mentra"), not the scheme/project
 // ("MentraOS" on this branch) — glob the products dir instead of assuming.
 const appBundles = await glob(`${derivedData}/Build/Products/Debug-iphoneos/*.app`, {onlyDirectories: true})
-if (appBundles.length !== 1) {
-  throw new Error(`Expected exactly one built .app bundle, found: ${appBundles.join(", ") || "none"}`)
+if (appBundles.length === 0) {
+  throw new Error(`Expected a built .app bundle under ${derivedData}/Build/Products/Debug-iphoneos, found none`)
 }
-const appPath = appBundles[0]
+// ios/build persists between runs, so a renamed target/product can leave stale
+// bundles behind — install the one the build we just ran produced (newest mtime).
+let appPath = appBundles[0]
+if (appBundles.length > 1) {
+  const byMtime = await Promise.all(appBundles.map(async (p) => ({p, mtimeMs: (await fs.stat(p)).mtimeMs})))
+  byMtime.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  appPath = byMtime[0].p
+  console.log(`Multiple .app bundles found (${appBundles.join(", ")}); installing newest: ${appPath}`)
+}
 
 // Install + launch via devicectl (works where expo's installer fails).
 await $({stdio: "inherit"})`xcrun devicectl device install app --device ${deviceUdid} ${appPath}`

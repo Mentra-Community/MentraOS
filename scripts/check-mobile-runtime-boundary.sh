@@ -57,15 +57,15 @@ echo "mobile runtime boundary check passed ($(wc -l <"$TMP_ACTUAL" | tr -d ' ') 
 report_count() {
   local label="$1" pattern="$2"
   local count
-  # `|| true` keeps a zero-match counter from killing the script under
-  # `set -euo pipefail` (rg exits 1 when nothing matches).
-  count="$( (rg -l "$pattern" mobile/src \
+  # rg exits 1 on zero matches; under `set -euo pipefail` that would abort the
+  # script exactly when a burn-down hits 0 — swallow it so 0 reports as 0.
+  count="$({ rg -l "$pattern" mobile/src \
     -g '*.ts' -g '*.tsx' \
     --glob '!**/__tests__/**' \
     --glob '!**/*.test.ts' \
     --glob '!**/*.test.tsx' \
     --glob '!**/test-utils/**' \
-    2>/dev/null || true) | wc -l | tr -d ' ')"
+    2>/dev/null || true; } | wc -l | tr -d ' ')"
   echo "  [report-only] ${label}: ${count} files"
 }
 

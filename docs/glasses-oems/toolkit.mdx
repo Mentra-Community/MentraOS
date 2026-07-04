@@ -165,7 +165,7 @@ The current keys, their types, and defaults:
 | `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
 | `power_saving_mode` | boolean | `false` | low-power mode |
 | `offline_mode` | boolean | `false` | offline operation |
-| `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra app auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |
+| `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra App auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |
 | `calendar_events` | array | `[]` | synced calendar events |
 | `twelve_hour_time` | boolean | `true` | 12-hour vs 24-hour clock |
 | `metric_system` | boolean | `false` | metric vs imperial |
@@ -355,7 +355,7 @@ await toolkit.miniapps.uninstall(packageName, version?)
 
 The raw device-state stores are also exposed under `toolkit.stores`
 (`glasses`, `display`, `core`, `connection`, `gallerySync`, `cloudClientStatus`,
-`settings`) so the first-party Mentra app can keep using them directly during migration.
+`settings`) so the first-party Mentra App can keep using them directly during migration.
 
 <Warning>
 `toolkit.stores.*` is a **Mentra-app convenience, not the OEM contract.** It exposes
@@ -372,7 +372,7 @@ storage, the cloud client, glasses/BLE, settings, speech, display, and the minia
 runtime from there.
 
 <Note>
-You may see internal `configureRuntime(...)` wiring in the first-party Mentra app —
+You may see internal `configureRuntime(...)` wiring in the first-party Mentra App —
 that's **transitional** scaffolding for migrating Mentra's own screens, not part of
 the OEM contract. It deletes itself as each domain lands in island. An OEM only ever
 calls `configure({auth, config?})` + `start()`.

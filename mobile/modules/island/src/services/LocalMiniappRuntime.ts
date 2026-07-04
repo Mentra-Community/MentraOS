@@ -1542,13 +1542,16 @@ class LocalMiniappRuntime {
         })
       } else if (stream === "glasses_wifi") {
         // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
-        // Read the canonical nested `wifi: {state, ssid}` (NOT the legacy flat
-        // wifiConnected). Effective connectivity requires the glasses connected
-        // AND on Wi-Fi — mirrors the host's store-derived forward, so an
-        // already-disconnected device reports `connected: false` rather than
-        // silently emitting nothing. Always emits so onWifi gets an initial value.
-        const wifi = (glassesState as {wifi?: {state?: string; ssid?: string; localIp?: string}}).wifi
-        const connected = glassesState.connected === true && wifi?.state === "connected"
+        // Read the canonical nested `wifi: {state, ssid}` from the STORE state
+        // (`glassesState` is the narrowed 4-field projection and has no `wifi`;
+        // the pre-island host hook spread the full store, so read gs directly —
+        // NOT the legacy flat wifiConnected). Effective connectivity requires the
+        // glasses connected AND on Wi-Fi — mirrors the host's store-derived
+        // forward, so an already-disconnected device reports `connected: false`
+        // rather than silently emitting nothing. Always emits so onWifi gets an
+        // initial value.
+        const wifi = gs.wifi.state === "connected" ? gs.wifi : null
+        const connected = glassesState.connected === true && wifi !== null
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: "glasses_wifi",
@@ -1560,7 +1563,9 @@ class LocalMiniappRuntime {
           },
         })
       } else if (stream === "head_position") {
-        const headUp = (glassesState as {headUp?: boolean}).headUp
+        // The glasses store has no headUp field (same on the pre-island host
+        // hook), so this stays a no-emit until head state lands in the store.
+        const headUp = (gs as {headUp?: boolean}).headUp
         if (typeof headUp === "boolean") {
           this.sendToMiniapp(packageName, {
             type: MiniappResponseType.EVENT,

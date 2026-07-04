@@ -94,22 +94,31 @@ export const toolkit = {
     displayProcessor.attachToRuntime()
     gallerySyncService.initialize()
   },
-  /** Stop the runtime: tear down the settings sync + cloud client + mark stopped. */
+  /** Stop the runtime: tear down the settings sync + cloud client + mark stopped.
+   * Each step is guarded so one failing teardown can't skip the rest and leak
+   * the remaining runtime services. */
   async stop() {
-    stopGlassesSettingsSync()
-    stopGlassesStatusProjection()
-    stopDeviceEventRouter()
-    stopOtaService()
-    stopAudioCloudUplink()
-    stopPhoneNotificationsSync()
-    stopCaptionsTesterReportService()
-    stopMentraJSCrashloopReportService()
-    await stopMiniappEngine()
-    localMiniappRuntime.cleanup()
-    displayProcessor.detachFromRuntime()
-    gallerySyncService.cleanup()
-    cloudClientService.stop()
-    await bootstrapStop()
+    const safely = async (label: string, step: () => unknown): Promise<void> => {
+      try {
+        await step()
+      } catch (error) {
+        console.warn(`toolkit.stop: ${label} failed:`, error)
+      }
+    }
+    await safely("glasses settings sync", stopGlassesSettingsSync)
+    await safely("glasses status projection", stopGlassesStatusProjection)
+    await safely("device event router", stopDeviceEventRouter)
+    await safely("ota service", stopOtaService)
+    await safely("audio cloud uplink", stopAudioCloudUplink)
+    await safely("phone notifications sync", stopPhoneNotificationsSync)
+    await safely("captions tester report service", stopCaptionsTesterReportService)
+    await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
+    await safely("miniapp engine", stopMiniappEngine)
+    await safely("local miniapp runtime", () => localMiniappRuntime.cleanup())
+    await safely("display processor", () => displayProcessor.detachFromRuntime())
+    await safely("gallery sync service", () => gallerySyncService.cleanup())
+    await safely("cloud client", () => cloudClientService.stop())
+    await safely("bootstrap", bootstrapStop)
   },
   glasses,
   speech,

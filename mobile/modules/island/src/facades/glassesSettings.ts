@@ -32,9 +32,18 @@ const INTERNAL_KEYS = new Set<string>([
 ])
 const DEVICE_KEYS = BLUETOOTH_SETTING_KEYS.filter((k) => !INTERNAL_KEYS.has(k))
 
+// Copy: object/array-valued settings must not hand callers a mutable reference
+// into the store (mutations would bypass persistence + Bluetooth sync).
+function copySettingValue<T>(value: T): T {
+  if (Array.isArray(value)) return [...value] as T
+  if (value && typeof value === "object") return {...(value as object)} as T
+  return value
+}
+
 export const glassesSettings = {
-  /** Read a device setting by key. */
-  get: <T = unknown>(key: string): T | undefined => useSettingsStore.getState().getSetting(key) as T | undefined,
+  /** Read a device setting by key (object/array values are shallow copies). */
+  get: <T = unknown>(key: string): T | undefined =>
+    copySettingValue(useSettingsStore.getState().getSetting(key) as T | undefined),
   /** Write a device setting — persists and auto-syncs to the connected glasses. */
   set: <T = unknown>(key: string, value: T) => useSettingsStore.getState().setSetting(key, value),
   /** Subscribe to changes for one device-setting key; returns an unsubscribe. */
@@ -43,5 +52,6 @@ export const glassesSettings = {
   /** The schema descriptor for a key (type, default, options…), or undefined. */
   descriptor: (key: string) => SETTINGS[key],
   /** The device-setting keys synced to the glasses (excludes internal sync keys). */
-  available: (): string[] => DEVICE_KEYS,
+  // Copy: callers must not be able to mutate the module-level key list.
+  available: (): string[] => [...DEVICE_KEYS],
 }

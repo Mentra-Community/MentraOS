@@ -26,6 +26,18 @@ export const glassesWifi = {
   },
 
   /**
+   * Subscribe to streamed scan results: the glasses report networks one by one
+   * while a scan runs, so callers can render them as they arrive instead of
+   * waiting for the final `scan()` result. Returns an unsubscribe.
+   */
+  onScanResult(cb: (networks: WifiSearchResult[]) => void): () => void {
+    const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
+      cb(event.networks)
+    })
+    return () => sub.remove()
+  },
+
+  /**
    * Send wifi credentials to the glasses. Resolves on success; rejects with the
    * bluetooth-sdk coded error (`bluetooth_powered_off`, `request_timeout`, …) on
    * failure, propagated unchanged for the caller to map.
@@ -45,8 +57,12 @@ export const glassesWifi = {
     return {...useGlassesStore.getState().wifi}
   },
 
-  /** Subscribe to wifi-status changes; returns an unsubscribe. */
-  onStatus(cb: (status: WifiStatus) => void): () => void {
-    return useGlassesStore.subscribe((s) => s.wifi, cb)
+  /** Subscribe to wifi-status changes (current, previous); returns an unsubscribe. */
+  onStatus(cb: (status: WifiStatus, previous: WifiStatus) => void): () => void {
+    // Copy: like status(), never publish the store's live wifi objects to listeners.
+    return useGlassesStore.subscribe(
+      (s) => s.wifi,
+      (wifi, previous) => cb({...wifi}, {...previous}),
+    )
   },
 }

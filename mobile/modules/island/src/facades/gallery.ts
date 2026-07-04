@@ -24,8 +24,9 @@ function projectStatus() {
     isSyncing: selectIssyncing(s),
     isStarting: gallerySyncService.isSyncStarting(),
     glassesGallery: selectGlassesGalleryStatus(s),
-    // Copy: the snapshot must not hand callers a mutable reference into the store.
-    queue: [...s.queue],
+    // Copy: the snapshot must not hand callers a mutable reference into the store
+    // (each queue item is copied too — callers must not mutate them in place).
+    queue: s.queue.map((item) => ({...item})),
     queueLength: s.queue.length,
     queueIndex: s.queueIndex,
   }

@@ -195,7 +195,9 @@ export const pairing = {
   onOtherBtConnected: (cb: (connected: boolean) => void): (() => void) =>
     useCoreStore.subscribe((s) => s.otherBtConnected, cb),
   /** The current scan results (snapshot). */
-  searchResults: () => [...useCoreStore.getState().searchResults],
+  // Copy the array AND each entry: neither the list nor the Device objects may
+  // leak as mutable references into the store.
+  searchResults: () => useCoreStore.getState().searchResults.map((result) => ({...result})),
   /** Subscribe to scan-result changes; fires only when they change. Returns an unsubscribe. */
   onFound: (cb: (results: ReturnType<typeof useCoreStore.getState>["searchResults"]) => void): (() => void) => {
     let last = JSON.stringify(useCoreStore.getState().searchResults)
@@ -204,7 +206,8 @@ export const pairing = {
       const key = JSON.stringify(results)
       if (key === last) return
       last = key
-      cb(results)
+      // Copy like searchResults(): listeners must not mutate shared scan state.
+      cb(results.map((result) => ({...result})))
     })
   },
 

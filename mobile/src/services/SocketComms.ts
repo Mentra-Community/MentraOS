@@ -102,7 +102,11 @@ class SocketComms {
       processedEvent = msg
     }
 
-    BluetoothSdk.displayEvent(processedEvent)
+    // Match LocalDisplayManager.sendToNative: a native rejection must not leak an
+    // unhandled promise rejection into websocket message handling.
+    void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+      console.error("SOCKET: native display failed:", err)
+    })
     const displayEventStr = JSON.stringify(processedEvent)
     useDisplayStore.getState().setDisplayEvent(displayEventStr)
   }
