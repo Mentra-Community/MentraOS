@@ -22,10 +22,16 @@ export interface Setting {
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
-  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
+  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  appearance_menu_enabled: {key: "appearance_menu_enabled", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  appearance_menu_enabled: {
+    key: "appearance_menu_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   app_boot_extra_info: {
     key: "app_boot_extra_info",
     defaultValue: () => false,
@@ -33,7 +39,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  miniapp_dev_mode: {
+    key: "miniapp_dev_mode",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -208,33 +220,44 @@ export const SETTINGS: Record<string, Setting> = {
   // from or saved to the legacy Cloud V1 settings store.
   core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
+  // Pairing identity is per-phone, not per-account: two phones on one account
+  // can be paired to different glasses, so none of these keys may sync to the
+  // server (saveOnServer: false — a stale server copy resurrecting a local
+  // pairing identity is exactly the desync this group's flags prevent).
+  //
+  // Two-phase identity: pending_wearable is the model the user last STARTED
+  // pairing (written at selection, rendered as a finish-pairing card);
+  // default_wearable + device_name + device_address are only promoted by the
+  // native layer when pairing actually succeeds (handleDeviceReady).
+  // pending_wearable persists so an abandoned selection still shows its
+  // finish-pairing card after an app restart.
   pending_wearable: {
     key: "pending_wearable",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
-    persist: false,
+    persist: true,
   },
   default_wearable: {
     key: "default_wearable",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
+  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   pending_controller: {
@@ -248,14 +271,14 @@ export const SETTINGS: Record<string, Setting> = {
     key: "controller_device_name",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   controller_address: {
     key: "controller_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
   },
   // ui state:
@@ -719,10 +742,19 @@ export interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce((acc, key) => {
-    acc[key] = SETTINGS[key].defaultValue()
-    return acc
-  }, {} as Record<string, any>)
+  Object.keys(SETTINGS).reduce(
+    (acc, key) => {
+      acc[key] = SETTINGS[key].defaultValue()
+      return acc
+    },
+    {} as Record<string, any>,
+  )
+
+// Single-flight for loadAllSettings: the host fires it at module load and
+// toolkit.start()'s device-store hydration awaits it — without the memo the
+// second caller runs a duplicate full disk load while the first is still in
+// flight. Cleared on failure so a later call can retry.
+let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
 
 export const useSettingsStore = create<SettingsState>()(
   subscribeWithSelector((set, get) => ({
@@ -829,7 +861,10 @@ export const useSettingsStore = create<SettingsState>()(
     // loads any preferences that have been changed from the default and saved to DISK!
     loadAllSettings: (): AsyncResult<void, Error> => {
       console.log("SETTINGS: loadAllSettings()")
-      return Res.try_async(async () => {
+      if (loadAllSettingsInFlight) {
+        return loadAllSettingsInFlight
+      }
+      const inFlight = Res.try_async(async () => {
         const state = get()
         let loadedSettings: Record<string, any> = {}
 
@@ -914,6 +949,13 @@ export const useSettingsStore = create<SettingsState>()(
           storage.save(MIGRATION_KEY, true)
         }
       })
+      loadAllSettingsInFlight = inFlight
+      void Promise.resolve(inFlight).then((result) => {
+        if (result.is_error()) {
+          loadAllSettingsInFlight = null
+        }
+      })
+      return inFlight
     },
     getRestUrl: () => {
       const serverUrl = get().getSetting(SETTINGS.backend_url.key)
