@@ -314,8 +314,9 @@ class OtaInstallCoordinator {
       errorMsg: this.errorMsg,
       continueButtonDisabled: this.continueButtonDisabled,
       connected,
-      otaStatus,
-      otaProgress,
+      // Copies: the snapshot must not hand callers mutable references into the store.
+      otaStatus: otaStatus ? {...otaStatus} : null,
+      otaProgress: otaProgress ? {...otaProgress} : null,
       mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
     }
   }
