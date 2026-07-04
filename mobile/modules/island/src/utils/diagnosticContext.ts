@@ -13,6 +13,20 @@ import {SETTINGS, useSettingsStore} from "../stores/settings"
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
 
+/**
+ * The glasses store keeps hotspot credentials NESTED (`hotspot: {state, ssid,
+ * password, localIp}`), not just on the legacy top-level `hotspotPassword` key —
+ * strip the password before the state is attached to a report.
+ */
+function redactNestedCredentials(glasses: Record<string, unknown>): Record<string, unknown> {
+  const hotspot = glasses.hotspot
+  if (hotspot && typeof hotspot === "object" && "password" in hotspot) {
+    const {password: _password, ...rest} = hotspot as Record<string, unknown>
+    return {...glasses, hotspot: {...rest, password: "[REDACTED]"}}
+  }
+  return glasses
+}
+
 export async function collectDiagnosticContext(extra?: Partial<ReportContext>): Promise<ReportContext> {
   const appletState = useAppStatusStore.getState()
   const settingsState = useSettingsStore.getState()
@@ -40,9 +54,11 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
     ...glassesState
   } = useGlassesStore.getState()
 
-  const filteredGlasses = Object.fromEntries(
-    Object.entries(glassesState).filter(
-      ([key]) => !SENSITIVE_GLASSES_KEYS.includes(key as (typeof SENSITIVE_GLASSES_KEYS)[number]),
+  const filteredGlasses = redactNestedCredentials(
+    Object.fromEntries(
+      Object.entries(glassesState).filter(
+        ([key]) => !SENSITIVE_GLASSES_KEYS.includes(key as (typeof SENSITIVE_GLASSES_KEYS)[number]),
+      ),
     ),
   )
   const filteredSettings = Object.fromEntries(
