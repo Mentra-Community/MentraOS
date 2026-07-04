@@ -156,6 +156,12 @@ export type PhotoCaptureMetadataDetails = {
   totalLightProxy?: number;
   mfnrLikely?: boolean;
 };
+export type PhotoTimelineEvent = {
+  source: 'request' | 'photo_status' | 'photo_response';
+  status?: string;
+  deviceTimestamp?: number;
+  timestamp: number;
+};
 export type PhotoPreviewDetails = {
   bleFallbackMessage?: string;
   bleFallbackUsed?: boolean;
@@ -174,6 +180,7 @@ export type PhotoPreviewDetails = {
   source: 'Cloud server' | 'Phone receiver' | 'Action button' | 'Glasses gallery';
   state: 'acknowledged' | 'error' | 'preview';
   timestamp?: number;
+  timeline?: PhotoTimelineEvent[];
   uploadUrl?: string;
   uploadedAt?: string;
   width?: number;
@@ -1626,7 +1633,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Enter a valid http:// or https:// media upload URL.');
       }
 
-      const requestId = `photo-${Date.now()}`;
+      const requestedAt = Date.now();
+      const requestId = `photo-${requestedAt}`;
       statusUrl = photoStatusUrl(uploadUrlText, requestId);
       activePhotoRequestIdRef.current = requestId;
       pollGenerationRef.current += 1;
@@ -1634,7 +1642,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
       setPhotoPreviewUrl(null);
       setPhotoPreviewDetails(null);
-      markPhotoRequestStarted(requestId);
+      markPhotoRequestStarted(requestId, 'Cloud server', requestedAt);
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       try {
@@ -1663,13 +1671,14 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function captureAndUploadToPhone() {
     const receiver = await ensurePhonePhotoReceiver('capture');
 
-    const requestId = `photo-${Date.now()}`;
+    const requestedAt = Date.now();
+    const requestId = `photo-${requestedAt}`;
     activePhotoRequestIdRef.current = requestId;
     pollGenerationRef.current += 1;
 
     setPhotoPreviewUrl(null);
     setPhotoPreviewDetails(null);
-    markPhotoRequestStarted(requestId);
+    markPhotoRequestStarted(requestId, 'Phone receiver', requestedAt);
     resetBarcodeScan();
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
     startPhonePhotoUploadTimeout(requestId);
@@ -1758,6 +1767,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('LIVE', `ignoring stale phone photo ${payload.requestId}`);
       return;
     }
+    const deliveredAt = Date.now();
     clearPhotoUploadTimeout();
     activePhotoRequestIdRef.current = null;
     setPhonePhotoReceiverRunning(true);
@@ -1773,6 +1783,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requestId: payload.requestId ?? activeRequestId ?? current?.requestId ?? null,
       source: 'Phone receiver',
       state: 'preview',
+      timestamp: deliveredAt,
+      timeline: appendPhotoResponseTimeline(current?.timeline, {timestamp: deliveredAt}),
     }));
     void updatePhotoPreviewMetadata(payload.fileUri);
     if (scanModeRef.current) {
@@ -1834,12 +1846,23 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhonePhotoUploadUrl(null);
   }
 
-  function markPhotoRequestStarted(requestId: string) {
+  function markPhotoRequestStarted(
+    requestId: string,
+    source: PhotoPreviewDetails['source'],
+    requestedAt: number,
+  ) {
     setPhotoStatus({
       type: 'photo_status',
       requestId,
       status: 'accepted',
-      timestamp: Date.now(),
+      timestamp: requestedAt,
+    });
+    setPhotoPreviewDetails({
+      requestId,
+      source,
+      state: 'acknowledged',
+      timestamp: requestedAt,
+      timeline: [{source: 'request', timestamp: requestedAt}],
     });
   }
 
@@ -1848,14 +1871,28 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     errorCode: string,
     errorMessage: string,
   ) {
+    const failedAt = Date.now();
     setPhotoStatus({
       type: 'photo_status',
       requestId,
       status: 'failed',
-      timestamp: Date.now(),
+      timestamp: failedAt,
       errorCode,
       errorMessage,
     });
+    setPhotoPreviewDetails((current) => ({
+      ...current,
+      error: errorMessage || errorCode,
+      requestId,
+      source: current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
+      state: 'error',
+      timestamp: failedAt,
+      timeline: appendPhotoTimeline(current?.timeline, {
+        source: 'photo_status',
+        status: 'failed',
+        timestamp: failedAt,
+      }),
+    }));
   }
 
   function markPhotoRequestStillWaiting(
@@ -1863,11 +1900,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     source: PhotoPreviewDetails['source'],
     error: unknown,
   ) {
+    const waitingAt = Date.now();
     setPhotoStatus({
       type: 'photo_status',
       requestId,
       status: 'uploading',
-      timestamp: Date.now(),
+      timestamp: waitingAt,
     });
     setPhotoPreviewDetails((current) => ({
       ...current,
@@ -1875,7 +1913,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requestId,
       source,
       state: current?.state === 'preview' ? 'preview' : 'acknowledged',
-      timestamp: Date.now(),
+      timestamp: waitingAt,
+      timeline: appendPhotoTimeline(current?.timeline, {
+        source: 'photo_status',
+        status: 'uploading',
+        timestamp: waitingAt,
+      }),
     }));
     setCameraStatus('Camera: still waiting for photo delivery');
     addEvent(
@@ -1932,54 +1975,60 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const fallbackMessage = photoBleFallbackMessage(payload.status);
     const bleTransferStatus =
       payload.status === 'ready_for_transfer' || payload.status === 'transferring';
-    if (
-      payload.resolvedConfig ||
-      payloadWithExtras.requestedCaptureConfig ||
-      payloadWithExtras.meteredPreview ||
-      payloadWithExtras.captureMetadata ||
-      fallbackMessage ||
-      bleTransferStatus
-    ) {
-      setPhotoPreviewDetails((current) => {
-        const bleFallbackUsed =
-          current?.bleFallbackUsed || payload.status === 'ble_fallback_compression';
-        return {
-          ...current,
-          bleFallbackMessage:
-            fallbackMessage ??
-            (bleFallbackUsed
-              ? photoBleFallbackProgressMessage(payload.status, current?.bleFallbackMessage)
-              : current?.bleFallbackMessage),
-          bleFallbackUsed,
-          requestId: payload.requestId,
-          source:
-            isGalleryModeButtonPhoto
-              ? 'Glasses gallery'
-              : payload.resolvedConfig?.source === 'button'
-                ? 'Action button'
-              : current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
-          state: current?.state === 'preview' ? 'preview' : 'acknowledged',
-          timestamp: payload.timestamp,
-          resolvedConfig: payload.resolvedConfig ?? current?.resolvedConfig,
-          requestedCaptureConfig:
-            payloadWithExtras.requestedCaptureConfig ?? current?.requestedCaptureConfig,
-          meteredPreview: payloadWithExtras.meteredPreview ?? current?.meteredPreview,
-          captureMetadata: payloadWithExtras.captureMetadata ?? current?.captureMetadata,
-        };
-      });
-    }
+    const statusPhoneTimestamp = Date.now();
+    const statusDeviceTimestamp = payload.timestamp ?? statusPhoneTimestamp;
+    setPhotoPreviewDetails((current) => {
+      const bleFallbackUsed =
+        current?.bleFallbackUsed || payload.status === 'ble_fallback_compression';
+      return {
+        ...current,
+        bleFallbackMessage:
+          fallbackMessage ??
+          (bleFallbackUsed
+            ? photoBleFallbackProgressMessage(payload.status, current?.bleFallbackMessage)
+            : current?.bleFallbackMessage),
+        bleFallbackUsed,
+        requestId: payload.requestId,
+        source:
+          isGalleryModeButtonPhoto
+            ? 'Glasses gallery'
+            : payload.resolvedConfig?.source === 'button'
+              ? 'Action button'
+            : current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
+        state: current?.state === 'preview' ? 'preview' : 'acknowledged',
+        timestamp: statusDeviceTimestamp,
+        timeline: appendPhotoTimeline(current?.timeline, {
+          source: 'photo_status',
+          status: payload.status,
+          deviceTimestamp: payload.timestamp,
+          timestamp: statusPhoneTimestamp,
+        }),
+        resolvedConfig: payload.resolvedConfig ?? current?.resolvedConfig,
+        requestedCaptureConfig:
+          payloadWithExtras.requestedCaptureConfig ?? current?.requestedCaptureConfig,
+        meteredPreview: payloadWithExtras.meteredPreview ?? current?.meteredPreview,
+        captureMetadata: payloadWithExtras.captureMetadata ?? current?.captureMetadata,
+      };
+    });
 
     if (payload.status === 'failed') {
       galleryModePhotoRequestIdsRef.current.delete(payload.requestId);
       clearPhotoUploadTimeout();
       activePhotoRequestIdRef.current = null;
-      setPhotoPreviewDetails({
+      setPhotoPreviewDetails((current) => ({
+        ...current,
         error: payload.errorCode ?? payload.errorMessage,
         requestId: payload.requestId,
-        source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
+        source: current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
         state: 'error',
-        timestamp: payload.timestamp,
-      });
+        timestamp: statusDeviceTimestamp,
+        timeline: current?.timeline ?? [{
+          source: 'photo_status',
+          status: payload.status,
+          deviceTimestamp: payload.timestamp,
+          timestamp: statusPhoneTimestamp,
+        }],
+      }));
       resetBarcodeScan();
     }
 
@@ -2152,6 +2201,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
     const previewUrl = response.photoUrl;
+    const responsePhoneTimestamp = Date.now();
+    const responseDeviceTimestamp = response.timestamp ?? responsePhoneTimestamp;
     if (previewUrl) {
       setPhotoPreviewUrl(previewUrl);
       setPhotoStatus(null);
@@ -2172,7 +2223,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requestId: response.requestId,
       source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
       state: current?.state === 'preview' || previewUrl ? 'preview' : 'acknowledged',
-      timestamp: response.timestamp,
+      timestamp: responseDeviceTimestamp,
+      timeline: appendPhotoResponseTimeline(current?.timeline, {
+        deviceTimestamp: response.timestamp,
+        timestamp: responsePhoneTimestamp,
+      }),
       uploadUrl: response.uploadUrl,
     }));
     if (previewUrl) {
@@ -2210,6 +2265,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             uploadedAt?: string;
           };
           if (json.photoUrl) {
+            const deliveredAt = Date.now();
             setPhotoPreviewUrl(json.photoUrl);
             setPhotoStatus(null);
             setPhotoPreviewDetails((current) => ({
@@ -2223,6 +2279,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
               requestId: json.requestId ?? requestId,
               source: 'Cloud server',
               state: 'preview',
+              timestamp: deliveredAt,
+              timeline: appendPhotoResponseTimeline(current?.timeline, {timestamp: deliveredAt}),
               uploadedAt: json.uploadedAt ?? current?.uploadedAt,
             }));
             void updatePhotoPreviewMetadata(json.photoUrl);
@@ -4201,6 +4259,31 @@ function photoBleFallbackProgressMessage(status: string, currentMessage?: string
 
 function photoStatusStartsNewCapture(status: string) {
   return status === 'accepted' || status === 'queued' || status === 'configuring';
+}
+
+function appendPhotoTimeline(
+  timeline: PhotoTimelineEvent[] | undefined,
+  event: PhotoTimelineEvent,
+) {
+  const entries = timeline ?? [];
+  const duplicate = entries.some(
+    (entry) =>
+      entry.source === event.source &&
+      entry.status === event.status &&
+      (entry.deviceTimestamp ?? entry.timestamp) === (event.deviceTimestamp ?? event.timestamp),
+  );
+  return duplicate ? entries : [...entries, event];
+}
+
+function appendPhotoResponseTimeline(
+  timeline: PhotoTimelineEvent[] | undefined,
+  event: Pick<PhotoTimelineEvent, 'deviceTimestamp' | 'timestamp'>,
+) {
+  return appendPhotoTimeline(timeline, {
+    source: 'photo_response',
+    deviceTimestamp: event.deviceTimestamp,
+    timestamp: event.timestamp,
+  });
 }
 
 function videoStatusIsFailure(status: string) {
