@@ -20,9 +20,21 @@ jobs:
   android:
     name: Native Android example
     runs-on: ubuntu-latest
+    outputs:
+      sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read Bluetooth SDK version
+        id: sdk-version
+        run: |
+          version=$(grep '^mentraSdkVersion=' examples/android/gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          if [ -z "$version" ]; then
+            echo "Could not read mentraSdkVersion from gradle.properties" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -71,12 +83,35 @@ jobs:
         run: |
           ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Collect APK
+        run: cp examples/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-android.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-android
+          path: mentra-example-android.apk
+          if-no-files-found: error
+
   ios:
     name: Native iOS example
     runs-on: macos-latest
+    outputs:
+      sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read Bluetooth SDK version
+        id: sdk-version
+        run: |
+          version=$(awk '/repositoryURL = .*mentra-bluetooth-sdk-ios/,/};/' examples/ios/MentraExample.xcodeproj/project.pbxproj \
+            | sed -n 's/.*version = \([0-9][0-9.]*\);.*/\1/p' | head -1)
+          if [ -z "$version" ]; then
+            echo "Could not read the Bluetooth SDK package version from project.pbxproj" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Swift packages
         uses: actions/cache@v4
@@ -105,6 +140,7 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS' \
             -clonedSourcePackagesDirPath SourcePackages \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             analyze
 
@@ -117,15 +153,42 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS' \
             -clonedSourcePackagesDirPath SourcePackages \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Package unsigned IPA
+        working-directory: examples/ios
+        run: |
+          mkdir Payload
+          cp -R "build/Build/Products/Debug-iphoneos/MentraExample.app" Payload/
+          zip -qry mentra-example-ios-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-ios
+          path: examples/ios/mentra-example-ios-unsigned.ipa
+          if-no-files-found: error
 
   react-native:
     name: React Native example
     runs-on: ubuntu-latest
+    outputs:
+      sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read Bluetooth SDK version
+        id: sdk-version
+        run: |
+          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native/package.json | tr -d '^~')
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -191,12 +254,34 @@ jobs:
         run: |
           ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Collect APK
+        run: cp examples/react-native/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-react-native.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-react-native
+          path: mentra-example-react-native.apk
+          if-no-files-found: error
+
   react-native-elevenlabs-audio:
     name: React Native ElevenLabs audio example
     runs-on: ubuntu-latest
+    outputs:
+      sdk-version: ${{ steps.sdk-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read Bluetooth SDK version
+        id: sdk-version
+        run: |
+          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native-elevenlabs-audio/package.json | tr -d '^~')
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -255,3 +340,78 @@ jobs:
         working-directory: examples/react-native-elevenlabs-audio/android
         run: |
           ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Collect APK
+        run: cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-rn-elevenlabs-audio.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentra-example-rn-elevenlabs-audio
+          path: mentra-example-rn-elevenlabs-audio.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish per-SDK-version release
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs:
+      - android
+      - ios
+      - react-native
+      - react-native-elevenlabs-audio
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish artifacts to per-version releases
+        run: |
+          set -euo pipefail
+
+          # Each app publishes to the release matching its own pinned SDK
+          # version, so the releases stay correct even if one example
+          # temporarily pins an older SDK than the others.
+          publish() {
+            local version="$1"
+            local file="$2"
+            local tag="sdk-$version"
+
+            if ! gh release view "$tag" --json tagName >/dev/null 2>&1; then
+              gh release create "$tag" \
+                --prerelease \
+                --target "$GITHUB_SHA" \
+                --title "Bluetooth SDK $version example builds" \
+                --notes ""
+            fi
+
+            gh release upload "$tag" "$file" --clobber
+
+            # Re-point the tag at the commit whose artifacts the release now carries.
+            git tag -f "$tag" "$GITHUB_SHA"
+            git push -f origin "refs/tags/$tag"
+
+            local notes
+            notes="Latest example app builds for Mentra Bluetooth SDK $version."
+            notes+=$'\n\n'"Android APKs install directly (allow installs from unknown sources)."
+            notes+=$'\n'"The iOS IPA is unsigned: install it with a sideloading tool such as Sideloadly or AltStore, which re-signs it with your own Apple ID."
+            notes+=$'\n\n'"Assets last updated from commit $GITHUB_SHA on $(date -u +%Y-%m-%d)."
+            gh release edit "$tag" --notes "$notes"
+          }
+
+          publish "${{ needs.android.outputs.sdk-version }}" \
+            artifacts/mentra-example-android/mentra-example-android.apk
+          publish "${{ needs.ios.outputs.sdk-version }}" \
+            artifacts/mentra-example-ios/mentra-example-ios-unsigned.ipa
+          publish "${{ needs.react-native.outputs.sdk-version }}" \
+            artifacts/mentra-example-react-native/mentra-example-react-native.apk
+          publish "${{ needs.react-native-elevenlabs-audio.outputs.sdk-version }}" \
+            artifacts/mentra-example-rn-elevenlabs-audio/mentra-example-rn-elevenlabs-audio.apk

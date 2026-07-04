@@ -27,6 +27,19 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
 4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.
 
+## Install Prebuilt Example Apps
+
+Every commit on `main` publishes installable builds of the example apps to [GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases), grouped by Bluetooth SDK version: the `sdk-<version>` release always carries the latest build of each example for that SDK version.
+
+From the release matching your SDK version (e.g. `sdk-0.1.17`), download:
+
+- `mentra-example-android.apk` — native Android example
+- `mentra-example-react-native.apk` — React Native example
+- `mentra-example-rn-elevenlabs-audio.apk` — React Native ElevenLabs audio example
+- `mentra-example-ios-unsigned.ipa` — native iOS example
+
+Android APKs install directly from the phone browser (enable installs from unknown sources when prompted). The iOS IPA is unsigned; install it with a sideloading tool such as [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which re-signs it with your own Apple ID. Pull-request builds are also available for 90 days as run artifacts on each [workflow run](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml).
+
 ## What The Examples Demonstrate
 
 - Scanning for supported Mentra glasses, connecting, disconnecting, and reconnecting to a saved/default device.

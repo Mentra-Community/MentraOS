@@ -56,6 +56,18 @@ android {
         }
     }
 
+    signingConfigs {
+        // Shared debug keystore committed to the repo so debug builds from any
+        // machine (including CI) carry the same signature and can update each
+        // other without an uninstall. Debug-only key, not used for release.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildFeatures {
         compose = true
     }
