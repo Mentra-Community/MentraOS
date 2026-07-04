@@ -75,7 +75,9 @@ export const bluetoothSdkMock = {
   displayText: jest.fn(() => Promise.resolve()),
   clearDisplay: jest.fn(() => Promise.resolve()),
   requestStatus: jest.fn(() => Promise.resolve()),
-  getDefaultDevice: jest.fn(() => null),
+  // Default: a device is paired (the common case for connect-path tests);
+  // override with mockResolvedValueOnce(null) to exercise the unpaired state.
+  getDefaultDevice: jest.fn(() => Promise.resolve({id: "mock-default-device", model: "Mock Glasses", name: "Mock Glasses"})),
   setDefaultDevice: jest.fn(() => Promise.resolve()),
   clearDefaultDevice: jest.fn(() => Promise.resolve()),
   startScan: jest.fn(() => Promise.resolve()),

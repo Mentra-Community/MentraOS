@@ -38,4 +38,32 @@ describe("attemptReconnectToDefaultWearable", () => {
       (BluetoothSdk.connectDefault as jest.Mock).mock.invocationCallOrder[0],
     )
   })
+
+  it("skips quietly when a model is chosen but no device was ever paired", async () => {
+    useSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        [SETTINGS.default_wearable.key]: "Mentra Live",
+      },
+    }))
+    ;(BluetoothSdk.getDefaultDevice as jest.Mock).mockResolvedValueOnce(null)
+
+    await expect(attemptReconnectToDefaultWearable()).resolves.toBe(false)
+
+    expect(BluetoothSdk.connectDefault).not.toHaveBeenCalled()
+  })
+
+  it("fails open to connectDefault when the default-device lookup rejects", async () => {
+    useSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        [SETTINGS.default_wearable.key]: "Mentra Live",
+      },
+    }))
+    ;(BluetoothSdk.getDefaultDevice as jest.Mock).mockRejectedValueOnce(new Error("bridge unavailable"))
+
+    await expect(attemptReconnectToDefaultWearable()).resolves.toBe(true)
+
+    expect(BluetoothSdk.connectDefault).toHaveBeenCalled()
+  })
 })

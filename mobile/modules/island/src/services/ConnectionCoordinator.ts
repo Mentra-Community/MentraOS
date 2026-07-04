@@ -22,6 +22,8 @@ export interface ReconnectDecisionInput {
   isSimulated: boolean
   /** Current glasses connection snapshot. */
   connection: GlassesConnectionStatus
+  /** True when the SDK holds an actual default device (connectDefault target). */
+  hasDefaultDevice: boolean
   /** True when a scan is already in progress. */
   searching: boolean
 }
@@ -38,6 +40,9 @@ export function decideReconnect(input: ReconnectDecisionInput): ReconnectDecisio
   if (!input.reconnectOnForeground) return {kind: "skip", result: true}
   // No real wearable paired (or the simulated device): nothing to reconnect to.
   if (!input.defaultWearable || input.isSimulated) return {kind: "skip", result: false}
+  // Model chosen but never actually paired (or the native default was cleared):
+  // connectDefault() would throw — skip quietly; pairing is a user-driven flow.
+  if (!input.hasDefaultDevice) return {kind: "skip", result: false}
   // Already connected, or a scan is already running: nothing to do.
   if (isGlassesConnected(input.connection) || input.searching) return {kind: "skip", result: true}
   return {kind: "connect"}

@@ -286,6 +286,7 @@ jest.mock("@mentra/island", () => {
     decideReconnect: (input) => {
       if (!input?.reconnectOnForeground) return {kind: "skip", result: true}
       if (!input?.defaultWearable || input?.isSimulated) return {kind: "skip", result: false}
+      if (!input?.hasDefaultDevice) return {kind: "skip", result: false}
       if (input?.connection?.state === "connected" || input?.searching) return {kind: "skip", result: true}
       return {kind: "connect"}
     },

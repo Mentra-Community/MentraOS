@@ -19,6 +19,11 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     defaultWearable,
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
     connection: useGlassesStore.getState().connection,
+    // Fail open on a bridge error: pass true so the flow proceeds to
+    // connectDefault(), whose existing catch handles a genuinely missing
+    // device (the pre-guard behavior) — a transient native failure must not
+    // throw out of the app-foreground handler.
+    hasDefaultDevice: !!(await BluetoothSdk.getDefaultDevice().catch(() => true)),
     searching: useCoreStore.getState().searching,
   })
   if (decision.kind === "skip") {

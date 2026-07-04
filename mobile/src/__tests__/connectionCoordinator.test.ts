@@ -12,6 +12,7 @@ describe("decideReconnect", () => {
     defaultWearable: "Even Realities G1",
     isSimulated: false,
     connection: disconnected,
+    hasDefaultDevice: true,
     searching: false,
   }
 
@@ -33,6 +34,10 @@ describe("decideReconnect", () => {
 
   it("skips when already searching", () => {
     expect(decideReconnect({...base, searching: true})).toEqual({kind: "skip", result: true})
+  })
+
+  it("skips quietly when a model is chosen but no device was ever paired", () => {
+    expect(decideReconnect({...base, hasDefaultDevice: false})).toEqual({kind: "skip", result: false})
   })
 
   it("connects when paired, idle, and disconnected", () => {
