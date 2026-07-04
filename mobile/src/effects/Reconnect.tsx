@@ -19,6 +19,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
     connected: toolkit.pairing.readiness().connected,
     nativeLinkBusy: toolkit.pairing.readiness().nativeLinkBusy,
+    hasDefaultDevice: await toolkit.glasses.hasDefaultDevice(),
     searching: toolkit.pairing.scanning(),
   })
   if (decision.kind === "skip") {

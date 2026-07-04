@@ -10,6 +10,7 @@ describe("decideReconnect", () => {
     connected: false,
     searching: false,
     nativeLinkBusy: false,
+    hasDefaultDevice: true,
   }
 
   it("skips as a no-op success when reconnect-on-foreground is off", () => {
@@ -34,6 +35,10 @@ describe("decideReconnect", () => {
 
   it("skips when the native link layer is mid connect/bond (no scan running)", () => {
     expect(decideReconnect({...base, nativeLinkBusy: true})).toEqual({kind: "skip", result: true})
+  })
+
+  it("skips quietly when a model is chosen but no device was ever paired", () => {
+    expect(decideReconnect({...base, hasDefaultDevice: false})).toEqual({kind: "skip", result: false})
   })
 
   it("connects when paired, idle, and disconnected", () => {
