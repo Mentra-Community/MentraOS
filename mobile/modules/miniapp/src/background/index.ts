@@ -99,12 +99,7 @@ export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 export type {LedColor, LedControlOptions} from "../modules/led"
 export type {
   ViewType,
-  LayoutType,
-  Layout,
-  DisplayOptions,
-  TextWall,
-  BitmapView,
-  ClearView,
+  DisplayBreakMode,
   RenderBox,
   RenderElement,
   RenderOptions,

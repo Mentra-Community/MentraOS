@@ -57,18 +57,13 @@ export type {Transport, TransportDisconnectHandler, TransportMessageHandler} fro
 
 // Module types — useful for typing handlers in consumer code
 export type {
-  BitmapView,
-  ClearView,
-  DisplayOptions,
-  Layout,
-  LayoutType,
+  DisplayBreakMode,
   RenderBox,
   RenderElement,
   RenderOptions,
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
-  TextWall,
   ViewType,
 } from "./modules/display"
 export type {

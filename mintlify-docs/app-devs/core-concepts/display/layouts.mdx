@@ -76,32 +76,23 @@ phone degrades the scene to a full-view text layout automatically — check
 `session.capabilities.display.canPosition` if your layout depends on
 positioning.
 
-## Legacy one-shot layouts
+## Text walls and simple cases
 
-The `show*` methods predate `render()` and remain for compatibility — the
-phone converts each into a single-element scene internally. Every one is
-fire-and-forget and `void`.
+There are no separate "simple" methods — a classic full-screen text wall is
+just one full-canvas text element, and `render()` scales down to it cleanly:
 
-| Method | Shows |
-|---|---|
-| `showTextWall(text, options?)` | A single block of text filling the view. |
-| `showBitmapView(data, options?)` | A base64 PNG/JPEG; `options` may position it (`x`, `y`, `width`, `height`). |
-| `clear(view?)` | Clears `"main"` (default) or `"dashboard"`. |
+```typescript
+const d = session.capabilities?.display;
+session.display.render([
+  {type: "text", id: "wall", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text: "Saved"},
+], {durationMs: 2000});
+```
 
-They take a `DisplayOptions` object:
-
-| Field | Type | What it does |
-|---|---|---|
-| `view` | `"main" \| "dashboard"` | Which surface to draw on. Defaults to `"main"`. |
-| `durationMs` | `number` | Auto-clear after this many milliseconds. |
-| `breakMode` | `"character" \| "character-no-hyphen" \| "word" \| "strict-word"` | How the text wall wraps. |
-
-New code should prefer `render()` — one API for the simple case (a single
-full-canvas text element) and the composed case (a HUD of text, images, and
-shapes), with in-place updates for free.
+Per-element `style.breakMode` (`"character" | "character-no-hyphen" | "word" |
+"strict-word"`) controls how the text wraps inside its box.
 
 ## Dashboard view
 
-Any call with `view: "dashboard"` targets the dashboard view, the glasses'
-status view that the user brings up with a glasses-specific gesture (head-up
-on G1, a double-tap on others).
+`render(elements, {view: "dashboard"})` targets the dashboard view, the
+glasses' status view that the user brings up with a glasses-specific gesture
+(head-up on G1, a double-tap on others). The default is `"main"`.

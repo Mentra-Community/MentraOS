@@ -15,7 +15,7 @@ registerMiniapp((session) => {
   session.input.onButtonPress(async () => {
     if (!session.capabilities?.hasCamera) return;
     const photo = await session.camera.takePhoto();
-    session.display.showBitmapView(photo.photoUrl);
+    session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
   });
 });
 ```
@@ -105,10 +105,12 @@ Wrap calls in `try`/`catch` and read `code`.
 ```typescript
 try {
   const photo = await session.camera.takePhoto();
-  session.display.showBitmapView(photo.photoUrl);
+  session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
 } catch (err) {
   if (err.code === "PERMISSION_NOT_DECLARED") {
-    session.display.showTextWall("Camera permission not granted");
+    session.display.render([
+      {type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Camera permission not granted"},
+    ]);
   }
 }
 ```

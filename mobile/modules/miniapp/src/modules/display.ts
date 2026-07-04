@@ -1,18 +1,12 @@
 /**
- * @fileoverview DisplayManager — glasses display layouts.
+ * @fileoverview DisplayManager — the glasses display, via `render()`.
  *
- * Mirrors cloud SDK v3's DisplayManager naming. Was called `LayoutManager` /
- * `session.layouts` before the v3-alignment round.
- *
- * Wire shape matches the cloud SDK's DisplayRequest:
- *
- *   { type: "DISPLAY",
- *     view: "main" | "dashboard",
- *     layout: { layoutType: "text_wall", text: "..." },
- *     durationMs?: number }
- *
- * The phone's LocalMiniappRuntime forwards this to BluetoothSdk.displayEvent,
- * which reads event.view and event.layout.layoutType.
+ * render(elements) is replace-the-frame scene rendering: each call describes
+ * everything that should be on screen, the host diffs it against the previous
+ * frame per device, and `render([])` clears. The legacy one-shot `show*`
+ * layout methods were removed once nothing first-party or known-external
+ * called them; hosts still accept the historical `miniapp_display` wire shape
+ * from bundles packed with older SDKs.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -20,41 +14,7 @@ import {MiniappSession} from "../session"
 
 export type ViewType = "main" | "dashboard"
 
-/**
- * Layout types this SDK still EMITS. Hosts accept a wider historical set
- * (double_text_wall, reference_card, dashboard_card, positioned_text) from
- * older bundles; those methods were removed from the SDK surface once nothing
- * first-party or known-external called them.
- */
-export type LayoutType = "text_wall" | "bitmap_view" | "clear_view"
-
 export type DisplayBreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
-
-export interface TextWall {
-  layoutType: "text_wall"
-  text: string
-  breakMode?: DisplayBreakMode
-}
-
-export interface BitmapView {
-  layoutType: "bitmap_view"
-  /** Base64-encoded PNG/JPEG. Phone SGC converts to glasses-native format. */
-  data: string
-  /** Top-left x of the target container on the 576×288 canvas. Omit for default placement. */
-  x?: number
-  /** Top-left y of the target container on the 576×288 canvas. Omit for default placement. */
-  y?: number
-  /** Target container width. On G2, width>200 (or height>100) renders in quad mode; otherwise a single positioned tile. */
-  width?: number
-  /** Target container height. */
-  height?: number
-}
-
-export interface ClearView {
-  layoutType: "clear_view"
-}
-
-export type Layout = TextWall | BitmapView | ClearView
 
 // ============================================================================
 // render() — the scene API
@@ -115,61 +75,8 @@ export interface RenderResult {
   reason?: string
 }
 
-export interface DisplayOptions {
-  view?: ViewType
-  durationMs?: number
-  breakMode?: DisplayBreakMode
-}
-
-export interface BitmapOptions extends DisplayOptions {
-  /** Top-left x of the target container on the 576×288 canvas. */
-  x?: number
-  /** Top-left y of the target container on the 576×288 canvas. */
-  y?: number
-  /** Target container width. On G2, width>200 (or height>100) renders in quad mode; otherwise a single positioned tile. */
-  width?: number
-  /** Target container height. */
-  height?: number
-}
-
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
-
-  private send(layout: Layout, options: DisplayOptions = {}): void {
-    const payloadLayout =
-      options.breakMode && supportsBreakMode(layout) ? {...layout, breakMode: options.breakMode} : layout
-    this.session.sendOneShot({
-      type: MiniappRequestType.DISPLAY,
-      view: options.view ?? "main",
-      layout: payloadLayout,
-      durationMs: options.durationMs,
-    })
-  }
-
-  /** Show a single block of text filling the glasses display. */
-  showTextWall(text: string, options: DisplayOptions = {}): void {
-    this.send({layoutType: "text_wall", text}, options)
-  }
-
-  /**
-   * Show a bitmap. Phone SGC handles conversion to glasses-native format.
-   *
-   * Optional `x`/`y`/`width`/`height` position and size the bitmap's container.
-   * Omit them for default placement
-   *
-   * @example
-   * // 100×100 image pinned to the bottom-right of the 576×288 canvas
-   * display.showBitmapView(base64Png, {x: 476, y: 188, width: 100, height: 100})
-   */
-  showBitmapView(data: string, options: BitmapOptions = {}): void {
-    const {x, y, width, height, ...display} = options
-    this.send({layoutType: "bitmap_view", data, x, y, width, height}, display)
-  }
-
-  /** Clear the specified view. */
-  clear(view: ViewType = "main"): void {
-    this.send({layoutType: "clear_view"}, {view})
-  }
 
   /**
    * Render a whole scene of positioned elements — replace-the-frame.
@@ -212,8 +119,4 @@ export class DisplayManager {
             : String(err),
       }))
   }
-}
-
-function supportsBreakMode(layout: Layout): layout is TextWall {
-  return layout.layoutType === "text_wall"
 }

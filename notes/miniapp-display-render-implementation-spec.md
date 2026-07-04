@@ -268,14 +268,20 @@ Also done in-branch (2026-07-03 round 2):
       existed once `everything` was gone; no shipped bundle ever sent
       miniapp_canvas.
 
+- [x] SUGAR FULLY DELETED from the SDK (2026-07-03 round 3, Alex's call):
+      nav 1.1.15 migrated its secondary paths (large map, test box, dev-panel
+      text tests, clear → render); then `showTextWall`, `showBitmapView`,
+      `clear`, `send()`, and the legacy layout types were removed from
+      display.ts. `session.display` is render()-only. The external
+      Mentra-AI-Miniapp dev branch typechecks again once PR #6 merges (Aryan,
+      Monday 2026-07-06). Hardware note: nav's swipe-up large-map + loading
+      message paths (1.1.14/1.1.15 changes) have not had a device pass.
+
 Post-merge (gated on Alex):
-- [ ] Remaining SDK sugar retirement (`showTextWall` / `showBitmapView` /
-      `clear`): monorepo is clean except nav's secondary paths
-      (showText/showTestBox/showLargeBitmap/showBitmapTest/clear); blocked on
-      the external Mentra-AI-Miniapp PR merging + releasing
-- [ ] Host WIRE support for legacy DISPLAY layouts must OUTLIVE the SDK
-      methods — registry bundles packed with older SDKs and cloud-SDK apps
-      still send them; needs a deprecation window, not a delete
+- [ ] Host WIRE support for legacy DISPLAY layouts must OUTLIVE the SDK —
+      registry bundles packed with older SDKs and cloud-SDK apps still send
+      them, and the G1/Z100 degrade path emits them internally. Keep
+      `MiniappRequestType.DISPLAY` + handleDisplay + the sugar→scene converter.
 - [ ] `display.measure()` helper (reserved in the contract, unimplemented)
 
 Follow-ups:

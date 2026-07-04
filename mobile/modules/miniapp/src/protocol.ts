@@ -24,7 +24,11 @@ export enum MiniappRequestType {
   /** Update the set of streams the miniapp is subscribed to. */
   SUBSCRIBE = "miniapp_subscribe",
 
-  /** Push a layout to the glasses display. */
+  /**
+   * Push a legacy display layout to the glasses. The SDK no longer emits this
+   * (render()/RENDER replaced it); hosts keep accepting it from bundles packed
+   * with older SDKs and from cloud-shaped layouts.
+   */
   DISPLAY = "miniapp_display",
 
   /** Render a whole scene of positioned elements (replace-the-frame). */
@@ -231,7 +235,7 @@ export enum MiniappResponseType {
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
    * a brief window (~50ms grace on the phone side) to fire one last
    * `sendOneShot` before the transport closes — used to flush final
-   * cleanup like `display.clear()`. Synchronous handlers only.
+   * cleanup like `display.render([])`. Synchronous handlers only.
    */
   WILL_DISCONNECT = "miniapp_will_disconnect",
 

@@ -7,7 +7,7 @@
  * Lifecycle:
  *   const session = new MiniappSession()
  *   await session.connect()          // sends CONNECT, resolves on CONNECT_ACK
- *   session.display.showTextWall(...)
+ *   session.display.render([...])
  *   ...
  *   session.disconnect()
  */
@@ -181,7 +181,7 @@ type SessionEmitterEvents = {
    * Last-chance hook before the transport closes. Fires when the phone
    * sends WILL_DISCONNECT, or when this session calls `disconnect()`
    * locally. Handlers run synchronously and may issue one final
-   * `sendOneShot` (e.g. `display.clear()`); async work won't complete
+   * `sendOneShot`/`sendRequest` (e.g. `display.render([])`); async work won't complete
    * before the socket closes.
    */
   beforeDisconnect: (reason: string) => void
@@ -462,7 +462,7 @@ export class MiniappSession {
     if (this.disposed) return
     this.disposed = true
     // Give listeners one synchronous chance to flush final messages
-    // (e.g. display.clear()) before we tear down the transport.
+    // (e.g. display.render([])) before we tear down the transport.
     try {
       this.emitter.emit("beforeDisconnect", "disconnect called")
     } catch (err) {
@@ -551,7 +551,7 @@ export class MiniappSession {
    * phone notifies the session of an imminent disconnect (~50ms grace
    * window before the socket is torn down) or when this session's
    * `disconnect()` is called locally. Use it to flush final cleanup
-   * messages — e.g. `display.clear()` — synchronously. Async work
+   * messages — e.g. `display.render([])` — synchronously. Async work
    * started here will not complete before the socket closes.
    */
   onBeforeDisconnect(handler: (reason: string) => void): () => void {
