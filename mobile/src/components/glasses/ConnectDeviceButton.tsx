@@ -14,6 +14,7 @@ export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [pendingWearable] = useSetting(SETTINGS.pending_wearable.key)
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
@@ -40,6 +41,16 @@ export const ConnectDeviceButton = () => {
       const requirementsCheck = await checkConnectivityRequirementsUI()
 
       if (!requirementsCheck) {
+        return
+      }
+
+      // A chosen model (default_wearable) does not imply a paired device (an
+      // orphaned identity the boot demotion hasn't repaired yet). Without a
+      // device, connectDefault() throws — route back into pairing for the
+      // already-selected model instead of surfacing an error alert. Fail open
+      // on a read error: connectDefault()'s catch is the pre-guard behavior.
+      if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
+        push("/pairing/scan", {deviceModel: defaultWearable})
         return
       }
 
@@ -71,6 +82,13 @@ export const ConnectDeviceButton = () => {
   const defaultWearableEmpty = defaultWearable === ""
 
   if (defaultWearableNull || defaultWearableStringNull || defaultWearableEmpty) {
+    // A pending selection (chosen model, pairing never completed) resumes the
+    // scan for that model instead of restarting from model selection.
+    if (pendingWearable) {
+      return (
+        <Button onPress={() => push("/pairing/scan", {deviceModel: pendingWearable})} tx="home:finishPairingGlasses" />
+      )
+    }
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 

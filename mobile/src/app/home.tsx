@@ -25,6 +25,7 @@ import {BlurTargetView, BlurView} from "expo-blur"
 export default function Homepage() {
   const refreshApps = useRefresh()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [pendingWearable] = useSetting(SETTINGS.pending_wearable.key)
   const glassesConnected =
     useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
   const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
@@ -59,7 +60,9 @@ export default function Homepage() {
   }, [glassesConnected, isSearching, defaultWearable])
 
   const renderContent = () => {
-    if (!defaultWearable) {
+    // A pending selection (model chosen, pairing never completed) renders the
+    // glasses card in its finish-pairing state rather than the first-run card.
+    if (!defaultWearable && !pendingWearable) {
       return (
         <>
           <Group>

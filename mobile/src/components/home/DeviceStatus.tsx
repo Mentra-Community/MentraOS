@@ -61,6 +61,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [pendingWearable] = useSetting(SETTINGS.pending_wearable.key)
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
@@ -136,6 +137,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
+      // A chosen model (default_wearable) does not imply a paired device (an
+      // orphaned identity the boot demotion hasn't repaired yet). Without a
+      // native default device, connectDefault() throws — route back into
+      // pairing for the already-selected model instead of erroring. Fail open
+      // on a read error: connectDefault()'s catch is the pre-guard behavior.
+      if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
+        push("/pairing/scan", {deviceModel: defaultWearable})
+        return
+      }
       await toolkit.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
@@ -152,6 +162,40 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     } else {
       await connectGlasses()
     }
+  }
+
+  // Pending selection: a model was chosen but pairing never completed (abandoned
+  // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
+  // that model — or start over with a different one — instead of a Connect
+  // button that has no device to connect to.
+  if (!defaultWearable && pendingWearable) {
+    return (
+      <View style={style}>
+        <DeviceStatus
+          onPress={() => push("/pairing/scan", {deviceModel: pendingWearable})}
+          image={getGlassesImage(pendingWearable)}>
+          <View className="flex-row items-center gap-3">
+            <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
+            <Text className="font-semibold text-secondary-foreground text-end self-end" text={pendingWearable} />
+          </View>
+          <Button
+            flex
+            compact
+            className="max-h-10"
+            tx="home:finishPairingGlasses"
+            preset="primary"
+            onPress={() => push("/pairing/scan", {deviceModel: pendingWearable})}
+          />
+        </DeviceStatus>
+        <Button
+          className="mt-2"
+          compact
+          preset="secondary"
+          tx="home:pairDifferentGlasses"
+          onPress={() => push("/pairing/select-glasses-model", {transition: "simple_push"})}
+        />
+      </View>
+    )
   }
 
   const getCurrentGlassesImage = () => {
