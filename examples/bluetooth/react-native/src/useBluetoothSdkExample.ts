@@ -1767,6 +1767,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('LIVE', `ignoring stale phone photo ${payload.requestId}`);
       return;
     }
+    const deliveredAt = Date.now();
     clearPhotoUploadTimeout();
     activePhotoRequestIdRef.current = null;
     setPhonePhotoReceiverRunning(true);
@@ -1782,6 +1783,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requestId: payload.requestId ?? activeRequestId ?? current?.requestId ?? null,
       source: 'Phone receiver',
       state: 'preview',
+      timestamp: deliveredAt,
+      timeline: appendPhotoResponseTimeline(current?.timeline, {timestamp: deliveredAt}),
     }));
     void updatePhotoPreviewMetadata(payload.fileUri);
     if (scanModeRef.current) {
@@ -2221,8 +2224,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
       state: current?.state === 'preview' || previewUrl ? 'preview' : 'acknowledged',
       timestamp: responseDeviceTimestamp,
-      timeline: appendPhotoTimeline(current?.timeline, {
-        source: 'photo_response',
+      timeline: appendPhotoResponseTimeline(current?.timeline, {
         deviceTimestamp: response.timestamp,
         timestamp: responsePhoneTimestamp,
       }),
@@ -2263,6 +2265,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             uploadedAt?: string;
           };
           if (json.photoUrl) {
+            const deliveredAt = Date.now();
             setPhotoPreviewUrl(json.photoUrl);
             setPhotoStatus(null);
             setPhotoPreviewDetails((current) => ({
@@ -2276,6 +2279,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
               requestId: json.requestId ?? requestId,
               source: 'Cloud server',
               state: 'preview',
+              timestamp: deliveredAt,
+              timeline: appendPhotoResponseTimeline(current?.timeline, {timestamp: deliveredAt}),
               uploadedAt: json.uploadedAt ?? current?.uploadedAt,
             }));
             void updatePhotoPreviewMetadata(json.photoUrl);
@@ -4268,6 +4273,17 @@ function appendPhotoTimeline(
       (entry.deviceTimestamp ?? entry.timestamp) === (event.deviceTimestamp ?? event.timestamp),
   );
   return duplicate ? entries : [...entries, event];
+}
+
+function appendPhotoResponseTimeline(
+  timeline: PhotoTimelineEvent[] | undefined,
+  event: Pick<PhotoTimelineEvent, 'deviceTimestamp' | 'timestamp'>,
+) {
+  return appendPhotoTimeline(timeline, {
+    source: 'photo_response',
+    deviceTimestamp: event.deviceTimestamp,
+    timestamp: event.timestamp,
+  });
 }
 
 function videoStatusIsFailure(status: string) {
