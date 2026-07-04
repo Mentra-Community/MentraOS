@@ -104,14 +104,19 @@ export class DisplayManager {
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
-    this.enqueue("wall", () => this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined))
+    this.enqueue(
+      "wall",
+      () =>
+        void this.session.display.render(
+          [{type: "text", id: "wall", box: {x: 0, y: 0, w: 576, h: 288}, text}],
+          durationMs != null ? {durationMs} : undefined,
+        ),
+    )
   }
 
   showTextTest(): void {
-    this.safeCall(() =>
-      this.session.display.showTextWall(
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec venenatis vulputate lorem. Maecenas vestibulum mollis diam. Pellentesque ut neque. Sed lectus. Donec sodales sagittis magna.",
-      ),
+    this.showText(
+      "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec venenatis vulputate lorem. Maecenas vestibulum mollis diam. Pellentesque ut neque. Sed lectus. Donec sodales sagittis magna.",
     )
   }
 
@@ -157,11 +162,16 @@ export class DisplayManager {
     const base64Bmp = borderTestImageBase64(w, h)
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
-    // Clear first, wait 2s so old containers tear down, THEN draw the box.
-    this.safeCall(() => this.session.display.clear())
+    // Clear first, wait 1s so old containers tear down, THEN draw the box.
+    this.safeCall(() => void this.session.display.render([]))
     setTimeout(() => {
-      this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
+      this.renderCenteredBitmap(base64Bmp, x, y, w, h)
     }, 1000)
+  }
+
+  /** One centered image element as the whole frame (test/large-map paths). */
+  private renderCenteredBitmap(data: string, x: number, y: number, w: number, h: number): void {
+    this.safeCall(() => void this.session.display.render([{type: "image", id: "bmp", box: {x, y, w, h}, data}]))
   }
 
   /**
@@ -174,7 +184,7 @@ export class DisplayManager {
     const h = Math.max(8, Math.min(height, 288))
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
+    this.renderCenteredBitmap(base64Bmp, x, y, w, h)
   }
 
   // ── Two stacked text containers ──────────────────────────────────────
@@ -243,10 +253,8 @@ export class DisplayManager {
    * to verify the bitmap pipeline in isolation — no maneuver text competing.
    */
   showBitmapTest(base64Bmp: string): void {
-    this.safeCall(() => {
-      this.session.display.clear()
-      this.session.display.showBitmapView(base64Bmp, {x: 144, y: 0, width: 288, height: 288})
-    })
+    // render() replaces the whole frame — no separate clear needed.
+    this.renderCenteredBitmap(base64Bmp, 144, 0, 288, 288)
   }
 
   /**
@@ -262,16 +270,16 @@ export class DisplayManager {
     const w = Math.max(8, Math.min(size, 576))
     const h = Math.max(8, Math.min(height ?? size, 288))
     if (size > 200) {
-      console.log(`[NAV-MINI] bitmap width ${size} > 200 — may not render (G2 quad-mode limit)`)
+      console.log(`[NAV-MINI] bitmap width ${size} > 200 — G2 SGC tiles it across multiple containers`)
     }
     const base64Bmp = borderTestImageBase64(w, h)
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
     // Clear first, wait 3s so the old container fully tears down, THEN draw the
     // new bitmap — avoids the G2 reusing/overlapping a stale image container.
-    this.safeCall(() => this.session.display.clear())
+    this.safeCall(() => void this.session.display.render([]))
     setTimeout(() => {
-      this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h}))
+      this.renderCenteredBitmap(base64Bmp, x, y, w, h)
     }, 3000)
   }
 
@@ -284,13 +292,10 @@ export class DisplayManager {
     const h = Math.max(8, Math.min(height, 288))
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
-    // No clear() first: the rect is always the same, so G2 reuses the existing
-    // image container and swaps the bitmap in place (see G2.displayBitmap's
-    // "reuse container if rect matches"). Clearing would destroy the container
-    // and force a full add+rebuild every redraw — that's the off→on flicker.
-    this.safeCall(() => {
-      this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h})
-    })
+    // Stable id + unchanged rect ⇒ the differ marks this a content-only update
+    // and the G2 swaps the bitmap into the existing container in place — the
+    // same no-flicker behavior the old rect-keyed container reuse gave.
+    this.renderCenteredBitmap(base64Bmp, x, y, w, h)
   }
 
   /** Wipe whatever's on the glasses (and forget the cached frame slots). */
@@ -301,7 +306,7 @@ export class DisplayManager {
     this.stats = null
     this.maneuver = null
     this.message = null
-    this.safeCall(() => this.session.display.clear())
+    this.safeCall(() => void this.session.display.render([]))
   }
 
   private safeCall(fn: () => void): void {

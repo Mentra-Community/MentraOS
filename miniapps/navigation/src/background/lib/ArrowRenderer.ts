@@ -69,7 +69,7 @@ function insideUpArrow(lx: number, ly: number, s: number): boolean {
 
 /**
  * Render a `size`×`size` arrow BMP pointing in the maneuver's direction.
- * Returns a base64 BMP ready for `session.display.showBitmapView`.
+ * Returns a base64 BMP for a `session.display.render()` image element.
  */
 export function renderManeuverArrowBmp(maneuver: string | null | undefined, size = 40): string {
   const s = Math.max(8, Math.round(size))
