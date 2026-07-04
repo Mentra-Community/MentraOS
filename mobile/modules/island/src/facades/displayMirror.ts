@@ -13,7 +13,8 @@ export type DisplayMirrorEvent = Record<string, unknown> & {view?: string; layou
 export const displayMirror = {
   /** The display event currently shown on the previewed view (snapshot). */
   current(): DisplayMirrorEvent {
-    return useDisplayStore.getState().currentEvent
+    // Copy: the snapshot must not hand callers a mutable reference into the store.
+    return {...useDisplayStore.getState().currentEvent}
   },
 
   /** Subscribe to changes of the previewed display event; returns an unsubscribe. */

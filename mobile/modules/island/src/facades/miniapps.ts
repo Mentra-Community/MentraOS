@@ -15,7 +15,8 @@ type AppsState = ReturnType<typeof useAppStatusStore.getState>
 
 export const miniapps = {
   /** All installed miniapps (snapshot). */
-  list: (): ClientApp[] => useAppStatusStore.getState().apps,
+  // Copy: the snapshot must not hand callers a mutable reference into the store.
+  list: (): ClientApp[] => [...useAppStatusStore.getState().apps],
   /** Subscribe to the installed-app set; fires only when it changes. Returns an unsubscribe. */
   onChanged: (cb: (apps: ClientApp[]) => void): (() => void) => {
     let last = JSON.stringify(useAppStatusStore.getState().apps)

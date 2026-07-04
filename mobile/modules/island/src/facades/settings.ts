@@ -8,9 +8,19 @@
  */
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
+// Copy: object/array-valued settings must not hand callers a mutable reference
+// into the store (mutations would silently corrupt store state, bypassing set()).
+function copySettingValue<T>(value: T): T {
+  if (Array.isArray(value)) return [...value] as T
+  if (value && typeof value === "object") return {...(value as object)} as T
+  return value
+}
+
 export const settings = {
-  /** Read a setting by key (the current value, or its default). */
-  get: <T = unknown>(key: string): T | undefined => useSettingsStore.getState().getSetting(key) as T | undefined,
+  /** Read a setting by key (the current value, or its default; object/array values
+   * are shallow copies). */
+  get: <T = unknown>(key: string): T | undefined =>
+    copySettingValue(useSettingsStore.getState().getSetting(key) as T | undefined),
   /**
    * Write a setting. `syncToServer` (default true) also pushes the change to the
    * backend; pass false for device-local-only writes.

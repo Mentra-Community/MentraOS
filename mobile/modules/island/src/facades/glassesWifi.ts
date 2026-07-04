@@ -57,8 +57,12 @@ export const glassesWifi = {
     return {...useGlassesStore.getState().wifi}
   },
 
-  /** Subscribe to wifi-status changes; returns an unsubscribe. */
-  onStatus(cb: (status: WifiStatus) => void): () => void {
-    return useGlassesStore.subscribe((s) => s.wifi, cb)
+  /** Subscribe to wifi-status changes (current, previous); returns an unsubscribe. */
+  onStatus(cb: (status: WifiStatus, previous: WifiStatus) => void): () => void {
+    // Copy: like status(), never publish the store's live wifi objects to listeners.
+    return useGlassesStore.subscribe(
+      (s) => s.wifi,
+      (wifi, previous) => cb({...wifi}, {...previous}),
+    )
   },
 }
