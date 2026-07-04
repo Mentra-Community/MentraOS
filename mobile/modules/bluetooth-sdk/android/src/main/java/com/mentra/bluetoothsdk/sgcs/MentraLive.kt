@@ -1427,6 +1427,26 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
+
+                            // High-priority connection interval (~11-15ms vs 30-50ms
+                            // default) and 2M PHY, as MentraNex and G2 already do. The
+                            // BES firmware only *prefers* 2M PHY; the central has to
+                            // request the switch or the link stays on 1M.
+                            try {
+                                gatt.requestConnectionPriority(
+                                        BluetoothGatt.CONNECTION_PRIORITY_HIGH
+                                )
+                                gatt.setPreferredPhy(
+                                        BluetoothDevice.PHY_LE_2M_MASK,
+                                        BluetoothDevice.PHY_LE_2M_MASK,
+                                        BluetoothDevice.PHY_OPTION_NO_PREFERRED
+                                )
+                            } catch (e: SecurityException) {
+                                Bridge.log(
+                                        "LIVE: requestConnectionPriority/setPreferredPhy denied: ${e.message}"
+                                )
+                            }
+
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
                             // Persist MAC so reconnection can use direct GATT instead of scanning
                             if (connectedDevice!!.address != null) {
