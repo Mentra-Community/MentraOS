@@ -60,10 +60,23 @@ export default function AppSettings() {
   if (appInfo) {
     everFoundRef.current = true
   }
-  const appsLoaded = applets.length > 0
+  // "Loaded" must come from the registry refresh completing, not from
+  // `applets.length > 0` — a user with zero installed apps would otherwise
+  // never trigger the fallback and sit on a blank screen.
+  const [appsLoaded, setAppsLoaded] = useState(applets.length > 0)
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve(refreshApplets()).finally(() => {
+      if (!cancelled) setAppsLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useEffect(() => {
     if (appsLoaded && !appInfo && !everFoundRef.current) {
-      Toast.show({type: "error", text1: "App not installed", text2: packageName})
+      Toast.show({type: "error", text1: translate("appInfo:notInstalled"), text2: packageName})
       replaceAll("/home")
     }
   }, [appsLoaded, appInfo, packageName, replaceAll])

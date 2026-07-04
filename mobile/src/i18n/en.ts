@@ -1031,6 +1031,7 @@ const en = {
     lmaLoader: "Side Loader",
   },
   appInfo: {
+    notInstalled: "App not installed",
     share: "Share",
     addToHome: "Add to Home",
     removeFromHome: "Remove from Home",
