@@ -139,19 +139,23 @@ that asserts snapshot mutation never reaches the store, so the class dies.
 > Phase 5 (per-store burn-down) remains open.
 
 The glasses/gallery discipline does not yet extend to the rest of the runtime
-state. Present today:
+state. Present at review time (phase-4 disposition in brackets):
 
 - `toolkit.stores.{display, core, connection, cloudClientStatus, settings}` —
-  self-described "temporary host migration" hatch ([island.ts:148–154](../../../../mobile/modules/island/src/island.ts)).
+  self-described "temporary host migration" hatch. [**Deleted** in phase 4.]
 - Flat index.ts exports of the same stores plus service singletons
   (`appRegistry`, `cloudClientService`, `restComms`, `gallerySyncService`,
   `asgCameraApi`, `localStorageService`, `mediaProcessingQueue`,
   `miniappRunningRegistry`, `localMiniappRuntime`, `miniappLauncher`,
-  OTA check helpers, clock-fix helpers…).
+  OTA check helpers, clock-fix helpers…). [**Moved off the main entry** in
+  phase 4: stores + services on `@mentra/island/internal`, debug singletons on
+  `@mentra/island/devtools`; the main barrel keeps toolkit + types + pure
+  helpers.]
 - Host shim files `@/stores/{core, connection, display, settings,
   cloudClientStatus}` re-exporting island stores; ~36 host files /
   150+ accesses, heaviest: `useSettingsStore` (~38 files), `useAppStatusStore`
-  (~24 files), `useCoreStore` in pairing/status UI.
+  (~24 files), `useCoreStore` in pairing/status UI. [Still present — phase 5
+  burns these down per store; the shims now re-export from `/internal`.]
 
 Not a regression — these predate the PR and plan 020 scoped them out — but they
 are the reason the host still can't be handed to an OEM. Recommended shape:

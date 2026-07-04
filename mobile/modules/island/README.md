@@ -50,9 +50,9 @@ import {miniappRunningRegistry} from "@mentra/island/devtools"
   service can `postMessage` JSON into a specific miniapp.
 - `miniappRunningRegistry` — session-scoped set of currently-mounted local
   miniapp packageNames (foreground + background).
-- `miniappGlobals` — builds the `window.MentraOS` injection script (and
-  CSS variables / console-tap shim) used by every miniapp WebView.
-- `devMiniappLaunch` — pre-flight a dev URL's `miniapp.json` to decide
+- `buildMiniappGlobalsScript` — builds the `window.MentraOS` injection script
+  (and CSS variables / console-tap shim) used by every miniapp WebView.
+- `decideDevLaunchRoute` — pre-flight a dev URL's `miniapp.json` to decide
   whether to mount live or take the user to the offline screen.
 
 ## Imports

@@ -1,4 +1,5 @@
-import {miniappRunningRegistry, useApps, useStart, useStop} from "@mentra/island"
+import {useApps, useStart, useStop} from "@mentra/island"
+import {miniappRunningRegistry} from "@mentra/island/devtools"
 import {StatusBar} from "expo-status-bar"
 import {useCallback, useEffect, useState} from "react"
 import {SafeAreaView, ScrollView, StyleSheet, Text, View} from "react-native"
