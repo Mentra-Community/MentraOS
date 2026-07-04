@@ -95,15 +95,22 @@ export const glasses = {
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
   /**
    * Reconnect to the saved default glasses. Resolves `false` when there's nothing to
-   * reconnect to (no default paired), `true` when already connected or after kicking
-   * off the connect. The host gates connectivity/permissions (its UI) before calling.
+   * reconnect to (no default paired) or the connect attempt fails (e.g. BLE powered
+   * off), `true` when already connected or after kicking off the connect. Never
+   * rejects — the boolean contract holds. The host gates connectivity/permissions
+   * (its UI) before calling.
    */
   reconnect: async (): Promise<boolean> => {
     const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
     if (!defaultWearable) return false
     if (isGlassesConnected(useGlassesStore.getState().connection)) return true
-    await pushAllBluetoothSettings()
-    await BluetoothSdk.connectDefault()
+    try {
+      await pushAllBluetoothSettings()
+      await BluetoothSdk.connectDefault()
+    } catch (error) {
+      console.warn("toolkit.glasses.reconnect failed:", error)
+      return false
+    }
     return true
   },
   /** True when no glasses has ever been paired (no saved default wearable) — e.g. to

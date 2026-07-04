@@ -7,10 +7,12 @@ export function e2eMetricsEnabled(): boolean {
 }
 
 export function buildE2EMetric(event: string, payload: E2EMetricPayload = {}): E2EMetricPayload {
+  // Payload first: the system-set `event` and `ts_ms` fields always win, so a
+  // caller-supplied collision can't mislabel or re-timestamp the metric.
   return {
+    ...payload,
     event,
     ts_ms: Date.now(),
-    ...payload,
   }
 }
 

@@ -47,7 +47,11 @@ export function startGlassesSettingsSync(): void {
         if (settings[key] !== previous[key]) changed[key] = settings[key]
       }
       if (Object.keys(changed).length > 0) {
-        BluetoothSdk.updateBluetoothSettings(changed)
+        // Settings can change while the glasses are disconnected — a native
+        // rejection must not surface as an unhandled promise rejection.
+        void Promise.resolve(BluetoothSdk.updateBluetoothSettings(changed)).catch((error) => {
+          console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
+        })
       }
     },
     {equalityFn: shallow},
@@ -58,7 +62,10 @@ export function startGlassesSettingsSync(): void {
   unsubConnect = useGlassesStore.subscribe(() => {
     const connected = isGlassesConnected(useGlassesStore.getState().connection)
     if (connected && !wasConnected) {
-      pushAllBluetoothSettings()
+      // Background sync: log-and-continue if the device drops right after connect.
+      void pushAllBluetoothSettings().catch((error) => {
+        console.warn("GlassesSettingsSync: on-connect settings push failed:", error)
+      })
     }
     wasConnected = connected
   })
