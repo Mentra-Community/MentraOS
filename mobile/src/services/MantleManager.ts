@@ -647,6 +647,13 @@ class MantleManager {
 
   private async sendCalendarEvents() {
     try {
+      // Ungranted CALENDAR permission is the default state — skip quietly
+      // instead of letting getCalendarsAsync throw into the catch as an error.
+      const {status} = await Calendar.getCalendarPermissionsAsync()
+      if (status !== "granted") {
+        console.log("MANTLE: sendCalendarEvents() skipped - calendar permission not granted")
+        return
+      }
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
