@@ -148,6 +148,7 @@ private final class PendingResponse<T> {
 
 @MainActor
 public final class MentraBluetoothSDK {
+    private static let wifiScanTimeoutMs = 20_000
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
@@ -180,6 +181,7 @@ public final class MentraBluetoothSDK {
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
     private var pendingWifiScan: PendingWifiScan?
+    private var wifiScanTask: Task<[WifiScanResult], Error>?
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
@@ -664,37 +666,38 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestWifiScan() async throws -> [WifiScanResult] {
-        guard pendingWifiScan == nil else {
-            throw BluetoothSdkError(
-                code: "request_in_flight",
-                message: "A WiFi scan is already waiting for a glasses response."
-            )
+        if let existing = wifiScanTask {
+            // Join the in-flight scan instead of failing with request_in_flight;
+            // the scan screen auto-starts a scan on mount and can be pushed twice.
+            return try await existing.value
         }
         let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
         let request = PendingWifiScan(pending: pending)
         pendingWifiScan = request
         DeviceManager.shared.requestWifiScan()
-        do {
-            let results = try await pending.wait()
-            if pendingWifiScan?.pending === pending {
-                pendingWifiScan = nil
+        let task = Task { @MainActor [weak self] () async throws -> [WifiScanResult] in
+            defer {
+                if let self {
+                    if self.pendingWifiScan === request {
+                        self.pendingWifiScan = nil
+                    }
+                    self.wifiScanTask = nil
+                }
             }
-            return results
-        } catch {
-            let fallbackResults: [WifiScanResult]
-            if (error as? BluetoothSdkError)?.code == "request_timeout" {
-                fallbackResults = request.latestResults
-            } else {
-                fallbackResults = []
+            do {
+                // The glasses wait up to 15s for scan-results broadcasts before sending
+                // scan_complete, so give them longer than that before falling back.
+                return try await pending.wait(timeoutMs: MentraBluetoothSDK.wifiScanTimeoutMs)
+            } catch {
+                if (error as? BluetoothSdkError)?.code == "request_timeout",
+                   !request.latestResults.isEmpty {
+                    return request.latestResults
+                }
+                throw error
             }
-            if pendingWifiScan?.pending === pending {
-                pendingWifiScan = nil
-            }
-            if !fallbackResults.isEmpty {
-                return fallbackResults
-            }
-            throw error
         }
+        wifiScanTask = task
+        return try await task.value
     }
 
     public func sendWifiCredentials(ssid: String, password: String) async throws -> WifiStatusEvent {

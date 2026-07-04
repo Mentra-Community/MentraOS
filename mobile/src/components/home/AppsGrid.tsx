@@ -671,6 +671,15 @@ export function AppsGrid({
   const handlePress = async (app: ClientApp) => {
     if (app.packageName.includes("@empty")) return // ignore dummy apps
 
+    // Hardware-incompatible apps must not foreground the overlay or prompt for
+    // permissions — startApplet's beforeStart gate shows the incompatible alert
+    // and rejects the launch. Foregrounding first would open the miniapp
+    // WebView underneath that alert (same predicate as the beforeStart gate).
+    if (!app.compatibility?.isCompatible) {
+      startApplet(app)
+      return
+    }
+
     // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
     // their splash painted by foregrounding the Compositor overlay. Other types
     // navigate via routes inside startApplet, so we leave their flow untouched.
@@ -784,6 +793,13 @@ export function AppsGrid({
 
   const renderItem = useCallback(
     ({item}: {item: MasonryAppItem}) => {
+      // Synthetic @empty slots exist only to pad the grid / hold drag positions.
+      // Render them as blank spacers: an AppIcon with an empty logoUrl falls back
+      // to the first-letter tile, which paints a faint "@" (from "@emptyN") in
+      // every unoccupied slot.
+      if (item.packageName.startsWith("@empty")) {
+        return <View className="flex-1" />
+      }
       return (
         <TouchableOpacity
           ref={(ref) => {
