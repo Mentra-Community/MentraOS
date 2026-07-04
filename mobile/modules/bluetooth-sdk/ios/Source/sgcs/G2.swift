@@ -1622,6 +1622,43 @@ class G2: NSObject, SGCManager {
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
+
+    /// One firmware text line (hardware-calibrated 2026-07-03: 28px overflows,
+    /// 40px clean). Text containers are silently grown to at least this.
+    private static let minTextContainerHeight: Int32 = 40
+
+    /// Scene-verb registries (display.render() pipeline): element id → container
+    /// id(s). Containers stay rect-keyed underneath — these pin element↔container
+    /// so content updates go in place and moves recreate at the SAME container
+    /// id. Images map to an ARRAY of containers: firmware refuses image
+    /// transfers into containers beyond ~200x100, so bigger images tile across
+    /// multiple containers (e.g. 400x100 → two side-by-side, 150x150 → two
+    /// stacked). At most one app's ids are live at a time (DeviceManager sweeps
+    /// the previous app's elements on an app switch).
+    private var sceneTextByElement: [String: Int32] = [:]
+    private var sceneImageByElement: [String: [Int32]] = [:]
+
+    /// Max image-container size the firmware accepts pixels for
+    /// (hardware-verified 2026-07-03: 150x150 refused, 100x100 clean; 200x100
+    /// is the firmware default container and the old docs' boundary).
+    private static let maxImageTileW: Int32 = 200
+    private static let maxImageTileH: Int32 = 100
+
+    /// Tile rects (relative to the element box) covering w×h with tiles the
+    /// firmware will accept. Row-major.
+    private static func imageTileRects(w: Int32, h: Int32) -> [(dx: Int32, dy: Int32, w: Int32, h: Int32)] {
+        let cols = Int((w + maxImageTileW - 1) / maxImageTileW)
+        let rows = Int((h + maxImageTileH - 1) / maxImageTileH)
+        var rects: [(Int32, Int32, Int32, Int32)] = []
+        for r in 0 ..< rows {
+            for c in 0 ..< cols {
+                let dx = Int32(c) * maxImageTileW
+                let dy = Int32(r) * maxImageTileH
+                rects.append((dx, dy, min(maxImageTileW, w - dx), min(maxImageTileH, h - dy)))
+            }
+        }
+        return rects
+    }
     private static let defaultImgContainer = (
         x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100)
     )
@@ -2149,9 +2186,16 @@ class G2: NSObject, SGCManager {
         }
 
         let rx = x ?? G2.defaultTextContainer.x
-        let ry = y ?? G2.defaultTextContainer.y
+        // Legacy callers can hand us y beyond the canvas — clamp it first so
+        // the height formula below can't go negative/below one fw line.
+        let ry = min(max(y ?? G2.defaultTextContainer.y, 0), 288 - G2.minTextContainerHeight)
         let rw = width ?? G2.defaultTextContainer.width
-        let rh = height ?? G2.defaultTextContainer.height
+        // Firmware guard (hardware-calibrated): a text container shorter than
+        // one firmware line (~40px; 28px overflowed) makes the fw draw its
+        // overflow-indicator tick. Silently grow to one line, clamped to the
+        // canvas. Content-independent so rect keys stay stable across updates.
+        let rhRequested = height ?? G2.defaultTextContainer.height
+        let rh = min(max(rhRequested, G2.minTextContainerHeight), 288 - ry)
         let borderWidth = borderWidth ?? G2.defaultTextContainer.borderWidth
         let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
         let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
@@ -2199,7 +2243,7 @@ class G2: NSObject, SGCManager {
             textContainers[j].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         signalDisplayDirty()
-        await rebuildPage()
+        await requestPageRebuild()
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
@@ -2209,13 +2253,342 @@ class G2: NSObject, SGCManager {
         await sendTextWall(combined)
     }
 
+    // MARK: - Scene verbs (display.render() pipeline)
+
+    /// Scene-frame rebuild batching. A frame with several new containers must
+    /// NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
+    /// and 4-5 shutdown/recover cycles back-to-back are a firmware rebuild
+    /// storm — the G2 punishes those by dropping the BLE link (same failure
+    /// family as the mic-session incidents). While a frame is being applied,
+    /// structural changes only mark this flag; applySceneFrame does ONE rebuild
+    /// at the end.
+    private var sceneBatchDepth = 0
+    private var sceneStructuralPending = false
+
+    /// Rebuild now — or, inside an applySceneFrame batch, once at frame end.
+    private func requestPageRebuild() async {
+        if sceneBatchDepth > 0 {
+            sceneStructuralPending = true
+            return
+        }
+        await coalescedPageRebuild()
+    }
+
+    /// Structural change: tear down + rebuild ONLY when the page is actually
+    /// live. When the page is already down (mid-recovery, or a prior frame's
+    /// rebuild in flight), sending another SHUTDOWN_PAGE restarts the firmware
+    /// recovery cycle — frames arriving faster than recovery completes then
+    /// keep the page down FOREVER (nothing renders, image fragments all fail).
+    /// A down page just needs the dirty signal: the reconcile loop resurrects
+    /// it once, with the full current container list, which already includes
+    /// every structural change accumulated while it was down.
+    private func coalescedPageRebuild() async {
+        if pageCreated {
+            await rebuildPage()
+        } else {
+            Bridge.log("G2: structural change while page down — deferring to reconcile rebuild (no extra shutdown)")
+            signalDisplayDirty()
+        }
+    }
+
+    /// G2 override of the default paint-then-sweep: identical walk, but
+    /// structural rebuilds are coalesced to a single shutdown/rebuild per frame.
+    func applySceneFrame(_ frame: SceneFrame) async {
+        if frame.replay {
+            await onSceneReplay(frame.appId)
+        }
+        sceneBatchDepth += 1
+        sceneStructuralPending = false
+        // Type-changed ids (removed AND re-painted this frame) must be removed
+        // BEFORE the paint — post-paint removal would delete the just-painted
+        // replacement (registries key by id).
+        let paintedIds = Set(frame.elements.map { $0.id })
+        for id in frame.removed where paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        for el in frame.elements {
+            if !frame.replay, el.change == "unchanged" { continue }
+            switch el.type {
+            case "text":
+                await drawLayoutText(
+                    el.text ?? "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: el.border, borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "rect":
+                await drawLayoutText(
+                    "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: max(1, el.border), borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "image":
+                if let data = el.data {
+                    _ = await drawLayoutBitmap(
+                        base64ImageData: data, x: el.x, y: el.y, width: el.w, height: el.h,
+                        elementId: el.id, layoutId: frame.appId
+                    )
+                }
+            default:
+                Bridge.log("G2: applySceneFrame: unknown element type \(el.type)")
+            }
+        }
+        for id in frame.removed where !paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+            await coalescedPageRebuild()
+        }
+    }
+
+    func onSceneReplay(_: String) async {
+        // A replay frame repaints from scratch through the create path; forget
+        // the element mapping so creates re-match/re-register cleanly.
+        sceneTextByElement.removeAll()
+        sceneImageByElement.removeAll()
+    }
+
+    func drawLayoutText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, elementId: String, layoutId _: String?
+    ) async {
+        // Same firmware min-height guard as sendTextAt, applied before the
+        // registry rect checks so grown rects stay consistent across calls.
+        // y is clamped first so the height term can't go negative.
+        let y = min(max(y, 0), 288 - G2.minTextContainerHeight)
+        let height = min(max(height, G2.minTextContainerHeight), 288 - y)
+        let content = text.isEmpty ? " " : text
+        if let existingId = sceneTextByElement[elementId] {
+            if let i = textContainers.firstIndex(where: { $0.id == existingId }) {
+                let c = textContainers[i]
+                if c.x == x, c.y == y, c.width == width, c.height == height,
+                   c.borderWidth == borderWidth, c.borderRadius == borderRadius
+                {
+                    // Content-only change: update in place — NEVER a page
+                    // rebuild. On G2 this is correctness, not perf: page
+                    // teardown couples to mic state and firmware recovery
+                    // storms (design doc §3.4.1 hard rule).
+                    textContainers[i].content = content
+                    textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                    signalDisplayDirty()
+                    return
+                }
+                // Moved/restyled: recreate at the SAME container id (structural).
+                textContainers[i] = TextContainer(
+                    id: existingId, x: x, y: y, width: width, height: height, content: content,
+                    borderWidth: borderWidth, borderColor: G2.defaultTextContainer.borderColor,
+                    borderRadius: borderRadius, paddingLength: G2.defaultTextContainer.paddingLength,
+                    pendingSends: 1 + EVEN_HUB_RESEND_COUNT
+                )
+                signalDisplayDirty()
+                await requestPageRebuild()
+                return
+            }
+            // Container got evicted underneath us — fall through to create.
+            sceneTextByElement.removeValue(forKey: elementId)
+        }
+
+        await sendTextAt(
+            content, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius
+        )
+        if let i = textContainers.firstIndex(where: {
+            $0.matches(
+                x: x, y: y, width: width, height: height, borderWidth: borderWidth,
+                borderColor: G2.defaultTextContainer.borderColor, borderRadius: borderRadius,
+                paddingLength: G2.defaultTextContainer.paddingLength)
+        }) {
+            let cid = textContainers[i].id
+            // The container id may have been LRU-recycled from another element.
+            sceneTextByElement = sceneTextByElement.filter { $0.value != cid }
+            sceneTextByElement[elementId] = cid
+        }
+    }
+
+    func drawLayoutBitmap(
+        base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        elementId: String, layoutId _: String?
+    ) async -> Bool {
+        let tiles = G2.imageTileRects(w: width, h: height)
+        guard tiles.count <= imageContainerIDPool.count else {
+            Bridge.log(
+                "G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) needs \(tiles.count) tiles — exceeds the \(imageContainerIDPool.count)-container pool, dropping"
+            )
+            return false
+        }
+
+        // Element moved or re-tiled: blacken any containers whose rects no
+        // longer belong to this element's tile set, then let the tile upserts
+        // reuse/place the rest.
+        if let existing = sceneImageByElement[elementId] {
+            let wantedRects = tiles.map { t in (x + t.dx, y + t.dy, t.w, t.h) }
+            for cid in existing {
+                if let i = imageContainers.firstIndex(where: { $0.id == cid }) {
+                    let c = imageContainers[i]
+                    let stillWanted = wantedRects.contains { $0 == (c.x, c.y, c.width, c.height) }
+                    if !stillWanted, !c.bmpData.isEmpty {
+                        imageContainers[i].bmpData = Data()
+                        imageContainers[i].dirty = true
+                        signalDisplayDirty()
+                    }
+                }
+            }
+        }
+        sceneImageByElement.removeValue(forKey: elementId)
+
+        var cids: [Int32] = []
+        if tiles.count == 1 {
+            // Single container — the existing path (decode, aspect-fit, encode).
+            let ok = await displayBitmap(
+                base64ImageData: base64ImageData, x: x, y: y, width: width, height: height
+            )
+            guard ok,
+                  let i = imageContainers.firstIndex(where: {
+                      $0.matches(x: x, y: y, width: width, height: height)
+                  })
+            else { return false }
+            cids = [imageContainers[i].id]
+        } else {
+            // Tiled: render the whole image to grayscale ONCE at the element
+            // size, then slice per-tile rows into their own 4-bit BMPs, one
+            // firmware container per tile.
+            guard let rawData = Data(base64Encoded: base64ImageData) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to decode base64")
+                return false
+            }
+            guard let gray = renderG2Grayscale(rawData, targetWidth: Int(width), targetHeight: Int(height)) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to render grayscale")
+                return false
+            }
+            Bridge.log("G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) → \(tiles.count) tiles")
+            for t in tiles {
+                var tilePixels = Data(capacity: Int(t.w * t.h))
+                for row in 0 ..< Int(t.h) {
+                    let start = (Int(t.dy) + row) * Int(width) + Int(t.dx)
+                    tilePixels.append(gray.subdata(in: (gray.startIndex + start)..<(gray.startIndex + start + Int(t.w))))
+                }
+                guard let bmp = build4BitBmp(grayscalePixels: tilePixels, width: Int(t.w), height: Int(t.h)) else {
+                    Bridge.log("G2: drawLayoutBitmap - tile encode failed")
+                    return false
+                }
+                let tx = x + t.dx
+                let ty = y + t.dy
+                if let i = imageContainers.firstIndex(where: { $0.matches(x: tx, y: ty, width: t.w, height: t.h) }) {
+                    imageContainers[i].bmpData = bmp
+                    imageContainers[i].dirty = true
+                    cids.append(imageContainers[i].id)
+                } else {
+                    let container = addImageContainer(x: tx, y: ty, width: t.w, height: t.h, bmpData: bmp)
+                    if let j = imageContainers.firstIndex(where: { $0.id == container.id }) {
+                        imageContainers[j].dirty = true
+                    }
+                    cids.append(container.id)
+                    await requestPageRebuild()
+                }
+            }
+            signalDisplayDirty()
+        }
+
+        // Container ids may have been LRU-recycled from other elements.
+        let taken = Set(cids)
+        for (key, value) in sceneImageByElement where value.contains(where: taken.contains) {
+            sceneImageByElement[key] = value.filter { !taken.contains($0) }
+            if sceneImageByElement[key]?.isEmpty == true {
+                sceneImageByElement.removeValue(forKey: key)
+            }
+        }
+        sceneImageByElement[elementId] = cids
+        return true
+    }
+
+    func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
+        // STRUCTURAL removal: blanked-in-place containers still RENDER (the
+        // firmware draws a cursor-like mark at a whitespace container's content
+        // origin — the long-hunted stray tick; legacy never saw it because its
+        // only container's origin sat above the visible eyebox). So a removed
+        // element leaves the page entirely: blank it for the live page, drop it
+        // from the tracked list (freeing the pool id), and mark the frame
+        // structural — the batched frame-end rebuild recreates the page without
+        // it. Never a per-remove shutdown (mic coupling).
+        if let id = sceneTextByElement.removeValue(forKey: elementId),
+           let i = textContainers.firstIndex(where: { $0.id == id })
+        {
+            textContainers.remove(at: i)
+            await requestPageRebuild()
+        }
+        if let ids = sceneImageByElement.removeValue(forKey: elementId) {
+            for id in ids {
+                if let i = imageContainers.firstIndex(where: { $0.id == id }),
+                   !imageContainers[i].bmpData.isEmpty
+                {
+                    imageContainers[i].bmpData = Data()
+                    imageContainers[i].dirty = true
+                }
+            }
+            signalDisplayDirty()
+            await requestPageRebuild()
+        }
+    }
+
+    /// Sweep a set of scene elements as ONE batched structural change (called
+    /// by DeviceManager on scene→legacy and cross-app transitions, outside any
+    /// applySceneFrame batch — without batching, each remove would rebuild).
+    func clearSceneElements(_ elementIds: [String]) async {
+        sceneBatchDepth += 1
+        for id in elementIds {
+            await removeLayoutElement(id, layoutId: nil)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            await coalescedPageRebuild()
+        }
+    }
+
+    /// Decode an image and render it to raw 8-bit grayscale at target size
+    /// (aspect-fit, centered on black) — the front half of `convertToG2Bmp`,
+    /// exposed for the tiler which encodes per-tile BMPs from one render.
+    private func renderG2Grayscale(_ data: Data, targetWidth: Int, targetHeight: Int) -> Data? {
+        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
+        let scale = min(
+            Double(targetWidth) / Double(cgImage.width), Double(targetHeight) / Double(cgImage.height)
+        )
+        let scaledW = max(1, Int(Double(cgImage.width) * scale))
+        let scaledH = max(1, Int(Double(cgImage.height) * scale))
+        let offsetX = (targetWidth - scaledW) / 2
+        let offsetY = (targetHeight - scaledH) / 2
+
+        var pixels = Data(count: targetWidth * targetHeight)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buf in
+            guard
+                let ctx = CGContext(
+                    data: buf.baseAddress,
+                    width: targetWidth,
+                    height: targetHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: targetWidth,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                )
+            else { return false }
+            ctx.setFillColor(gray: 0, alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+            ctx.interpolationQuality = .high
+            ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
+            return true
+        }
+        return drawn ? pixels : nil
+    }
+
     func clearDisplay() {
         Bridge.log("G2: clearDisplay()")
         // Blank the text in place — do NOT shut down + rebuild the page. A teardown kills audio
         // and triggers a firmware systemExit→recovery→rebuild; the cloud sends clearDisplay in
         // bursts, so that turned into a rebuild storm. The reconcile loop pushes the blanked text.
         for i in textContainers.indices {
-            textContainers[i].content = " "
+            textContainers[i].content = "\n"
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
@@ -2227,6 +2600,27 @@ class G2: NSObject, SGCManager {
             imageContainers[i].dirty = true
         }
         signalDisplayDirty()
+
+        // Purge scene HUD containers structurally: a blanked small box still
+        // renders the firmware's overflow tick (a "\n" husk is two empty lines
+        // in a one-line box) and corrupts whatever app draws next. Full-canvas
+        // containers stay blanked-in-place — the shipped caption-gap behavior,
+        // storm-safe (no rebuild on ordinary clears). Only when positioned HUD
+        // husks exist (app exit) do we drop them + rebuild ONCE.
+        let isFullCanvas: (TextContainer) -> Bool = {
+            $0.x == 0 && $0.y == 0 && $0.width >= G2.defaultTextContainer.width
+                && $0.height >= G2.defaultTextContainer.height
+        }
+        let huskIds = Set(textContainers.filter { !isFullCanvas($0) }.map { $0.id })
+        if !huskIds.isEmpty {
+            textContainers.removeAll { huskIds.contains($0.id) }
+            sceneTextByElement = sceneTextByElement.filter { !huskIds.contains($0.value) }
+            sceneImageByElement.removeAll()
+            Bridge.log("G2: clearDisplay() — purging \(huskIds.count) positioned husk container(s), one rebuild")
+            Task { [weak self] in
+                await self?.coalescedPageRebuild()
+            }
+        }
     }
 
     /// Send a bitmap to an image container as fragmented updateImageRawData packets.
@@ -2390,7 +2784,7 @@ class G2: NSObject, SGCManager {
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
             if !pageCreated {
-                await rebuildPage()
+                await requestPageRebuild()
             }
         } else {
             let container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
@@ -2402,7 +2796,7 @@ class G2: NSObject, SGCManager {
                 "G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
             )
             // New container changes page structure: rebuild it, then the loop sends the pixels.
-            await rebuildPage()
+            await requestPageRebuild()
         }
         return true
     }
@@ -2438,6 +2832,11 @@ class G2: NSObject, SGCManager {
         // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
         for i in textContainers.indices where textContainers[i].pendingSends > 0 {
             let container = textContainers[i]
+            // Byte-exact content log (debugDescription escapes \n and non-ASCII)
+            // — artifact forensics: match on-glass rendering to what was sent.
+            Bridge.log(
+                "G2: updateText id=\(container.id) rect=\(container.x),\(container.y) \(container.width)x\(container.height) bytes=\(container.content.utf8.count) content=\(container.content.debugDescription)"
+            )
             let msg = EvenHubProto.updateTextMessage(
                 containerID: container.id,
                 contentOffset: 0,
@@ -2996,19 +3395,45 @@ class G2: NSObject, SGCManager {
     // MARK: - Private Display Helpers
 
     private func createPageWithContainers() {
-        // build the page's text containers from the live tracked list.
-        // iterate by index not using map:
-        var textContainerProps: [Data] = []
-        for (index, c) in textContainers.enumerated() {
+        // Dedicated event-capture container: id 0, 1x1, borderless, empty — the
+        // designated event-capture slot per the RE demos ("container 0 is
+        // event-capture"). Touch events keep flowing through it, and no REAL
+        // container carries the flag: marking whichever container happened to
+        // be first (the old behavior) painted a visible artifact once pages
+        // stopped being one full-screen box — the stray line Alex saw
+        // persisting across miniapps.
+        var textContainerProps: [Data] = [
+            EvenHubProto.textContainerProperty(
+                x: 0, y: 0, width: 1, height: 1,
+                borderWidth: 0, borderColor: 0, borderRadius: 0,
+                paddingLength: 0, containerID: 0,
+                containerName: "evt-0", isEventCapture: true,
+                content: ""
+            ),
+        ]
+        for c in textContainers {
             textContainerProps.append(
                 EvenHubProto.textContainerProperty(
                     x: c.x, y: c.y, width: c.width, height: c.height,
                     borderWidth: c.borderWidth, borderColor: c.borderColor,
                     borderRadius: c.borderRadius,
                     paddingLength: c.paddingLength, containerID: c.id,
-                    containerName: c.name, isEventCapture: index == 0,  // the first container is the event capture container
+                    containerName: c.name, isEventCapture: false,
                     content: c.content
                 ))
+        }
+
+        // Page-composition dump: one line per container on every page create,
+        // so an on-glass artifact can be matched to exactly what we sent.
+        for c in textContainers {
+            Bridge.log(
+                "G2: page-comp text id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) border=\(c.borderWidth)/\(c.borderRadius) pad=\(c.paddingLength) contentLen=\(c.content.count)"
+            )
+        }
+        for c in imageContainers {
+            Bridge.log(
+                "G2: page-comp image id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) bytes=\(c.bmpData.count)"
+            )
         }
 
         // iterate all image containers, remove any entrys with duplicate id's, and ensure the ids in the imageContainerIDPool is up-to-date:
@@ -3761,10 +4186,92 @@ class G2: NSObject, SGCManager {
             handleEvenAIResponse(result.payload)
         case ServiceID.evenHubCtrl.rawValue:
             handleEvenHubCtrlResponse(result.payload)
+        case ServiceID.notification.rawValue:
+            handleNotificationResponse(result.payload)
         default:
             Bridge.log(
                 "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.map { String(format: "%02X", $0) }.joined())"
             )
+        }
+    }
+
+    /// Notification service (0x04 — UI_FOREGROUND_NOTIFICATION_ID).
+    ///
+    /// On iOS the G2 reads notifications straight from the phone via ANCS (the
+    /// system BLE notification service — no app code involved), and reports
+    /// notification activity to us on this channel as a NotificationDataPackage
+    /// (notification.proto from the RE work):
+    ///   field 1: commandId (1=CTRL, 2=NOTIFICATION_IOS, 3=WHITELIST_CTRL, 161=COMM_RSP)
+    ///   field 3: NotificationControl {notifEnable, autoDispEnable, dispTime, avoidDisturbEnable}
+    ///   field 4: NotificationIOS {appID, displayName} — the source app of a notification
+    ///   field 6: NotificationWhitelistCtrl {whitelistDisable}
+    ///
+    /// Log-only for now: this is the observability hook for the notification
+    /// relay work (the CTRL/WHITELIST commands are also how the app would
+    /// control notification behavior on-glass).
+    private func handleNotificationResponse(_ payload: Data) {
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        let cmd = fields[1] as? Int32 ?? 0
+
+        var detail = ""
+        if let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            detail = " ios={app: \(appID), name: \(name)}"
+        }
+        if let ctrlData = fields[3] as? Data {
+            var ctrl = ProtobufReader(ctrlData)
+            let ctrlFields = ctrl.parseFields()
+            detail += " ctrl={enable: \(ctrlFields[1] as? Int32 ?? -1), autoDisp: \(ctrlFields[2] as? Int32 ?? -1), dispTime: \(ctrlFields[3] as? Int32 ?? -1), dnd: \(ctrlFields[5] as? Int32 ?? -1)}"
+        }
+        if let wlData = fields[6] as? Data {
+            var wl = ProtobufReader(wlData)
+            let wlFields = wl.parseFields()
+            detail += " whitelist={disable: \(wlFields[1] as? Int32 ?? -1)}"
+        }
+
+        let cmdName: String
+        switch cmd {
+        case 1: cmdName = "CTRL"
+        case 2: cmdName = "NOTIFICATION_IOS"
+        case 3: cmdName = "WHITELIST_CTRL"
+        case 161: cmdName = "COMM_RSP"
+        default: cmdName = "cmd_\(cmd)"
+        }
+        Bridge.log("G2: NOTIFICATION service — \(cmdName)\(detail)")
+
+        // Pipe NOTIFICATION_IOS up as a phone_notification event — the same
+        // path Android's NotificationListenerService feeds. iOS can't read
+        // other apps' notifications, but the glasses CAN (ANCS) and report the
+        // source app here; title/content are empty because this packet only
+        // carries app identity.
+        if cmd == 2, let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            if !appID.isEmpty {
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                Bridge.sendTypedMessage(
+                    "phone_notification",
+                    body: [
+                        "notificationId": "ancs-\(appID)-\(now)",
+                        "app": name.isEmpty ? appID : name,
+                        "title": "",
+                        "content": "",
+                        "priority": "0",
+                        "timestamp": now,
+                        "packageName": appID,
+                    ]
+                )
+            }
         }
     }
 

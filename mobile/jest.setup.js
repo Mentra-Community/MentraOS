@@ -784,7 +784,14 @@ jest.mock("@mentra/island", () => {
       SPEAKER: "speaker",
       WIFI: "wifi",
     },
-    localDisplayManager: {},
+    localDisplayManager: {
+      attachToRuntime: jest.fn(),
+      replayCurrent: jest.fn(),
+      request: jest.fn(),
+      onMount: jest.fn(),
+      onUnmount: jest.fn(),
+      onCoreAppChange: jest.fn(),
+    },
     phonePhotoCoordinator: {
       owns: jest.fn(() => false),
       handlePhotoError: jest.fn(),

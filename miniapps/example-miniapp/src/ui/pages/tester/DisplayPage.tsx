@@ -101,9 +101,10 @@ function makeBitmap(width: number, height: number, label: string): string {
   return imageDataToBmp4Bit(ctx.getImageData(0, 0, width, height))
 }
 
-// The four 100×100 corner containers on the 576×288 display, keyed by rect.
-// First press of a corner sends its code (TL/TR/BR/BL); each later press
-// re-sends to the same rect with an incrementing count, updating in place.
+// The four 100×100 corner images on the 576×288 display. First press of a
+// corner adds its element (id = corner code) to the accumulated bitmap scene;
+// each later press re-renders the same scene with that element's bitmap
+// updated in place (stable id, unchanged box ⇒ content-only update).
 const CORNERS = [
   {code: "TL", x: 0, y: 0},
   {code: "TR", x: 476, y: 0},
@@ -113,12 +114,35 @@ const CORNERS = [
 
 type CornerCode = "TL" | "TR" | "BR" | "BL" | "CE" | "full"
 
+interface BitmapElement {
+  type: "image"
+  id: CornerCode
+  box: {x: number; y: number; w: number; h: number}
+  data: string
+}
+
 export default function DisplayPage() {
   const navigate = useNavigate()
   // useTester opens a (no-op) subscription so `tester:event {kind:"error"}`
   // from a bad invoke() lands in lastError and surfaces in the UI.
   const {invoke, lastError} = useTester("display")
   const [text, setText] = useState("Hello from MentraJS!")
+  // render() scene press count — each press re-renders the same scene with
+  // updated content, exercising in-place element updates (stable ids).
+  const [sceneCount, setSceneCount] = useState(0)
+
+  const pushScene = () => {
+    const next = sceneCount + 1
+    setSceneCount(next)
+    invoke("render", [
+      [
+        {type: "text", id: "title", box: {x: 12, y: 9, w: 300, h: 40}, text: `${text} #${next}`},
+        {type: "text", id: "footer", box: {x: 12, y: 240, w: 300, h: 40}, text: `render() frame ${next}`},
+        {type: "image", id: "badge", box: {x: 440, y: 14, w: 100, h: 100}, data: makeBitmap(100, 100, `${next}`)},
+        {type: "rect", id: "frame", box: {x: 4, y: 4, w: 568, h: 280}, style: {border: 2, radius: 6}},
+      ],
+    ]).catch(() => {})
+  }
   // Per-corner press counts. 0 = not yet pressed (first press shows the code).
   const [counts, setCounts] = useState<Record<CornerCode, number>>({
     TL: 0,
@@ -133,11 +157,20 @@ export default function DisplayPage() {
   // which would otherwise reuse the same count and show a duplicate label.
   const countsRef = useRef(counts)
 
+  // Accumulated bitmap scene: pressing a slot upserts that slot's image
+  // element and re-renders the WHOLE set — the other slots ride along
+  // unchanged (the host diff keeps them off the wire).
+  const bitmapSceneRef = useRef<Map<CornerCode, BitmapElement>>(new Map())
+
+  const pushBitmap = (code: CornerCode, box: {x: number; y: number; w: number; h: number}, label: string) => {
+    bitmapSceneRef.current.set(code, {type: "image", id: code, box, data: makeBitmap(box.w, box.h, label)})
+    invoke("render", [[...bitmapSceneRef.current.values()]]).catch(() => {})
+  }
+
   const pressCorner = (code: CornerCode, x: number, y: number) => {
     const next = incrementCount(code)
     // First press: just the corner code. Subsequent presses: code + count.
-    const label = `${code} ${next}`
-    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}]).catch(() => {})
+    pushBitmap(code, {x, y, w: 100, h: 100}, `${code} ${next}`)
   }
 
   const incrementCount = (code: CornerCode) => {
@@ -152,22 +185,34 @@ export default function DisplayPage() {
       <MiniappHeader title="session.display" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Render text on the glasses display. Tap a button to invoke the corresponding `session.display.*` method in
-          background.
+          `render(elements)` — the scene API. Each call describes the whole frame; the host diffs it against the
+          previous one, so elements with a stable `id` update in place and elements you stop sending are removed. Repeat
+          presses update the scene's text and badge without rebuilding the frame; `render([])` clears.
         </p>
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
-          <Button onClick={() => invoke("showTextWall", [text]).catch(() => {})}>showTextWall(text)</Button>
-          <Button onClick={() => invoke("showReferenceCard", ["Title", text]).catch(() => {})}>showReferenceCard(title, text)</Button>
-          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text]).catch(() => {})}>showDoubleTextWall(top, bottom)</Button>
+          <Button onClick={pushScene}>
+            render(scene) — {sceneCount === 0 ? "text + image + rect" : `frame ${sceneCount}`}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              setSceneCount(0)
+              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
+              countsRef.current = zero
+              setCounts(zero)
+              bitmapSceneRef.current.clear()
+              invoke("render", [[]]).catch(() => {})
+            }}>
+            render([]) — clear
+          </Button>
         </div>
 
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
-          Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`. On G2 the page tracks up
-          to 4 image containers, keyed by rect: a new rect adds a container (evicting the oldest past 4), an existing
-          rect updates in place. Each corner button sends its code on first press, then increments a count in place on
-          later presses.
+          Bitmap scene. Each button upserts one image element (stable id per slot) and re-renders the accumulated set —
+          pressed slots coexist on screen, and re-pressing a slot updates its bitmap in place. On G2 each element maps
+          to an image container (oversized ones tile).
         </p>
         <div className="flex flex-row gap-2">
           {CORNERS.map(({code, x, y}) => (
@@ -181,35 +226,20 @@ export default function DisplayPage() {
         <div className="flex flex-row gap-2 mt-5">
           <Button
             onClick={() => {
-              let next = incrementCount("CE")
-              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}]).catch(() => {})
+              const next = incrementCount("CE")
+              pushBitmap("CE", {x: 288 - 100 / 2, y: 144 - 100 / 2, w: 100, h: 100}, `CE ${next}`)
             }}>
             Center
           </Button>
           <Button
             onClick={() => {
-              let next = incrementCount("full")
-              invoke("showBitmapView", [
-                makeBitmap(288, 144, `full ${next}`),
-                {x: 288 - 288 / 2, y: 144 - 144 / 2, width: 288, height: 144},
-              ]).catch(() => {})
+              const next = incrementCount("full")
+              pushBitmap("full", {x: 288 - 288 / 2, y: 144 - 144 / 2, w: 288, h: 144}, `full ${next}`)
             }}>
             Large
           </Button>
         </div>
 
-        <div className="mt-5 flex flex-col gap-2">
-          <Button
-            variant="destructive"
-            onClick={() => {
-              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
-              countsRef.current = zero
-              setCounts(zero)
-              invoke("clear", []).catch(() => {})
-            }}>
-            clearDisplay()
-          </Button>
-        </div>
         <ErrorRow event={lastError} />
       </div>
     </Shell>

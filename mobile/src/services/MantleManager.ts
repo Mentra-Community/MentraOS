@@ -20,6 +20,7 @@ import {
   displayProcessor,
   toolkit,
   phoneLocationService,
+  localDisplayManager,
   localMiniappRuntime,
   miniappLauncher,
   localSttFallbackCoordinator,
@@ -174,6 +175,11 @@ class MantleManager {
     // services hydrated the island stores. Re-attach so captions are wrapped with
     // the current profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
     displayProcessor.attachToRuntime()
+
+    // Same late-attach for the local display manager's reconnect-replay hook:
+    // after a glasses reconnect it re-pushes the current owner's frame (scenes
+    // replay from retained state — apps never re-send on reconnect).
+    localDisplayManager.attachToRuntime()
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
@@ -488,33 +494,40 @@ class MantleManager {
       // fired twice per event. The duplicates are removed here; the single registrations
       // live further down (head_up there is the superset — it also forwards to miniapps).
 
-      this.subs.push(
-        (CrustModule.addListener as any)("phone_notification", async (event: any) => {
-          // Direct forward to local miniapps subscribed to phone_notification.
-          // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
-          localMiniappRuntime.forwardEvent("phone_notification", {
-            notificationId: event.notificationId,
-            app: event.app,
-            title: event.title,
-            content: event.content,
-            priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
-            timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
-            packageName: event.packageName,
-          })
-          const res = await restComms.sendPhoneNotification({
-            notificationId: event.notificationId,
-            app: event.app,
-            title: event.title,
-            content: event.content,
-            priority: event.priority.toString(),
-            timestamp: parseInt(event.timestamp.toString()),
-            packageName: event.packageName,
-          })
-          if (res.is_error()) {
-            console.error("Failed to send phone notification:", res.error)
-          }
-        }),
-      )
+      const forwardPhoneNotification = async (event: any) => {
+        // Direct forward to local miniapps subscribed to phone_notification.
+        // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
+        localMiniappRuntime.forwardEvent("phone_notification", {
+          notificationId: event.notificationId,
+          app: event.app,
+          title: event.title,
+          content: event.content,
+          priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
+          timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
+          packageName: event.packageName,
+        })
+        const res = await restComms.sendPhoneNotification({
+          notificationId: event.notificationId,
+          app: event.app,
+          title: event.title,
+          content: event.content,
+          priority: event.priority.toString(),
+          timestamp: parseInt(event.timestamp.toString()),
+          packageName: event.packageName,
+        })
+        if (res.is_error()) {
+          console.error("Failed to send phone notification:", res.error)
+        }
+      }
+
+      // Android: Crust's NotificationListenerService reads notifications.
+      this.subs.push((CrustModule.addListener as any)("phone_notification", forwardPhoneNotification))
+
+      // iOS: the phone can't read other apps' notifications, but connected
+      // glasses can (ANCS) — the G2 SGC reports the source app on its
+      // notification service and pipes it up as the SAME event (empty
+      // title/content; app identity only). Feeds the identical path.
+      this.subs.push(BluetoothSdk.addListener("phone_notification" as any, forwardPhoneNotification))
 
       this.subs.push(
         (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {

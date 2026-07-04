@@ -43,14 +43,11 @@ interface InitGlobals {
  * @example
  *   registerMiniapp((session) => {
  *     session.transcription.on((tx) => {
- *       session.display.showTextWall(tx.text)
+ *       session.display.render([{type: "text", id: "tx", box, text: tx.text}])
  *     })
  *   })
  */
-export function registerMiniapp(
-  handler: MiniappInitHandler,
-  options: MiniappSessionOptions = {},
-): void {
+export function registerMiniapp(handler: MiniappInitHandler, options: MiniappSessionOptions = {}): void {
   const g = globalThis as unknown as InitGlobals
   g.__mentraInitCallback = (_sessionId: string) => {
     const session = new MiniappSession(options)

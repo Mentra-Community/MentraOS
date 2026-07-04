@@ -27,6 +27,27 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
   },
 }))
 
+// The store ports (SceneRenderer reads settings/glasses; attachToRuntime
+// subscribes to the glasses store) pull native modules bun can't parse —
+// stub the stores like the PhonePhotoCoordinator suite does.
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {default_wearable: {key: "default_wearable"}},
+  useSettingsStore: {
+    // No device model: keeps these suites on the legacy (non-scene) path, the
+    // same effective condition they ran under on dev (unset runtime hooks).
+    getState: () => ({getSetting: () => undefined}),
+  },
+}))
+mock.module("../../stores/glasses", () => ({
+  useGlassesStore: {
+    getState: () => ({connection: {state: "connected", fullyBooted: true}, deviceModel: undefined}),
+    subscribe: () => () => {},
+  },
+}))
+mock.module("../GlassesReadiness", () => ({
+  isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
+}))
+
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,

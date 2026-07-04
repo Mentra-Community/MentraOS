@@ -24,10 +24,22 @@ export const mentraDisplay: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: true,
-    resolution: { width: 640, height: 200 },
+    resolution: { width: 640, height: 480 },
     fieldOfView: { horizontal: 25 },
     maxTextLines: 5,
     adjustBrightness: true,
+
+    // Scene display API — firmware canvas components on the 500x220 virtual
+    // screen centered in the 640x480 A6N panel (mos_display_config.c).
+    width: 500,
+    height: 220,
+    canPosition: true,
+    maxTextElements: 6, // firmware TEXTBOX pool ids 1-6 (rects share it)
+    maxImageElements: 4, // firmware BITMAP pool ids 10-13
+    maxImagePx: { width: 200, height: 200 }, // CANVAS_IMAGE_MAX_I1_BYTES / NAV_IMAGE_MAX_W/H
+    shapes: ["rect"], // bordered empty TEXTBOX ≈ rect (no shape primitive)
+    intensityLevels: 2, // 1-bpp panel today
+    partialUpdate: true,
   },
 
   // Microphone capabilities - Mentra Display has one microphone without VAD

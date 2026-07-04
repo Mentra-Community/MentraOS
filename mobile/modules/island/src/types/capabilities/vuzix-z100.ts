@@ -28,6 +28,10 @@ export const vuzixZ100: Capabilities = {
     fieldOfView: { horizontal: 30 },
     maxTextLines: 7,
     adjustBrightness: true,
+
+    // Scene display API — no positioned elements; scenes degrade to text walls.
+    canPosition: false,
+    maxImageElements: 0,
   },
 
   // Microphone capabilities - does not have a microphone
