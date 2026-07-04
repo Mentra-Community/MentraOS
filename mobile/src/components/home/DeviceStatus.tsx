@@ -136,14 +136,6 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
-      // A chosen model (default_wearable) does not imply a paired device: the
-      // setting is written on the selection screen, before pairing succeeds.
-      // Without a native default device, connectDefault() throws — route back
-      // into pairing for the already-selected model instead of erroring.
-      if (!(await toolkit.glasses.hasDefaultDevice())) {
-        push("/pairing/scan", {deviceModel: defaultWearable})
-        return
-      }
       await toolkit.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)

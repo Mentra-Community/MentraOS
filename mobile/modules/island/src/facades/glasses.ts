@@ -116,15 +116,6 @@ export const glasses = {
   /** True when no glasses has ever been paired (no saved default wearable) — e.g. to
    * route a first-run host into the pairing/onboarding flow. */
   isFirstPairing: (): boolean => !useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key),
-  /**
-   * True when the SDK has an actual default DEVICE to reconnect to. Distinct
-   * from `default_wearable` (the model chosen on the selection screen, set
-   * before any pairing succeeds): connectDefault() throws without a device, so
-   * hosts should route to the pairing flow when this is false.
-   */
-  hasDefaultDevice: async (): Promise<boolean> => {
-    return !!(await BluetoothSdk.getDefaultDevice())
-  },
 
   // --- read-model (projected from the island-owned glasses store) ---
   status: (): GlassesStatusSnapshot => projectStatus(),

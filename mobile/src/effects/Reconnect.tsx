@@ -19,11 +19,6 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
     connected: toolkit.pairing.readiness().connected,
     nativeLinkBusy: toolkit.pairing.readiness().nativeLinkBusy,
-    // Fail open on a bridge error: pass true so the flow proceeds to
-    // connectDefault(), whose existing catch handles a genuinely missing
-    // device (the pre-guard behavior) — a transient native failure must not
-    // throw out of the app-foreground handler.
-    hasDefaultDevice: await toolkit.glasses.hasDefaultDevice().catch(() => true),
     searching: toolkit.pairing.scanning(),
   })
   if (decision.kind === "skip") {

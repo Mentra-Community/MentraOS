@@ -376,7 +376,6 @@ jest.mock("@mentra/island", () => {
       }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
-        hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         forget: jest.fn(() => Promise.resolve()),
         connect: jest.fn(() => Promise.resolve()),
