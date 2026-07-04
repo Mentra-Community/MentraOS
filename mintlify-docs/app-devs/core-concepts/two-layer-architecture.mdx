@@ -54,7 +54,9 @@ import "../shared/channels";
 registerMiniapp(async (session) => {
   // Subscribe to glasses events here. The runtime tears them down on disable.
   session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
+    session.display.render([
+      { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+    ]);
   });
 });
 ```

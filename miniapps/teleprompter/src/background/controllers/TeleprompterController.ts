@@ -134,9 +134,7 @@ export class TeleprompterController {
 
     // React to glasses model / display changes.
     try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()),
-      )
+      this.unsubs.push(this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()))
     } catch {
       /* capabilities-change not available — keep current profile */
     }
@@ -678,12 +676,15 @@ export class TeleprompterController {
     // push because no display was attached yet, leave the cache untouched so
     // the first push after the glasses connect isn't deduped away.
     if (this.hasDisplay && text !== this.lastRenderedText) {
-      try {
-        this.session.display.showTextWall(text, {view: "main"})
-        this.lastRenderedText = text
-      } catch (err) {
-        console.log("Teleprompter: display error", err)
-      }
+      // One full-canvas text element with a stable id: each scroll step updates
+      // it in place on the glasses. Box coordinates are raw device px — read
+      // from capabilities, falling back to the largest canvas (the host clamps
+      // to the real one). render() never throws.
+      const d = this.session.capabilities?.display
+      void this.session.display.render([
+        {type: "text", id: "script", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+      ])
+      this.lastRenderedText = text
     }
   }
 

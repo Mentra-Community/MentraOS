@@ -28,8 +28,18 @@ import {LocationManager} from "./managers/LocationManager"
 import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
+import {renderManeuverArrowBmp} from "./lib/ArrowRenderer"
 import {formatDistance, formatDuration} from "./lib/formatDistance"
-import {bearingDeg, distanceToPolylineMeters, haversineMeters, nextSegmentBearing, remainingRoutePoints, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
+import {
+  bearingDeg,
+  distanceToPolylineMeters,
+  haversineMeters,
+  nextSegmentBearing,
+  remainingRoutePoints,
+  remainingRouteMeters,
+  sideOfFinalSegment,
+  type LatLng,
+} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 import {borderTestImageBase64} from "./lib/bmp"
 import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
@@ -53,6 +63,10 @@ export class NavigationController {
   private started = false
   private logSeq = 0
   private lastHudKey = ""
+  // Direction key of the last arrow bitmap pushed — re-ENCODE the arrow only
+  // when the turn direction changes (rasterizing the BMP is the cost; resending
+  // is free — the host diffs frames and unchanged elements never re-cross BLE).
+  private lastArrowKey = ""
   // Timestamp of the last HUD push, so we can periodically re-push the maneuver
   // text even when unchanged (recovers from G2 EvenHub page teardowns).
   private lastHudAt = 0
@@ -528,9 +542,7 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
     this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
 
-    this.unsubs.push(
-      this.ui.handle("places:autocomplete", ({query, near}) => this.places.autocomplete(query, near)),
-    )
+    this.unsubs.push(this.ui.handle("places:autocomplete", ({query, near}) => this.places.autocomplete(query, near)))
     this.unsubs.push(this.ui.handle("places:details", ({placeId}) => this.places.details(placeId)))
     this.unsubs.push(
       this.ui.handle("places:reverse-geocode", ({lat, lng}) => this.navigation.reverseGeocode({lat, lng})),
@@ -552,7 +564,9 @@ export class NavigationController {
    * if the native start fails. Resolves `{ok, error?}` for the action; the UI
    * listener ignores the return.
    */
-  private async beginTrip(opts: StartNavigationOptions & {destinationName?: string}): Promise<{ok: boolean; error?: string}> {
+  private async beginTrip(
+    opts: StartNavigationOptions & {destinationName?: string},
+  ): Promise<{ok: boolean; error?: string}> {
     // Re-entrancy guard: ignore a second start while one is already in flight
     // (the duplicate's start() would stop() the session the first just created
     // and freeze the puck).
@@ -666,9 +680,7 @@ export class NavigationController {
    */
   private registerActions(): void {
     try {
-      this.unsubs.push(
-        this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)),
-      )
+      this.unsubs.push(this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)))
     } catch (err) {
       // actions module unavailable on this host, or already registered — the
       // miniapp still runs, it just can't be started via the action.
@@ -973,8 +985,7 @@ export class NavigationController {
         } catch (err) {
           this.appendLog(`dev-settings forward failed: ${err instanceof Error ? err.message : String(err)}`)
         }
-        const rawJustEnabled =
-          partial.useRawInstructions === true && !this.devSettings.useRawInstructions
+        const rawJustEnabled = partial.useRawInstructions === true && !this.devSettings.useRawInstructions
         this.devSettings = next
         this.ui.send("nav:dev-settings-update", this.devSettings)
         // Flipping the toggle changes what the maneuver card / HUD
@@ -1015,9 +1026,10 @@ export class NavigationController {
         if (show === this.showMinimap) return
         this.showMinimap = show
         if (!show) {
-          // Wipe whatever bitmap is on the glasses and reset the dedup
-          // cache so toggling back on re-pushes the next frame.
-          this.display.clear()
+          // Drop just the minimap slot — the HUD frame re-renders without it
+          // (clear() would blank the whole HUD until the next nav tick).
+          // Reset the dedup cache so toggling back on re-pushes the frame.
+          this.display.clearMinimap()
           this.lastMinimapPng = null
           this.lastHudKey = ""
         } else {
@@ -1142,9 +1154,7 @@ export class NavigationController {
   private async renderOsmMap(reason: string): Promise<{ok: boolean; error?: string}> {
     const {lat, lng} = this.osmMapCenter
     const SIZE = this.OSM_MAP_SIZE
-    console.log(
-      `[OSM-MAP] 🗺️  ${reason} — fetching roads around ${lat.toFixed(6)},${lng.toFixed(6)} (${SIZE}×${SIZE})`,
-    )
+    console.log(`[OSM-MAP] 🗺️  ${reason} — fetching roads around ${lat.toFixed(6)},${lng.toFixed(6)} (${SIZE}×${SIZE})`)
     const t0 = Date.now()
     try {
       const base64 = await buildOsmLineMap({
@@ -1342,8 +1352,10 @@ export class NavigationController {
         lat: (Math.min(...lats) + Math.max(...lats)) / 2,
         lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
       }
-      const halfH = haversineMeters({lat: Math.min(...lats), lng: center.lng}, {lat: Math.max(...lats), lng: center.lng}) / 2
-      const halfW = haversineMeters({lat: center.lat, lng: Math.min(...lngs)}, {lat: center.lat, lng: Math.max(...lngs)}) / 2
+      const halfH =
+        haversineMeters({lat: Math.min(...lats), lng: center.lng}, {lat: Math.max(...lats), lng: center.lng}) / 2
+      const halfW =
+        haversineMeters({lat: center.lat, lng: Math.min(...lngs)}, {lat: center.lat, lng: Math.max(...lngs)}) / 2
       const fetchRadius = Math.max(halfH, halfW) * 1.3 + 50
       this.osmFetchInFlight = true
       fetchOsmRoads(center, fetchRadius)
@@ -1421,6 +1433,12 @@ export class NavigationController {
 
     let next: string | null = null
     let durationMs: number | undefined
+    // Structured maneuver split for the new 4-slot HUD (arrow bitmap + maneuver
+    // text box). Populated only on the normal next-turn frame; when set (and
+    // running), refreshHUD sends the split layout instead of the single-container
+    // text frame used by the welcome/rerouting/arrived/off-route states.
+    let maneuverArrow: string | null = null
+    let maneuverBody: string | null = null
 
     // The next-turn display, derived from the live `maneuver` event via the
     // SHARED helper the phone OrientationCard also uses. Computed once here
@@ -1435,13 +1453,7 @@ export class NavigationController {
     const liveDist =
       maneuver?.maneuverType === "ARRIVE"
         ? remainingRouteMeters(me, this.trip.routePoints)
-        : liveDistanceToNextTurn(
-            me,
-            this.trip.routePoints,
-            this.trip.routeSteps,
-            remainingRouteMeters,
-            haversineMeters,
-          )
+        : liveDistanceToNextTurn(me, this.trip.routePoints, this.trip.routeSteps, remainingRouteMeters, haversineMeters)
     const md = deriveManeuverDisplay(maneuver, status, liveDist)
 
     // Mirrors the phone-side OrientationCard's pickDisplay() — same
@@ -1490,31 +1502,27 @@ export class NavigationController {
       // 1:1 with the phone, while the maneuver event's own distance lagged). So
       // we compute the top-line distance HERE from the live position, with the
       // same fallback chain the bottom box uses, instead of trusting md's
-      // (possibly frozen) value. Layout: arrow, distance, instruction.
+      // (possibly frozen) value. The DIRECTIONS box shows the turn instruction;
+      // distance/ETA now live in the TOP stats box, so we no longer put
+      // "In X m" / "Arriving in X m" here.
       //
-      //   ←|→|↑                          ← arrow from maneuver.maneuverType
-      //   In 198 m  | Now | Arriving in 65 m
+      //   Now                            ← only at the turn (urgency cue, not distance)
       //   Turn left onto Market St       ← Mapbox's verbatim instruction
       if (md.arriving) {
-        // Arrival leg: distance to the DESTINATION, live (same as bottom box).
-        const dDest = remainingRouteMeters(me, this.trip.routePoints) ?? md.distanceMeters
-        const distLine =
-          dDest != null ? `Arriving in ${formatDistance(dDest, this.unitSystem)}` : "Arriving"
-        next = `↑\n${distLine}`
+        // Final leg: show the arrival directions (distance is in the top stats box).
+        maneuverArrow = "↑"
+        maneuverBody = md.instruction || "Arriving"
+        next = maneuverBody
       } else {
-        // DISTANCE shown comes from the live position (smooth). But the ARROW
-        // and the "Now" state come from `md`, whose atTurn is gated on the
-        // EVENT's distance — NOT the live one. This avoids the wrong-arrow flash:
-        // `md.arrow`/`md.atTurn` always belong to the same turn as `md.kind`, so
-        // the glyph can't briefly point the wrong way as you pass a turn (the
-        // live distance can already be measuring the NEXT turn). See
-        // deriveManeuverDisplay for the full rationale.
+        // Directions box: NEXT-TURN distance + instruction (mockup: "56 m" /
+        // "Turn left onto the walkway"). This next-turn distance is distinct from
+        // the top box's distance-to-destination, so it belongs here. "Now"
+        // replaces the distance right at the turn. The ARROW and atTurn come from
+        // `md` (gated on the EVENT distance), so the glyph/cue always match md.kind.
         const dTurn = liveDist ?? md.distanceMeters
-        const distLine = md.atTurn
-          ? "Now"
-          : dTurn != null
-            ? `In ${formatDistance(dTurn, this.unitSystem)}`
-            : null
+        const distLine = md.atTurn ? "Now" : dTurn != null ? formatDistance(dTurn, this.unitSystem) : null
+        maneuverArrow = md.arrow || "↑"
+        maneuverBody = [distLine, md.instruction].filter(Boolean).join("\n")
         next = [md.arrow || "↑", distLine, md.instruction].filter(Boolean).join("\n")
       }
     } else if (running) {
@@ -1534,7 +1542,8 @@ export class NavigationController {
       if (stuck && firstStep) {
         const arrow = arrowFor(firstStep.maneuver, null)
         const onto = isRealRoadName(firstStep.road)
-        const dist = firstStep.distanceMeters > 0 ? `In ${formatDistance(firstStep.distanceMeters, this.unitSystem)}` : null
+        const dist =
+          firstStep.distanceMeters > 0 ? `In ${formatDistance(firstStep.distanceMeters, this.unitSystem)}` : null
         next = [arrow, onto ? `Onto ${onto}` : null, dist].filter(Boolean).join("\n") || `Starting…`
       } else {
         next = `Starting…`
@@ -1555,6 +1564,9 @@ export class NavigationController {
       // cleared but no replacement HUD was ever pushed.
       if (this.lastHudKey !== "") {
         this.lastHudKey = ""
+        // clear() wipes the glasses AND the DisplayManager's cached frame
+        // slots; reset the arrow-encode memo so the next frame re-encodes.
+        this.lastArrowKey = ""
         try {
           this.display.clear()
         } catch {
@@ -1572,28 +1584,57 @@ export class NavigationController {
     // Mapbox reroutes.
     const showStats = running && !(this.offRouteAdvisory && status !== "rerouting" && status !== "arrived")
     const stats = showStats ? this.buildTripStats() : null
+
+    // ── New 4-slot HUD ──────────────────────────────────────────────────
+    // On the normal next-turn frame, send the arrow bitmap (left) + maneuver
+    // text box (bottom) + trip-stats box (top) as separate canvas components.
+    // The minimap (right) was pushed by refreshMinimap() above. Special states
+    // (welcome/rerouting/arrived/off-route) have no arrow/stats split and fall
+    // through to the single-container text frame below.
+    if (maneuverBody != null && running) {
+      const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}`
+      const nowHud = Date.now()
+      const unchanged = key === this.lastHudKey
+      if (unchanged && nowHud - this.lastHudAt <= 3000) return
+      const forced = unchanged // unchanged but >3s: periodic re-push (page teardown recovery)
+      this.lastHudAt = nowHud
+      this.lastHudKey = key
+
+      // Compose the whole HUD frame in one render() call. The arrow bitmap is
+      // re-ENCODED only when the direction changes (or on a forced re-push);
+      // DisplayManager caches it, so it's present in every frame regardless.
+      const arrowChanged = forced || maneuverArrow !== this.lastArrowKey
+      if (arrowChanged) this.lastArrowKey = maneuverArrow ?? ""
+      this.display.showNavHud({
+        arrowBmp: arrowChanged ? renderManeuverArrowBmp(maneuverArrow) : undefined,
+        maneuver: maneuverBody,
+        stats: stats ?? "",
+      })
+      return
+    }
+
+    // Single-container state (welcome / rerouting / arrived / off-route / "Starting…").
+    // No HUD bookkeeping needed: render() replaces the frame, and the cached
+    // arrow/map slots survive in DisplayManager for when turn-by-turn resumes.
+
     // Stack the maneuver block over the stats line, blank line between, or just
     // one if the other is absent.
     const combined = [next, stats].filter(Boolean).join("\n\n")
 
     // Coalesce on the combined frame so we don't re-push identical content.
-    const key = `${combined}${durationMs ?? 0}`
+    // Prefixed "msg|" so a message frame never collides with a "hud|" key.
+    const key = `msg|${combined}${durationMs ?? 0}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
     if (key === this.lastHudKey && nowHud - this.lastHudAt <= 3000) return
     this.lastHudAt = nowHud
-
     this.lastHudKey = key
 
-    // Single full-canvas container: push the WHOLE combined frame (maneuver
-    // block + trip stats) through showManeuver, which spans the full canvas and
-    // REPLACES whatever text was there (incl. the "Welcome…" frame) in place. We
-    // deliberately do NOT clear() before this: showManeuver overwrites the same
-    // container, and clear() is an async full-view teardown that would race this
-    // draw (the "old frame lingers under the new one" glitch). clear() is
-    // reserved for genuine teardown (trip end / dispose), not routine updates.
-    this.display.showManeuver(combined)
+    // Render as the "message" frame (positioned at the arrow's left x). The
+    // frame replaces turn-by-turn entirely; returning to turn-by-turn replaces
+    // it back. Nothing lingers — render() is the whole screen.
+    this.display.showNavMessage(combined)
   }
 
   /**
@@ -1618,17 +1659,14 @@ export class NavigationController {
   private buildTripStats(): string | null {
     const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
     const distM =
-      this.trip.maneuver?.distanceToDestinationMeters ??
-      remainingRouteMeters(me, this.trip.routePoints) ??
-      undefined
+      this.trip.maneuver?.distanceToDestinationMeters ?? remainingRouteMeters(me, this.trip.routePoints) ?? undefined
     if (distM == null || distM < 0) return null
-    // Glasses stats line shows ETA only — the total remaining distance was
-    // dropped to keep the left text compact (distM is still used as the ETA
-    // fallback when the SDK hasn't sent a remaining-time value).
-    const etaS =
-      this.trip.maneuver?.timeToDestinationSeconds ??
-      distM / this.FALLBACK_WALKING_M_PER_S
-    return etaS >= 0 ? `⊙ ${formatDuration(etaS)}` : null
+    // Top stats slot: total remaining distance + ETA, e.g. "863 m  11 min"
+    // (matches the HUD mockup). distM also feeds the ETA fallback when the SDK
+    // hasn't sent a remaining-time value.
+    const etaS = this.trip.maneuver?.timeToDestinationSeconds ?? distM / this.FALLBACK_WALKING_M_PER_S
+    const dist = formatDistance(distM, this.unitSystem)
+    return etaS >= 0 ? `${dist}  ${formatDuration(etaS)}` : dist
   }
 
   /**
@@ -1700,9 +1738,7 @@ export class NavigationController {
     // Re-fetch roads if we have none yet, or the user has wandered far from the
     // cached center. Fetch is async + best-effort; we render with whatever roads
     // we currently have (possibly empty on the very first tick).
-    const movedFar =
-      !this.osmRoadsCenter ||
-      haversineMeters(me, this.osmRoadsCenter) > this.OSM_REFETCH_THRESHOLD_M
+    const movedFar = !this.osmRoadsCenter || haversineMeters(me, this.osmRoadsCenter) > this.OSM_REFETCH_THRESHOLD_M
     if (movedFar && !this.osmFetchInFlight) {
       this.osmFetchInFlight = true
       const fetchCenter = me
@@ -1710,7 +1746,9 @@ export class NavigationController {
         .then((roads) => {
           this.osmRoadsCache = roads
           this.osmRoadsCenter = fetchCenter
-          console.log(`[OSM-MINIMAP] fetched ${roads.length} roads around ${fetchCenter.lat.toFixed(5)},${fetchCenter.lng.toFixed(5)}`)
+          console.log(
+            `[OSM-MINIMAP] fetched ${roads.length} roads around ${fetchCenter.lat.toFixed(5)},${fetchCenter.lng.toFixed(5)}`,
+          )
           this.refreshMinimap() // redraw now that roads are in
         })
         .catch((err) => console.log("[OSM-MINIMAP] fetch failed:", err))
@@ -1756,9 +1794,7 @@ export class NavigationController {
     // Falls back to perpendicular route distance when the SDK hasn't populated
     // distanceToDestinationMeters yet. Deduped on content.
     const distM =
-      this.trip.maneuver?.distanceToDestinationMeters ??
-      remainingRouteMeters(me, this.trip.routePoints) ??
-      undefined
+      this.trip.maneuver?.distanceToDestinationMeters ?? remainingRouteMeters(me, this.trip.routePoints) ?? undefined
     // ETA: prefer the SDK's mode-aware remaining time; fall back to a
     // walking-speed estimate from the distance so the time still shows when the
     // SDK value isn't in yet.
@@ -1833,11 +1869,10 @@ export class NavigationController {
   /** Start the recurring minimap watchdog (no-op if already running). */
   private startMinimapWatchdog(): void {
     if (this.minimapWatchdogTimer != null) return
-    console.log(`[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`)
-    this.minimapWatchdogTimer = setInterval(
-      () => this.minimapWatchdogTick(),
-      this.MINIMAP_WATCHDOG_INTERVAL_MS,
+    console.log(
+      `[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`,
     )
+    this.minimapWatchdogTimer = setInterval(() => this.minimapWatchdogTick(), this.MINIMAP_WATCHDOG_INTERVAL_MS)
   }
 
   /** Stop the minimap watchdog (no-op if not running). */
@@ -2026,9 +2061,7 @@ export class NavigationController {
 
     const alongRouteArrived = remaining <= ARRIVAL_REMAINING_M
     const nearPinArrived =
-      straightLineToPin != null &&
-      straightLineToPin <= ARRIVAL_NEAR_PIN_M &&
-      remaining <= ARRIVAL_NEAR_END_M
+      straightLineToPin != null && straightLineToPin <= ARRIVAL_NEAR_PIN_M && remaining <= ARRIVAL_NEAR_END_M
     if (!alongRouteArrived && !nearPinArrived) return
 
     const side = sideOfFinalSegment(route, this.trip.activeDestination)
@@ -2142,9 +2175,7 @@ export class NavigationController {
         const merged = live.map((s, i) => ({
           ...s,
           instruction:
-            this.cachedInstructions && i < this.cachedInstructions.length
-              ? this.cachedInstructions[i] || null
-              : null,
+            this.cachedInstructions && i < this.cachedInstructions.length ? this.cachedInstructions[i] || null : null,
         }))
         this.trip = {...this.trip, routeSteps: merged}
         this.ui.send("nav:route", {points: this.trip.routePoints ?? [], steps: merged})
@@ -2341,9 +2372,7 @@ function cleanInstruction(raw: string | null | undefined): string {
   // Remove "Destination will be on the left/right" (with or without
   // a preceding " | " or ". " delimiter). Trim trailing whitespace
   // and stray punctuation left behind by the removal.
-  return raw
-    .replace(/\s*[|.]?\s*(?:your\s+)?destination will be on the (left|right)\s*\.?\s*$/i, "")
-    .trim()
+  return raw.replace(/\s*[|.]?\s*(?:your\s+)?destination will be on the (left|right)\s*\.?\s*$/i, "").trim()
 }
 
 /**

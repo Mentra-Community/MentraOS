@@ -10,7 +10,7 @@ you start getting results; the SDK handles the subscription for you.
 ```typescript
 session.transcription.on((data) => {
   if (data.isFinal) {
-    session.display.showTextWall(data.text);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
   }
 });
 ```

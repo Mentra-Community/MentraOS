@@ -48,6 +48,23 @@ export interface DisplayCapabilities {
   fieldOfView?: { horizontal?: number; vertical?: number };
   maxTextLines?: number;
   adjustBrightness?: boolean;
+
+  // --- Scene display API (display.render()) — typed capabilities ---
+  // Pure DATA the host scene pipeline acts on generically; a device without
+  // canPosition renders scenes via the host degrade path instead.
+  /** Public drawable canvas in px — the raw coordinate space for render() boxes. */
+  width?: number;
+  height?: number;
+  /** True ⇒ the device renders positioned elements (containers / canvas components). */
+  canPosition?: boolean;
+  /** Element budgets. Rects share the text pool on container-based devices. */
+  maxTextElements?: number;
+  maxImageElements?: number;
+  /** Per-image dimension cap (box-level), when the firmware has one. */
+  maxImagePx?: { width: number; height: number };
+  shapes?: "rect"[];
+  intensityLevels?: number;
+  partialUpdate?: boolean;
 }
 
 /**

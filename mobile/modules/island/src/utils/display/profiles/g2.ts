@@ -19,6 +19,11 @@ export const G2_PROFILE: DisplayProfile = {
   // G2 fits more vertical text than G1 — allow up to 8 lines before the
   // wrapper truncates (G1 stays at its inherited 5).
   maxLines: 8,
+  // Hardware-calibrated 2026-07-03: a 28px container overflowed one line of
+  // the firmware font (triggering the fw's overflow indicator tick); 40px is
+  // clean. With this set, the scene pipeline height-clips text so a box is
+  // never handed more lines than fit.
+  lineHeightPx: 40,
 }
 
 /**

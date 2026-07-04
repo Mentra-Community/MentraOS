@@ -23,11 +23,15 @@ export const evenRealitiesG1: Capabilities = {
     count: 2,
     isColor: false,
     color: "green",
-    canDisplayBitmap: true,
+    canDisplayBitmap: false, // broken in practice — capability stops lying (design doc §3.4.8)
     resolution: { width: 640, height: 200 },
     fieldOfView: { horizontal: 25 },
     maxTextLines: 5,
     adjustBrightness: true,
+
+    // Scene display API — no positioned elements; scenes degrade to text walls.
+    canPosition: false,
+    maxImageElements: 0,
   },
 
   // Microphone capabilities - G1 has one microphone without VAD

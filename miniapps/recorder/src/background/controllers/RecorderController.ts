@@ -663,16 +663,17 @@ export class RecorderController {
   // ── Glasses HUD ──────────────────────────────────────────────────────────
 
   private renderHud(): void {
-    try {
-      if (this.recordingId && this.lastStatus) {
-        const tag = this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"
-        this.session.display.showTextWall(`${tag}   ${fmtClock(this.lastStatus.ms)}`, {view: "main"})
-      } else {
-        this.session.display.showTextWall("Recorder ready", {view: "main"})
-      }
-    } catch {
-      /* no display attached — fine */
-    }
+    const text =
+      this.recordingId && this.lastStatus
+        ? `${this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"}   ${fmtClock(this.lastStatus.ms)}`
+        : "Recorder ready"
+    // Full-canvas text element with a stable id — the ticking clock updates in
+    // place on the glasses. render() never throws; on a displayless device it
+    // just resolves {status: "blocked"}.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "hud", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 }
 
