@@ -503,6 +503,10 @@ class LocalDisplayManager {
     }
     this.sendToNative("system.clear", clearEvent, null)
     this.currentDisplay = null
+    // The glasses main view is now blank: every app's retained scene is
+    // replay-only until it re-renders — diffing against it would skip
+    // "unchanged" elements onto the blank screen.
+    sceneRenderer.markViewStale("main")
   }
 
   // ===========================================================================

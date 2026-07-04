@@ -198,8 +198,12 @@ class SceneRenderer {
     }
 
     const processed = processScene(elements, caps, displayProcessor.getProfile())
+    // A stale baseline means the glasses were cleared since the last commit —
+    // diff from empty so everything repaints (the retained frame stays valid
+    // as the replay source only).
+    const prevFrame = this.store.isBaselineStale(appId, view) ? [] : this.store.lastFrame(appId, view)
     const {elements: diffed, removed} = diffScene(
-      this.store.lastFrame(appId, view),
+      prevFrame,
       processed.elements,
       this.store.nextSyntheticId(appId, view),
     )
@@ -243,6 +247,16 @@ class SceneRenderer {
    */
   public resetBaseline(appId: string, view: "main" | "dashboard"): void {
     this.store.commit(appId, view, [])
+  }
+
+  /**
+   * A system-level clear wiped the view (durationMs expiry, unmount fallback,
+   * boot-window expiry): mark every app's baseline for that view stale. Unlike
+   * resetBaseline this KEEPS the retained frames — they remain the
+   * restore-as-replay source; only incremental diffing restarts from empty.
+   */
+  public markViewStale(view: "main" | "dashboard"): void {
+    this.store.markViewStale(view)
   }
 
   private sendFrame(frame: SceneFrame): void {

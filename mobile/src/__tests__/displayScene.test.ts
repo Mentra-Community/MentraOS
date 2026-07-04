@@ -355,4 +355,32 @@ describe("SceneStore", () => {
     store.clear("app")
     expect(store.hasScene("app", "main")).toBe(false)
   })
+
+  it("markViewStale keeps the replay source but forces the next diff from empty (durationMs expiry)", () => {
+    // Regression: app renders with durationMs → expiry sends clear_view → app
+    // re-renders IDENTICAL elements. With the baseline intact they'd all diff
+    // to "unchanged" and never repaint onto the now-blank glasses.
+    const store = new SceneStore()
+    const els = [frameEl({id: "a", type: "text", box: {x: 0, y: 0, w: 100, h: 40}, text: "hello"})]
+    store.commit("app", "main", els)
+
+    store.markViewStale("main")
+
+    // Replay source survives (restore-as-replay is create-based).
+    expect(store.buildReplayFrame("app", "main")).not.toBeNull()
+    expect(store.isBaselineStale("app", "main")).toBe(true)
+
+    // The next incremental diff must run against EMPTY, so the identical
+    // element comes back as "created", not "unchanged".
+    const prev = store.isBaselineStale("app", "main") ? [] : store.lastFrame("app", "main")
+    const next: DiffableElement[] = [
+      {id: "a", type: "text", box: {x: 0, y: 0, w: 100, h: 40}, text: "hello", contentHash: els[0].contentHash},
+    ]
+    const {elements} = diffScene(prev, next, store.nextSyntheticId("app", "main"))
+    expect(elements.map((e) => e.change)).toEqual(["created"])
+
+    // Committing the re-render clears the flag.
+    store.commit("app", "main", elements)
+    expect(store.isBaselineStale("app", "main")).toBe(false)
+  })
 })
