@@ -118,7 +118,9 @@ class BlePhotoUploadService {
             "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
         )
 
-        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
+        // 0.95, not lower: the source already went through a lossy AVIF pass on
+        // the glasses, so this re-encode shouldn't compound the quality loss.
+        guard var jpegData = image.jpegData(compressionQuality: 0.95) else {
             throw NSError(
                 domain: "BlePhotoUpload",
                 code: -2,

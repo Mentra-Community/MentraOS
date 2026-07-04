@@ -37,7 +37,9 @@ import org.json.JSONObject;
  */
 public class BlePhotoUploadService {
     private static final String TAG = "BlePhotoUploadService";
-    private static final int JPEG_QUALITY = 90;
+    // 95, not lower: the source already went through a lossy AVIF pass on the
+    // glasses, so this re-encode shouldn't compound the quality loss.
+    private static final int JPEG_QUALITY = 95;
 
     public interface UploadCallback {
         void onSuccess(String requestId, String responseBody);
