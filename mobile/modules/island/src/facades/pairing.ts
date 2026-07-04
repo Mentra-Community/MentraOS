@@ -7,10 +7,16 @@
  * facade is the first-time discovery + pair flow.)
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
+import type {ConnectOptions, Device, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
-import {isGlassesLinkLayerBusy, isGlassesReady, waitForGlassesReady} from "../services/GlassesReadiness"
+import {hasDefaultDevice} from "../services/DeviceStoreHydration"
+import {
+  isGlassesConnected,
+  isGlassesLinkLayerBusy,
+  isGlassesReady,
+  waitForGlassesReady,
+} from "../services/GlassesReadiness"
 import {
   logAutomaticReportSubmissionStatus,
   toAutomaticReportSubmissionStatus,
@@ -182,8 +188,7 @@ export const pairing = {
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
   /** Subscribe to scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
-  onScanning: (cb: (scanning: boolean) => void): (() => void) =>
-    useCoreStore.subscribe((s) => s.searching, cb),
+  onScanning: (cb: (scanning: boolean) => void): (() => void) => useCoreStore.subscribe((s) => s.searching, cb),
   /** Whether a controller scan is currently in progress. */
   scanningController: (): boolean => useCoreStore.getState().searchingController,
   /** Subscribe to controller-scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */
@@ -211,13 +216,53 @@ export const pairing = {
     })
   },
 
-  /** Pair with (connect to) a discovered device. */
-  pair: async (...args: Parameters<typeof BluetoothSdk.connect>): Promise<void> => {
+  /**
+   * Pair with (connect to) a discovered device. Two-phase identity: the connect
+   * attempt only marks the device as pending (`saveAsDefault: false` — no eager
+   * default-device write); the native layer promotes it to the default wearable
+   * when pairing actually succeeds (handleDeviceReady), so an abandoned or
+   * failed attempt can't leave a default identity with no paired device behind.
+   */
+  pair: async (device: Device, options?: ConnectOptions): Promise<void> => {
     await pushAllBluetoothSettings()
-    return BluetoothSdk.connect(...args)
+    return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
+  /**
+   * Abandon an in-flight pairing attempt (back-out, failure retry, conflict
+   * retry) without destroying an existing pairing:
+   * - Re-pair with the old glasses still connected (nothing tapped yet — an
+   *   attempt drops the link first): stop the scan, touch nothing else.
+   * - Re-pair with an attempt in flight: cancel it, then re-seed the native
+   *   identity from the phone's persisted settings — the attempt's
+   *   connect-by-name overwrote the native device_name, so a later
+   *   connectDefault() would otherwise target the abandoned device.
+   * - Fresh pairing (no default device): also forget, clearing the partial
+   *   native pairing state.
+   * The `pending_wearable` marker is deliberately left alone — the host renders
+   * it as a finish-pairing affordance.
+   *
+   * `hadDefaultDevice` lets a screen pass the state it captured at entry (the
+   * scan screen does); when omitted, a live hydrated read is used, failing OPEN
+   * to "preserve" — a transient read failure must never wipe a real pairing.
+   */
+  abandonAttempt: async (hadDefaultDevice?: boolean): Promise<void> => {
+    const preserve = hadDefaultDevice ?? (await hasDefaultDevice().catch(() => true))
+    if (preserve && isGlassesConnected(useGlassesStore.getState().connection)) {
+      // Still connected means no connect attempt is in flight (an attempt drops
+      // the existing link first): the user browsed the scan and backed out.
+      // Stop the scan and leave the live pairing untouched.
+      await BluetoothSdk.stopScan()
+      return
+    }
+    await BluetoothSdk.disconnect()
+    if (preserve) {
+      await pushAllBluetoothSettings()
+    } else {
+      await BluetoothSdk.forget()
+    }
+  },
 
   /** Subscribe to pairing failures; returns an unsubscribe. */
   onPairFailure: (cb: (event: PairFailureEvent) => void): (() => void) => {

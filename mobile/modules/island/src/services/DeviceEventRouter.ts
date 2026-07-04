@@ -25,7 +25,7 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore} from "../stores/settings"
+import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
@@ -118,6 +118,12 @@ export function startDeviceEventRouter(): void {
   subs.push(
     BluetoothSdk.addListener("save_setting", async (event) => {
       await useSettingsStore.getState().setSetting(event.key, event.value)
+      // Two-phase identity: the native layer promotes the default wearable on
+      // pairing success (handleDeviceReady) and echoes it here — a promoted
+      // default retires the pending selection marker.
+      if (event.key === SETTINGS.default_wearable.key && event.value) {
+        await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, "")
+      }
     }),
   )
 

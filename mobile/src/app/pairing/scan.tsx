@@ -1,7 +1,7 @@
 import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
 import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -30,11 +30,33 @@ export default function SelectGlassesBluetoothScreen() {
   const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
     toolkit.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
-  const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
+  const [, setPendingWearable] = useSetting(SETTINGS.pending_wearable.key)
   const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
     toolkit.pairing.onFound(onChange),
   )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
+
+  // Whether a real pairing existed when this screen was ENTERED decides how the
+  // back handler cleans up: fresh pairing → forget the partial attempt; re-pair →
+  // the existing pairing must survive back-out. Defaults to "preserve" until the
+  // hydrated read lands — a race must never wipe a real pairing.
+  const enteredWithDefaultDevice = useRef(true)
+
+  useEffect(() => {
+    // Two-phase identity: reaching the scan screen marks the chosen model as the
+    // PENDING wearable (selection). Promotion to default_wearable only happens
+    // natively when pairing succeeds; until then the home card renders a
+    // finish-pairing affordance from this marker.
+    setPendingWearable(deviceModel)
+    toolkit.glasses
+      .hasDefaultDevice()
+      .then((has) => {
+        enteredWithDefaultDevice.current = has
+      })
+      .catch(() => {
+        enteredWithDefaultDevice.current = true
+      })
+  }, [])
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -48,8 +70,12 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    toolkit.glasses.disconnect()
-    toolkit.glasses.forget()
+    // Non-destructive back-out: only a FRESH pairing flow forgets on back
+    // (clearing the partial attempt); backing out of a re-pair preserves the
+    // existing pairing. The pending marker survives either way.
+    void toolkit.pairing.abandonAttempt(enteredWithDefaultDevice.current).catch((error) => {
+      console.warn("Pairing scan back-out cleanup failed:", error)
+    })
     goBack()
   }, true)
 
@@ -118,10 +144,9 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    await toolkit.pairing.setDefault(device)
-    setDeviceName(device.name)
-    // pair bt classic first:
-    replace("/pairing/btclassic")
+    // pair bt classic first — thread the device through the route; the connect
+    // (and the on-success default promotion) happens after BT Classic links.
+    replace("/pairing/btclassic", {device: JSON.stringify(device)})
     pushUnder("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }
 

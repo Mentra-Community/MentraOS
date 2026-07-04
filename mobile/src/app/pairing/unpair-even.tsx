@@ -24,7 +24,10 @@ export default function UnpairEvenScreen() {
   }
 
   const handleTryAgain = () => {
-    toolkit.glasses.forget()
+    // Clears the failed attempt; a pre-existing pairing (re-pair) is preserved.
+    void toolkit.pairing.abandonAttempt().catch((error) => {
+      console.warn("Pairing retry cleanup failed:", error)
+    })
     clearHistory()
     replace("/pairing/prep", {deviceModel})
   }

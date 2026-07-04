@@ -1,7 +1,4 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {toolkit} from "@mentra/island"
-import {useFocusEffect} from "expo-router"
-import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
@@ -25,13 +22,11 @@ export default function SelectGlassesModelScreen() {
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  // when this screen is focused, forget any glasses that may be paired:
-  useFocusEffect(
-    useCallback(() => {
-      toolkit.glasses.forget()
-      return () => {}
-    }, []),
-  )
+  // (This screen used to forget any paired glasses on focus. With two-phase
+  // identity there is no eager default to clean up before a fresh pairing, and
+  // the forget wiped REAL pairings whenever the screen was entered — or backed
+  // into — while glasses were paired. Attempt cleanup now lives on the specific
+  // abandon paths: scan back-out, pairing failure, and unpair-even retry.)
 
   // Get logo component for manufacturer
   const getManufacturerLogo = (deviceModel: string) => {

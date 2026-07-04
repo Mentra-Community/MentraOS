@@ -376,6 +376,7 @@ jest.mock("@mentra/island", () => {
       }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
+        hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         forget: jest.fn(() => Promise.resolve()),
         connect: jest.fn(() => Promise.resolve()),
@@ -508,6 +509,7 @@ jest.mock("@mentra/island", () => {
         onFound: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
+        abandonAttempt: jest.fn(() => Promise.resolve()),
         onPairFailure: subscribeVia("pair_failure"),
         onGlassesNotReady: subscribeVia("glasses_not_ready"),
         waitForReady: jest.fn(() => Promise.resolve(false)),
