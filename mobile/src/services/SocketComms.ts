@@ -133,6 +133,10 @@ class SocketComms {
       case "app_state_change":
       case "app_started":
       case "app_stopped":
+      // The V1 cloud announces mic requirements per session for cloud-SDK
+      // apps; with those apps end-of-life the payload is always "no mic
+      // needed" and local mic policy is island MicStateCoordinator's job.
+      case "microphone_state_change":
         // Legacy cloud-v1 message types — ignored.
         break
 

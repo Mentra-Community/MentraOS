@@ -629,6 +629,11 @@ class AppRegistry {
   public getInstalledVersions(packageName: string): string[] {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
+      // Not installed yet is an expected state (e.g. preinstall sync probing
+      // versions before first install) — return [] without the error noise.
+      if (!lmaDir.exists) {
+        return []
+      }
       const lma = lmaDir.list()
       return lma.map((lma) => lma.name)
     } catch (error) {
