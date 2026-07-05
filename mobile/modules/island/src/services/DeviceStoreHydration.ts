@@ -63,6 +63,14 @@ export function hydrateDeviceStore(): Promise<void> {
 }
 
 /**
+ * Test-only: clear the hydration memo so each test starts from an unhydrated
+ * store instead of inheriting whichever hydration a previous test ran.
+ */
+export function resetDeviceStoreHydrationForTests(): void {
+  hydrationPromise = null
+}
+
+/**
  * Whether the SDK holds an actual default DEVICE to reconnect to — the
  * hydration-aware two-state read. Distinct from the `default_wearable`
  * setting (a model string that pending/orphaned states can hold without any
@@ -90,6 +98,12 @@ export async function hasDefaultDevice(): Promise<boolean> {
  * connected (an in-flight pairing owns the identity right now).
  */
 export async function demoteOrphanedDefaultWearable(): Promise<void> {
+  // Never judge "native default absent" against an unseeded store: a valid
+  // pairing identity would read as an orphan and be demoted. Awaiting the
+  // (memoized) hydration makes the check safe regardless of call ordering;
+  // a failed hydration rejects here instead of demoting blind.
+  await hydrateDeviceStore()
+
   const settings = useSettingsStore.getState()
   const model = settings.getSetting(SETTINGS.default_wearable.key) as string | undefined
   if (!model) return
@@ -105,7 +119,12 @@ export async function demoteOrphanedDefaultWearable(): Promise<void> {
   if (await BluetoothSdk.getDefaultDevice()) return
 
   console.log(`DeviceStoreHydration: demoting orphaned default_wearable "${model}" to pending_wearable`)
-  await settings.setSetting(SETTINGS.pending_wearable.key, model)
+  // The user's LATEST selection wins: only backfill the pending marker when
+  // none exists — a fresher pending model (a pairing started after the orphan
+  // formed) must not be replaced by the stale orphaned model.
+  if (!settings.getSetting(SETTINGS.pending_wearable.key)) {
+    await settings.setSetting(SETTINGS.pending_wearable.key, model)
+  }
   await settings.setSetting(SETTINGS.default_wearable.key, "")
   await settings.setSetting(SETTINGS.device_name.key, "")
   await settings.setSetting(SETTINGS.device_address.key, "")

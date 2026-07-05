@@ -46,7 +46,12 @@ mock.module("../GlassesSettingsSync", () => ({
 }))
 
 // Import AFTER the mocks are registered
-const {hydrateDeviceStore, hasDefaultDevice, demoteOrphanedDefaultWearable} = require("../DeviceStoreHydration")
+const {
+  hydrateDeviceStore,
+  hasDefaultDevice,
+  demoteOrphanedDefaultWearable,
+  resetDeviceStoreHydrationForTests,
+} = require("../DeviceStoreHydration")
 
 function resetSettings(values: Record<string, unknown>) {
   for (const key of Object.keys(settingsValues)) delete settingsValues[key]
@@ -55,6 +60,7 @@ function resetSettings(values: Record<string, unknown>) {
 
 describe("DeviceStoreHydration", () => {
   beforeEach(() => {
+    resetDeviceStoreHydrationForTests()
     mockGetDefaultDevice.mockClear()
     mockLoadAllSettings.mockClear()
     mockSetSetting.mockClear()
@@ -105,9 +111,20 @@ describe("DeviceStoreHydration", () => {
     expect(settingsValues.default_wearable).toBe("")
     expect(settingsValues.device_name).toBe("")
     expect(settingsValues.device_address).toBe("")
-    // Native must mirror the demoted identity (the seed already pushed the
-    // pre-demotion values).
-    expect(mockPushAllBluetoothSettings).toHaveBeenCalled()
+    // Two pushes: the hydration seed (pre-demotion values), then the re-push
+    // so native mirrors the demoted identity.
+    expect(mockPushAllBluetoothSettings).toHaveBeenCalledTimes(2)
+  })
+
+  test("demotion backfills pending only when empty — a fresher selection wins", async () => {
+    resetSettings({default_wearable: "Mentra Live", pending_wearable: "Even Realities G1"})
+    mockGetDefaultDevice.mockImplementation(() => Promise.resolve(null))
+
+    await demoteOrphanedDefaultWearable()
+
+    // The user's later selection (G1) survives; the stale orphan is only cleared.
+    expect(settingsValues.pending_wearable).toBe("Even Realities G1")
+    expect(settingsValues.default_wearable).toBe("")
   })
 
   test("does not demote when the native default device exists", async () => {
@@ -127,7 +144,21 @@ describe("DeviceStoreHydration", () => {
     await demoteOrphanedDefaultWearable()
 
     expect(mockSetSetting).not.toHaveBeenCalled()
+    // Hydration runs (the internal await), but the native default is never read.
     expect(mockGetDefaultDevice).not.toHaveBeenCalled()
+  })
+
+  test("demotion refuses to run against an unhydrated store", async () => {
+    resetSettings({default_wearable: "Mentra Live", device_name: "LIVE_1"})
+    mockLoadAllSettings.mockImplementation(() =>
+      Promise.resolve({is_error: () => true, error: new Error("disk unavailable")}),
+    )
+
+    await expect(demoteOrphanedDefaultWearable()).rejects.toThrow("settings load failed")
+
+    // Nothing was demoted on the unseeded store.
+    expect(mockSetSetting).not.toHaveBeenCalled()
+    expect(settingsValues.default_wearable).toBe("Mentra Live")
   })
 
   test("does not demote while the link layer is busy or connected (a pairing owns the identity)", async () => {

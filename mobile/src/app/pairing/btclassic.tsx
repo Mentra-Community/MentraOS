@@ -7,6 +7,7 @@ import {translate} from "@/i18n"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {toolkit} from "@mentra/island"
 import type {Device} from "@mentra/bluetooth-sdk"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -20,6 +21,11 @@ export default function BtClassicPairingScreen() {
   // The device the user picked on the scan screen, threaded through the route.
   // Two-phase identity: it is NOT the default device yet — the connect below
   // marks it pending, and the native layer promotes it on pairing success.
+  //
+  // This screen is ALSO entered without a device from paired contexts — the
+  // pairing-success step stack and the home-screen "Bluetooth Classic
+  // disconnected" recovery alert — where the saved default identity is the
+  // device to (re)connect.
   const device = useMemo((): Device | null => {
     const {device: deviceJson} = (route.params ?? {}) as {device?: string}
     if (!deviceJson) return null
@@ -35,16 +41,24 @@ export default function BtClassicPairingScreen() {
   const otherBtConnected = useToolkitSnapshot(toolkit.pairing.otherBtConnected, (onChange) =>
     toolkit.pairing.onOtherBtConnected(onChange),
   )
-  const deviceName = device?.name ?? ""
+  const [savedDeviceName] = useSetting(SETTINGS.device_name.key)
+  const deviceName = device?.name || savedDeviceName || ""
   const {theme} = useAppTheme()
 
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    if (!device) return
-    toolkit.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
-      console.error("Failed to connect glasses after Bluetooth Classic pairing:", error)
-    })
+    if (device) {
+      toolkit.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
+        console.error("Failed to connect glasses after Bluetooth Classic pairing:", error)
+      })
+    } else {
+      // Paired contexts (success step stack / recovery alert): reconnect the
+      // saved default device.
+      toolkit.glasses.connectDefault().catch((error) => {
+        console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
+      })
+    }
     pushPrevious()
   }
 
@@ -67,11 +81,11 @@ export default function BtClassicPairingScreen() {
   }, [bluetoothClassicConnected])
 
   useEffect(() => {
-    if (!device) {
-      console.log("BTCLASSIC: no device threaded from the scan screen, cannot continue")
+    if (!device && !savedDeviceName) {
+      console.log("BTCLASSIC: no device threaded from scan and no saved default, cannot continue")
       handleBack()
     }
-  }, [device])
+  }, [device, savedDeviceName])
 
   let steps: OnboardingStep[] = [
     {
