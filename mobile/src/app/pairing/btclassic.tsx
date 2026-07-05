@@ -81,11 +81,24 @@ export default function BtClassicPairingScreen() {
   }, [bluetoothClassicConnected])
 
   useEffect(() => {
-    if (!device && !savedDeviceName) {
-      console.log("BTCLASSIC: no device threaded from scan and no saved default, cannot continue")
-      handleBack()
+    if (device) return
+    let cancelled = false
+    // Paired-context entry (no scan device): stay only when a default device
+    // actually exists — the same precondition connectDefault() has, read
+    // hydration-aware. Fail open (stay) on a read error; connectDefault()'s
+    // catch is the fallback for a genuinely missing device.
+    toolkit.glasses
+      .hasDefaultDevice()
+      .catch(() => true)
+      .then((hasDefault) => {
+        if (cancelled || hasDefault) return
+        console.log("BTCLASSIC: no device threaded from scan and no default device, cannot continue")
+        handleBack()
+      })
+    return () => {
+      cancelled = true
     }
-  }, [device, savedDeviceName])
+  }, [device])
 
   let steps: OnboardingStep[] = [
     {
