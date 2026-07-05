@@ -51,8 +51,10 @@ public class BesWireFormat {
     private static final AtomicInteger NEXT_BINARY_MSG_ID = new AtomicInteger(1);
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE_MAX =
-            221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
+    // 400 matches the BES firmware's hardcoded FILE_PACK_SIZE (432-byte notifications
+    // incl. 32B overhead + 3B ATT). Phones with MTU >= 435 get full-size packs; smaller
+    // MTUs still negotiate down via set_ble_mtu -> setFilePackSizeFromMtu.
+    public static final int FILE_PACK_SIZE_MAX = 400;
     public static final int FILE_PACK_SIZE_DEFAULT =
             FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size

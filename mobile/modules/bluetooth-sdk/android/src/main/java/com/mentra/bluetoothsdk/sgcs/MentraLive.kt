@@ -95,6 +95,11 @@ class MentraLive : SGCManager() {
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
         private const val BES2700_MTU_LIMIT = 509
 
+        // L2CAP CoC fast path: new BES2700 firmware registers an LE L2CAP CoC server on this
+        // PSM. When the phone opens the channel, the glasses send file packets over it instead
+        // of GATT FILE_READ notifications. Phone→glasses traffic stays on GATT.
+        private const val L2CAP_FILE_PSM = 0x00C9
+
         // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass
         // types
         // CRITICAL FIX: Swapped TX and RX UUIDs to match actual usage from central device
@@ -330,6 +335,12 @@ class MentraLive : SGCManager() {
     private val filePacketBufferLock = Any()
     private var fileReadNotificationCount = 0 // Debug counter for FILE_READ notifications
     private val incomingChunkReassembler = MessageChunkReassembler()
+
+    // L2CAP CoC fast path for incoming file transfers (see L2CAP_FILE_PSM).
+    // The channel is read-only; all outgoing messages remain on GATT. When it can't be
+    // opened (older firmware, Android < 10), GATT notifications remain the file path.
+    private val enableL2capFilePath = true
+    private var l2capFileChannel: MentraLiveL2capChannel? = null
 
     private val connectionLock = Any()
 
@@ -1567,6 +1578,9 @@ class MentraLive : SGCManager() {
                             // Stop micbeat mechanism
                             stopMicBeat()
 
+                            // Close the L2CAP file channel (if the fast path was open)
+                            closeL2capFileChannel()
+
                             // Clean up GATT resources
                             closeGattQuietly(false)
 
@@ -1618,6 +1632,9 @@ class MentraLive : SGCManager() {
 
                         // Stop micbeat mechanism
                         stopMicBeat()
+
+                        // Close the L2CAP file channel (if the fast path was open)
+                        closeL2capFileChannel()
 
                         // Clean up resources
                         closeGattQuietly(false)
@@ -2824,6 +2841,49 @@ class MentraLive : SGCManager() {
         synchronized(filePacketBufferLock) { filePacketBufferSize = 0 }
     }
 
+    /**
+     * Open the L2CAP CoC fast path for incoming file transfers (PSM 0x00C9).
+     *
+     * New BES2700 firmware registers an LE L2CAP CoC server; when the phone opens the channel,
+     * the glasses send K900 file packets over it instead of GATT FILE_READ notifications.
+     * Complete frames from the channel are fed into processFilePacketData — the exact same entry
+     * point used by GATT FILE_READ notifications — so downstream reassembly (FileTransferSession,
+     * transfer_complete) is unchanged. On any failure to open we stay on GATT notifications.
+     */
+    private fun openL2capFileChannel() {
+        if (!enableL2capFilePath) {
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // createInsecureL2capChannel requires API 29
+            Bridge.log("LIVE: L2CAP: unavailable, staying on GATT (requires Android 10+)")
+            return
+        }
+        if (l2capFileChannel != null) {
+            // Already open (or connecting) for this connection — e.g. repeated glasses_ready
+            return
+        }
+        val device = connectedDevice
+        if (device == null) {
+            Log.w(TAG, "L2CAP: no connected device, staying on GATT")
+            return
+        }
+        val channel =
+                MentraLiveL2capChannel(L2CAP_FILE_PSM) { frame ->
+                    // Same code path as a GATT FILE_READ notification carrying this frame
+                    processFilePacketData(frame)
+                }
+        l2capFileChannel = channel
+        channel.open(device)
+    }
+
+    /** Close the L2CAP file channel if open (call on disconnect). */
+    private fun closeL2capFileChannel() {
+        val channel = l2capFileChannel ?: return
+        l2capFileChannel = null
+        channel.close()
+    }
+
     /** Process data received from the glasses */
     private fun processReceivedData(data: ByteArray?, size: Int) {
         // Bridge.log("LIVE: Processing received data: " + bytesToHex(data));
@@ -3485,6 +3545,14 @@ class MentraLive : SGCManager() {
 
                 // Stop the readiness check loop since we got confirmation
                 stopReadinessCheckLoop()
+
+                // Try to open the L2CAP CoC fast path for file transfers. No-op when the
+                // firmware doesn't support it — GATT notifications remain the default path.
+                try {
+                    openL2capFileChannel()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: openL2capFileChannel threw: " + t)
+                }
 
                 // Send BLE MTU config to glasses so they can adjust file packet sizes.
             // Use the minimum of negotiated MTU and BES2700's datapath limit (509).
@@ -6108,6 +6176,9 @@ class MentraLive : SGCManager() {
         // if (rgbLedAuthorityClaimed) {
         //     sendRgbLedControlAuthority(false);
         // }
+
+        // Close the L2CAP file channel (if the fast path was open)
+        closeL2capFileChannel()
 
         // Disconnect from GATT if connected
         closeGattQuietly(true)
