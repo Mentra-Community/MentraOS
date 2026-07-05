@@ -1146,7 +1146,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return 0;
     }
 
-    /** Send {"C":"cs_baud","V":1,"B":{"baud":TARGET_UART_BAUD}} to the BES over UART. */
+    /** Send {"C":"cs_baud","V":1,"B":"{\"baud\":N}"} to the BES over UART. */
     private void sendCsBaudRequest() {
         try {
             org.json.JSONObject body = new org.json.JSONObject();
@@ -1155,7 +1155,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             org.json.JSONObject k900Command = new org.json.JSONObject();
             k900Command.put("C", "cs_baud");
             k900Command.put("V", 1);
-            k900Command.put("B", body);
+            // K900 convention: B is a STRING of JSON (cs_ledon etc.) - the BES
+            // reads body->valuestring, which is NULL for a nested object.
+            k900Command.put("B", body.toString());
 
             String commandStr = k900Command.toString();
             Log.i(BAUD_TAG, "📤 Sending cs_baud request: " + commandStr);
@@ -1209,11 +1211,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 bData = new org.json.JSONObject(bFieldStr);
             }
 
-            int ok = bData != null ? bData.optInt("ok", 0) : 0;
+            // Success is the standard K900 status field: {"C":"sr_baud","S":0,"B":{"baud":N}}
+            // (S=0 is RC_SUCCESS; there is no "ok" field in the firmware reply).
+            int status = json.optInt("S", -1);
             int ackedBaud = bData != null ? bData.optInt("baud", -1) : -1;
 
-            if (ok != 1) {
-                Log.w(BAUD_TAG, "BES rejected baud switch (ok=" + ok + ") - staying at 460800");
+            if (status != 0) {
+                Log.w(BAUD_TAG, "BES rejected baud switch (S=" + status + ") - staying at 460800");
                 return true;
             }
             if (ackedBaud != TARGET_UART_BAUD) {
