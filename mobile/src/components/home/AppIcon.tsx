@@ -112,6 +112,10 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
               contentFit="cover"
               transition={instant ? 0 : 200}
               cachePolicy="memory-disk"
+              // Icons can be animated GIFs/WebPs (devs upload anything). A single
+              // looping GIF icon keeps the frame decoder + render pipeline running
+              // forever and measurably heats the phone — render the first frame only.
+              autoplay={false}
               onError={() => {
                 markRemoteImageSourceFailed(app.logoUrl)
                 setIconFailed(true)

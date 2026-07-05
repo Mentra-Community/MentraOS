@@ -35,9 +35,9 @@ type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels
 const DEFAULT_SCRIPT = [
   "Welcome to your teleprompter.",
   "",
-  "Paste or type your script here, put on your glasses, and press play. The words appear in front of you, line by line.",
+  "Paste or type your script here, put on your glasses, and press play. The words scroll by on their own at the speed you set, line by line.",
   "",
-  "Leave voice-follow on and the prompter listens — it advances as you speak, and waits when you pause. Turn it off to scroll at a steady pace you set in words per minute.",
+  "Want it to keep pace with you instead? Turn on AI Scroll and the prompter listens — it advances as you speak, and waits when you pause.",
   "",
   "That's it. Look up, speak naturally, and never lose your place.",
 ].join("\n")
@@ -47,7 +47,10 @@ const DEFAULT_SETTINGS: TeleprompterSettings = {
   wpm: 130,
   numberOfLines: 4,
   lineWidth: 2,
-  voiceFollow: true,
+  // Default to timed auto-scroll: pressing Play advances the script on its own.
+  // Voice-follow ("AI Scroll") is an explicit opt-in via the cockpit toggle —
+  // otherwise Play silently waits for speech and reads as "it doesn't work".
+  voiceFollow: false,
   autoRestart: false,
   showTimecode: false,
 }
@@ -131,9 +134,7 @@ export class TeleprompterController {
 
     // React to glasses model / display changes.
     try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()),
-      )
+      this.unsubs.push(this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()))
     } catch {
       /* capabilities-change not available — keep current profile */
     }
@@ -675,12 +676,15 @@ export class TeleprompterController {
     // push because no display was attached yet, leave the cache untouched so
     // the first push after the glasses connect isn't deduped away.
     if (this.hasDisplay && text !== this.lastRenderedText) {
-      try {
-        this.session.display.showTextWall(text, {view: "main"})
-        this.lastRenderedText = text
-      } catch (err) {
-        console.log("Teleprompter: display error", err)
-      }
+      // One full-canvas text element with a stable id: each scroll step updates
+      // it in place on the glasses. Box coordinates are raw device px — read
+      // from capabilities, falling back to the largest canvas (the host clamps
+      // to the real one). render() never throws.
+      const d = this.session.capabilities?.display
+      void this.session.display.render([
+        {type: "text", id: "script", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+      ])
+      this.lastRenderedText = text
     }
   }
 

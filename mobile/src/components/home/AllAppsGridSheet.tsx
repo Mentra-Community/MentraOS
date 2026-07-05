@@ -135,6 +135,10 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
             <View className="h-2" />
             <AppsGrid
               showPlaceholders={!isOpen}
+              // The sheet stays mounted while closed (index -1), so its skeleton
+              // does too — freeze the pulse or it animates the app at 60fps from
+              // behind the home screen forever.
+              skeletonPulse={isOpen}
               gateOnIconsReady={true}
               showAllApps={true}
               searchQuery={searchQuery}

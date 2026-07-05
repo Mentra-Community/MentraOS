@@ -52,7 +52,6 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actio
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
-export type {CanvasManager} from "../modules/canvas"
 export type {
   CameraFovPreset,
   CameraFovRequest,
@@ -100,15 +99,13 @@ export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 export type {LedColor, LedControlOptions} from "../modules/led"
 export type {
   ViewType,
-  LayoutType,
-  Layout,
-  DisplayOptions,
-  TextWall,
-  DoubleTextWall,
-  ReferenceCard,
-  DashboardCard,
-  BitmapView,
-  ClearView,
+  DisplayBreakMode,
+  RenderBox,
+  RenderElement,
+  RenderOptions,
+  RenderRectStyle,
+  RenderResult,
+  RenderTextStyle,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"

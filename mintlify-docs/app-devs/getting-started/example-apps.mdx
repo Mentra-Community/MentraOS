@@ -27,7 +27,7 @@ bunx create-mentra-miniapp my-app --type=camera    # Mentra Live
 
 The `--type` choice only changes the manifest's `hardwareRequirements` (display
 vs. camera plus microphone). The generated code is the same either way: a glasses
-button press calls `session.display.showTextWall(...)`, and the WebView UI sends a
+button press calls `session.display.render(...)`, and the WebView UI sends a
 `ping` that the background answers with a `pong` carrying a roundtrip timestamp.
 That gives you a button-to-display path and a UI-to-background path to edit from.
 

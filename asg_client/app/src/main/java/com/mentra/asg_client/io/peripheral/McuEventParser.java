@@ -5,6 +5,7 @@ import com.mentra.asg_client.io.peripheral.events.BesOtaAuthEvent;
 import com.mentra.asg_client.io.peripheral.events.BesVersionEvent;
 import com.mentra.asg_client.io.peripheral.events.BtMacEvent;
 import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
+import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -52,6 +53,9 @@ public final class McuEventParser {
 
             case "cs_shut":
                 return new ShutdownEvent();
+
+            case "cs_fcrst":
+                return new FactoryResetEvent();
 
             case "hm_batv":
                 if (b == null) {

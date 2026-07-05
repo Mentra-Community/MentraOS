@@ -21,6 +21,9 @@ export function InviteAcceptPage() {
     }
     request.then(
       () => {
+        // Drop the resolved entry so a later re-visit can re-accept/refresh
+        // rather than replaying a stale success from a long-lived session.
+        acceptRequests.delete(token);
         if (!cancelled) navigate({ to: "/organization" });
       },
       (err) => {

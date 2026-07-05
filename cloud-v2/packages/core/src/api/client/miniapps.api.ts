@@ -1,5 +1,8 @@
 import { Hono } from "hono";
-import { PreinstalledRegistryService } from "../../services/miniapps/preinstalled-registry.service";
+import {
+  PreinstalledRegistryService,
+  PreinstalledRegistryServiceError,
+} from "../../services/miniapps/preinstalled-registry.service";
 import { createStorageService } from "../../services/storage/storage.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
@@ -41,18 +44,35 @@ async function loadRegistry(c: AppContext) {
 async function downloadBundle(c: AppContext) {
   const assetId = c.req.param("assetId");
   if (!assetId) throw new InvalidRequest("missing assetId");
-  const asset = await registryService.getBundleAsset(assetId);
-  const bytes = await storage.getObject(asset.storageKey);
+  try {
+    const asset = await registryService.getBundleAsset(assetId);
+    const bytes = await storage.getObject(asset.storageKey);
 
-  return new Response(bytes, {
-    headers: {
-      "content-type": asset.contentType || "application/zip",
-      "content-length": String(asset.sizeBytes),
-      "content-disposition": `attachment; filename="${asset.fileName.replace(/"/g, "")}"`,
-      "cache-control": "public, max-age=31536000, immutable",
-      "x-bundle-sha256": asset.sha256,
-    },
-  });
+    return new Response(bytes, {
+      headers: {
+        "content-type": asset.contentType || "application/zip",
+        "content-length": String(asset.sizeBytes),
+        "content-disposition": `attachment; filename="${asset.fileName.replace(/"/g, "")}"`,
+        "cache-control": "public, max-age=31536000, immutable",
+        "x-bundle-sha256": asset.sha256,
+      },
+    });
+  } catch (error) {
+    return serviceError(error);
+  }
+}
+
+function serviceError(error: unknown) {
+  if (error instanceof PreinstalledRegistryServiceError) {
+    return new Response(
+      JSON.stringify({ error: error.code, error_description: error.message }),
+      {
+        status: error.status,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+  throw error;
 }
 
 export default app;

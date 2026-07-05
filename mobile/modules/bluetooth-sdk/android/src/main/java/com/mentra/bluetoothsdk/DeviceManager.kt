@@ -16,6 +16,8 @@ import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
 import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
+import com.mentra.bluetoothsdk.sgcs.SceneElement
+import com.mentra.bluetoothsdk.sgcs.SceneFrame
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
@@ -660,6 +662,13 @@ class DeviceManager {
         var borderWidth: Int? = null,
         var borderRadius: Int? = null
     )
+
+    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
+    // viewStates. When a slot holds a scene, viewStates carries a "scene"
+    // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
+    // native re-dispatch coherent (dashboard exit re-applies a complete scene,
+    // not whatever element happened to arrive last).
+    private val sceneStates = arrayOfNulls<SceneFrame>(2)
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -877,16 +886,8 @@ class DeviceManager {
         }
 
         // executor.execute {
-        var currentViewState: ViewState
-        if (hUp) {
-            currentViewState = viewStates[1]
-        } else {
-            currentViewState = viewStates[0]
-        }
-
-        if (hUp && !contextualDashboard) {
-            currentViewState = viewStates[0]
-        }
+        val currentStateIndex = if (hUp && contextualDashboard) 1 else 0
+        val currentViewState: ViewState = viewStates[currentStateIndex]
 
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) {
             // dont send the event to glasses that aren't there:
@@ -942,6 +943,10 @@ class DeviceManager {
                     currentViewState.borderWidth ?: 0,
                     currentViewState.borderRadius ?: 0
                 )
+            }
+
+            "scene" -> {
+                sceneStates[currentStateIndex]?.let { sgc?.applySceneFrame(it) }
             }
 
             "clear_view" -> sgc?.clearDisplay()
@@ -1362,9 +1367,31 @@ class DeviceManager {
         val isDashboard = view == "dashboard"
         val stateIndex = if (isDashboard) 1 else 0
 
+        // Scene frames (display.render() pipeline) take their own path: the
+        // whole frame is the unit, not a layout, and the host's per-element
+        // annotations make redundant frames self-deduping (all-"unchanged"
+        // frames no-op in the SGC base handler).
+        @Suppress("UNCHECKED_CAST") val sceneMap = event["scene"] as? Map<String, Any>
+        if (sceneMap != null) {
+            handleSceneEvent(stateIndex, sceneMap)
+            return
+        }
+
         @Suppress("UNCHECKED_CAST") val layout = event["layout"] as? Map<String, Any> ?: return
 
         val layoutType = layout["layoutType"] as? String
+
+        // Scene→legacy handoff: a legacy layout is about to draw over a scene
+        // (e.g. a cloud app taking the view from a miniapp). Sweep the scene's
+        // elements first so they don't linger under the new content; clear_view
+        // wipes everything anyway.
+        sceneStates[stateIndex]?.let { prevFrame ->
+            sceneStates[stateIndex] = null
+            if (layoutType != "clear_view") {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
+        }
+
         val text = parsePlaceholders(layout.getString("text", " "))
         val topText = parsePlaceholders(layout.getString("topText", " "))
         val bottomText = parsePlaceholders(layout.getString("bottomText", " "))
@@ -1412,6 +1439,86 @@ class DeviceManager {
         } else if (stateIndex == 1 && hUp) {
             sendCurrentState()
         }
+    }
+
+    /** Parse + store a scene frame, then dispatch it if its view is visible. */
+    private fun handleSceneEvent(stateIndex: Int, sceneMap: Map<String, Any>) {
+        var frame = parseSceneFrame(sceneMap) ?: return
+        val prevFrame = sceneStates[stateIndex]
+
+        if (prevFrame == null) {
+            // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
+            // text wall) must not linger under the scene's elements.
+            // clearDisplay is the per-device "wipe what's there" (blank-in-place
+            // on G2 — no page rebuild).
+            val prevLegacyType = viewStates[stateIndex].layoutType
+            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+                sgc?.clearDisplay()
+            }
+        } else if (prevFrame.appId != frame.appId) {
+            // Cross-app switch: the host's diff baseline is per-app, so the new
+            // app's annotations don't know the old app's elements are on the
+            // glasses. Sweep the old app's elements (SGC registries still map
+            // them), then paint the new frame from scratch. In practice the
+            // boot message interposes between apps, so this isn't visible as a
+            // blank.
+            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
+        }
+
+        // Store the REDISPATCH form: any later sendCurrentState (dashboard
+        // exit, head-up return) must repaint the whole frame — the original
+        // annotations are only valid for the first dispatch right now.
+        sceneStates[stateIndex] =
+            frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
+        viewStates[stateIndex] = ViewState(" ", " ", " ", "scene", " ", null, null)
+
+        val hUp = headUp && contextualDashboard
+        if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
+            dispatchSceneFrame(frame)
+        }
+    }
+
+    /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
+    private fun dispatchSceneFrame(frame: SceneFrame) {
+        if (screenDisabled) return
+        if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
+        if (sgc?.fullyBooted != true) {
+            Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
+            return
+        }
+        sgc?.applySceneFrame(frame)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseSceneFrame(sceneMap: Map<String, Any>): SceneFrame? {
+        val elementsRaw = sceneMap["elements"] as? List<Map<String, Any>> ?: return null
+        val elements =
+            elementsRaw.mapNotNull { el ->
+                val box = el["box"] as? Map<String, Any> ?: return@mapNotNull null
+                val style = el["style"] as? Map<String, Any>
+                SceneElement(
+                    id = el["id"] as? String ?: return@mapNotNull null,
+                    type = el["type"] as? String ?: return@mapNotNull null,
+                    x = (box["x"] as? Number)?.toInt() ?: 0,
+                    y = (box["y"] as? Number)?.toInt() ?: 0,
+                    w = (box["w"] as? Number)?.toInt() ?: 0,
+                    h = (box["h"] as? Number)?.toInt() ?: 0,
+                    text = (el["text"] as? String)?.let { parsePlaceholders(it) },
+                    data = el["data"] as? String,
+                    border = (style?.get("border") as? Number)?.toInt() ?: 0,
+                    radius = (style?.get("radius") as? Number)?.toInt() ?: 0,
+                    change = el["change"] as? String ?: "created",
+                    contentHash = el["contentHash"] as? String ?: ""
+                )
+            }
+        return SceneFrame(
+            appId = sceneMap["appId"] as? String ?: "",
+            epoch = (sceneMap["sceneEpoch"] as? Number)?.toInt() ?: 0,
+            replay = sceneMap["replay"] as? Boolean ?: false,
+            elements = elements,
+            removed = (sceneMap["removed"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        )
     }
 
     fun showDashboard() {

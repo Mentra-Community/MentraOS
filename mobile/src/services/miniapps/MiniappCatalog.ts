@@ -7,9 +7,11 @@ import {
   BgTimer,
   configureIsland,
   decideDevLaunchRoute,
-  HardwareCompatibility,
   HardwareRequirementLevel,
   HardwareType,
+  miniappLauncher,
+  saveLocalAppRunningState,
+  storage,
   sttModelManager as STTModelManager,
   type ClientApp,
   type StartOptions,
@@ -57,6 +59,13 @@ class MiniappCatalog {
   private refreshInterval: ReturnType<typeof BgTimer.setInterval> | null = null
   private menuAppsSyncTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
   private pendingMenuApps: GlassesMenuItem[] | null = null
+
+  /**
+   * Cloud applets we've already asked the cloud to stop because a local
+   * miniapp owns their packageName. Re-armed when the cloud copy reports
+   * not-running, so a later cloud-side start gets stopped again.
+   */
+  private shadowedCloudStopsRequested = new Set<string>()
 
   static getInstance(): MiniappCatalog {
     if (!MiniappCatalog._instance) {
@@ -115,11 +124,65 @@ class MiniappCatalog {
     }
   }
 
+  /**
+   * Re-spawn local miniapps that were running when the app was last killed.
+   *
+   * Cloud apps run on a remote server: the cloud persists which ones are
+   * running and resurrects them when the phone reconnects, so a host-app
+   * restart brings them back on its own. Local (phone-hosted) miniapps run in
+   * the phone's own JS engine — a host-process kill tears down their JSContext
+   * and there is no server to resurrect them, so without this they silently
+   * stay stopped on the next launch even though the user left them running.
+   *
+   * Each local miniapp persists its running flag to disk on start/stop
+   * (island's `saveLocalAppRunningState`, via the applet's `onStart`/`onStop`,
+   * keyed `${packageName}_running`). We read those flags back and re-spawn the
+   * background context headlessly (no foreground, no navigation) — the launcher
+   * registers the package so the home tray/switcher project it as running,
+   * exactly as a normal start would. The WebView, if any, re-attaches lazily
+   * when the user opens the app.
+   *
+   * Idempotent and best-effort: skips already-spawned contexts, and clears the
+   * persisted flag for any app whose bundle can no longer be resolved
+   * (uninstalled, or dev server gone) so a dead entry doesn't retry every boot.
+   * Not compatibility-gated: a previously-running background app shouldn't be
+   * dropped just because glasses are momentarily disconnected at boot — it
+   * resumes when they reconnect, same as mid-session.
+   */
+  async autostartLocalMiniapps(): Promise<void> {
+    const apps = await appRegistry.getInstalledMiniapps()
+    for (const app of apps) {
+      // Only phone-hosted miniapps have a JSContext to re-spawn. Offline
+      // built-ins (`local:false, offline:true`) restore their native running
+      // state elsewhere and have no bundle to launch.
+      if (!app.local) continue
+      // Mirror island's getLocalAppRunningState: the running flag is stored at
+      // `${packageName}_running` by saveLocalAppRunningState.
+      const wasRunning = storage.load<boolean>(`${app.packageName}_running`)
+      if (!(wasRunning.is_ok() && wasRunning.value)) continue
+      if (miniappLauncher.isRunning(app.packageName)) continue
+      try {
+        await miniappLauncher.ensureRunning(app.packageName)
+      } catch (e) {
+        console.warn(`MiniappCatalog: autostart failed for ${app.packageName} — clearing stale running flag`, e)
+        saveLocalAppRunningState(app.packageName, false)
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Host hooks
   // ---------------------------------------------------------------------
 
   private async loadExtraApps(): Promise<ClientApp[]> {
+    // A local (new-SDK) miniapp owns its packageName outright: a cloud applet
+    // with the same packageName is a stale duplicate (e.g. the old cloud-SDK
+    // version of a ported miniapp). The island store dedupes by packageName
+    // with the cloud copy winning, so the duplicate must be dropped HERE,
+    // before the merge — otherwise it shadows the local miniapp entirely.
+    const installed = await appRegistry.getInstalledMiniapps()
+    const localPackages = new Set(installed.filter((a) => a.local || a.isMiniappDev).map((a) => a.packageName))
+
     const res = await restComms.getApplets()
     if (res.is_error()) {
       console.error(`MiniappCatalog: getApplets failed: ${res.error}`)
@@ -128,20 +191,52 @@ class MiniappCatalog {
       // running flag to false and cascade into "Cannot reach" error screens.
       // The island store will keep the prior snapshot for whatever isn't
       // re-emitted from local sources during refresh().
-      return useAppStatusStore.getState().apps.filter((a) => !a.local && !a.offline)
+      return useAppStatusStore
+        .getState()
+        .apps.filter((a) => !a.local && !a.offline && !localPackages.has(a.packageName))
     }
-    return res.value.map((app) => ({
-      ...app,
-      loading: false,
-      offline: false,
-      offlineRoute: "",
-      local: false,
-      hidden: false,
-      hardwareRequirements: [
-        ...app.hardwareRequirements,
-        {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-      ],
-    }))
+
+    const applets: ClientApp[] = []
+    for (const app of res.value) {
+      if (localPackages.has(app.packageName)) {
+        void this.stopShadowedCloudApplet(app.packageName, app.running)
+        continue
+      }
+      applets.push({
+        ...app,
+        loading: false,
+        offline: false,
+        offlineRoute: "",
+        local: false,
+        hidden: false,
+        hardwareRequirements: [
+          ...app.hardwareRequirements,
+          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+        ],
+      })
+    }
+    return applets
+  }
+
+  /**
+   * A cloud applet hidden behind a local miniapp shouldn't keep running
+   * server-side (it would keep consuming the session — displays, mic subs).
+   * Fire a one-shot stop when the cloud copy reports running; a failed stop
+   * re-arms so the next refresh retries.
+   */
+  private async stopShadowedCloudApplet(packageName: string, running: boolean): Promise<void> {
+    if (!running) {
+      this.shadowedCloudStopsRequested.delete(packageName)
+      return
+    }
+    if (this.shadowedCloudStopsRequested.has(packageName)) return
+    this.shadowedCloudStopsRequested.add(packageName)
+    console.log(`MiniappCatalog: stopping cloud applet ${packageName} — a local miniapp owns this package`)
+    const res = await restComms.stopApp(packageName)
+    if (res.is_error()) {
+      console.error(`MiniappCatalog: stop failed for shadowed cloud applet ${packageName}: ${res.error}`)
+      this.shadowedCloudStopsRequested.delete(packageName)
+    }
   }
 
   private getCapabilities() {

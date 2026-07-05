@@ -35,6 +35,7 @@ console.log("[e2e] access_token len:", access.length);
 // stash for reuse
 await Bun.write("/tmp/e2e-access-token.txt", access);
 
+let bundleFailures = 0;
 for (const env of ["debug", "dev", "staging", "prod"]) {
   const r = await fetch(`${CORE}/api/client/miniapps/registry?environment=${env}`, {
     headers: { authorization: `Bearer ${access}` },
@@ -42,6 +43,12 @@ for (const env of ["debug", "dev", "staging", "prod"]) {
   const body: any = await r.json().catch(() => ({}));
   const entries = body.entries ?? body.miniapps ?? [];
   console.log(`[e2e] registry ${env}: ${r.status} entries=${entries.length}`);
+  if (!r.ok) {
+    console.error(
+      `[e2e] registry ${env} failed: ${r.status} ${body.error ?? ""} ${body.error_description ?? ""}`.trim(),
+    );
+    process.exit(1);
+  }
 
   // For the env we seeded, download each bundle and verify SHA-256 end to end.
   for (const entry of entries) {
@@ -61,5 +68,20 @@ for (const env of ["debug", "dev", "staging", "prod"]) {
       `  - ${entry.packageName} v${entry.version} policy=${entry.installPolicy ?? "?"}: ` +
       `dl=${dl.status} bytes=${buf.length} sha_ok=${ok} (got=${got.slice(0, 12)} expect=${expected.slice(0, 12)} hdr=${hdr.slice(0, 12)})`,
     );
+    // A corrupted or failed download must fail the e2e run, not just log.
+    if (!dl.ok) {
+      console.error(`  - ${entry.packageName} v${entry.version}: download failed (status ${dl.status})`);
+      bundleFailures++;
+    } else if (!expected || !ok) {
+      console.error(
+        `  - ${entry.packageName} v${entry.version}: SHA-256 mismatch (got=${got.slice(0, 12)} expect=${expected.slice(0, 12) || "<none>"})`,
+      );
+      bundleFailures++;
+    }
   }
+}
+
+if (bundleFailures > 0) {
+  console.error(`[e2e] ${bundleFailures} bundle integrity failure(s)`);
+  process.exit(1);
 }

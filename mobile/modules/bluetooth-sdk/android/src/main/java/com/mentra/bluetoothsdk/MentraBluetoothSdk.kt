@@ -67,6 +67,7 @@ class MentraBluetoothSdk private constructor(
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+        private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
@@ -633,35 +634,35 @@ class MentraBluetoothSdk private constructor(
     fun requestWifiScan(): List<WifiScanResult> {
         val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
         val request = PendingWifiScan(pending)
-        synchronized(oneShotLock) {
-            if (pendingWifiScan != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A WiFi scan is already waiting for a glasses response.",
-                )
+        val existing =
+            synchronized(oneShotLock) {
+                pendingWifiScan ?: run {
+                    pendingWifiScan = request
+                    null
+                }
             }
-            pendingWifiScan = request
+        if (existing != null) {
+            // Join the in-flight scan instead of failing with request_in_flight;
+            // the scan screen auto-starts a scan on mount and can be pushed twice.
+            return existing.pending.await(WIFI_SCAN_TIMEOUT_MS)
         }
         try {
             deviceManager.requestWifiScan()
-            return pending.await()
-        } catch (error: BluetoothSdkException) {
-            if (error.code == "request_timeout") {
-                val fallbackResults =
-                    synchronized(oneShotLock) {
-                        if (request.latestResults.isNotEmpty()) {
-                            if (pendingWifiScan === request) {
-                                pendingWifiScan = null
-                            }
-                            request.latestResults
-                        } else {
-                            emptyList()
-                        }
-                    }
+            // The glasses wait up to 15s for scan-results broadcasts before sending
+            // scan_complete, so give them longer than that before falling back.
+            return pending.await(WIFI_SCAN_TIMEOUT_MS)
+        } catch (error: Throwable) {
+            if (error is BluetoothSdkException && error.code == "request_timeout") {
+                val fallbackResults = synchronized(oneShotLock) { request.latestResults }
                 if (fallbackResults.isNotEmpty()) {
+                    // Resolve so callers joined on the same scan get the fallback too.
+                    pending.resolve(fallbackResults)
                     return fallbackResults
                 }
             }
+            // Fail joined callers immediately instead of letting them run out their
+            // own timeout.
+            pending.reject(error)
             throw error
         } finally {
             synchronized(oneShotLock) {
@@ -771,7 +772,14 @@ class MentraBluetoothSdk private constructor(
     ): CameraStatusEvent {
         val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
         val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
-        pendingCameraStatusRequests[effectiveRequestId] = pending
+        // Guard against a concurrent warm-up reusing the same requestId: a blind put would overwrite
+        // (and strand) the first caller's continuation until it times out. Reject the duplicate.
+        if (pendingCameraStatusRequests.putIfAbsent(effectiveRequestId, pending) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A camera warm-up request with this requestId is already waiting for a glasses response.",
+            )
+        }
         try {
             deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
             return pending.await()
@@ -1132,7 +1140,7 @@ class MentraBluetoothSdk private constructor(
     private fun resolveOtaVersionUrl(status: GlassesStatus): String {
         val deviceUrl = status.otaVersionUrl.trim()
         if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
-            return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
+            return OtaManifestDefaults.LEGACY_PROD_OTA_VERSION_URL
         }
         // SDK consumers are pinned to the manifest built for their SDK version.
         // A future glasses-advertised URL should not silently change that pairing.

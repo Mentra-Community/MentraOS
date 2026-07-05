@@ -2,7 +2,6 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900ProtocolStrategy;
 import com.mentra.asg_client.io.bluetooth.utils.BleJsonCompact;
 import java.util.ArrayList;
 import java.util.List;
@@ -84,16 +83,19 @@ public class CommandProtocolDetector {
 
     /** Initialize detection strategies following Open/Closed Principle */
     private void initializeDetectionStrategies() {
-        // Order matters - more specific strategies should come first
+        // Order matters - more specific strategies should come first.
         // ChunkedMessageProtocolStrategy needs to be created with a ChunkReassembler
-        // This will be set via setter method from CommandProcessor
+        // (added via addChunkedMessageSupport from CommandProcessor).
+        // Vendor-specific strategies (e.g. the Mentra Live MCU wire format) are registered at
+        // runtime via addDetectionStrategy by the vendor wiring layer.
         detectionStrategies.add(new JsonCommandProtocolStrategy());
-        detectionStrategies.add(new K900ProtocolStrategy());
         detectionStrategies.add(new UnknownProtocolStrategy());
 
         Log.d(
                 TAG,
-                "✅ Initialized " + detectionStrategies.size() + " protocol detection strategies");
+                "✅ Initialized "
+                        + detectionStrategies.size()
+                        + " base protocol detection strategies");
     }
 
     /**

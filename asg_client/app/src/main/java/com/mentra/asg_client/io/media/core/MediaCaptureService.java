@@ -13,10 +13,10 @@ import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
-import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
@@ -403,7 +403,7 @@ public class MediaCaptureService {
      * brightness)
      */
     private void triggerPhotoFlashLed() {
-        triggerPhotoFlashLed(K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+        triggerPhotoFlashLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
     }
 
     /**
@@ -427,7 +427,7 @@ public class MediaCaptureService {
 
     /** Trigger solid white LED for video recording duration (default brightness) */
     private void triggerVideoRecordingLed() {
-        triggerVideoRecordingLed(K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+        triggerVideoRecordingLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
     }
 
     /**
@@ -4144,6 +4144,12 @@ public class MediaCaptureService {
                         + " durationMs="
                         + durationMs);
 
+        // CameraNeoService.warmUpCamera rejects an overlapping/mid-capture warm-up synchronously
+        // (it fires onCameraError on this thread before returning). Track that so the return value
+        // reflects a synchronous busy rejection instead of always reporting acceptance. Rejections
+        // that resolve later (async, in the service) are surfaced via camera_status as usual.
+        AtomicBoolean warmUpDispatching = new AtomicBoolean(true);
+        AtomicBoolean rejectedSynchronously = new AtomicBoolean(false);
         CameraNeoService.warmUpCamera(
                 mContext,
                 size,
@@ -4169,14 +4175,23 @@ public class MediaCaptureService {
 
                     @Override
                     public void onCameraError(String errorMessage) {
+                        if (warmUpDispatching.get()) {
+                            rejectedSynchronously.set(true);
+                        }
                         sendCameraStatus(
                                 requestId,
                                 "error",
                                 cameraWarmUpErrorCode(errorMessage),
                                 errorMessage);
                     }
+
+                    @Override
+                    public String getRequestId() {
+                        return requestId;
+                    }
                 });
-        return true;
+        warmUpDispatching.set(false);
+        return !rejectedSynchronously.get();
     }
 
     /**
@@ -4273,13 +4288,14 @@ public class MediaCaptureService {
                 json.put("resolvedConfig", resolvedConfig);
             }
             if (requestedCaptureConfig != null) {
-                json.put("requestedCaptureConfig", requestedCaptureConfig);
+                logFullPhotoStatusMetadata(
+                        requestId, status, "requestedCaptureConfig", requestedCaptureConfig);
             }
             if (meteredPreview != null) {
                 json.put("meteredPreview", meteredPreview);
             }
             if (captureMetadata != null) {
-                json.put("captureMetadata", captureMetadata);
+                logFullPhotoStatusMetadata(requestId, status, "captureMetadata", captureMetadata);
             }
             if (errorCode != null && !errorCode.isEmpty()) {
                 json.put("errorCode", errorCode);
@@ -4296,6 +4312,23 @@ public class MediaCaptureService {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating photo status", e);
         }
+    }
+
+    private void logFullPhotoStatusMetadata(
+            String requestId, String status, String metadataName, JSONObject metadata) {
+        if (metadata == null) {
+            return;
+        }
+        Log.i(
+                TAG,
+                "📸 photo_status "
+                        + status
+                        + " full "
+                        + metadataName
+                        + " requestId="
+                        + requestId
+                        + " "
+                        + metadata);
     }
 
     /** Send simplified photo error response with only essential fields */

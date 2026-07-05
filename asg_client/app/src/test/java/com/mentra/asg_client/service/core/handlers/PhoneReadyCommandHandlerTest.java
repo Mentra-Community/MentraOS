@@ -2,86 +2,81 @@ package com.mentra.asg_client.service.core.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+/**
+ * Verifies {@link PhoneReadyCommandHandler} resets the transport through the {@link
+ * ICompanionTransport} interface (instead of {@code BesWireFormat} statics) and completes the
+ * glasses_ready handshake.
+ */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhoneReadyCommandHandlerTest {
 
-    @Test
-    public void phoneReady_withOldBesStaysOnLegacyWirePath() throws Exception {
-        ICommunicationManager communicationManager = mock(ICommunicationManager.class);
-        IStateManager stateManager = mock(IStateManager.class);
-        IResponseBuilder responseBuilder = mock(IResponseBuilder.class);
-        AsgClientServiceManager serviceManager = mock(AsgClientServiceManager.class);
-        K900BluetoothManager bluetoothManager = mock(K900BluetoothManager.class);
-        JSONObject response = new JSONObject().put("type", "glasses_ready");
+    private ICommunicationManager communicationManager;
+    private IStateManager stateManager;
+    private IResponseBuilder responseBuilder;
+    private AsgClientServiceManager serviceManager;
+    private ICompanionTransport transport;
+    private PhoneReadyCommandHandler handler;
 
-        when(responseBuilder.buildGlassesReadyResponse()).thenReturn(response);
-        when(communicationManager.sendBluetoothResponse(response)).thenReturn(true);
-        when(serviceManager.getBluetoothManager()).thenReturn(bluetoothManager);
-        when(bluetoothManager.isBesBinaryRelaySupported()).thenReturn(false);
+    @Before
+    public void setUp() throws Exception {
+        communicationManager = mock(ICommunicationManager.class);
+        stateManager = mock(IStateManager.class);
+        responseBuilder = mock(IResponseBuilder.class);
+        serviceManager = mock(AsgClientServiceManager.class);
+        transport = mock(ICompanionTransport.class);
 
-        PhoneReadyCommandHandler handler =
+        when(serviceManager.getBluetoothManager()).thenReturn(transport);
+        when(responseBuilder.buildGlassesReadyResponse())
+                .thenReturn(new JSONObject().put("type", "glasses_ready"));
+        when(communicationManager.sendBluetoothResponse(any(JSONObject.class))).thenReturn(true);
+
+        handler =
                 new PhoneReadyCommandHandler(
                         communicationManager, stateManager, responseBuilder, serviceManager);
-
-        assertThat(handler.handleCommand("phone_ready", new JSONObject())).isTrue();
-
-        assertThat(response.has("wire_caps")).isFalse();
-        verify(bluetoothManager).addPhoneWireCapsIfSupported(response);
-        verify(bluetoothManager, never()).sendWireV2Handshake();
     }
 
     @Test
-    public void phoneReady_withNewBesAdvertisesCapsAndSendsWireHandshake() throws Exception {
-        ICommunicationManager communicationManager = mock(ICommunicationManager.class);
-        IStateManager stateManager = mock(IStateManager.class);
-        IResponseBuilder responseBuilder = mock(IResponseBuilder.class);
-        AsgClientServiceManager serviceManager = mock(AsgClientServiceManager.class);
-        K900BluetoothManager bluetoothManager = mock(K900BluetoothManager.class);
-        JSONObject response = new JSONObject().put("type", "glasses_ready");
+    public void phoneReady_resetsTransportAndSendsGlassesReady() {
+        boolean handled = handler.handleCommand("phone_ready", new JSONObject());
 
-        when(responseBuilder.buildGlassesReadyResponse()).thenReturn(response);
-        when(communicationManager.sendBluetoothResponse(response)).thenReturn(true);
-        when(serviceManager.getBluetoothManager()).thenReturn(bluetoothManager);
-        when(bluetoothManager.isBesBinaryRelaySupported()).thenReturn(true);
-        doAnswer(
-                        invocation -> {
-                            JSONObject message = invocation.getArgument(0);
-                            message.put(
-                                    "wire_caps",
-                                    new JSONObject()
-                                            .put("k900_le", true)
-                                            .put("binary", true)
-                                            .put("proto", 2));
-                            return null;
-                        })
-                .when(bluetoothManager)
-                .addPhoneWireCapsIfSupported(any(JSONObject.class));
+        assertThat(handled).isTrue();
+        verify(transport).onTransportReset();
+        verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
+        verify(serviceManager).onPhoneReadyHandshakeComplete();
+    }
 
-        PhoneReadyCommandHandler handler =
-                new PhoneReadyCommandHandler(
-                        communicationManager, stateManager, responseBuilder, serviceManager);
+    @Test
+    public void phoneReady_transportUnavailable_stillSendsGlassesReady() {
+        when(serviceManager.getBluetoothManager()).thenReturn(null);
 
-        assertThat(handler.handleCommand("phone_ready", new JSONObject())).isTrue();
+        boolean handled = handler.handleCommand("phone_ready", new JSONObject());
 
-        assertThat(response.getJSONObject("wire_caps").getBoolean("binary")).isTrue();
-        verify(bluetoothManager).sendWireV2Handshake();
+        assertThat(handled).isTrue();
+        verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
+        verify(serviceManager).onPhoneReadyHandshakeComplete();
+    }
+
+    @Test
+    public void unsupportedCommandType_rejected() {
+        boolean handled = handler.handleCommand("not_phone_ready", new JSONObject());
+
+        assertThat(handled).isFalse();
     }
 }

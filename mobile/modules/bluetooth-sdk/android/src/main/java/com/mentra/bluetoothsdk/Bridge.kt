@@ -30,6 +30,18 @@ public class Bridge private constructor() {
         private const val MIC_CHANNELS = 1
         private const val LC3_FRAME_DURATION_MS = 10
         private const val DEFAULT_LC3_FRAME_SIZE_BYTES = 60
+        private val AUDIO_TRACE_METADATA_KEYS =
+                listOf(
+                        "sampleRate",
+                        "bitsPerSample",
+                        "channels",
+                        "encoding",
+                        "frameDurationMs",
+                        "frameSizeBytes",
+                        "bitrate",
+                        "packetizedFromGlasses",
+                        "voiceActivityDetectionEnabled",
+                )
 
         @Volatile private var instance: Bridge? = null
 
@@ -731,13 +743,14 @@ public class Bridge private constructor() {
                     return
                 }
 
-                if (shouldTraceTypedMessage(type)) {
+                val tracePayload = tracePayloadForTypedMessage(type, mutableBody as Map<String, Any>)
+                if (tracePayload != null) {
                     try {
                         BleTraceLogger.logMap(
                             "phone_to_app",
                             "sdk_event_dispatch",
                             type,
-                            mutableBody as Map<String, Any>,
+                            tracePayload,
                         )
                     } catch (e: Exception) {
                         Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
@@ -762,8 +775,43 @@ public class Bridge private constructor() {
             }
         }
 
-        private fun shouldTraceTypedMessage(type: String): Boolean =
-                type != "log" && type != "mic_pcm" && type != "mic_lc3"
+        private fun tracePayloadForTypedMessage(
+                type: String,
+                body: Map<String, Any>
+        ): Map<String, Any>? =
+                when {
+                    type == "log" -> null
+                    isAudioPayloadEvent(type) -> audioTracePayload(type, body)
+                    else -> body
+                }
+
+        private fun isAudioPayloadEvent(type: String): Boolean =
+                type == "mic_pcm" || type == "mic_lc3"
+
+        private fun audioTracePayload(type: String, body: Map<String, Any>): Map<String, Any> {
+            val payload = HashMap<String, Any>()
+            payload["type"] = type
+            payload["timestamp"] = System.currentTimeMillis()
+            payload["payloadOmitted"] = true
+            payload["payloadOmittedReason"] = "audio"
+
+            val audioBytes =
+                    when (type) {
+                        "mic_pcm" -> (body["pcm"] as? ByteArray)?.size
+                        "mic_lc3" -> (body["lc3"] as? ByteArray)?.size
+                        else -> null
+                    }
+            audioBytes?.let { payload["audioBytes"] = it }
+
+            AUDIO_TRACE_METADATA_KEYS.forEach { key ->
+                val value = body[key]
+                if (value != null) {
+                    payload[key] = value
+                }
+            }
+
+            return payload
+        }
     }
 
     init {

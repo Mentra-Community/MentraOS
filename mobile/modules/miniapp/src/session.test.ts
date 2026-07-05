@@ -63,8 +63,10 @@ describe("MiniappSession queue-before-ACK", () => {
     const connectPromise = session.connect()
 
     // Call things BEFORE the phone responds with CONNECT_ACK. These should queue.
-    session.display.showTextWall("queued-1")
-    session.display.showTextWall("queued-2")
+    // (sendOneShot is the public escape hatch — the same path every module's
+    // fire-and-forget sends ride.)
+    session.sendOneShot({type: "test_one_shot", text: "queued-1"})
+    session.sendOneShot({type: "test_one_shot", text: "queued-2"})
     expect(session.ready).toBe(false)
 
     // Let the connect() IIFE resume past `await transport.open()` so CONNECT is sent.
@@ -91,9 +93,8 @@ describe("MiniappSession queue-before-ACK", () => {
     expect(transport.sent.length).toBe(3)
     const queued1 = parseEnvelope(transport.sent[1]!)
     const queued2 = parseEnvelope(transport.sent[2]!)
-    // showTextWall produces {type: DISPLAY, view, layout: {layoutType, text}, durationMs}.
-    expect((queued1!.payload as {layout: {text: string}}).layout.text).toBe("queued-1")
-    expect((queued2!.payload as {layout: {text: string}}).layout.text).toBe("queued-2")
+    expect((queued1!.payload as {text: string}).text).toBe("queued-1")
+    expect((queued2!.payload as {text: string}).text).toBe("queued-2")
   })
 
   test("post-ACK calls bypass the queue", async () => {
@@ -109,7 +110,7 @@ describe("MiniappSession queue-before-ACK", () => {
     await connectPromise
 
     const before = transport.sent.length
-    session.display.showTextWall("hello post-ack")
+    session.sendOneShot({type: "test_one_shot", text: "hello post-ack"})
     expect(transport.sent.length).toBe(before + 1)
   })
 })
@@ -299,7 +300,7 @@ describe("MiniappSession auth", () => {
       expect(res.status).toBe(200)
       expect(observedHeaders).toEqual({
         "Content-Type": "application/json",
-        Authorization: "Bearer fetch-token-no-headers",
+        "Authorization": "Bearer fetch-token-no-headers",
       })
     } finally {
       globalThis.fetch = originalFetch

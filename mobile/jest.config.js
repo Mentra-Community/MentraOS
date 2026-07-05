@@ -7,6 +7,9 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    // Mirror metro: @mentra/island resolves to SOURCE, not the (stale) build/
+    // output — tests must exercise the same code the app bundles.
+    "^@mentra/island$": "<rootDir>/modules/island/src/index.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",

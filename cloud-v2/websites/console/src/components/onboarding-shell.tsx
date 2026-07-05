@@ -27,7 +27,7 @@ export function OnboardingShell({
             <img src={mentraLogo} alt="" className="h-[22px] w-[41px]" />
             <div className="min-w-0">
               <div className="font-display text-[15px] font-bold leading-5 text-[#14151b]">Dev Console</div>
-              <div className="truncate text-xs leading-4 text-[#8a8d95]">MentraOS{userLabel ? ` · ${userLabel}` : ""}</div>
+              <div className="truncate text-xs leading-4 text-muted-foreground">MentraOS{userLabel ? ` · ${userLabel}` : ""}</div>
             </div>
           </div>
           <button

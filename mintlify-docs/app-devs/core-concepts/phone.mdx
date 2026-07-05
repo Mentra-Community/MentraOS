@@ -10,7 +10,7 @@ Register a handler and the events start arriving.
 
 ```typescript src/background/index.ts
 session.phone.notifications.on((data) => {
-  session.display.showTextWall(`${data.app}: ${data.title}`);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${data.app}: ${data.title}`}]);
 });
 ```
 

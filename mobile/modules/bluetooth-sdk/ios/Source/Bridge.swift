@@ -15,6 +15,17 @@ class Bridge {
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
     private static let defaultLc3FrameSizeBytes = 60
+    private static let audioTraceMetadataKeys = [
+        "sampleRate",
+        "bitsPerSample",
+        "channels",
+        "encoding",
+        "frameDurationMs",
+        "frameSizeBytes",
+        "bitrate",
+        "packetizedFromGlasses",
+        "voiceActivityDetectionEnabled",
+    ]
     private static let eventSinkLock = NSLock()
     private static let defaultEventSinkId = "default"
     private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
@@ -486,7 +497,59 @@ class Bridge {
     static func sendTypedMessage(_ type: String, body: [String: Any]) {
         var body = body
         body["type"] = type
+        if let tracePayload = tracePayloadForTypedMessage(type, body: body) {
+            BleTraceLogger.logMap(
+                direction: "phone_to_app",
+                layer: "sdk_event_dispatch",
+                type: type,
+                payload: tracePayload
+            )
+        }
         // Send directly using type as event name - no JSON serialization
         dispatchEvent(type, body)
+    }
+
+    private static func tracePayloadForTypedMessage(_ type: String, body: [String: Any]) -> [String: Any]? {
+        if type == "log" {
+            return nil
+        }
+        if isAudioPayloadEvent(type) {
+            return audioTracePayload(type, body: body)
+        }
+        return body
+    }
+
+    private static func isAudioPayloadEvent(_ type: String) -> Bool {
+        type == "mic_pcm" || type == "mic_lc3"
+    }
+
+    private static func audioTracePayload(_ type: String, body: [String: Any]) -> [String: Any] {
+        var payload: [String: Any] = [
+            "type": type,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "payloadOmitted": true,
+            "payloadOmittedReason": "audio",
+        ]
+
+        switch type {
+        case "mic_pcm":
+            if let data = body["pcm"] as? Data {
+                payload["audioBytes"] = data.count
+            }
+        case "mic_lc3":
+            if let data = body["lc3"] as? Data {
+                payload["audioBytes"] = data.count
+            }
+        default:
+            break
+        }
+
+        for key in audioTraceMetadataKeys {
+            if let value = body[key] {
+                payload[key] = value
+            }
+        }
+
+        return payload
     }
 }

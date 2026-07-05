@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { sessionQuery } from "@/features/session/session.queries";
 import { saveDeveloperOrg } from "./org.api";
-import { normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
+import { isValidPackagePrefix, normalizePackagePrefix, suggestedOrgDefaults } from "./org-helpers";
 
 /**
  * The onboarding step shown inside OnboardingShell when a developer has no org.
@@ -46,7 +46,7 @@ export function DevOnboarding() {
 
   const normalizedPrefix = normalizePackagePrefix(packagePrefix);
   const previewPackageName = normalizedPrefix ? `${normalizedPrefix}.weather` : "io.acme.weather";
-  const canCreate = displayName.trim().length >= 2 && normalizedPrefix.length > 0 && !create.isPending;
+  const canCreate = displayName.trim().length >= 2 && isValidPackagePrefix(normalizedPrefix) && !create.isPending;
 
   return (
     <div className="space-y-7">
