@@ -127,14 +127,32 @@ public class AeStateMachineTest {
     }
 
     @Test
-    public void noteRepeatingFrame_leavingConvergedResetsEverything() {
+    public void noteRepeatingFrame_leavingConvergedResetsStreakButKeepsCapWindow() {
         AeStateMachine sm = new AeStateMachine();
         sm.beginWaitingForAe();
 
         sm.noteRepeatingFrame(CaptureResult.CONTROL_AE_STATE_CONVERGED, 25_000_000L, 400);
         sm.noteRepeatingFrame(CaptureResult.CONTROL_AE_STATE_SEARCHING, 20_000_000L, 500);
         assertThat(sm.stableConvergedFrames()).isZero();
-        assertThat(sm.nsSinceFirstConverged()).isZero();
+        // The stabilization cap keeps counting from FIRST convergence across AE flicker, so the
+        // worst-case wait stays bounded by the historical fixed delay.
+        assertThat(sm.nsSinceFirstConverged()).isGreaterThan(0L);
+    }
+
+    @Test
+    public void noteRepeatingFrame_nullAeStateIsNoOp() {
+        // Null AE state means "keep waiting" (CONTINUE_WAITING_NULL_AE) — it must not erase
+        // streak progress accumulated between valid converged frames.
+        AeStateMachine sm = new AeStateMachine();
+        sm.beginWaitingForAe();
+
+        sm.noteRepeatingFrame(CaptureResult.CONTROL_AE_STATE_CONVERGED, 25_000_000L, 400);
+        sm.noteRepeatingFrame(CaptureResult.CONTROL_AE_STATE_CONVERGED, 25_000_000L, 400);
+        sm.noteRepeatingFrame(null, null, null);
+        assertThat(sm.stableConvergedFrames()).isEqualTo(2);
+        assertThat(sm.nsSinceFirstConverged()).isGreaterThan(0L);
+        sm.noteRepeatingFrame(CaptureResult.CONTROL_AE_STATE_CONVERGED, 25_000_000L, 400);
+        assertThat(sm.stableConvergedFrames()).isEqualTo(3);
     }
 
     @Test

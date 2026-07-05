@@ -17,12 +17,17 @@ public final class AeStateMachine {
     private volatile boolean aeLockRequested;
     private volatile long aeStartTimeNs;
 
-    /** Wall time of the first converged frame in the current wait; 0 = not converged yet. */
+    /**
+     * Wall time of the first converged frame in the current wait; 0 = not converged yet. Once
+     * set it survives AE flicker (converged → searching → converged) so the
+     * {@link #EXPOSURE_STABILIZATION_DELAY_MS} cap is measured from first convergence — matching
+     * the historical fixed-delay worst case. Only {@link #beginWaitingForAe()} resets it.
+     */
     private volatile long firstConvergedNs;
     /** Consecutive converged frames whose exposure×ISO stayed within tolerance. */
     private volatile int stableConvergedFrames;
     /** exposure×ISO of the previous converged frame; 0 = none / HAL not reporting. */
-    private long lastTotalLight;
+    private volatile long lastTotalLight;
 
     public boolean waitingForAeConvergence() {
         return waitingForAeConvergence;
@@ -49,11 +54,17 @@ public final class AeStateMachine {
      * <p>Call from the camera {@link Handler} thread only (same thread as the capture callback).
      */
     public void noteRepeatingFrame(Integer aeState, Long exposureNs, Integer iso) {
-        boolean converged = aeState != null
-                && (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED
-                        || aeState == CaptureResult.CONTROL_AE_STATE_LOCKED);
+        if (aeState == null) {
+            // Matches AeRepeatCaptureDecision.CONTINUE_WAITING_NULL_AE: a frame with no AE state
+            // is "keep waiting", not evidence that AE left convergence — don't touch the streak.
+            return;
+        }
+        boolean converged = aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED
+                || aeState == CaptureResult.CONTROL_AE_STATE_LOCKED;
         if (!converged) {
-            firstConvergedNs = 0L;
+            // AE regressed (e.g. scene change mid-wait): restart the stability streak, but keep
+            // firstConvergedNs so the stabilization cap still bounds this wait at the historical
+            // fixed delay instead of stretching toward the 2s AE timeout.
             stableConvergedFrames = 0;
             lastTotalLight = 0L;
             return;
