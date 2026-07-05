@@ -37,9 +37,10 @@ import org.json.JSONObject;
  */
 public class BlePhotoUploadService {
     private static final String TAG = "BlePhotoUploadService";
-    // 95, not lower: the source already went through a lossy AVIF pass on the
-    // glasses, so this re-encode shouldn't compound the quality loss.
-    private static final int JPEG_QUALITY = 95;
+    // 100: the source already went through a lossy AVIF pass on the glasses, so
+    // this re-encode must not compound the loss. Phone CPU and upload bandwidth
+    // are cheap relative to what was paid to get the bytes over BLE.
+    private static final int JPEG_QUALITY = 100;
 
     public interface UploadCallback {
         void onSuccess(String requestId, String responseBody);
