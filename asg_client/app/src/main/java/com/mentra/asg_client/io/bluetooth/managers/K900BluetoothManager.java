@@ -91,7 +91,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Feature switch for the runtime UART baud upgrade. */
     private static final boolean UART_BAUD_SWITCH_ENABLED = true;
 
-    /** Baud rate to upgrade the BES UART link to (must be supported by liblhsserial). */
+    /** Baud rate to upgrade the BES UART link to. 1152000 is the measured hardware
+     * ceiling: 1.5M/2M/3M all negotiated fine but carried zero data (probe silent,
+     * both sides auto-reverted) - without flow control the clocking above 1.152M
+     * doesn't survive the wire. Tested 2026-07-05. */
     private static final int TARGET_UART_BAUD = 1152000;
 
     /** Minimum BES firmware version (sr_syvr "dpj" dotted string) that supports cs_baud. */
@@ -112,6 +115,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** True between sending cs_baud and receiving sr_baud (guards spurious sr_baud). */
     private boolean baudSwitchWaitingSrBaud = false;
+
+    // Boot-time baud recovery: if asg restarts after a previous baud switch, the BES
+    // is still at the high rate while we reopen at the 460800 default - the link is
+    // silent until something hunts for the right rate. Cycle candidates until an
+    // sr_syvr answers.
+    private static final int[] BOOT_BAUD_CANDIDATES = {
+        SerialPortBridge.DEFAULT_BAUDRATE, TARGET_UART_BAUD, 1152000
+    };
+    private static final int BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
+    private static final int BOOT_RECOVERY_STEP_MS = 3000;
+    private volatile long lastSrSyvrTime = 0;
+    private int bootRecoveryIdx = 0;
+    private java.util.concurrent.ScheduledFuture<?> bootRecoveryFuture;
 
     /** True between reopening at TARGET_UART_BAUD and the sr_syvr probe answer. */
     private boolean baudProbePending = false;
@@ -203,6 +219,55 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Initialize file transfer executor
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
+
+        // Boot-time baud recovery: if a previous asg run switched the BES to a high
+        // baud and asg restarted, we come up at 460800 against a fast BES and the
+        // link is silent. Hunt candidate rates until sr_syvr answers.
+        synchronized (baudSwitchLock) {
+            bootRecoveryFuture =
+                    baudSwitchExecutor.schedule(
+                            this::bootBaudRecoveryTick,
+                            BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** No sr_syvr since boot: cycle through candidate bauds until the BES answers. */
+    private void bootBaudRecoveryTick() {
+        if (lastSrSyvrTime > 0) {
+            return; // Link is alive; nothing to recover.
+        }
+        synchronized (baudSwitchLock) {
+            if (baudProbePending || comManager.mbOtaUpdating) {
+                return; // A switch/OTA is mid-flight; stay out of its way.
+            }
+        }
+        bootRecoveryIdx = (bootRecoveryIdx + 1) % BOOT_BAUD_CANDIDATES.length;
+        int candidate = BOOT_BAUD_CANDIDATES[bootRecoveryIdx];
+        Log.w(
+                BAUD_TAG,
+                "Boot recovery: no sr_syvr yet - trying "
+                        + candidate
+                        + " baud (candidate "
+                        + (bootRecoveryIdx + 1)
+                        + "/"
+                        + BOOT_BAUD_CANDIDATES.length
+                        + ")");
+        try {
+            comManager.reopen(candidate);
+            requestBesSystemVersion();
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Boot recovery reopen failed at " + candidate, e);
+        }
+        synchronized (baudSwitchLock) {
+            if (lastSrSyvrTime == 0) {
+                bootRecoveryFuture =
+                        baudSwitchExecutor.schedule(
+                                this::bootBaudRecoveryTick,
+                                BOOT_RECOVERY_STEP_MS,
+                                TimeUnit.MILLISECONDS);
+            }
+        }
     }
 
     @Override
@@ -1054,7 +1119,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     private void onSrSyvrForBaudSwitch(org.json.JSONObject bData) {
         try {
+            // Any sr_syvr proves the UART link is alive at the current baud.
+            lastSrSyvrTime = System.currentTimeMillis();
             synchronized (baudSwitchLock) {
+                if (bootRecoveryFuture != null) {
+                    bootRecoveryFuture.cancel(false);
+                    bootRecoveryFuture = null;
+                }
                 if (baudProbePending) {
                     // sr_syvr answered at the new baud - the switch is confirmed.
                     baudProbePending = false;
@@ -1073,8 +1144,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (baudSwitchAttempted) {
                     return; // Only attempt the switch once per boot.
                 }
-                if (comManager.getCurrentBaud() != SerialPortBridge.DEFAULT_BAUDRATE) {
-                    return; // Already switched (or in an unexpected state) - leave it alone.
+                if (comManager.getCurrentBaud() == TARGET_UART_BAUD) {
+                    return; // Already at the target (e.g., boot recovery landed there).
                 }
                 if (comManager.mbOtaUpdating) {
                     Log.i(BAUD_TAG, "BES OTA in progress - skipping baud switch");
