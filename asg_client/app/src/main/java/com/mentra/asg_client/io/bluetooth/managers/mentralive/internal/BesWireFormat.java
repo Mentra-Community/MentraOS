@@ -58,6 +58,9 @@ public class BesWireFormat {
     public static final int FILE_PACK_SIZE_DEFAULT =
             FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
+    // File frame flags bit 0: sender streams push-mode and accepts batched acks
+    // (BES >= 17.26.7.6 then acks every 8th pack instead of each one).
+    public static final int FILE_FLAG_PUSH_BATCH_ACK = 0x0001;
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
 

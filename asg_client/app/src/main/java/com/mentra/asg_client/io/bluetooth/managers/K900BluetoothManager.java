@@ -74,10 +74,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             75; // Delay between successful packets - BES2700 needs time to drain BLE TX
     // Push-mode streaming: keep up to this many packets in flight ahead of the highest
     // BES ack instead of ping-ponging one packet per ack round trip. The window must stay
-    // small: the BES UART RX buffer is ~2KB (~4 full packs) and blasting ahead of its
-    // drain rate overruns it (observed as state=0 rejects at pack 9 with a 32 window).
-    // 3 keeps the pipe full without exceeding the RX buffer; state=0 still rewinds.
+    // small on legacy firmware: its UART RX buffer is ~2KB (~4 full packs) and blasting
+    // ahead of its drain rate overruns it (observed as state=0 rejects at pack 9 with a
+    // 32 window). Firmware >= 17.26.7.6 has an 8KB RX buffer and acks every 8th pack
+    // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
+    private static final int FILE_PUSH_WINDOW_BATCHED = 12;
+    private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.6";
+    private volatile boolean besSupportsBatchedAcks = false;
+
+    private int effectivePushWindow() {
+        return besSupportsBatchedAcks ? FILE_PUSH_WINDOW_BATCHED : FILE_PUSH_WINDOW;
+    }
     private static final long SIGNIFICANT_CHUNK_TRACE_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SEND_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SPACING_MS = PACING_DELAY_MS + 150;
@@ -1414,6 +1422,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.i(TAG, "📋 Caching BES firmware version: " + version);
 
         try {
+            besSupportsBatchedAcks =
+                    compareDottedVersions(version, MIN_BES_VERSION_FOR_BATCHED_ACKS) >= 0;
+            Log.i(
+                    TAG,
+                    "📦 Batched-ack push mode "
+                            + (besSupportsBatchedAcks ? "ENABLED" : "disabled")
+                            + " (fw " + version + ", window " + effectivePushWindow() + ")");
+        } catch (Exception e) {
+            besSupportsBatchedAcks = false;
+        }
+
+        try {
             android.content.SharedPreferences prefs =
                     context.getSharedPreferences(
                             "asg_settings", android.content.Context.MODE_PRIVATE);
@@ -1769,7 +1789,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 && currentFileTransfer.isActive
                 && currentFileTransfer.currentPacketIndex < currentFileTransfer.totalPackets
                 && currentFileTransfer.currentPacketIndex - currentFileTransfer.highestAckedIndex
-                        <= FILE_PUSH_WINDOW) {
+                        <= effectivePushWindow()) {
             if (!sendFilePacketAt(currentFileTransfer.currentPacketIndex)) {
                 return;
             }
@@ -1794,6 +1814,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // NOTE: We use fakeFileSize to lie to BES firmware about total file size.
         // BES hardcodes 400-byte pack size when calculating totalPack, so we inflate
         // fileSize to make BES expect the correct number of our smaller packets.
+        // Advertise push-mode/batched-ack support to firmware that understands it
+        // (bit 0 of the flags field; older firmware never reads flags).
+        int flags = besSupportsBatchedAcks ? BesWireFormat.FILE_FLAG_PUSH_BATCH_ACK : 0;
         byte[] packet =
                 BesWireFormat.packFilePacket(
                         packetData,
@@ -1801,7 +1824,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         packSize,
                         currentFileTransfer.fakeFileSize,
                         currentFileTransfer.fileName,
-                        0, // flags = 0
+                        flags,
                         BesWireFormat.CMD_TYPE_PHOTO);
 
         if (packet == null) {

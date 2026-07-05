@@ -3957,12 +3957,13 @@ public class MediaCaptureService {
                 recordTiming(requestId, "ble_ready_msg");
                 sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
 
-                // Add delay to ensure JSON packet completes transmission through MCU before file
-                // packets start
-                // This prevents packet interleaving at the BLE MTU boundary
+                // Brief delay so the ble_photo_ready JSON drains ahead of file packets.
+                // Was 200ms; the firmware TX window now queues both in order (and the
+                // phone's reassembly tolerates packets arriving before the JSON), so
+                // 20ms is a safety margin, not a required gap. Hardware-validate: a
+                // regression shows up as first-packet retries in the transfer logs.
                 try {
-                    Thread.sleep(200); // 200ms delay for JSON packet to fully transmit over BLE
-                    Log.d(TAG, "⏱️ Waited 200ms for JSON packet to complete BLE transmission");
+                    Thread.sleep(20);
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Delay interrupted", e);
                 }
