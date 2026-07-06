@@ -121,6 +121,7 @@ struct GlassesStatus: CustomStringConvertible {
             "wifiConnected": false,
             "wifiSsid": "",
             "wifiLocalIp": "",
+            "wifiCaptivePortal": false,
             "signalStrength": -1,
             "signalStrengthUpdatedAt": 0,
         ]))
@@ -304,6 +305,7 @@ struct GlassesStatus: CustomStringConvertible {
         dictionary.removeValue(forKey: "wifiConnected")
         dictionary.removeValue(forKey: "wifiSsid")
         dictionary.removeValue(forKey: "wifiLocalIp")
+        dictionary.removeValue(forKey: "wifiCaptivePortal")
         dictionary.removeValue(forKey: "hotspotEnabled")
         dictionary.removeValue(forKey: "hotspotSsid")
         dictionary.removeValue(forKey: "hotspotPassword")
@@ -323,7 +325,7 @@ struct GlassesStatus: CustomStringConvertible {
             dictionary.removeValue(forKey: "fullyBooted")
             dictionary.removeValue(forKey: "connectionState")
         }
-        if hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp") {
+        if hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") {
             let wifi = (values["wifi"] as? [String: Any]).flatMap(WifiStatus.init(values:))
                 ?? WifiStatus.fromStoreValues(values)
             if let wifi {
@@ -332,6 +334,7 @@ struct GlassesStatus: CustomStringConvertible {
             dictionary.removeValue(forKey: "wifiConnected")
             dictionary.removeValue(forKey: "wifiSsid")
             dictionary.removeValue(forKey: "wifiLocalIp")
+            dictionary.removeValue(forKey: "wifiCaptivePortal")
         }
         if hasAnyKey(values, "hotspot") {
             if let hotspot = (values["hotspot"] as? [String: Any]).flatMap(HotspotStatus.init(values:)) {
@@ -709,7 +712,7 @@ struct GlassesStatusUpdate: CustomStringConvertible {
         if let wifi = values["wifi"] as? [String: Any] {
             return WifiStatus(values: wifi)
         }
-        if hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp") {
+        if hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") {
             return WifiStatus.fromStoreValues(values)
         }
         return nil

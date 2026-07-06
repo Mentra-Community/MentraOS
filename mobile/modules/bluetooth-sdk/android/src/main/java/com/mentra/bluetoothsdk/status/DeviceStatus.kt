@@ -486,7 +486,7 @@ internal data class GlassesStatusUpdate(
                 wifi =
                     if (hasAnyKey(values, "wifi")) {
                         WifiStatus.fromMap(values)
-                    } else if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp")) {
+                    } else if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal")) {
                         WifiStatus.fromStoreMap(values)
                     } else {
                         null

@@ -1614,7 +1614,7 @@ public final class MentraBluetoothSDK {
     private func wifiStatusMatches(_ status: WifiStatus, request: PendingWifiStatusRequest) -> Bool {
         switch request.operation {
         case .connect:
-            if case let .connected(ssid, _) = status {
+            if case let .connected(ssid, _, _) = status {
                 return ssid == request.ssid
             }
             return false
@@ -1622,7 +1622,7 @@ public final class MentraBluetoothSDK {
             switch status {
             case .disconnected:
                 return true
-            case let .connected(ssid, _):
+            case let .connected(ssid, _, _):
                 return ssid != request.ssid
             }
         }

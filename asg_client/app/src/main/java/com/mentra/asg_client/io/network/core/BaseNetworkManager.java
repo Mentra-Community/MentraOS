@@ -10,6 +10,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -246,6 +247,36 @@ public abstract class BaseNetworkManager implements INetworkController {
         boolean hasWifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
         Log.d(TAG, "WiFi transport available: " + hasWifi);
         return hasWifi;
+    }
+
+    @Override
+    public boolean isWifiCaptivePortal() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return false;
+        }
+        ConnectivityManager connectivityManager =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) {
+            return false;
+        }
+
+        Network activeNetwork = connectivityManager.getActiveNetwork();
+        if (activeNetwork == null) {
+            return false;
+        }
+
+        NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(activeNetwork);
+        if (capabilities == null) {
+            return false;
+        }
+
+        if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+            return false;
+        }
+
+        boolean captive = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL);
+        Log.d(TAG, "WiFi captive portal capability: " + captive);
+        return captive;
     }
 
     @Override

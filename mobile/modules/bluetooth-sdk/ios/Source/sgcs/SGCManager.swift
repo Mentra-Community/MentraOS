@@ -466,6 +466,10 @@ extension SGCManager {
         DeviceStore.shared.get("glasses", "wifiLocalIp") as? String ?? ""
     }
 
+    var wifiCaptivePortal: Bool {
+        DeviceStore.shared.get("glasses", "wifiCaptivePortal") as? Bool ?? false
+    }
+
     var hotspotEnabled: Bool {
         DeviceStore.shared.get("glasses", "hotspotEnabled") as? Bool ?? false
     }

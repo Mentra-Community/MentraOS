@@ -106,7 +106,9 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatus = {state: "disconnected"} | {state: "connected"; ssid: string; localIp?: string}
+export type WifiStatus =
+  | {state: "disconnected"}
+  | {state: "connected"; ssid: string; localIp?: string; captivePortal?: boolean}
 
 export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 

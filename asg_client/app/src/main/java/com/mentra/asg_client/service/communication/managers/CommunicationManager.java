@@ -94,16 +94,20 @@ public class CommunicationManager
                 if (isConnected && networkManager != null) {
                     String ssid = networkManager.getCurrentWifiSsid();
                     String localIp = networkManager.getLocalIpAddress();
+                    boolean captivePortal = networkManager.isWifiCaptivePortal();
 
                     Log.d(TAG, "🔄 📡 WiFi SSID: " + (ssid != null ? ssid : "unknown"));
                     Log.d(TAG, "🔄 🌐 Local IP: " + (localIp != null ? localIp : "unknown"));
+                    Log.d(TAG, "🔄 🧾 Captive portal: " + captivePortal);
 
                     wifiStatus.put("ssid", ssid != null ? ssid : "unknown");
                     wifiStatus.put("local_ip", localIp != null ? localIp : "");
+                    wifiStatus.put("captive_portal", captivePortal);
                 } else {
                     Log.d(TAG, "🔄 ❌ WiFi not connected or network manager unavailable");
                     wifiStatus.put("ssid", "");
                     wifiStatus.put("local_ip", "");
+                    wifiStatus.put("captive_portal", false);
                 }
 
                 boolean sent = reliableManager.sendMessage(wifiStatus);
