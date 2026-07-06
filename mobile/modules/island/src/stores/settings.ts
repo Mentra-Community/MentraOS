@@ -721,6 +721,26 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.nex_lc3_audio_playback.key,
 ]
 
+// Pairing identity is NATIVE-authoritative: the native layer writes it on
+// pairing success (handleDeviceReady) / forget and echoes it down via
+// save_setting; JS persists those echoes. JS→native, identity travels ONLY in
+// the explicit full seeds (device-store hydration, pre-connect push,
+// post-demotion re-push) — never in the change-push subscription. Relaying an
+// echoed identity change back up would make the sync bidirectional with loop
+// gain 1: two identity values in flight (e.g. a boot demotion crossing a
+// native promotion) then chase each other through push→apply→echo→push
+// forever, flapping the UI.
+export const PAIRING_IDENTITY_KEYS: string[] = [
+  SETTINGS.pending_wearable.key,
+  SETTINGS.default_wearable.key,
+  SETTINGS.device_name.key,
+  SETTINGS.device_address.key,
+  SETTINGS.default_controller.key,
+  SETTINGS.pending_controller.key,
+  SETTINGS.controller_device_name.key,
+  SETTINGS.controller_address.key,
+]
+
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
 export interface SettingsState {

@@ -117,12 +117,20 @@ export function startDeviceEventRouter(): void {
   // The inbound complement to GlassesSettingsSync (which only pushes store→device).
   subs.push(
     BluetoothSdk.addListener("save_setting", async (event) => {
-      await useSettingsStore.getState().setSetting(event.key, event.value)
+      const settings = useSettingsStore.getState()
+      // Damp the relay: native re-echoes some settings unconditionally (e.g.
+      // the identity block at every handleDeviceReady) — a same-value echo
+      // must not become a store write (persistence churn + change-push noise).
+      if (settings.getSetting(event.key) !== event.value) {
+        await settings.setSetting(event.key, event.value)
+      }
       // Two-phase identity: the native layer promotes the default wearable on
       // pairing success (handleDeviceReady) and echoes it here — a promoted
       // default retires the pending selection marker.
       if (event.key === SETTINGS.default_wearable.key && event.value) {
-        await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, "")
+        if (settings.getSetting(SETTINGS.pending_wearable.key)) {
+          await settings.setSetting(SETTINGS.pending_wearable.key, "")
+        }
       }
     }),
   )

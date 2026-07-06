@@ -15,9 +15,31 @@
 import {shallow} from "zustand/shallow"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import {useSettingsStore} from "../stores/settings"
+import {useSettingsStore, PAIRING_IDENTITY_KEYS} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "./GlassesReadiness"
+
+/**
+ * The changed-keys diff for the change-push, MINUS the pairing-identity keys.
+ * Identity is native-authoritative (promoted on pairing success, cleared on
+ * forget, echoed down via save_setting) and reaches native only through the
+ * explicit full seeds. Pushing identity from the change subscription would
+ * close a feedback loop: native echo → store setSetting → change-push →
+ * native apply → echo…, which self-sustains the moment two different values
+ * are in flight (e.g. a boot demotion crossing a native promotion) and flaps
+ * the pairing UI.
+ */
+export function diffBluetoothSettingsForPush(
+  settings: Record<string, unknown>,
+  previous: Record<string, unknown>,
+): Record<string, unknown> {
+  const changed: Record<string, unknown> = {}
+  for (const key in settings) {
+    if (PAIRING_IDENTITY_KEYS.includes(key)) continue
+    if (settings[key] !== previous[key]) changed[key] = settings[key]
+  }
+  return changed
+}
 
 let unsubChange: (() => void) | null = null
 let unsubConnect: (() => void) | null = null
@@ -39,13 +61,11 @@ export function startGlassesSettingsSync(): void {
   if (unsubChange || unsubConnect) return
 
   // 1. Push only the keys that changed (matching the prior MantleManager sync).
+  // Pairing identity is excluded — see diffBluetoothSettingsForPush.
   unsubChange = useSettingsStore.subscribe(
     (state) => state.getBluetoothSettings(),
     (settings: Record<string, unknown>, previous: Record<string, unknown>) => {
-      const changed: Record<string, unknown> = {}
-      for (const key in settings) {
-        if (settings[key] !== previous[key]) changed[key] = settings[key]
-      }
+      const changed = diffBluetoothSettingsForPush(settings, previous)
       if (Object.keys(changed).length > 0) {
         // Settings can change while the glasses are disconnected — a native
         // rejection must not surface as an unhandled promise rejection.
