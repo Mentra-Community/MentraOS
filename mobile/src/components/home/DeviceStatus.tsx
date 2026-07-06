@@ -169,7 +169,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
   // that model — or start over with a different one — instead of a Connect
   // button that has no device to connect to.
-  if (identity.kind === "pending") {
+  //
+  // NOT when the glasses are already connected: right after a promotion, the
+  // BLE link is up while the save_setting echoes are still landing, so the JS
+  // identity is momentarily still `pending` — render the normal connected card
+  // (with the pending model as its display name) instead of finish-pairing
+  // actions for a device that is already paired and connected.
+  if (identity.kind === "pending" && !glassesConnected) {
     return (
       <View style={style}>
         <DeviceStatus
@@ -199,10 +205,14 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     )
   }
 
-  const getCurrentGlassesImage = () => {
-    let image = getGlassesImage(pairedModel)
+  // The card body's model name/image: the paired model, or — in the mid-relay
+  // window above (connected while the promotion echoes land) — the pending one.
+  const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
 
-    if (pairedModel === DeviceTypes.G1) {
+  const getCurrentGlassesImage = () => {
+    let image = getGlassesImage(displayModel)
+
+    if (displayModel === DeviceTypes.G1) {
       let state = "folded"
       if (!caseRemoved) {
         state = caseOpen ? "case_open" : "case_close"
@@ -211,7 +221,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     }
 
     if (!caseRemoved) {
-      image = caseOpen ? getGlassesOpenImage(pairedModel) : getGlassesClosedImage(pairedModel)
+      image = caseOpen ? getGlassesOpenImage(displayModel) : getGlassesClosedImage(displayModel)
     }
 
     return image
@@ -226,7 +236,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     _connectingText = translate("glasses:glassesAreReconnecting")
   }
 
-  const features = getModelCapabilities(pairedModel as DeviceTypes)
+  const features = getModelCapabilities(displayModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
@@ -234,7 +244,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-          <Text className="font-semibold text-secondary-foreground text-end self-end" text={pairedModel} />
+          <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayModel} />
         </View>
         {!isSearching && (
           <Button
@@ -265,7 +275,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   return (
     <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
-      <Text className="font-semibold text-secondary-foreground text-base" text={pairedModel} />
+      <Text className="font-semibold text-secondary-foreground text-base" text={displayModel} />
       <View className="flex-row items-center gap-3">
         {batteryLevel !== -1 && (
           <View className="flex-row items-center gap-1">
