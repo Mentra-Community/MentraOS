@@ -7,6 +7,7 @@ import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 
 /** Manager for serial communication with the BES2700 Bluetooth module in K900 devices. */
@@ -220,6 +221,77 @@ public class SerialPortBridge {
     }
 
     /**
+     * Write all bytes to the serial port, draining EAGAIN. liblhsserial opens /dev/ttyS1
+     * O_NONBLOCK (verified by disassembly: open flags 0x902), so large bursts overrun the
+     * kernel's ~4KB tty TX buffer and FileOutputStream.write throws EAGAIN after an UNKNOWN
+     * number of bytes already left the process - corrupting the stream on retry. Os.write
+     * gives exact-byte accounting; on EAGAIN we wait for the line to drain (~4KB at 1.152M
+     * is ~36ms) and continue from the precise offset. This is what restores the "write
+     * blocks at line rate" pacing the push-mode file pump is designed around.
+     *
+     * @return true if every byte was written
+     */
+    private boolean writeAllToSerial(OutputStream os, byte[] data, String what) {
+        java.io.FileDescriptor fd;
+        try {
+            fd = ((java.io.FileOutputStream) os).getFD();
+        } catch (IOException | ClassCastException e) {
+            // No FD access - fall back to the plain stream write (single-shot).
+            try {
+                os.write(data);
+                os.flush();
+                return true;
+            } catch (IOException e2) {
+                Log.e(TAG, "Error writing " + what + " to serial port: " + e2.getMessage());
+                return false;
+            }
+        }
+
+        int off = 0;
+        int eagainWaits = 0;
+        // 500 x 2ms = 1s of cumulative drain budget; the line moves ~230B/2ms at 1.152M.
+        final int maxEagainWaits = 500;
+        while (off < data.length) {
+            try {
+                int written = android.system.Os.write(fd, data, off, data.length - off);
+                if (written > 0) {
+                    off += written;
+                    eagainWaits = 0;
+                }
+            } catch (android.system.ErrnoException e) {
+                if (e.errno == android.system.OsConstants.EAGAIN
+                        || e.errno == android.system.OsConstants.EINTR) {
+                    if (++eagainWaits > maxEagainWaits) {
+                        Log.e(
+                                TAG,
+                                "Serial TX stalled writing "
+                                        + what
+                                        + " ("
+                                        + off
+                                        + "/"
+                                        + data.length
+                                        + " bytes)");
+                        return false;
+                    }
+                    try {
+                        Thread.sleep(2);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                } else {
+                    Log.e(TAG, "Error writing " + what + " to serial port: errno=" + e.errno);
+                    return false;
+                }
+            } catch (InterruptedIOException e) {
+                Log.e(TAG, "Interrupted writing " + what + " to serial port");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Send data over the serial port Blocked during BES OTA updates
      *
      * @param data The data to send
@@ -227,15 +299,8 @@ public class SerialPortBridge {
     public boolean send(byte[] data) {
         OutputStream os = mOS;
         if (mbStart && os != null && !mbOtaUpdating) {
-            try {
-                Log.d(TAG, ">>> sending " + data.length + " bytes");
-                os.write(data);
-                os.flush();
-
-                return true;
-            } catch (IOException e) {
-                Log.e(TAG, "Error writing to serial port: " + e.getMessage());
-            }
+            Log.d(TAG, ">>> sending " + data.length + " bytes");
+            return writeAllToSerial(os, data, "data");
         } else {
             if (mbOtaUpdating) {
                 Log.d(TAG, "Cannot send data - BES OTA in progress");
@@ -262,14 +327,8 @@ public class SerialPortBridge {
     public boolean sendFile(byte[] data) {
         OutputStream os = mOS;
         if (mbStart && os != null && !mbOtaUpdating) {
-            try {
-                // Don't log file data content, just write it
-                os.write(data);
-                os.flush();
-                return true;
-            } catch (IOException e) {
-                Log.e(TAG, "Error writing file to serial port: " + e.getMessage());
-            }
+            // Don't log file data content, just write it
+            return writeAllToSerial(os, data, "file");
         } else {
             if (mbOtaUpdating) {
                 Log.d(TAG, "Cannot send file - BES OTA in progress");
@@ -315,13 +374,7 @@ public class SerialPortBridge {
     public boolean sendOta(byte[] data) {
         OutputStream os = mOS;
         if (mbStart && os != null && mbOtaUpdating) {
-            try {
-                os.write(data);
-                os.flush();
-                return true;
-            } catch (IOException e) {
-                Log.e(TAG, "Error writing OTA data to serial port: " + e.getMessage());
-            }
+            return writeAllToSerial(os, data, "OTA data");
         } else {
             Log.e(
                     TAG,
