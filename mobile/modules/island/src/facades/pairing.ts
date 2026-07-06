@@ -245,24 +245,25 @@ export const pairing = {
     BluetoothSdk.updateBluetoothSettings({device_name: device.name}),
   /**
    * Abandon an in-flight pairing attempt (back-out, failure retry, conflict
-   * retry) without destroying an existing pairing:
-   * - Re-pair with the old glasses still connected (nothing tapped yet — an
+   * retry) without destroying an existing pairing. The decision comes from the
+   * LIVE hydrated default-device read — never from flow-entry state, because a
+   * pairing can PROMOTE while the flow is open (the glasses finish pairing
+   * even as the user backs out of the UI), and an entry snapshot would forget
+   * that brand-new pairing:
+   * - Default device exists and glasses are connected (nothing in flight — an
    *   attempt drops the link first): stop the scan, touch nothing else.
-   * - Re-pair with an attempt in flight: cancel it, then re-seed the native
-   *   identity from the phone's persisted settings — the attempt's
+   * - Default device exists with an attempt in flight: cancel it, then re-seed
+   *   the native identity from the phone's persisted settings — the attempt's
    *   connect-by-name overwrote the native device_name, so a later
    *   connectDefault() would otherwise target the abandoned device.
-   * - Fresh pairing (no default device): also forget, clearing the partial
-   *   native pairing state.
-   * The `pending_wearable` marker is deliberately left alone — the host renders
-   * it as a finish-pairing affordance.
-   *
-   * `hadDefaultDevice` lets a screen pass the state it captured at entry (the
-   * scan screen does); when omitted, a live hydrated read is used, failing OPEN
-   * to "preserve" — a transient read failure must never wipe a real pairing.
+   * - No default device (genuinely unpaired attempt): also forget, clearing
+   *   the partial native pairing state.
+   * The read fails OPEN to "preserve" — a transient failure must never wipe a
+   * real pairing. The `pending_wearable` marker is deliberately left alone —
+   * the host renders it as a finish-pairing affordance.
    */
-  abandonAttempt: async (hadDefaultDevice?: boolean): Promise<void> => {
-    const preserve = hadDefaultDevice ?? (await hasDefaultDevice().catch(() => true))
+  abandonAttempt: async (): Promise<void> => {
+    const preserve = await hasDefaultDevice().catch(() => true)
     if (preserve && isGlassesConnected(useGlassesStore.getState().connection)) {
       // Still connected means no connect attempt is in flight (an attempt drops
       // the existing link first): the user browsed the scan and backed out.

@@ -1,7 +1,7 @@
 import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
 import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useRef, useState} from "react"
+import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -36,26 +36,12 @@ export default function SelectGlassesBluetoothScreen() {
   )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
-  // Whether a real pairing existed when this screen was ENTERED decides how the
-  // back handler cleans up: fresh pairing → forget the partial attempt; re-pair →
-  // the existing pairing must survive back-out. Defaults to "preserve" until the
-  // hydrated read lands — a race must never wipe a real pairing.
-  const enteredWithDefaultDevice = useRef(true)
-
   useEffect(() => {
     // Two-phase identity: reaching the scan screen marks the chosen model as the
     // PENDING wearable (selection). Promotion to default_wearable only happens
     // natively when pairing succeeds; until then the home card renders a
     // finish-pairing affordance from this marker.
     setPendingWearable(deviceModel)
-    toolkit.glasses
-      .hasDefaultDevice()
-      .then((has) => {
-        enteredWithDefaultDevice.current = has
-      })
-      .catch(() => {
-        enteredWithDefaultDevice.current = true
-      })
   }, [])
 
   // useFocusEffect(
@@ -70,10 +56,12 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    // Non-destructive back-out: only a FRESH pairing flow forgets on back
-    // (clearing the partial attempt); backing out of a re-pair preserves the
-    // existing pairing. The pending marker survives either way.
-    void toolkit.pairing.abandonAttempt(enteredWithDefaultDevice.current).catch((error) => {
+    // Non-destructive back-out: abandonAttempt decides from the LIVE hydrated
+    // default-device read — a re-pair's existing pairing survives, and so does
+    // a pairing that PROMOTED while this flow was open (glasses can finish
+    // pairing even when the user backs out of the UI). Only a genuinely
+    // unpaired attempt forgets. The pending marker survives either way.
+    void toolkit.pairing.abandonAttempt().catch((error) => {
       console.warn("Pairing scan back-out cleanup failed:", error)
     })
     goBack()
