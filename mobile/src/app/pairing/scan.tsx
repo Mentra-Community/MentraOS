@@ -1,7 +1,7 @@
 import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
 import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -47,12 +47,15 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setRememberedSearchResults]),
   // )
 
-  focusEffectPreventBack((event) => {
-    // Skip cleanup when navigating forward (e.g. replace() to btclassic) —
-    // only run on actual back navigation.
-    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
-      return
-    }
+  // One back-out per mount, whichever surface triggers it — the header chevron
+  // and Cancel button (handleBackOut), Android hardware back (the preventBack
+  // handler), or the iOS pop gesture (the beforeRemove listener). The ref
+  // dedupes the overlap: an explicit back-out's goBack() also fires
+  // beforeRemove on iOS, which must not run the cleanup (or pop) again.
+  const backOutRanRef = useRef(false)
+  const runBackOutCleanup = () => {
+    if (backOutRanRef.current) return false
+    backOutRanRef.current = true
     // Non-destructive back-out: abandonAttempt decides from the LIVE hydrated
     // default-device read — a re-pair's existing pairing survives, and so does
     // a pairing that PROMOTED while this flow was open (glasses can finish
@@ -61,8 +64,24 @@ export default function SelectGlassesBluetoothScreen() {
     void toolkit.pairing.abandonAttempt().catch((error) => {
       console.warn("Pairing scan back-out cleanup failed:", error)
     })
-    goBack()
+    return true
+  }
+
+  focusEffectPreventBack((event) => {
+    // Skip cleanup when navigating forward (e.g. replace() to btclassic) —
+    // only run on actual back navigation.
+    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
+      return
+    }
+    if (runBackOutCleanup()) {
+      goBack()
+    }
   }, true)
+
+  const handleBackOut = () => {
+    runBackOutCleanup()
+    goBack()
+  }
 
   useEffect(() => {
     const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
@@ -165,7 +184,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
-      <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
+      <Header leftIcon="chevron-left" onLeftPress={handleBackOut} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
         <GlassView className="gap-6 rounded-3xl p-6 bg-primary-foreground" transparent={false}>
           <Image
@@ -207,7 +226,7 @@ export default function SelectGlassesBluetoothScreen() {
           )}
           <Divider />
           <View className="flex-row justify-end">
-            <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+            <Button preset="primary" compact tx="common:cancel" onPress={handleBackOut} className="min-w-[100px]" />
           </View>
         </GlassView>
       </View>
