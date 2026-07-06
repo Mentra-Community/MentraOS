@@ -105,8 +105,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * frames, and only apply when the phone negotiated full-size BLE packs - a phone
      * that asked for smaller packs (small MTU) must keep bounding the BLE frame size.
      */
+    /**
+     * 800B packs are DISABLED pending a firmware fix: fw 17.26.7.9 deterministically loses
+     * pack 0 of an 800B transfer in its UART frame reassembly (packs 1+ arrive intact; BES
+     * trace shows 'unexpected pack index: expect=0, got=1/2/3'), which needs DUMP8-level
+     * instrumentation on the BES to localize. Batched acks + window 12 still apply at 400B.
+     */
+    private static final boolean BIG_PACKS_ENABLED = false;
+
     private int effectiveUartPackSize() {
-        if (besSupportsBigPacks
+        if (BIG_PACKS_ENABLED
+                && besSupportsBigPacks
                 && BesWireFormat.getFilePackSize() == BesWireFormat.FILE_PACK_SIZE_MAX) {
             return BesWireFormat.FILE_UART_PACK_SIZE_MAX;
         }
