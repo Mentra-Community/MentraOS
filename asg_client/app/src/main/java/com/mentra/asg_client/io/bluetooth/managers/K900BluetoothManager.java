@@ -79,8 +79,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // 32 window). Firmware >= 17.26.7.6 has an 8KB RX buffer and acks every 8th pack
     // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
-    private static final int FILE_PUSH_WINDOW_BATCHED = 12;
-    private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.6";
+    // 8, not 12: the BES UART RX buffer is capped just under 4KB by its HAL's
+    // single-descriptor DMA limit (an 8KB buffer bricked UART RX in 17.26.7.6),
+    // so the in-flight window must stay within ~8 full packs. Firmware acks
+    // every 4th pack, so 8 still streams continuously.
+    private static final int FILE_PUSH_WINDOW_BATCHED = 8;
+    private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
     private volatile boolean besSupportsBatchedAcks = false;
 
     private int effectivePushWindow() {
