@@ -93,6 +93,7 @@ export function subscribePairingIdentity(cb: (identity: IdentitySnapshot) => voi
  * finish-pairing card after an app restart.
  */
 export function markPendingSelection(model: string): AsyncResult<void, Error> {
+  console.log(`PairingIdentity: pending selection -> "${model}"`)
   return useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, model)
 }
 
@@ -105,7 +106,9 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
 export async function retirePendingSelectionOnPromotion(echoedKey: string, echoedValue: unknown): Promise<void> {
   if (echoedKey !== SETTINGS.default_wearable.key || !echoedValue) return
   const settings = useSettingsStore.getState()
-  if (settings.getSetting(SETTINGS.pending_wearable.key)) {
+  const pending = settings.getSetting(SETTINGS.pending_wearable.key)
+  if (pending) {
+    console.log(`PairingIdentity: promotion "${String(echoedValue)}" retires pending "${pending}"`)
     await settings.setSetting(SETTINGS.pending_wearable.key, "")
   }
 }
@@ -120,7 +123,13 @@ export async function retirePendingSelectionOnPromotion(echoedKey: string, echoe
  */
 export async function demoteDefaultToPending(model: string): Promise<void> {
   const settings = useSettingsStore.getState()
-  if (!settings.getSetting(SETTINGS.pending_wearable.key)) {
+  const fresher = settings.getSetting(SETTINGS.pending_wearable.key)
+  console.log(
+    fresher
+      ? `PairingIdentity: demote "${model}" — fresher pending "${fresher}" kept`
+      : `PairingIdentity: demote "${model}" -> pending`,
+  )
+  if (!fresher) {
     await settings.setSetting(SETTINGS.pending_wearable.key, model)
   }
   await settings.setSetting(SETTINGS.default_wearable.key, "")

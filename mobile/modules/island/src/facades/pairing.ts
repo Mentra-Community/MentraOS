@@ -287,13 +287,16 @@ export const pairing = {
       // Still connected means no connect attempt is in flight (an attempt drops
       // the existing link first): the user browsed the scan and backed out.
       // Stop the scan and leave the live pairing untouched.
+      console.log("PairingIdentity: abandonAttempt — pairing intact and connected; stopping scan only")
       await BluetoothSdk.stopScan()
       return
     }
     await BluetoothSdk.disconnect()
     if (preserve) {
+      console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
       await pushAllBluetoothSettings()
     } else {
+      console.log("PairingIdentity: abandonAttempt — no pairing; forgetting the partial attempt")
       await BluetoothSdk.forget()
     }
   },
