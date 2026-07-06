@@ -29,8 +29,11 @@ public class SerialPortBridge {
     private RecvThread mRecvThread = null;
     private byte[] mReadBuf = new byte[1024];
     private boolean mbStart = false;
-    protected OutputStream mOS;
-    protected InputStream mIS;
+    // volatile + snapshot-before-use: reopen() nulls these on the baud-switch
+    // thread while send/recv threads are mid-call. A stale stream throws a
+    // handled IOException; a raw field read after the null-check would NPE.
+    protected volatile OutputStream mOS;
+    protected volatile InputStream mIS;
     private Context mContext = null;
     private boolean mbRequestFast = false;
     public boolean mbOtaUpdating = false;
@@ -222,11 +225,12 @@ public class SerialPortBridge {
      * @param data The data to send
      */
     public boolean send(byte[] data) {
-        if (mbStart && mOS != null && !mbOtaUpdating) {
+        OutputStream os = mOS;
+        if (mbStart && os != null && !mbOtaUpdating) {
             try {
                 Log.d(TAG, ">>> sending " + data.length + " bytes");
-                mOS.write(data);
-                mOS.flush();
+                os.write(data);
+                os.flush();
 
                 return true;
             } catch (IOException e) {
@@ -256,11 +260,12 @@ public class SerialPortBridge {
      * @return true if the write succeeded
      */
     public boolean sendFile(byte[] data) {
-        if (mbStart && mOS != null && !mbOtaUpdating) {
+        OutputStream os = mOS;
+        if (mbStart && os != null && !mbOtaUpdating) {
             try {
                 // Don't log file data content, just write it
-                mOS.write(data);
-                mOS.flush();
+                os.write(data);
+                os.flush();
                 return true;
             } catch (IOException e) {
                 Log.e(TAG, "Error writing file to serial port: " + e.getMessage());
@@ -308,10 +313,11 @@ public class SerialPortBridge {
      * @return true if sent successfully, false otherwise
      */
     public boolean sendOta(byte[] data) {
-        if (mbStart && mOS != null && mbOtaUpdating) {
+        OutputStream os = mOS;
+        if (mbStart && os != null && mbOtaUpdating) {
             try {
-                mOS.write(data);
-                mOS.flush();
+                os.write(data);
+                os.flush();
                 return true;
             } catch (IOException e) {
                 Log.e(TAG, "Error writing OTA data to serial port: " + e.getMessage());
@@ -344,9 +350,10 @@ public class SerialPortBridge {
             int readSize;
 
             while (!mbStop) {
-                if (mIS != null) {
+                InputStream is = mIS;
+                if (is != null) {
                     try {
-                        readSize = mIS.read(mReadBuf);
+                        readSize = is.read(mReadBuf);
                         if (readSize > 0) {
                             // Route data based on OTA state
                             if (mbOtaUpdating) {

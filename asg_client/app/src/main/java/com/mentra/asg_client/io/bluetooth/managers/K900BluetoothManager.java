@@ -1210,23 +1210,41 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /**
      * Compare two dotted version strings numerically, component by component. Missing components
-     * count as 0.
+     * count as 0. Each component is read as its leading numeric prefix so hotfix-suffixed
+     * firmware strings (e.g. "17.26.7.5-fix1") compare as their base version instead of
+     * throwing and silently disabling the transport feature gates.
      *
      * @return negative if a &lt; b, 0 if equal, positive if a &gt; b
-     * @throws NumberFormatException if either string has a non-numeric component
      */
     static int compareDottedVersions(String a, String b) {
         String[] as = a.split("\\.");
         String[] bs = b.split("\\.");
         int n = Math.max(as.length, bs.length);
         for (int i = 0; i < n; i++) {
-            int av = i < as.length ? Integer.parseInt(as[i].trim()) : 0;
-            int bv = i < bs.length ? Integer.parseInt(bs[i].trim()) : 0;
+            int av = i < as.length ? leadingInt(as[i]) : 0;
+            int bv = i < bs.length ? leadingInt(bs[i]) : 0;
             if (av != bv) {
                 return av - bv;
             }
         }
         return 0;
+    }
+
+    /** Numeric prefix of a version component ("5-fix1" -> 5); 0 if there is none. */
+    private static int leadingInt(String component) {
+        String s = component.trim();
+        int end = 0;
+        while (end < s.length() && Character.isDigit(s.charAt(end))) {
+            end++;
+        }
+        if (end == 0) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(s.substring(0, end));
+        } catch (NumberFormatException e) {
+            return 0; // digit run longer than Integer range - treat as unknown
+        }
     }
 
     /** Send {"C":"cs_baud","V":1,"B":"{\"baud\":N}"} to the BES over UART. */
@@ -2234,8 +2252,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + "/"
                                 + (MAX_TRANSFER_RETRIES + 1));
 
-                // Reset for retry
+                // Reset for retry. highestAckedIndex must rewind too: completion keys
+                // off the ack high-water mark, and the failed attempt already acked
+                // every packet - without the reset sendNextFilePacket() would declare
+                // the retry complete without resending a byte.
                 currentFileTransfer.currentPacketIndex = 0;
+                currentFileTransfer.highestAckedIndex = -1;
                 currentFileTransfer.startTime = System.currentTimeMillis();
                 currentFileTransfer.waitingForPhoneConfirmation = false;
                 pendingPackets.clear();
