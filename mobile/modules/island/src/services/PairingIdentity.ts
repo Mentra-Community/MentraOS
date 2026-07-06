@@ -98,7 +98,7 @@ export function markPendingSelection(model: string): AsyncResult<void, Error> {
   const trimmed = typeof model === "string" ? model.trim() : ""
   if (!trimmed) {
     console.warn(`PairingIdentity: ignoring pending selection with empty model (got ${JSON.stringify(model)})`)
-    return Promise.resolve(Res.ok(undefined)) as AsyncResult<void, Error>
+    return Res.try_async(async () => {})
   }
   console.log(`PairingIdentity: pending selection -> "${trimmed}"`)
   const result = useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, trimmed)
