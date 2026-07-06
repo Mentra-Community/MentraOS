@@ -13,12 +13,12 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {gallerySyncService} from "@mentra/island"
+import {toolkit, BgTimer} from "@mentra/island"
 import {
   appRegistry,
   configureRuntime,
   displayProcessor,
-  toolkit,
+  gallerySyncService,
   phoneLocationService,
   localDisplayManager,
   localMiniappRuntime,
@@ -26,9 +26,8 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
-  BgTimer,
   useAppStatusStore,
-} from "@mentra/island"
+} from "@mentra/island/internal"
 import {useDisplayStore} from "@/stores/display"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"

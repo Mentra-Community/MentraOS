@@ -3,4 +3,4 @@
  * (moved together with RestComms, its mutually-coupled pair). Kept so existing
  * `@/stores/settings` imports resolve unchanged.
  */
-export {SETTINGS, OFFLINE_APPLETS, useSettingsStore, useSetting} from "@mentra/island"
+export {SETTINGS, OFFLINE_APPLETS, useSettingsStore, useSetting} from "@mentra/island/internal"

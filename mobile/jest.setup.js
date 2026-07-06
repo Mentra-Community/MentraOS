@@ -237,10 +237,17 @@ jest.mock("./modules/island/src/services/LocalMiniappRuntime", () => ({
   default: {forwardEvent: jest.fn()},
 }))
 
-// Mock @mentra/island — its barrel pulls in many native modules
-// (react-native-share, expo-battery/clipboard/location, etc.). Tests that
-// only need a handful of exports get stubs here; specific tests can override.
-jest.mock("@mentra/island", () => {
+// Mock the three @mentra/island entry points (main, /internal, /devtools) —
+// the package pulls in many native modules (react-native-share,
+// expo-battery/clipboard/location, etc.). Tests that only need a handful of
+// exports get stubs here; specific tests can override. The builder runs
+// lazily on the first island require (so island sources only load for suites
+// that use them) and is cached so all three entries share one underlying
+// state (stores, appStatusState, toolkit). Key sets mirror the real
+// src/index.ts / src/internal.ts / src/devtools.ts partition.
+let mockIslandEntriesCache = null
+const mockIslandEntries = () => {
+  if (mockIslandEntriesCache) return mockIslandEntriesCache
   // The glasses store moved into island; tests + the @/stores/glasses shim need its
   // REAL behavior (setState/getState/subscribe), so pull the actual store in. It's
   // pure (zustand + type-only btsdk imports), so it loads cleanly under the mock.
@@ -319,43 +326,13 @@ jest.mock("@mentra/island", () => {
     }
   }
 
-  return {
+  // --- "@mentra/island" (main): toolkit + the pure helper/constant surface ---
+  const main = {
     __esModule: true,
-    // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
-    // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates).
-    ...realGlasses,
-    // Real display/mirror store (useDisplayStore) — consumers need its real behavior.
-    ...realDisplay,
-    // Real core / connection / gallerySync stores (+ WebSocketStatus, selectors).
-    ...realCore,
-    ...realConnection,
-    ...realGallerySync,
-    // Real cloud-client runtime status store (useCloudClientStatusStore).
-    ...realCloudStatus,
-    // Real settings store (SETTINGS, useSettingsStore, useSetting, OFFLINE_APPLETS)
-    // + RestComms singleton — both moved into island.
-    ...realSettings,
-    restComms: realRestComms.default,
-    // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
-    fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
-    maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
-    // OTA manifest-URL resolution (real, pure) — consumed by the host OTA screens via
-    // the @/services/asg/asgOtaVersionUrl shim.
-    getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
-    fetchVersionInfo: realOtaUpdateCheck.fetchVersionInfo,
-    checkVersionUpdateAvailable: realOtaUpdateCheck.checkVersionUpdateAvailable,
-    getLatestVersionInfo: realOtaUpdateCheck.getLatestVersionInfo,
-    findMatchingMtkPatch: realOtaUpdateCheck.findMatchingMtkPatch,
-    checkBesUpdate: realOtaUpdateCheck.checkBesUpdate,
-    checkForOtaUpdate: realOtaUpdateCheck.checkForOtaUpdate,
-    checkCurrentGlassesForUpdate: realOtaUpdateCheck.checkCurrentGlassesForUpdate,
-    detectClockSkew: realGallerySyncClock.detectClockSkew,
-    isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
-    CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -625,75 +602,11 @@ jest.mock("@mentra/island", () => {
         sync: jest.fn(() => Promise.resolve()),
         cancel: jest.fn(() => Promise.resolve()),
       },
-      stores: {
-        display: realDisplay.useDisplayStore,
-        core: realCore.useCoreStore,
-        connection: realConnection.useConnectionStore,
-        cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
-        settings: realSettings.useSettingsStore,
-      },
-    },
-    // Shared process-wide event bus (moved into island) — the REAL island
-    // instance (not a fresh one) so the instance RestComms emits on is the same
-    // one tests listen on across the boundary.
-    GlobalEventEmitter: jest.requireActual("./modules/island/src/utils/GlobalEventEmitter").default,
-    // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
-    // NetworkMonitoring, MantleManager) import these from @mentra/island. Stub them here
-    // so those screens/services load under the mock without native deps. The gallery
-    // service's own jest test imports the REAL implementations by relative path instead.
-    gallerySyncService: {
-      initialize: jest.fn(),
-      startSync: jest.fn(() => Promise.resolve()),
-      cancelSync: jest.fn(() => Promise.resolve()),
-      isSyncing: jest.fn(() => false),
-      isSyncStarting: jest.fn(() => false),
-      queryGlassesGalleryStatus: jest.fn(() => Promise.resolve()),
-    },
-    localStorageService: {
-      getDownloadedFiles: jest.fn(() => Promise.resolve([])),
-      convertToPhotoInfo: jest.fn((file) => file),
-      convertToDownloadedFile: jest.fn((file) => file),
-      saveDownloadedFile: jest.fn(() => Promise.resolve()),
-      deleteDownloadedFile: jest.fn(() => Promise.resolve()),
-      clearAllFiles: jest.fn(() => Promise.resolve()),
-      getSyncState: jest.fn(() => Promise.resolve({total_downloaded: 0, total_size: 0})),
-      updateSyncState: jest.fn(() => Promise.resolve()),
-    },
-    asgCameraApi: {
-      setServer: jest.fn(),
-      syncWithServer: jest.fn(() => Promise.resolve()),
-      downloadCapture: jest.fn(() => Promise.resolve()),
-      deleteFilesFromServer: jest.fn(() => Promise.resolve()),
-    },
-    gallerySettingsService: {
-      getSettings: jest.fn(() => Promise.resolve({})),
-      getAutoSaveToCameraRoll: jest.fn(() => Promise.resolve(false)),
-      setAutoSaveToCameraRoll: jest.fn(() => Promise.resolve()),
     },
     MediaLibraryPermissions: {
       checkPermission: jest.fn(() => Promise.resolve(true)),
       requestPermission: jest.fn(() => Promise.resolve(true)),
       saveToLibrary: jest.fn(() => Promise.resolve()),
-    },
-    emitGalleryNotice: jest.fn(),
-    onGalleryNotice: jest.fn(() => () => {}),
-    // island now owns the cloud client (keystone #5); the host wrapper delegates
-    // to this. Mocked so host/service tests don't construct a real CloudClient.
-    audioPlaybackService: {
-      play: jest.fn(() => Promise.resolve()),
-      stopForApp: jest.fn(),
-    },
-    cloudClientService: {
-      init: jest.fn(),
-      reconnect: jest.fn(),
-      startManagedPhoto: jest.fn(() => Promise.resolve({})),
-      awaitManagedPhotoReady: jest.fn(() => Promise.resolve({})),
-      startManagedStream: jest.fn(() => Promise.resolve({})),
-      getManagedStreamStatus: jest.fn(() => Promise.resolve({})),
-      stopManagedStream: jest.fn(() => Promise.resolve()),
-      isConnected: jest.fn(() => false),
-      onConnectionChange: jest.fn(() => () => {}),
-      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
@@ -701,8 +614,11 @@ jest.mock("@mentra/island", () => {
       setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
       clearTimeout: jest.fn((id) => clearTimeout(id)),
     },
-    // GlassesReadiness predicates (re-exported by @/stores/glasses). Real impls
-    // so tests that exercise readiness logic behave correctly.
+    // WebSocketStatus enum stays on the main entry (read-model type); the
+    // connection store itself is internal-only.
+    WebSocketStatus: realConnection.WebSocketStatus,
+    // GlassesReadiness predicates (pure). Real-shaped impls so tests that
+    // exercise readiness logic behave correctly.
     isGlassesConnected: (c) => c?.state === "connected",
     isGlassesReady: (c) => c?.state === "connected" && !!c?.fullyBooted,
     isGlassesLinkLayerBusy: (c) => c?.state === "scanning" || c?.state === "connecting" || c?.state === "bonding",
@@ -736,42 +652,14 @@ jest.mock("@mentra/island", () => {
       return {kind: "connect"}
     },
     decideConnectButtonAction: (input) => (input?.busy ? "cancel" : !input?.hasDefaultWearable ? "pair" : "connect"),
-    // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
-    // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
-    // screens that now import BluetoothSdk from island.
-    BluetoothSdk: require("./src/test-utils/mockBluetoothSdk").bluetoothSdkMock,
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
-    useAppStatusStore,
     useRefresh: jest.fn(() => appStatusState.refresh),
     useStopAll: jest.fn(() => appStatusState.stopAll),
     useStart: jest.fn(() => appStatusState.start),
     useStop: jest.fn(() => appStatusState.stop),
-    installAppStoreHooks: jest.fn(),
     sortAppsByLastOpenTime: jest.fn((apps) => apps),
     decideDevLaunchRoute: jest.fn(),
-    buildMiniappGlobalsScript: jest.fn(() => ""),
-    appRegistry: {
-      subscribe: jest.fn(() => () => {}),
-      getApps: jest.fn(() => []),
-      getInstalledMiniapps: jest.fn(() => Promise.resolve([])),
-      installOfflineApp: jest.fn((app) => {
-        appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
-        return {is_ok: () => true, is_error: () => false, value: app}
-      }),
-    },
-    configureIsland: jest.fn(),
-    webviewBridge: {
-      handleMessage: jest.fn(),
-    },
-    miniappRunningRegistry: {
-      isRunning: jest.fn(() => false),
-    },
-    devServerBridge: {},
-    displayProcessor: {
-      attachToRuntime: jest.fn(),
-      processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
-    },
     HardwareCompatibility: {
       checkCompatibility: jest.fn(() => ({
         isCompatible: true,
@@ -794,6 +682,126 @@ jest.mock("@mentra/island", () => {
       MICROPHONE: "microphone",
       SPEAKER: "speaker",
       WIFI: "wifi",
+    },
+    throttle: jest.fn((callback) => callback),
+    ISLAND_SETTINGS_KEYS: {},
+  }
+
+  // --- "@mentra/island/internal": raw stores + service singletons ---
+  const internal = {
+    __esModule: true,
+    // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
+    // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
+    // — mock-side plumbing for the toolkit projections above; not part of the
+    // real entry's export surface.
+    ...realGlasses,
+    // Real display/mirror store (useDisplayStore) — consumers need its real behavior.
+    ...realDisplay,
+    // Real core / connection / gallerySync stores (+ WebSocketStatus, selectors).
+    ...realCore,
+    ...realConnection,
+    ...realGallerySync,
+    // Real cloud-client runtime status store (useCloudClientStatusStore).
+    ...realCloudStatus,
+    // Real settings store (SETTINGS, useSettingsStore, useSetting, OFFLINE_APPLETS)
+    // + RestComms singleton — both moved into island.
+    ...realSettings,
+    restComms: realRestComms.default,
+    // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
+    fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
+    maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
+    // OTA manifest-URL resolution (real, pure).
+    getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
+    fetchVersionInfo: realOtaUpdateCheck.fetchVersionInfo,
+    checkVersionUpdateAvailable: realOtaUpdateCheck.checkVersionUpdateAvailable,
+    getLatestVersionInfo: realOtaUpdateCheck.getLatestVersionInfo,
+    findMatchingMtkPatch: realOtaUpdateCheck.findMatchingMtkPatch,
+    checkBesUpdate: realOtaUpdateCheck.checkBesUpdate,
+    checkForOtaUpdate: realOtaUpdateCheck.checkForOtaUpdate,
+    checkCurrentGlassesForUpdate: realOtaUpdateCheck.checkCurrentGlassesForUpdate,
+    detectClockSkew: realGallerySyncClock.detectClockSkew,
+    isSyncManifestEmpty: realGallerySyncClock.isSyncManifestEmpty,
+    CLOCK_SKEW_TOLERANCE_MS: realGallerySyncClock.CLOCK_SKEW_TOLERANCE_MS,
+    // Shared process-wide event bus (moved into island) — the REAL island
+    // instance (not a fresh one) so the instance RestComms emits on is the same
+    // one tests listen on across the boundary.
+    GlobalEventEmitter: jest.requireActual("./modules/island/src/utils/GlobalEventEmitter").default,
+    // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
+    // NetworkMonitoring, MantleManager) import these from @mentra/island/internal. Stub
+    // them here so those screens/services load under the mock without native deps. The
+    // gallery service's own jest test imports the REAL implementations by relative path.
+    gallerySyncService: {
+      initialize: jest.fn(),
+      startSync: jest.fn(() => Promise.resolve()),
+      cancelSync: jest.fn(() => Promise.resolve()),
+      isSyncing: jest.fn(() => false),
+      isSyncStarting: jest.fn(() => false),
+      queryGlassesGalleryStatus: jest.fn(() => Promise.resolve()),
+    },
+    localStorageService: {
+      getDownloadedFiles: jest.fn(() => Promise.resolve([])),
+      convertToPhotoInfo: jest.fn((file) => file),
+      convertToDownloadedFile: jest.fn((file) => file),
+      saveDownloadedFile: jest.fn(() => Promise.resolve()),
+      deleteDownloadedFile: jest.fn(() => Promise.resolve()),
+      clearAllFiles: jest.fn(() => Promise.resolve()),
+      getSyncState: jest.fn(() => Promise.resolve({total_downloaded: 0, total_size: 0})),
+      updateSyncState: jest.fn(() => Promise.resolve()),
+    },
+    asgCameraApi: {
+      setServer: jest.fn(),
+      syncWithServer: jest.fn(() => Promise.resolve()),
+      downloadCapture: jest.fn(() => Promise.resolve()),
+      deleteFilesFromServer: jest.fn(() => Promise.resolve()),
+    },
+    gallerySettingsService: {
+      getSettings: jest.fn(() => Promise.resolve({})),
+      getAutoSaveToCameraRoll: jest.fn(() => Promise.resolve(false)),
+      setAutoSaveToCameraRoll: jest.fn(() => Promise.resolve()),
+    },
+    emitGalleryNotice: jest.fn(),
+    onGalleryNotice: jest.fn(() => () => {}),
+    // island now owns the cloud client (keystone #5); the host wrapper delegates
+    // to this. Mocked so host/service tests don't construct a real CloudClient.
+    audioPlaybackService: {
+      play: jest.fn(() => Promise.resolve()),
+      stopForApp: jest.fn(),
+    },
+    cloudClientService: {
+      init: jest.fn(),
+      reconnect: jest.fn(),
+      startManagedPhoto: jest.fn(() => Promise.resolve({})),
+      awaitManagedPhotoReady: jest.fn(() => Promise.resolve({})),
+      startManagedStream: jest.fn(() => Promise.resolve({})),
+      getManagedStreamStatus: jest.fn(() => Promise.resolve({})),
+      stopManagedStream: jest.fn(() => Promise.resolve()),
+      isConnected: jest.fn(() => false),
+      onConnectionChange: jest.fn(() => () => {}),
+      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
+    },
+    // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
+    // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
+    // screens that import BluetoothSdk through island.
+    BluetoothSdk: require("./src/test-utils/mockBluetoothSdk").bluetoothSdkMock,
+    useAppStatusStore,
+    installAppStoreHooks: jest.fn(),
+    buildMiniappGlobalsScript: jest.fn(() => ""),
+    appRegistry: {
+      subscribe: jest.fn(() => () => {}),
+      getApps: jest.fn(() => []),
+      getInstalledMiniapps: jest.fn(() => Promise.resolve([])),
+      installOfflineApp: jest.fn((app) => {
+        appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
+        return {is_ok: () => true, is_error: () => false, value: app}
+      }),
+    },
+    configureIsland: jest.fn(),
+    webviewBridge: {
+      handleMessage: jest.fn(),
+    },
+    displayProcessor: {
+      attachToRuntime: jest.fn(),
+      processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
     },
     localDisplayManager: {
       attachToRuntime: jest.fn(),
@@ -837,7 +845,6 @@ jest.mock("@mentra/island", () => {
     micStateCoordinator: {
       cleanup: jest.fn(),
     },
-    throttle: jest.fn((callback) => callback),
     configureRuntime: jest.fn(),
     configureLauncher: jest.fn(),
     miniappLauncher: {
@@ -857,12 +864,27 @@ jest.mock("@mentra/island", () => {
       isModelAvailable: jest.fn(() => Promise.resolve(false)),
     },
     getRuntimeHooks: jest.fn(() => ({})),
-    ISLAND_SETTINGS_KEYS: {},
     normalizeManifestPermissions: jest.fn(),
     buildHardwareRequirements: jest.fn(() => []),
     saveLocalAppRunningState: jest.fn(),
   }
-})
+
+  // --- "@mentra/island/devtools": debug-only singletons ---
+  const devtools = {
+    __esModule: true,
+    miniappRunningRegistry: {
+      isRunning: jest.fn(() => false),
+    },
+    devServerBridge: {},
+  }
+
+  mockIslandEntriesCache = {main, internal, devtools}
+  return mockIslandEntriesCache
+}
+
+jest.mock("@mentra/island", () => mockIslandEntries().main)
+jest.mock("@mentra/island/internal", () => mockIslandEntries().internal)
+jest.mock("@mentra/island/devtools", () => mockIslandEntries().devtools)
 
 // Mock SocketComms to avoid complex dependency chains
 jest.mock("@/services/SocketComms", () => ({

@@ -8,14 +8,14 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
+import {decideDevLaunchRoute} from "@mentra/island"
 import {
   appRegistry,
-  decideDevLaunchRoute,
   registerDevApp,
   useAppStatusStore,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
-} from "@mentra/island"
+} from "@mentra/island/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"

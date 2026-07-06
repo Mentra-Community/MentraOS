@@ -7,9 +7,12 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
-    // Mirror metro: @mentra/island resolves to SOURCE, not the (stale) build/
-    // output — tests must exercise the same code the app bundles.
+    // Mirror metro: the @mentra/island entry points resolve to SOURCE, not the
+    // (stale) build/ output — tests must exercise the same code the app
+    // bundles. jest.setup.js mocks all three entries.
     "^@mentra/island$": "<rootDir>/modules/island/src/index.ts",
+    "^@mentra/island/internal$": "<rootDir>/modules/island/src/internal.ts",
+    "^@mentra/island/devtools$": "<rootDir>/modules/island/src/devtools.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",

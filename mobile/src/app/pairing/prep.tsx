@@ -15,7 +15,8 @@ import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
-import {toolkit, useAppStatusStore} from "@mentra/island"
+import {toolkit} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 

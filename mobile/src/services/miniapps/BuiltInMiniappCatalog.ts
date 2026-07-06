@@ -2,17 +2,19 @@ import {createElement} from "react"
 import {Platform} from "react-native"
 
 import {
-  appRegistry,
   decideDevLaunchRoute,
   HardwareRequirementLevel,
   HardwareType,
-  installAppStoreHooks,
-  sttModelManager as STTModelManager,
   toolkit,
   type ClientApp,
   type StartOptions,
-  useAppStatusStore,
 } from "@mentra/island"
+import {
+  appRegistry,
+  installAppStoreHooks,
+  sttModelManager as STTModelManager,
+  useAppStatusStore,
+} from "@mentra/island/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"

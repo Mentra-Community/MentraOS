@@ -3,4 +3,4 @@
  * together with the settings store, its mutually-coupled pair). Kept so existing
  * `@/services/RestComms` default imports resolve unchanged.
  */
-export {restComms as default} from "@mentra/island"
+export {restComms as default} from "@mentra/island/internal"

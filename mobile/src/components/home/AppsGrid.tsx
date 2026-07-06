@@ -29,7 +29,6 @@ import {
   getAppsOrder,
   saveAppsOrder,
   sortAppsByPackageNamePriority,
-  useAppStatusStore,
   useSetForeground,
   useStart,
   useStop,
@@ -37,6 +36,7 @@ import {
   type ClientApp,
   type OrderMap,
 } from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"

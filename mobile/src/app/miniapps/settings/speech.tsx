@@ -8,14 +8,13 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {toolkit, useStopAll} from "@mentra/island"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
-  toolkit,
   ttsModelManager as TTSModelManager,
-  useStopAll,
   type OfflineModelDownloadStatus as DownloadStatus,
-} from "@mentra/island"
+} from "@mentra/island/internal"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 

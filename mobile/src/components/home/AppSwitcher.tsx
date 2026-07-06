@@ -21,10 +21,10 @@ import {
   saveLastOpenTime,
   sortAppsByLastOpenTime,
   useActiveApps,
-  useAppStatusStore,
   useSetForeground,
   type ClientApp,
 } from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 import AppIcon from "@/components/home/AppIcon"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
