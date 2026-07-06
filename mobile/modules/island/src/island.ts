@@ -10,6 +10,7 @@
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
+import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
 import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
@@ -17,7 +18,10 @@ import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloud
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
 import {startCaptionsTesterReportService, stopCaptionsTesterReportService} from "./services/CaptionsTesterReportService"
-import {startMentraJSCrashloopReportService, stopMentraJSCrashloopReportService} from "./services/MentraJSCrashloopReportService"
+import {
+  startMentraJSCrashloopReportService,
+  stopMentraJSCrashloopReportService,
+} from "./services/MentraJSCrashloopReportService"
 import {ensureMiniappEngine, stopMiniappEngine} from "./services/MiniappEngine"
 import localMiniappRuntime from "./services/LocalMiniappRuntime"
 import displayProcessor from "./services/DisplayProcessor"
@@ -66,6 +70,24 @@ export const toolkit = {
     // store, miniapp_selected -> launcher) so a bare OEM gets device data, not just the
     // Mentra app's MantleManager.
     startDeviceEventRouter()
+    // Hydration contract: the native DeviceStore is in-memory and starts empty
+    // every launch; seed it from the persisted settings BEFORE start() resolves
+    // so every post-start getDefaultDevice() read is a trustworthy two-state
+    // answer (no false "absent" for genuinely-paired users at cold start).
+    // Ordered before startGlassesSettingsSync so the settings load can't
+    // double-push through the change subscription. A failed hydration must not
+    // brick the runtime: start() continues, and the guards that consume
+    // hasDefaultDevice() see the rejection and fail open.
+    try {
+      await hydrateDeviceStore()
+      // Boot repair: a persisted default_wearable without a native default
+      // device (identity abandoned mid-pairing, or resurrected from the server
+      // before identity stopped syncing) demotes to pending_wearable so hosts
+      // render finish-pairing instead of a connect that would throw.
+      await demoteOrphanedDefaultWearable()
+    } catch (error) {
+      console.warn("toolkit.start: device-store hydration failed:", error instanceof Error ? error.message : error)
+    }
     // Project the glasses' OTA events into the store for the toolkit.ota read surface.
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
@@ -74,7 +96,10 @@ export const toolkit = {
     try {
       await cloudClientService.syncCoreTokenToBluetooth()
     } catch (error) {
-      console.warn("toolkit.start: initial Cloud V2 core token sync failed:", error instanceof Error ? error.message : error)
+      console.warn(
+        "toolkit.start: initial Cloud V2 core token sync failed:",
+        error instanceof Error ? error.message : error,
+      )
     }
     // Push device-setting changes to the glasses for ANY host, so
     // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).

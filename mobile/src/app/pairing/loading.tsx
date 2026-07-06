@@ -41,7 +41,11 @@ export default function GlassesPairingLoadingScreen() {
 
   const handlePairFailure = useCallback(
     (error: string) => {
-      toolkit.glasses.forget()
+      // Clears the failed attempt; when a real pairing predates this attempt
+      // (re-pair), it is preserved instead of forgotten.
+      void toolkit.pairing.abandonAttempt().catch((cleanupError) => {
+        console.warn("Pairing failure cleanup failed:", cleanupError)
+      })
       if (error === "errors:pairNeedDisconnect") {
         replace("/pairing/unpair-even", {deviceModel: deviceModel})
         return

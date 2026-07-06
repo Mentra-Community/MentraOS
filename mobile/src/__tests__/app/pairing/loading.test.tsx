@@ -119,7 +119,9 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(toolkit.glasses.forget).toHaveBeenCalled()
+      // Attempt cleanup preserves a pre-existing pairing (re-pair) instead of
+      // an unconditional forget.
+      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalled()
       expect(replace).toHaveBeenCalledWith("/pairing/failure", {
         error: "pairing:failed",
         deviceModel: "Mentra Live",

@@ -167,6 +167,7 @@ export type {
 } from "./facades/reports"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
+export type {IdentitySnapshot} from "./services/PairingIdentity"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
   IslandConfigureOptions,

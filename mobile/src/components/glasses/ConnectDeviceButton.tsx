@@ -13,7 +13,9 @@ import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
+  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const pairedModel = identity.kind === "paired" ? identity.model : ""
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
@@ -30,7 +32,7 @@ export const ConnectDeviceButton = () => {
   }
 
   const connectGlasses = async () => {
-    if (!defaultWearable) {
+    if (!pairedModel) {
       push("/pairing/select-glasses-model")
       return
     }
@@ -43,6 +45,16 @@ export const ConnectDeviceButton = () => {
         return
       }
 
+      // A `paired` identity snapshot does not imply a native device to connect
+      // to (the settings echo can outlive the native pairing). Without a
+      // device, connectDefault() throws — route back into pairing for the
+      // already-selected model instead of surfacing an error alert. Fail open
+      // on a read error: connectDefault()'s catch is the pre-guard behavior.
+      if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
+        push("/pairing/scan", {deviceModel: pairedModel})
+        return
+      }
+
       await toolkit.glasses.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
@@ -52,7 +64,7 @@ export const ConnectDeviceButton = () => {
 
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
-    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy})
+    const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy})
     if (action === "cancel") {
       await toolkit.glasses.disconnect()
     } else {
@@ -61,16 +73,18 @@ export const ConnectDeviceButton = () => {
   }
 
   // if we have simulated glasses, show nothing:
-  if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
+  if (pairedModel.includes(DeviceTypes.SIMULATED)) {
     return null
   }
 
-  // Debug the conditional logic
-  const defaultWearableNull = defaultWearable == null
-  const defaultWearableStringNull = defaultWearable == "null"
-  const defaultWearableEmpty = defaultWearable === ""
-
-  if (defaultWearableNull || defaultWearableStringNull || defaultWearableEmpty) {
+  if (identity.kind !== "paired") {
+    // A pending selection (chosen model, pairing never completed) resumes the
+    // scan for that model instead of restarting from model selection.
+    if (identity.kind === "pending") {
+      return (
+        <Button onPress={() => push("/pairing/scan", {deviceModel: identity.model})} tx="home:finishPairingGlasses" />
+      )
+    }
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
 

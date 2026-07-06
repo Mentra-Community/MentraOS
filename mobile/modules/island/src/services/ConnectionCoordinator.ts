@@ -20,6 +20,8 @@ export interface ReconnectDecisionInput {
   connected: boolean
   /** True while the native link layer is mid scan / connect / bond. */
   nativeLinkBusy: boolean
+  /** True when the SDK holds an actual default device (connectDefault target). */
+  hasDefaultDevice: boolean
   /** True when a scan is already in progress. */
   searching: boolean
 }
@@ -36,6 +38,11 @@ export function decideReconnect(input: ReconnectDecisionInput): ReconnectDecisio
   if (!input.reconnectOnForeground) return {kind: "skip", result: true}
   // No real wearable paired (or the simulated device): nothing to reconnect to.
   if (!input.defaultWearable || input.isSimulated) return {kind: "skip", result: false}
+  // Model chosen but never actually paired (or the native default was cleared):
+  // connectDefault() would throw — skip quietly; pairing is a user-driven flow.
+  // (Safe to trust at cold start now: hasDefaultDevice reads are gated on the
+  // device-store hydration completing, and callers fail open on rejection.)
+  if (!input.hasDefaultDevice) return {kind: "skip", result: false}
   // Already connected, or a scan/connect/bond is already in flight: starting a
   // second connectDefault() on top of the busy link layer would collide with it
   // (same busy rule as decideConnectButtonAction).

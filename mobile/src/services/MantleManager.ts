@@ -217,11 +217,11 @@ class MantleManager {
 
     offlineSpeechModelService.startBackgroundDownloads()
 
-    // Give the native Bluetooth SDK some time to boot before auto-connecting.
+    // Spacing only, not a correctness barrier: toolkit.start() already awaited
+    // the device-store hydration (the persisted-settings seed to native), so the
+    // reconnect decision's hasDefaultDevice read is trustworthy whenever this
+    // fires. The delay just keeps auto-connect off the critical boot path.
     BgTimer.setTimeout(() => {
-      // (Device settings are pushed to native by island's GlassesSettingsSync — on
-      // every change AND on the connected transition — so there's no boot push here;
-      // the auto-reconnect below triggers that on-connect push. Single source of truth.)
       attemptReconnectToDefaultWearable()
     }, 1000)
     // (Initial notification-config push now happens in island's

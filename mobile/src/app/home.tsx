@@ -24,7 +24,9 @@ import {BlurTargetView, BlurView} from "expo-blur"
 
 export default function Homepage() {
   const refreshApps = useRefresh()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
+  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const pairedModel = identity.kind === "paired" ? identity.model : ""
   const glassesConnected =
     useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
   const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
@@ -56,10 +58,12 @@ export default function Homepage() {
     }
 
     attemptInitialConnect()
-  }, [glassesConnected, isSearching, defaultWearable])
+  }, [glassesConnected, isSearching, pairedModel])
 
   const renderContent = () => {
-    if (!defaultWearable) {
+    // A pending selection (model chosen, pairing never completed) renders the
+    // glasses card in its finish-pairing state rather than the first-run card.
+    if (identity.kind === "none") {
       return (
         <>
           <Group>

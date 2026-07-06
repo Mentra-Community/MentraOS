@@ -30,7 +30,10 @@ export default function PairingFailureScreen() {
   }, [])
 
   const handleRetry = () => {
-    toolkit.glasses.forget()
+    // Clears the failed attempt; a pre-existing pairing (re-pair) is preserved.
+    void toolkit.pairing.abandonAttempt().catch((error) => {
+      console.warn("Pairing retry cleanup failed:", error)
+    })
     clearHistoryAndGoHome()
     push("/pairing/select-glasses-model")
   }

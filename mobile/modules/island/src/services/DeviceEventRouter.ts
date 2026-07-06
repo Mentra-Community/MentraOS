@@ -27,6 +27,7 @@ import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
+import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
 
@@ -117,7 +118,16 @@ export function startDeviceEventRouter(): void {
   // The inbound complement to GlassesSettingsSync (which only pushes store→device).
   subs.push(
     BluetoothSdk.addListener("save_setting", async (event) => {
-      await useSettingsStore.getState().setSetting(event.key, event.value)
+      const settings = useSettingsStore.getState()
+      // Damp the relay: native re-echoes some settings unconditionally (e.g.
+      // the identity block at every handleDeviceReady) — a same-value echo
+      // must not become a store write (persistence churn + change-push noise).
+      if (settings.getSetting(event.key) !== event.value) {
+        await settings.setSetting(event.key, event.value)
+      }
+      // Two-phase identity: a promoted default retires the pending selection
+      // marker. The rule lives with PairingIdentity (a no-op for other keys).
+      await retirePendingSelectionOnPromotion(event.key, event.value)
     }),
   )
 

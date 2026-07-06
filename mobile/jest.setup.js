@@ -261,6 +261,10 @@ jest.mock("@mentra/island", () => {
   const realOtaService = jest.requireActual("./modules/island/src/services/OtaService")
   const realAudioCloudUplink = jest.requireActual("./modules/island/src/services/AudioCloudUplink")
   const realDeviceEventRouter = jest.requireActual("./modules/island/src/services/DeviceEventRouter")
+  // Pairing-identity lifecycle (projection + the JS-owned identity writes) — real
+  // implementation (pure: settings store + types only) so host screens/tests
+  // exercise the actual three-state read-model, not a parallel stub.
+  const realPairingIdentity = jest.requireActual("./modules/island/src/services/PairingIdentity")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/island, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
@@ -376,6 +380,7 @@ jest.mock("@mentra/island", () => {
       }),
       glasses: {
         connectDefault: jest.fn(() => Promise.resolve()),
+        hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         forget: jest.fn(() => Promise.resolve()),
         connect: jest.fn(() => Promise.resolve()),
@@ -502,12 +507,19 @@ jest.mock("@mentra/island", () => {
             cb(readiness)
           })
         }),
+        // Identity lifecycle: real projection/writes over the real settings store,
+        // so tests observe the same none/pending/paired snapshots the app does.
+        identity: jest.fn(() => realPairingIdentity.projectPairingIdentity()),
+        onIdentity: jest.fn((cb) => realPairingIdentity.subscribePairingIdentity(cb)),
+        markPendingSelection: jest.fn((model) => realPairingIdentity.markPendingSelection(model)),
         scan: jest.fn(),
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
         onFound: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
+        setBluetoothClassicTarget: jest.fn(() => Promise.resolve()),
+        abandonAttempt: jest.fn(() => Promise.resolve()),
         onPairFailure: subscribeVia("pair_failure"),
         onGlassesNotReady: subscribeVia("glasses_not_ready"),
         waitForReady: jest.fn(() => Promise.resolve(false)),
@@ -918,4 +930,17 @@ global.__reanimatedWorkletInit = jest.fn()
 // after every test (a no-op when not attached) so each test starts clean.
 afterEach(() => {
   jest.requireActual("./modules/island/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
+  // The pairing mocks above delegate identity reads/writes to the REAL
+  // PairingIdentity over the shared settings store; scrub the identity keys so
+  // a test that marked a pending selection can't leak a stale identity into
+  // the next test's identity()/onIdentity() reads.
+  const {useSettingsStore: realSettingsStore, PAIRING_IDENTITY_KEYS: realIdentityKeys} = jest.requireActual(
+    "./modules/island/src/stores/settings",
+  )
+  const currentSettings = realSettingsStore.getState().settings
+  if (realIdentityKeys.some((key) => currentSettings[key])) {
+    const cleared = {...currentSettings}
+    for (const key of realIdentityKeys) cleared[key] = ""
+    realSettingsStore.setState({settings: cleared})
+  }
 })

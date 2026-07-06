@@ -342,6 +342,8 @@ const en = {
   home: {
     title: "MentraOS",
     pairGlasses: "Pair glasses",
+    finishPairingGlasses: "Finish pairing",
+    pairDifferentGlasses: "Pair different glasses",
     pairController: "Pair ring",
     setupWithoutGlasses: "Setup without glasses",
     connectGlasses: "Connect glasses",

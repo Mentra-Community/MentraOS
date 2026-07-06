@@ -14,6 +14,8 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ButtonPressEvent, TouchEvent} from "@mentra/bluetooth-sdk/internal"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
+import {hasDefaultDevice} from "../services/DeviceStoreHydration"
+import {projectPairingIdentity} from "../services/PairingIdentity"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
@@ -113,9 +115,23 @@ export const glasses = {
     }
     return true
   },
-  /** True when no glasses has ever been paired (no saved default wearable) — e.g. to
-   * route a first-run host into the pairing/onboarding flow. */
-  isFirstPairing: (): boolean => !useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key),
+  /** True when no glasses has ever been paired NOR selected (the pairing-identity
+   * lifecycle is in its `none` state) — e.g. to route a first-run host into the
+   * pairing/onboarding flow. A pending selection is not "first" — the host should
+   * offer finish-pairing (see `toolkit.pairing.identity()`). */
+  isFirstPairing: (): boolean => projectPairingIdentity().kind === "none",
+  /**
+   * True when the SDK has an actual default DEVICE to reconnect to. Distinct from
+   * `default_wearable` (a model string that a pending or orphaned selection can
+   * hold without any paired device): connectDefault() throws without a device, so
+   * hosts should route to the pairing flow when this is false.
+   *
+   * Hydration-aware: awaits the device-store seed internally, so a cold-start
+   * read can't see a false "absent" for genuinely-paired users. Rejects if
+   * hydration failed — callers guarding destructive or routing decisions must
+   * fail open (treat as "has a device").
+   */
+  hasDefaultDevice: (): Promise<boolean> => hasDefaultDevice(),
 
   // --- read-model (projected from the island-owned glasses store) ---
   status: (): GlassesStatusSnapshot => projectStatus(),

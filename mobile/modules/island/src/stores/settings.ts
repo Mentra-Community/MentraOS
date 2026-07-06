@@ -18,14 +18,28 @@ export interface Setting {
   override?: () => any
   // onWrite?: () => void
   persist: boolean
+  // Pairing-identity keys are NATIVE-authoritative: the native layer writes
+  // them on pairing success (handleDeviceReady) / forget and echoes them down
+  // via save_setting; JS→native they travel only in the explicit SEEDS
+  // (hydration, pre-connect, post-demotion, abandon re-seed) — never the
+  // change-push and never the on-connect replay, whose mid-relay snapshot can
+  // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
+  // this flag so the sync exclusions can't drift from the descriptors.
+  nativeAuthoritative?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
-  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
+  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  appearance_menu_enabled: {key: "appearance_menu_enabled", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  appearance_menu_enabled: {
+    key: "appearance_menu_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   app_boot_extra_info: {
     key: "app_boot_extra_info",
     defaultValue: () => false,
@@ -33,7 +47,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  miniapp_dev_mode: {
+    key: "miniapp_dev_mode",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -208,34 +228,56 @@ export const SETTINGS: Record<string, Setting> = {
   // from or saved to the legacy Cloud V1 settings store.
   core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
+  // Pairing identity is per-phone, not per-account: two phones on one account
+  // can be paired to different glasses, so none of these keys may sync to the
+  // server (saveOnServer: false — a stale server copy resurrecting a local
+  // pairing identity is exactly the desync this group's flags prevent).
+  //
+  // Two-phase identity: pending_wearable is the model the user last STARTED
+  // pairing (written at selection, rendered as a finish-pairing card);
+  // default_wearable + device_name + device_address are only promoted by the
+  // native layer when pairing actually succeeds (handleDeviceReady).
+  // pending_wearable persists so an abandoned selection still shows its
+  // finish-pairing card after an app restart.
   pending_wearable: {
     key: "pending_wearable",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
-    persist: false,
+    persist: true,
+    nativeAuthoritative: true,
   },
   default_wearable: {
     key: "default_wearable",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
+  device_name: {
+    key: "device_name",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   pending_controller: {
     key: "pending_controller",
@@ -243,20 +285,23 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_device_name: {
     key: "controller_device_name",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_address: {
     key: "controller_address",
     defaultValue: () => "",
     writable: true,
-    saveOnServer: true,
+    saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   // ui state:
   home_background: {
@@ -698,6 +743,23 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.nex_lc3_audio_playback.key,
 ]
 
+// Pairing identity is NATIVE-authoritative: the native layer writes it on
+// pairing success (handleDeviceReady) / forget and echoes it down via
+// save_setting; JS persists those echoes. JS→native, identity travels ONLY in
+// the explicit full seeds (device-store hydration, pre-connect push,
+// post-demotion re-push) — never in the change-push subscription. Relaying an
+// echoed identity change back up would make the sync bidirectional with loop
+// gain 1: two identity values in flight (e.g. a boot demotion crossing a
+// native promotion) then chase each other through push→apply→echo→push
+// forever, flapping the UI.
+//
+// Derived from the `nativeAuthoritative` descriptor flag (not maintained as a
+// parallel list) so the change-push exclusion in GlassesSettingsSync can't
+// drift from the setting declarations.
+export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
+  .filter((setting) => setting.nativeAuthoritative)
+  .map((setting) => setting.key)
+
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
 export interface SettingsState {
@@ -719,10 +781,19 @@ export interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce((acc, key) => {
-    acc[key] = SETTINGS[key].defaultValue()
-    return acc
-  }, {} as Record<string, any>)
+  Object.keys(SETTINGS).reduce(
+    (acc, key) => {
+      acc[key] = SETTINGS[key].defaultValue()
+      return acc
+    },
+    {} as Record<string, any>,
+  )
+
+// Single-flight for loadAllSettings: the host fires it at module load and
+// toolkit.start()'s device-store hydration awaits it — without the memo the
+// second caller runs a duplicate full disk load while the first is still in
+// flight. Cleared on failure so a later call can retry.
+let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
 
 export const useSettingsStore = create<SettingsState>()(
   subscribeWithSelector((set, get) => ({
@@ -829,7 +900,10 @@ export const useSettingsStore = create<SettingsState>()(
     // loads any preferences that have been changed from the default and saved to DISK!
     loadAllSettings: (): AsyncResult<void, Error> => {
       console.log("SETTINGS: loadAllSettings()")
-      return Res.try_async(async () => {
+      if (loadAllSettingsInFlight) {
+        return loadAllSettingsInFlight
+      }
+      const inFlight = Res.try_async(async () => {
         const state = get()
         let loadedSettings: Record<string, any> = {}
 
@@ -914,6 +988,13 @@ export const useSettingsStore = create<SettingsState>()(
           storage.save(MIGRATION_KEY, true)
         }
       })
+      loadAllSettingsInFlight = inFlight
+      void Promise.resolve(inFlight).then((result) => {
+        if (result.is_error()) {
+          loadAllSettingsInFlight = null
+        }
+      })
+      return inFlight
     },
     getRestUrl: () => {
       const serverUrl = get().getSetting(SETTINGS.backend_url.key)
