@@ -861,6 +861,8 @@ const en = {
     invalidEmail: "Invalid email address.",
     pairNeedDisconnect:
       "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
+    pairingCouldNotStart:
+      "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
   common: {
     ok: "OK",

@@ -97,6 +97,10 @@ export default function SelectGlassesBluetoothScreen() {
     setTimeout(() => {
       toolkit.pairing.pair(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
+        // A kickoff rejection (e.g. Bluetooth powered off) emits no
+        // pair_failure event, so the loading screen navigated to below would
+        // spin forever — replace it with the failure screen.
+        replace("/pairing/failure", {error: "errors:pairingCouldNotStart", deviceModel: device.model})
       })
     }, 2000)
     replace("/pairing/loading", {deviceModel: device.model, deviceName: device.name})

@@ -135,7 +135,7 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-import {render, fireEvent, waitFor} from "@testing-library/react-native"
+import {act, render, fireEvent, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
@@ -185,6 +185,7 @@ describe("pairing scan screen", () => {
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     setPlatformOS(originalPlatformOS)
   })
 
@@ -260,6 +261,39 @@ describe("pairing scan screen", () => {
       expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith(true)
     })
     expect(goBack).toHaveBeenCalled()
+  })
+
+  it("routes a pair kickoff rejection to the failure screen instead of leaving loading stuck", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    ;(toolkit.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    useCoreStore.setState({
+      searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
+    })
+
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    fireEvent.press(getByText("001"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/pairing/loading", {
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+      })
+    })
+
+    // The pair kickoff fires 2s after navigating to loading; its rejection
+    // must surface as a failure route, not just a console.error.
+    act(() => {
+      jest.advanceTimersByTime(2_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+        error: "errors:pairingCouldNotStart",
+        deviceModel: "Mentra Live",
+      })
+    })
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {

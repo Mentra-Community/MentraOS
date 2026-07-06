@@ -507,6 +507,8 @@ jest.mock("@mentra/island", () => {
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
         onFound: jest.fn(() => () => {}),
+        otherBtConnected: jest.fn(() => false),
+        onOtherBtConnected: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
         abandonAttempt: jest.fn(() => Promise.resolve()),
