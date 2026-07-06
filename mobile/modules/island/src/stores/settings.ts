@@ -18,6 +18,12 @@ export interface Setting {
   override?: () => any
   // onWrite?: () => void
   persist: boolean
+  // Pairing-identity keys are NATIVE-authoritative: the native layer writes
+  // them on pairing success (handleDeviceReady) / forget and echoes them down
+  // via save_setting; JS→native they travel only in the explicit full seeds,
+  // never the change-push. PAIRING_IDENTITY_KEYS is derived from this flag so
+  // the sync exclusion can't drift from the descriptors.
+  nativeAuthoritative?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -237,6 +243,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   default_wearable: {
     key: "default_wearable",
@@ -244,14 +251,23 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
+  device_name: {
+    key: "device_name",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   default_controller: {
     key: "default_controller",
@@ -259,6 +275,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   pending_controller: {
     key: "pending_controller",
@@ -266,6 +283,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_device_name: {
     key: "controller_device_name",
@@ -273,6 +291,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_address: {
     key: "controller_address",
@@ -280,6 +299,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   // ui state:
   home_background: {
@@ -730,16 +750,13 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
 // gain 1: two identity values in flight (e.g. a boot demotion crossing a
 // native promotion) then chase each other through push→apply→echo→push
 // forever, flapping the UI.
-export const PAIRING_IDENTITY_KEYS: string[] = [
-  SETTINGS.pending_wearable.key,
-  SETTINGS.default_wearable.key,
-  SETTINGS.device_name.key,
-  SETTINGS.device_address.key,
-  SETTINGS.default_controller.key,
-  SETTINGS.pending_controller.key,
-  SETTINGS.controller_device_name.key,
-  SETTINGS.controller_address.key,
-]
+//
+// Derived from the `nativeAuthoritative` descriptor flag (not maintained as a
+// parallel list) so the change-push exclusion in GlassesSettingsSync can't
+// drift from the setting declarations.
+export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
+  .filter((setting) => setting.nativeAuthoritative)
+  .map((setting) => setting.key)
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 

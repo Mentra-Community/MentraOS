@@ -25,8 +25,9 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore, SETTINGS} from "../stores/settings"
+import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
+import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
 
@@ -124,14 +125,9 @@ export function startDeviceEventRouter(): void {
       if (settings.getSetting(event.key) !== event.value) {
         await settings.setSetting(event.key, event.value)
       }
-      // Two-phase identity: the native layer promotes the default wearable on
-      // pairing success (handleDeviceReady) and echoes it here — a promoted
-      // default retires the pending selection marker.
-      if (event.key === SETTINGS.default_wearable.key && event.value) {
-        if (settings.getSetting(SETTINGS.pending_wearable.key)) {
-          await settings.setSetting(SETTINGS.pending_wearable.key, "")
-        }
-      }
+      // Two-phase identity: a promoted default retires the pending selection
+      // marker. The rule lives with PairingIdentity (a no-op for other keys).
+      await retirePendingSelectionOnPromotion(event.key, event.value)
     }),
   )
 

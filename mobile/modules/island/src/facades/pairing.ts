@@ -15,6 +15,12 @@ import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {
+  markPendingSelection,
+  projectPairingIdentity,
+  subscribePairingIdentity,
+  type IdentitySnapshot,
+} from "../services/PairingIdentity"
+import {
   isGlassesConnected,
   isGlassesLinkLayerBusy,
   isGlassesReady,
@@ -27,6 +33,8 @@ import {
 } from "../services/AutomaticReportResult"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {submitAutomaticReport} from "./reports"
+
+export type {IdentitySnapshot} from "../services/PairingIdentity"
 
 export interface PairingReadyWaitOptions {
   deviceModel?: string
@@ -185,6 +193,17 @@ export const pairing = {
       cb(snap)
     })
   },
+
+  // --- pairing-identity lifecycle (the PairingIdentity read-model + the JS-owned
+  // identity writes; promotion to `paired` only ever happens natively) ---
+  /** The identity lifecycle snapshot: none | pending (chosen, never paired) | paired. */
+  identity: (): IdentitySnapshot => projectPairingIdentity(),
+  /** Subscribe to identity changes; fires only when the projected snapshot changes.
+   * Returns an unsubscribe. */
+  onIdentity: (cb: (identity: IdentitySnapshot) => void): (() => void) => subscribePairingIdentity(cb),
+  /** Mark the chosen model as the pending selection (the scan-entry write); the
+   * host renders it as a finish-pairing affordance until pairing succeeds. */
+  markPendingSelection: (model: string) => markPendingSelection(model),
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),

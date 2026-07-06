@@ -60,8 +60,9 @@ export const DeviceStatus = ({onPress, image, children, className = "h-28"}: Dev
 export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [pendingWearable] = useSetting(SETTINGS.pending_wearable.key)
+  // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
+  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const pairedModel = identity.kind === "paired" ? identity.model : ""
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
@@ -103,7 +104,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, pairingReadiness.nativeLinkBusy)
 
-  if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
+  if (pairedModel.includes(DeviceTypes.SIMULATED)) {
     return (
       <GlassView className="bg-primary-foreground p-5" style={style}>
         <View className="flex-row justify-between items-center mb-4">
@@ -126,7 +127,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const connectGlasses = async () => {
-    if (!defaultWearable) {
+    if (!pairedModel) {
       push("/pairing/select-glasses-model", {transition: "simple_push"})
       return
     }
@@ -137,13 +138,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
-      // A chosen model (default_wearable) does not imply a paired device (an
-      // orphaned identity the boot demotion hasn't repaired yet). Without a
+      // A `paired` identity snapshot does not imply a native device to connect
+      // to (the settings echo can outlive the native pairing). Without a
       // native default device, connectDefault() throws — route back into
       // pairing for the already-selected model instead of erroring. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
-        push("/pairing/scan", {deviceModel: defaultWearable})
+        push("/pairing/scan", {deviceModel: pairedModel})
         return
       }
       await toolkit.glasses.connectDefault()
@@ -154,7 +155,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const handleConnectOrDisconnect = async () => {
-    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy: searching || nativeLinkBusy})
+    const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy: searching || nativeLinkBusy})
     if (action === "cancel") {
       await toolkit.glasses.disconnect()
       setIsCheckingConnectivity(false)
@@ -168,15 +169,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
   // that model — or start over with a different one — instead of a Connect
   // button that has no device to connect to.
-  if (!defaultWearable && pendingWearable) {
+  if (identity.kind === "pending") {
     return (
       <View style={style}>
         <DeviceStatus
-          onPress={() => push("/pairing/scan", {deviceModel: pendingWearable})}
-          image={getGlassesImage(pendingWearable)}>
+          onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
+          image={getGlassesImage(identity.model)}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-            <Text className="font-semibold text-secondary-foreground text-end self-end" text={pendingWearable} />
+            <Text className="font-semibold text-secondary-foreground text-end self-end" text={identity.model} />
           </View>
           <Button
             flex
@@ -184,7 +185,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
             className="max-h-10"
             tx="home:finishPairingGlasses"
             preset="primary"
-            onPress={() => push("/pairing/scan", {deviceModel: pendingWearable})}
+            onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
           />
         </DeviceStatus>
         <Button
@@ -199,9 +200,9 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const getCurrentGlassesImage = () => {
-    let image = getGlassesImage(defaultWearable)
+    let image = getGlassesImage(pairedModel)
 
-    if (defaultWearable === DeviceTypes.G1) {
+    if (pairedModel === DeviceTypes.G1) {
       let state = "folded"
       if (!caseRemoved) {
         state = caseOpen ? "case_open" : "case_close"
@@ -210,7 +211,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     }
 
     if (!caseRemoved) {
-      image = caseOpen ? getGlassesOpenImage(defaultWearable) : getGlassesClosedImage(defaultWearable)
+      image = caseOpen ? getGlassesOpenImage(pairedModel) : getGlassesClosedImage(pairedModel)
     }
 
     return image
@@ -225,7 +226,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     _connectingText = translate("glasses:glassesAreReconnecting")
   }
 
-  const features = getModelCapabilities(defaultWearable)
+  const features = getModelCapabilities(pairedModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
@@ -233,7 +234,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-          <Text className="font-semibold text-secondary-foreground text-end self-end" text={defaultWearable} />
+          <Text className="font-semibold text-secondary-foreground text-end self-end" text={pairedModel} />
         </View>
         {!isSearching && (
           <Button
@@ -264,7 +265,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   return (
     <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
-      <Text className="font-semibold text-secondary-foreground text-base" text={defaultWearable} />
+      <Text className="font-semibold text-secondary-foreground text-base" text={pairedModel} />
       <View className="flex-row items-center gap-3">
         {batteryLevel !== -1 && (
           <View className="flex-row items-center gap-1">

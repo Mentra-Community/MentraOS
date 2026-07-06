@@ -18,7 +18,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import GlassView from "@/components/ui/GlassView"
 
 export default function SelectGlassesBluetoothScreen() {
@@ -30,7 +29,6 @@ export default function SelectGlassesBluetoothScreen() {
   const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
     toolkit.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
-  const [, setPendingWearable] = useSetting(SETTINGS.pending_wearable.key)
   const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
     toolkit.pairing.onFound(onChange),
   )
@@ -38,10 +36,9 @@ export default function SelectGlassesBluetoothScreen() {
 
   useEffect(() => {
     // Two-phase identity: reaching the scan screen marks the chosen model as the
-    // PENDING wearable (selection). Promotion to default_wearable only happens
-    // natively when pairing succeeds; until then the home card renders a
-    // finish-pairing affordance from this marker.
-    setPendingWearable(deviceModel)
+    // PENDING selection. Promotion to `paired` only happens natively when pairing
+    // succeeds; until then the home card renders a finish-pairing affordance.
+    toolkit.pairing.markPendingSelection(deviceModel)
   }, [])
 
   // useFocusEffect(

@@ -261,6 +261,10 @@ jest.mock("@mentra/island", () => {
   const realOtaService = jest.requireActual("./modules/island/src/services/OtaService")
   const realAudioCloudUplink = jest.requireActual("./modules/island/src/services/AudioCloudUplink")
   const realDeviceEventRouter = jest.requireActual("./modules/island/src/services/DeviceEventRouter")
+  // Pairing-identity lifecycle (projection + the JS-owned identity writes) — real
+  // implementation (pure: settings store + types only) so host screens/tests
+  // exercise the actual three-state read-model, not a parallel stub.
+  const realPairingIdentity = jest.requireActual("./modules/island/src/services/PairingIdentity")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
   // from @mentra/island, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
@@ -503,6 +507,11 @@ jest.mock("@mentra/island", () => {
             cb(readiness)
           })
         }),
+        // Identity lifecycle: real projection/writes over the real settings store,
+        // so tests observe the same none/pending/paired snapshots the app does.
+        identity: jest.fn(() => realPairingIdentity.projectPairingIdentity()),
+        onIdentity: jest.fn((cb) => realPairingIdentity.subscribePairingIdentity(cb)),
+        markPendingSelection: jest.fn((model) => realPairingIdentity.markPendingSelection(model)),
         scan: jest.fn(),
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),

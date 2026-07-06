@@ -15,6 +15,7 @@ import type {ButtonPressEvent, TouchEvent} from "@mentra/bluetooth-sdk/internal"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
+import {projectPairingIdentity} from "../services/PairingIdentity"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
@@ -114,12 +115,11 @@ export const glasses = {
     }
     return true
   },
-  /** True when no glasses has ever been paired NOR selected (no default wearable and
-   * no pending selection) — e.g. to route a first-run host into the pairing/onboarding
-   * flow. A pending selection is not "first" — the host should offer finish-pairing. */
-  isFirstPairing: (): boolean =>
-    !useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) &&
-    !useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key),
+  /** True when no glasses has ever been paired NOR selected (the pairing-identity
+   * lifecycle is in its `none` state) — e.g. to route a first-run host into the
+   * pairing/onboarding flow. A pending selection is not "first" — the host should
+   * offer finish-pairing (see `toolkit.pairing.identity()`). */
+  isFirstPairing: (): boolean => projectPairingIdentity().kind === "none",
   /**
    * True when the SDK has an actual default DEVICE to reconnect to. Distinct from
    * `default_wearable` (a model string that a pending or orphaned selection can
