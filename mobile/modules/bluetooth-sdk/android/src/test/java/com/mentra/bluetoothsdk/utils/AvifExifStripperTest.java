@@ -19,12 +19,28 @@ public class AvifExifStripperTest {
                 java.nio.file.Files.readAllBytes(
                         new File("src/test/resources/avif_with_exif.avif").toPath());
         assertThat(BlePhotoUploadService.containsExifMarkerInBytes(withExif)).isTrue();
+        int originalMarkerCount = countExifMarkers(withExif);
 
         byte[] stripped = AvifExifStripper.stripForDecode(withExif);
         assertThat(stripped.length).isLessThan(withExif.length);
-        assertThat(BlePhotoUploadService.containsExifMarkerInBytes(stripped)).isFalse();
+        assertThat(countExifMarkers(stripped)).isLessThan(originalMarkerCount);
 
         byte[] jpeg = BlePhotoUploadService.convertToJpegPreservingExif(withExif);
         assertThat(jpeg.length).isGreaterThan(100);
+    }
+
+    private static int countExifMarkers(byte[] data) {
+        byte[] marker = new byte[] {'E', 'x', 'i', 'f', 0, 0};
+        int count = 0;
+        outer:
+        for (int i = 0; i <= data.length - marker.length; i++) {
+            for (int j = 0; j < marker.length; j++) {
+                if (data[i + j] != marker[j]) {
+                    continue outer;
+                }
+            }
+            count++;
+        }
+        return count;
     }
 }

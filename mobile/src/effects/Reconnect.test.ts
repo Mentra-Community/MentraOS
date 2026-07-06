@@ -30,7 +30,7 @@ describe("attemptReconnectToDefaultWearable", () => {
 
     expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        voice_activity_detection_enabled: true,
+        sensing_enabled: true,
       }),
     )
     expect(BluetoothSdk.connectDefault).toHaveBeenCalled()

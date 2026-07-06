@@ -2,6 +2,8 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
 
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.utils.BleJsonCompact;
 import com.mentra.asg_client.logging.BleTraceLogger;
 
 import org.json.JSONException;
@@ -30,6 +32,82 @@ public class ChunkedMessageProtocolStrategy
 
     public ChunkedMessageProtocolStrategy(ChunkReassembler chunkReassembler) {
         this.chunkReassembler = chunkReassembler;
+    }
+
+    /** Returns true when the raw K900 frame is a v2 binary fragment (type 0x40). */
+    public static boolean isBinaryWireFrame(byte[] frame) {
+        return BesWireFormat.isBinaryWireFrame(frame);
+    }
+
+    /**
+     * Process one inbound binary wire frame. Handshake frames are ignored here (handled upstream).
+     *
+     * @return Reassembled UTF-8 JSON bytes when the message is complete, otherwise null
+     */
+    public byte[] processBinaryWireFrame(byte[] frame) {
+        BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(frame);
+        if (!header.valid) {
+            Log.w(TAG, "Invalid binary wire frame");
+            return null;
+        }
+
+        if ((header.flags & BesWireFormat.FLAG_HANDSHAKE) != 0) {
+            return null;
+        }
+
+        return chunkReassembler.addBinaryFragment(
+                header.flags,
+                header.msgId,
+                header.fragIdx,
+                header.fragCount,
+                header.payload);
+    }
+
+    /**
+     * Parse a completed binary reassembly into a protocol detection result.
+     */
+    public CommandProtocolDetector.ProtocolDetectionResult detectReassembledBinaryPayload(
+            byte[] payload) {
+        if (payload == null || payload.length == 0) {
+            return new CommandProtocolDetector.ProtocolDetectionResult(
+                    CommandProtocolDetector.ProtocolType.UNKNOWN, null, "", -1, false);
+        }
+
+        try {
+            String jsonStr = new String(payload, StandardCharsets.UTF_8);
+            JSONObject reassembledJson = new JSONObject(jsonStr);
+            if (BesWireFormat.isBinaryProtocolActive()) {
+                reassembledJson = BleJsonCompact.decodeIfSupported(reassembledJson);
+                if (reassembledJson == null) {
+                    Log.w(TAG, "Rejected unsupported compact reassembled wire form");
+                    return new CommandProtocolDetector.ProtocolDetectionResult(
+                            CommandProtocolDetector.ProtocolType.UNKNOWN, null, "", -1, false);
+                }
+            }
+            String commandType = reassembledJson.optString("type", "");
+            long messageId = reassembledJson.optLong("mId", -1);
+
+            BleTraceLogger.logWireMetrics(
+                    "phone_to_glasses",
+                    "sdk_ble_binary",
+                    commandType.isEmpty() ? "binary" : commandType,
+                    payload.length,
+                    payload.length,
+                    1,
+                    0,
+                    BesWireFormat.getActiveProtocolVersion());
+
+            return new CommandProtocolDetector.ProtocolDetectionResult(
+                    CommandProtocolDetector.ProtocolType.JSON_COMMAND,
+                    reassembledJson,
+                    commandType,
+                    messageId,
+                    true);
+        } catch (JSONException e) {
+            Log.e(TAG, "Failed to parse reassembled binary payload", e);
+            return new CommandProtocolDetector.ProtocolDetectionResult(
+                    CommandProtocolDetector.ProtocolType.UNKNOWN, null, "", -1, false);
+        }
     }
 
     @Override

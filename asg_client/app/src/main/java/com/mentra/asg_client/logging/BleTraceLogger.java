@@ -24,6 +24,28 @@ public final class BleTraceLogger {
 
     private BleTraceLogger() {}
 
+    public static void logWireMetrics(
+            String direction,
+            String layer,
+            String messageType,
+            int payloadBytes,
+            int wireBytes,
+            int packetCount,
+            long latencyMs,
+            int protocolVersion) {
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("payload_bytes", payloadBytes);
+            payload.put("wire_bytes", wireBytes);
+            payload.put("packet_count", packetCount);
+            payload.put("latency_ms", latencyMs);
+            payload.put("protocol_version", protocolVersion);
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+        logEvent(direction, layer, messageType, payload);
+    }
+
     public static void logBytes(String direction, String layer, byte[] data) {
         if (data == null) {
             Log.i(TAG, format(direction, layer, caller(), "null", null, "null"));
@@ -191,9 +213,20 @@ public final class BleTraceLogger {
 
         int bigEndianLength = ((frame[3] & 0xFF) << 8) | (frame[4] & 0xFF);
         int littleEndianLength = (frame[3] & 0xFF) | ((frame[4] & 0xFF) << 8);
-        int payloadLength = bigEndianLength;
-        if (payloadLength + 7 != frame.length && littleEndianLength + 7 == frame.length) {
-            payloadLength = littleEndianLength;
+        int payloadLength = littleEndianLength;
+        if (payloadLength + 7 != frame.length && bigEndianLength + 7 == frame.length) {
+            payloadLength = bigEndianLength;
+        }
+        if (frame[2] == 0x40) {
+            JSONObject binaryPayload = new JSONObject();
+            try {
+                binaryPayload.put("frameType", "0x40");
+                binaryPayload.put("length", payloadLength);
+                binaryPayload.put("binary", true);
+            } catch (Exception ignored) {
+                // Keep trace logging non-fatal.
+            }
+            return binaryPayload;
         }
         if (payloadLength <= 0 || payloadLength + 7 > frame.length) {
             return null;

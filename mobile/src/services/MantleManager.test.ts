@@ -302,18 +302,14 @@ describe("MantleManager", () => {
       timestamp: 123456,
     })
     expect(socketComms.sendBatteryStatus).toHaveBeenCalledWith(88, true, 123456)
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
+    jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
-      }),
-    )
-
-    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
-    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
-    expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
         voice_activity_detection_enabled: false,
       }),
     )
@@ -342,6 +338,9 @@ describe("MantleManager", () => {
   })
 
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
+    jest.advanceTimersByTime(300)
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     const nonSdkSettings = {
       always_on_status_bar: true,
       bypass_audio_encoding_for_debugging: true,
@@ -359,6 +358,7 @@ describe("MantleManager", () => {
       await useSettingsStore.getState().setSetting(key, value, false)
     }
 
+    jest.advanceTimersByTime(300)
     for (const key of Object.keys(nonSdkSettings)) {
       expect(useSettingsStore.getState().getBluetoothSettings()).not.toHaveProperty(key)
     }
@@ -368,10 +368,15 @@ describe("MantleManager", () => {
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", true)
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("twelve_hour_time")
-    await useSettingsStore.getState().setSetting(SETTINGS.power_saving_mode.key, true, false)
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+    await useSettingsStore.getState().setSetting(SETTINGS.sensing_enabled.key, false, false)
+    jest.runOnlyPendingTimers()
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+    await useSettingsStore.getState().setSetting(SETTINGS.sensing_enabled.key, true, false)
+    jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        power_saving_mode: true,
+        sensing_enabled: true,
       }),
     )
   })

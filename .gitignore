@@ -391,8 +391,18 @@ MEMORY.md
 # PR agent orchestrator local outputs
 .pr-agent/
 
+# Local agent/tooling state
+.mcp.json
+.codex/
+
+# Local Cursor/agent skills
+mobile/agents/
+
 # Nested starter-kit repo (separate git history)
 Mentra-Bluetooth-SDK-Starter-Kit/
+
+# Nested Zephyr glasses client repo (separate git history)
+Mentra-Zephyr-Glasses-Client/
 
 # Navigation miniapp build output
 miniapps/navigation/build/
