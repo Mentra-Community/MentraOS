@@ -113,6 +113,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     private static final boolean BIG_PACKS_ENABLED = false;
 
+    /**
+     * Batched acks are DISABLED pending the same firmware burst-loss fix: with the
+     * window-12 blast the BES deterministically loses one early pack (pack 1 at 400B,
+     * pack 0 at 800B) and the reject/rewind interplay collapses throughput (~11KB/s,
+     * frequent packet_timeout aborts). Per-pack acks at window 3 are the
+     * hardware-validated 45-50KB/s configuration.
+     */
+    private static final boolean BATCHED_ACKS_ENABLED = false;
+
     private int effectiveUartPackSize() {
         if (BIG_PACKS_ENABLED
                 && besSupportsBigPacks
@@ -1483,9 +1492,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         try {
             besSupportsBatchedAcks =
-                    compareDottedVersions(version, MIN_BES_VERSION_FOR_BATCHED_ACKS) >= 0;
+                    BATCHED_ACKS_ENABLED
+                            && compareDottedVersions(version, MIN_BES_VERSION_FOR_BATCHED_ACKS)
+                                    >= 0;
             besSupportsBigPacks =
-                    compareDottedVersions(version, MIN_BES_VERSION_FOR_BIG_PACKS) >= 0;
+                    BIG_PACKS_ENABLED
+                            && compareDottedVersions(version, MIN_BES_VERSION_FOR_BIG_PACKS) >= 0;
             Log.i(
                     TAG,
                     "📦 Batched-ack push mode "
