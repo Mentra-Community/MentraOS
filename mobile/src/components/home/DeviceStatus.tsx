@@ -128,7 +128,14 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const connectGlasses = async () => {
     if (!pairedModel) {
-      push("/pairing/select-glasses-model", {transition: "simple_push"})
+      // A pending selection resumes its own scan (including the mid-pairing
+      // window where the link is up but promotion hasn't echoed yet); only a
+      // truly identity-less state starts over at model selection.
+      if (identity.kind === "pending") {
+        push("/pairing/scan", {deviceModel: identity.model})
+      } else {
+        push("/pairing/select-glasses-model", {transition: "simple_push"})
+      }
       return
     }
 
