@@ -282,8 +282,8 @@ export const pairing = {
    * the host renders it as a finish-pairing affordance.
    */
   abandonAttempt: async (): Promise<void> => {
-    const preserve = await hasDefaultDevice().catch(() => true)
-    if (preserve && isGlassesConnected(useGlassesStore.getState().connection)) {
+    const nativeHasDefault = await hasDefaultDevice().catch(() => true)
+    if (nativeHasDefault && isGlassesConnected(useGlassesStore.getState().connection)) {
       // Still connected means no connect attempt is in flight (an attempt drops
       // the existing link first): the user browsed the scan and backed out.
       // Stop the scan and leave the live pairing untouched.
@@ -292,20 +292,22 @@ export const pairing = {
       return
     }
     await BluetoothSdk.disconnect()
-    if (preserve) {
-      // Re-seed native ONLY from a COMPLETE paired JS identity. Mid-relay (a
-      // promotion's save_setting echoes still landing), the JS snapshot is
-      // incomplete — pushing it would overwrite the fresher native identity,
-      // the same race the on-connect replay had. Incomplete ⇒ skip; native
-      // already holds the truth and the echoes complete the JS side.
-      if (projectPairingIdentity().kind === "paired") {
-        console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
-        await pushAllBluetoothSettings()
-      } else {
-        console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
-      }
+    if (projectPairingIdentity().kind === "paired") {
+      // The persisted settings describe a COMPLETE pairing: restore it to
+      // native (the attempt's connect-by-name overwrote the native
+      // device_name; and if native somehow lost its default entirely, this
+      // repairs the divergence instead of forgetting a real pairing).
+      console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
+      await pushAllBluetoothSettings()
+    } else if (nativeHasDefault) {
+      // Mid-relay: native promoted and its echoes are still landing — the
+      // incomplete JS snapshot must not be pushed over the fresher native
+      // identity (the on-connect replay's race). Native holds the truth.
+      console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
     } else {
-      console.log("PairingIdentity: abandonAttempt — no pairing; forgetting the partial attempt")
+      // Forgetting requires CONSENSUS: no native default AND no complete
+      // persisted pairing — a genuinely partial attempt.
+      console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
       await BluetoothSdk.forget()
     }
   },
