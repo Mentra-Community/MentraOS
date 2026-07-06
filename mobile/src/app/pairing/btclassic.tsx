@@ -74,6 +74,18 @@ export default function BtClassicPairingScreen() {
   }
 
   useEffect(() => {
+    if (!device) return
+    // The Pair Audio step advances when native detects the picked device's
+    // Classic audio route — prime the native watcher with that device (it no
+    // longer learns it from a selection-time identity write). If the audio
+    // device is already paired, the resulting immediate check advances the
+    // screen right away.
+    void toolkit.pairing.setBluetoothClassicTarget(device).catch((error) => {
+      console.warn("BTCLASSIC: failed to set the Bluetooth Classic target:", error)
+    })
+  }, [device])
+
+  useEffect(() => {
     console.log("BTCLASSIC: check bluetoothClassicConnected", bluetoothClassicConnected)
     if (bluetoothClassicConnected) {
       handleSuccess()

@@ -509,6 +509,7 @@ jest.mock("@mentra/island", () => {
         onFound: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
+        setBluetoothClassicTarget: jest.fn(() => Promise.resolve()),
         abandonAttempt: jest.fn(() => Promise.resolve()),
         onPairFailure: subscribeVia("pair_failure"),
         onGlassesNotReady: subscribeVia("glasses_not_ready"),

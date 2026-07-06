@@ -230,6 +230,17 @@ export const pairing = {
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
   /**
+   * Prime the native Bluetooth Classic audio watcher with the picked device.
+   * The iOS Mentra Live flow pairs Classic audio BEFORE any BLE connect
+   * exists, and native detects the pairing by matching the connected audio
+   * route against its device_name — which two-phase identity no longer sets
+   * at selection time. This is native-only routing state (device_name has no
+   * native→JS echo): the phone's persisted identity is untouched, and
+   * promotion still happens only at pairing success.
+   */
+  setBluetoothClassicTarget: (device: Device): Promise<void> =>
+    BluetoothSdk.updateBluetoothSettings({device_name: device.name}),
+  /**
    * Abandon an in-flight pairing attempt (back-out, failure retry, conflict
    * retry) without destroying an existing pairing:
    * - Re-pair with the old glasses still connected (nothing tapped yet — an
