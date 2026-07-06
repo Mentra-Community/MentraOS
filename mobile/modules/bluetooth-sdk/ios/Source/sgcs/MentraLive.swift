@@ -3978,7 +3978,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func handlePeerWireHandshake() {
-        activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
+        activateBinaryWireV2Session(logMessage: "LIVE: Peer confirmed BLE wire protocol v2")
     }
 
     private func processBinaryWireFrame(_ data: Data) {
@@ -3993,7 +3993,7 @@ class MentraLive: NSObject, SGCManager {
         }
 
         if !useBinaryWireProtocol, isNewVersion {
-            activateBinaryWireV2Session("LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+            activateBinaryWireV2Session(logMessage: "LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
         }
 
         guard let reassembled = incomingChunkReassembler.addBinaryFragment(
