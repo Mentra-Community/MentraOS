@@ -2059,6 +2059,34 @@ class GallerySyncService {
       }%`,
     )
 
+    // If photos were supposed to be auto-saved to camera roll but some failed, check
+    // whether permissions are the cause and direct the user to fix them.
+    const syncStore = useGallerySyncStore.getState()
+    if (syncStore.failedFiles.length > 0) {
+      try {
+        const autoSaveEnabled = await gallerySettingsService.getAutoSaveToCameraRoll()
+        if (autoSaveEnabled) {
+          const hasPermission = await MediaLibraryPermissions.checkPermission()
+          if (!hasPermission) {
+            console.warn(
+              "[GallerySyncService] Camera roll permission denied — showing guidance alert",
+            )
+            showAlert(
+              translate("glasses:cameraRollPermissionTitle"),
+              translate("glasses:cameraRollPermissionMessage"),
+              [
+                {
+                  text: translate("common:ok"),
+                },
+              ],
+            )
+          }
+        }
+      } catch (permCheckError) {
+        console.warn("[GallerySyncService] Could not check camera roll permission:", permCheckError)
+      }
+    }
+
     // 🔍 DIAGNOSTIC: Show all pictures currently in storage after sync
     // try {
     //   const allStoredFiles = await localStorageService.getDownloadedFiles()

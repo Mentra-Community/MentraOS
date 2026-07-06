@@ -9,20 +9,26 @@ import {deriveGalleryDisplayName} from "./galleryDisplayName"
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
  * Platform behavior:
- * - iOS: Uses PHOTO_LIBRARY (read-write) so we can manage the MentraOS album
+ * - iOS: Prefers PHOTO_LIBRARY_ADD_ONLY (iOS 14+ "Add Photos Only") which is sufficient
+ *   for saving. Falls back to checking full PHOTO_LIBRARY (GRANTED or LIMITED).
  * - Android 10+ (API 29+): No permission needed to save your own files to MediaStore
  * - Android 9-: Uses WRITE_EXTERNAL_STORAGE (legacy)
  */
 export class MediaLibraryPermissions {
   /**
-   * Check if we have permission to save to the camera roll
-   * Note: On Android 10+, this always returns true since no permission is needed
+   * Check if we have permission to save to the camera roll.
+   * On iOS 14+, "Add Photos Only" (PHOTO_LIBRARY_ADD_ONLY) is sufficient and is
+   * checked alongside the full PHOTO_LIBRARY permission.
+   * On Android 10+, this always returns true since no permission is needed.
    */
   static async checkPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
         const status = await check(PERMISSIONS.IOS.PHOTO_LIBRARY)
-        return status === RESULTS.GRANTED || status === RESULTS.LIMITED
+        if (status === RESULTS.GRANTED || status === RESULTS.LIMITED) return true
+        // iOS 14+: user may have chosen "Add Photos Only" — sufficient for saving
+        const addOnlyStatus = await check(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        return addOnlyStatus === RESULTS.GRANTED
       }
 
       if (Platform.OS === "android") {
@@ -44,14 +50,25 @@ export class MediaLibraryPermissions {
   }
 
   /**
-   * Request permission to save to the camera roll
-   * Note: On Android 10+, this always returns true since no permission is needed
+   * Request permission to save to the camera roll.
+   * On iOS 14+, requests PHOTO_LIBRARY_ADD_ONLY first (least-privilege ask per Apple
+   * guidelines). Falls back to checking full PHOTO_LIBRARY if already granted.
+   * On Android 10+, this always returns true since no permission is needed.
    */
   static async requestPermission(): Promise<boolean> {
     try {
       if (Platform.OS === "ios") {
-        const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY)
-        return status === RESULTS.GRANTED || status === RESULTS.LIMITED
+        // First check if full library access is already granted
+        const currentStatus = await check(PERMISSIONS.IOS.PHOTO_LIBRARY)
+        if (currentStatus === RESULTS.GRANTED || currentStatus === RESULTS.LIMITED) return true
+
+        // iOS 14+: request add-only (least privilege for save-only use case)
+        const addOnlyStatus = await request(PERMISSIONS.IOS.PHOTO_LIBRARY_ADD_ONLY)
+        if (addOnlyStatus === RESULTS.GRANTED) return true
+
+        // Fall back: request full library if add-only was not granted
+        const fullStatus = await request(PERMISSIONS.IOS.PHOTO_LIBRARY)
+        return fullStatus === RESULTS.GRANTED || fullStatus === RESULTS.LIMITED
       }
 
       if (Platform.OS === "android") {

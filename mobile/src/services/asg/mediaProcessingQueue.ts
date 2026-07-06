@@ -257,9 +257,11 @@ class MediaProcessingQueue {
         console.log(`${TAG} ✅ Saved to camera roll: ${item.id}`)
       } else {
         console.warn(`${TAG} ❌ Failed to save to camera roll: ${item.id}`)
-        // D1: Surface camera roll save failures to the UI
         const store = useGallerySyncStore.getState()
         store.onFileFailed(item.id, "camera roll save failed")
+        // Throw so processLoop takes the failure path: metadata and glasses-deletion
+        // steps are skipped, keeping the file on glasses for a future sync attempt.
+        throw new Error("camera roll save failed")
       }
     }
 
