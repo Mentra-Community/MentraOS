@@ -20,9 +20,11 @@ export interface Setting {
   persist: boolean
   // Pairing-identity keys are NATIVE-authoritative: the native layer writes
   // them on pairing success (handleDeviceReady) / forget and echoes them down
-  // via save_setting; JS→native they travel only in the explicit full seeds,
-  // never the change-push. PAIRING_IDENTITY_KEYS is derived from this flag so
-  // the sync exclusion can't drift from the descriptors.
+  // via save_setting; JS→native they travel only in the explicit SEEDS
+  // (hydration, pre-connect, post-demotion, abandon re-seed) — never the
+  // change-push and never the on-connect replay, whose mid-relay snapshot can
+  // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
+  // this flag so the sync exclusions can't drift from the descriptors.
   nativeAuthoritative?: true
 }
 

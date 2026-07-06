@@ -1,7 +1,7 @@
 // Imports the real GlassesSettingsSync by path (not via "@mentra/island",
 // which jest mocks) so the actual diff logic runs under the mobile jest CI
 // runner.
-import {diffBluetoothSettingsForPush} from "../../modules/island/src/services/GlassesSettingsSync"
+import {diffBluetoothSettingsForPush, stripPairingIdentity} from "../../modules/island/src/services/GlassesSettingsSync"
 import {PAIRING_IDENTITY_KEYS, SETTINGS} from "../../modules/island/src/stores/settings"
 
 describe("diffBluetoothSettingsForPush", () => {
@@ -47,5 +47,17 @@ describe("diffBluetoothSettingsForPush", () => {
     const previous = {brightness: 50, default_wearable: ""}
     const next = {brightness: 80, default_wearable: "Even Realities G2"}
     expect(diffBluetoothSettingsForPush(next, previous)).toEqual({brightness: 80})
+  })
+})
+
+describe("stripPairingIdentity", () => {
+  it("removes every identity key and keeps the rest — the on-connect replay set", () => {
+    // While connected, NATIVE owns the identity it promoted at device-ready;
+    // the on-connect replay carrying a mid-relay JS snapshot overwrote a
+    // just-promoted identity with pre-promotion empties (Mentra Live pairing
+    // wiped itself right after succeeding).
+    const settings: Record<string, unknown> = {brightness: 80, gallery_mode: true}
+    for (const key of PAIRING_IDENTITY_KEYS) settings[key] = "stale"
+    expect(stripPairingIdentity(settings)).toEqual({brightness: 80, gallery_mode: true})
   })
 })
