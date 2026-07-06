@@ -79,8 +79,11 @@ export default function SelectGlassesBluetoothScreen() {
   }, true)
 
   const handleBackOut = () => {
-    runBackOutCleanup()
-    goBack()
+    // Guard the pop like the preventBack handler does: a rapid double-tap on
+    // Cancel/the chevron must not pop a second route while cleanup ran once.
+    if (runBackOutCleanup()) {
+      goBack()
+    }
   }
 
   useEffect(() => {
