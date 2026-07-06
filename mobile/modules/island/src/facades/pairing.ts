@@ -6,7 +6,10 @@
  * (Connect-the-already-paired-default is `toolkit.glasses.connectDefault()`; this
  * facade is the first-time discovery + pair flow.)
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+// Internal btsdk surface — updateBluetoothSettings (the Bluetooth Classic
+// target hint) lives on the full surface, not the public entry (same reason
+// the glasses facade imports internal).
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ConnectOptions, Device, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
