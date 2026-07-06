@@ -3812,7 +3812,12 @@ public class MediaCaptureService {
                                 android.graphics.Bitmap scaled =
                                         android.graphics.Bitmap.createScaledBitmap(
                                                 original, targetWidth, targetHeight, true);
-                                original.recycle();
+                                // createScaledBitmap returns the SAME object when the size
+                                // already matches (medium ladder == capture resolution), so
+                                // recycling unconditionally would kill the bitmap mid-pipeline.
+                                if (scaled != original) {
+                                    original.recycle();
+                                }
                                 android.graphics.Bitmap resized =
                                         BleImageSharpener.sharpen(mContext, scaled);
                                 if (resized != scaled) {
