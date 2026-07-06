@@ -293,8 +293,17 @@ export const pairing = {
     }
     await BluetoothSdk.disconnect()
     if (preserve) {
-      console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
-      await pushAllBluetoothSettings()
+      // Re-seed native ONLY from a COMPLETE paired JS identity. Mid-relay (a
+      // promotion's save_setting echoes still landing), the JS snapshot is
+      // incomplete — pushing it would overwrite the fresher native identity,
+      // the same race the on-connect replay had. Incomplete ⇒ skip; native
+      // already holds the truth and the echoes complete the JS side.
+      if (projectPairingIdentity().kind === "paired") {
+        console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
+        await pushAllBluetoothSettings()
+      } else {
+        console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
+      }
     } else {
       console.log("PairingIdentity: abandonAttempt — no pairing; forgetting the partial attempt")
       await BluetoothSdk.forget()

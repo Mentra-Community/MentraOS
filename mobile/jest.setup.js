@@ -930,4 +930,17 @@ global.__reanimatedWorkletInit = jest.fn()
 // after every test (a no-op when not attached) so each test starts clean.
 afterEach(() => {
   jest.requireActual("./modules/island/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
+  // The pairing mocks above delegate identity reads/writes to the REAL
+  // PairingIdentity over the shared settings store; scrub the identity keys so
+  // a test that marked a pending selection can't leak a stale identity into
+  // the next test's identity()/onIdentity() reads.
+  const {useSettingsStore: realSettingsStore, PAIRING_IDENTITY_KEYS: realIdentityKeys} = jest.requireActual(
+    "./modules/island/src/stores/settings",
+  )
+  const currentSettings = realSettingsStore.getState().settings
+  if (realIdentityKeys.some((key) => currentSettings[key])) {
+    const cleared = {...currentSettings}
+    for (const key of realIdentityKeys) cleared[key] = ""
+    realSettingsStore.setState({settings: cleared})
+  }
 })

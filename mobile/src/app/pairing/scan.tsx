@@ -39,7 +39,7 @@ export default function SelectGlassesBluetoothScreen() {
     // PENDING selection. Promotion to `paired` only happens natively when pairing
     // succeeds; until then the home card renders a finish-pairing affordance.
     toolkit.pairing.markPendingSelection(deviceModel)
-  }, [])
+  }, [deviceModel])
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -82,7 +82,7 @@ export default function SelectGlassesBluetoothScreen() {
     }
 
     void initializeAndSearchForDevices()
-  }, [])
+  }, [deviceModel])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {

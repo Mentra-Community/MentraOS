@@ -34,7 +34,7 @@
  * save_setting persistence is the inbound native→JS echo leg, not a
  * JS-initiated write, and stays with the router.
  */
-import type {AsyncResult} from "typesafe-ts"
+import {result as Res, type AsyncResult} from "typesafe-ts"
 
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {DeviceTypes} from "../types"
@@ -93,8 +93,21 @@ export function subscribePairingIdentity(cb: (identity: IdentitySnapshot) => voi
  * finish-pairing card after an app restart.
  */
 export function markPendingSelection(model: string): AsyncResult<void, Error> {
-  console.log(`PairingIdentity: pending selection -> "${model}"`)
-  return useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, model)
+  // Guard the public write-path: an empty/whitespace model would persist a
+  // pending identity that renders a blank finish-pairing card.
+  const trimmed = typeof model === "string" ? model.trim() : ""
+  if (!trimmed) {
+    console.warn(`PairingIdentity: ignoring pending selection with empty model (got ${JSON.stringify(model)})`)
+    return Promise.resolve(Res.ok(undefined)) as AsyncResult<void, Error>
+  }
+  console.log(`PairingIdentity: pending selection -> "${trimmed}"`)
+  const result = useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, trimmed)
+  // setSetting resolves to a Result (never rejects); a persist failure would
+  // silently drop the finish-pairing affordance on restart — surface it.
+  void Promise.resolve(result).then((r) => {
+    if (r.is_error()) console.warn("PairingIdentity: pending selection failed to persist:", r.error)
+  })
+  return result
 }
 
 /**
@@ -123,7 +136,10 @@ export async function retirePendingSelectionOnPromotion(echoedKey: string, echoe
  */
 export async function demoteDefaultToPending(model: string): Promise<void> {
   const settings = useSettingsStore.getState()
-  const fresher = settings.getSetting(SETTINGS.pending_wearable.key)
+  // readIdentityString, not raw getSetting: a truthy non-string legacy value
+  // must read as absent here too, or the orphaned model is never backfilled
+  // while the projection reads the same junk as no pending at all.
+  const fresher = readIdentityString(SETTINGS.pending_wearable.key)
   console.log(
     fresher
       ? `PairingIdentity: demote "${model}" — fresher pending "${fresher}" kept`
