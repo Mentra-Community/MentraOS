@@ -79,16 +79,38 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // 32 window). Firmware >= 17.26.7.6 has an 8KB RX buffer and acks every 8th pack
     // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
-    // 8, not 12: the BES UART RX buffer is capped just under 4KB by its HAL's
-    // single-descriptor DMA limit (an 8KB buffer bricked UART RX in 17.26.7.6),
-    // so the in-flight window must stay within ~8 full packs. Firmware acks
-    // every 4th pack, so 8 still streams continuously.
+    // 17.26.7.7 firmware: 3.4KB UART RX ring (the HAL rejects single-descriptor
+    // DMA arms over 4095B and 7.7 armed the whole ring at once), acks every 4th
+    // pack - window 8 fits the ring and stays above the batch interval.
     private static final int FILE_PUSH_WINDOW_BATCHED = 8;
     private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
+    // 17.26.7.8 firmware: 12KB UART RX ring (arms are margin-sized so the ring is
+    // free to grow), accepts 800B UART packs (split to 400B BLE frames on the BES),
+    // acks every 8th UART pack - window 12 x 832B = ~10KB in flight fits the ring.
+    private static final int FILE_PUSH_WINDOW_BIG_PACKS = 12;
+    private static final String MIN_BES_VERSION_FOR_BIG_PACKS = "17.26.7.8";
     private volatile boolean besSupportsBatchedAcks = false;
+    private volatile boolean besSupportsBigPacks = false;
 
     private int effectivePushWindow() {
+        if (besSupportsBigPacks) {
+            return FILE_PUSH_WINDOW_BIG_PACKS;
+        }
         return besSupportsBatchedAcks ? FILE_PUSH_WINDOW_BATCHED : FILE_PUSH_WINDOW;
+    }
+
+    /**
+     * Data bytes per UART file pack for a new transfer. 800B packs (halved framing +
+     * ack overhead on the UART leg) need firmware that splits them back into 400B BLE
+     * frames, and only apply when the phone negotiated full-size BLE packs - a phone
+     * that asked for smaller packs (small MTU) must keep bounding the BLE frame size.
+     */
+    private int effectiveUartPackSize() {
+        if (besSupportsBigPacks
+                && BesWireFormat.getFilePackSize() == BesWireFormat.FILE_PACK_SIZE_MAX) {
+            return BesWireFormat.FILE_UART_PACK_SIZE_MAX;
+        }
+        return BesWireFormat.getFilePackSize();
     }
     private static final long SIGNIFICANT_CHUNK_TRACE_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SEND_DURATION_MS = 250;
@@ -152,7 +174,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         String fileName;
         byte[] fileData;
         int fileSize; // Real file size (for our internal tracking)
-        int fakeFileSize; // Inflated file size to tell BES firmware (totalPackets * 400)
+        int fakeFileSize; // File size written into frame headers (see ctor)
+        int packSize; // Data bytes per UART pack, snapshotted for this transfer
         int totalPackets;
         int currentPacketIndex; // next packet index to SEND (may run ahead of acks)
         int highestAckedIndex = -1; // highest packet index BES has acked
@@ -167,18 +190,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // This allows us to send smaller packets (221 bytes) that fit within BLE MTU.
         private static final int BES_HARDCODED_PACK_SIZE = 400;
 
-        FileTransferSession(String filePath, String fileName, byte[] fileData) {
+        FileTransferSession(String filePath, String fileName, byte[] fileData, int packSize) {
             this.filePath = filePath;
             this.fileName = fileName;
             this.fileData = fileData;
             this.fileSize = fileData.length;
-            this.totalPackets =
-                    (fileSize + BesWireFormat.getFilePackSize() - 1)
-                            / BesWireFormat.getFilePackSize();
-            // Calculate fake file size so BES firmware calculates correct totalPack
-            // BES does: totalPack = (fileSize + 400 - 1) / 400
-            // We want BES to get our totalPackets, so: fakeFileSize = totalPackets * 400
-            this.fakeFileSize = totalPackets * BES_HARDCODED_PACK_SIZE;
+            this.packSize = packSize;
+            this.totalPackets = (fileSize + packSize - 1) / packSize;
+            if (packSize > BES_HARDCODED_PACK_SIZE) {
+                // Big-pack firmware (>= 17.26.7.8) derives BOTH index spaces (UART acks
+                // and the 400B BLE frames it splits into) from the header fileSize, so
+                // it must be the REAL size - the inflate trick would make it expect a
+                // phantom trailing BLE frame whenever the last pack is <= 400B.
+                this.fakeFileSize = fileSize;
+            } else {
+                // Legacy path: BES hardcodes totalPack = ceil(fileSize / 400); inflate
+                // fileSize so its count matches ours when our packs are smaller.
+                this.fakeFileSize = totalPackets * BES_HARDCODED_PACK_SIZE;
+            }
             this.currentPacketIndex = 0;
             this.isActive = true;
             this.startTime = System.currentTimeMillis();
@@ -194,7 +223,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + ", totalPackets="
                             + totalPackets
                             + ", actualPackSize="
-                            + BesWireFormat.getFilePackSize());
+                            + packSize);
         }
     }
 
@@ -1446,13 +1475,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         try {
             besSupportsBatchedAcks =
                     compareDottedVersions(version, MIN_BES_VERSION_FOR_BATCHED_ACKS) >= 0;
+            besSupportsBigPacks =
+                    compareDottedVersions(version, MIN_BES_VERSION_FOR_BIG_PACKS) >= 0;
             Log.i(
                     TAG,
                     "📦 Batched-ack push mode "
                             + (besSupportsBatchedAcks ? "ENABLED" : "disabled")
-                            + " (fw " + version + ", window " + effectivePushWindow() + ")");
+                            + ", big packs "
+                            + (besSupportsBigPacks ? "ENABLED" : "disabled")
+                            + " (fw " + version + ", window " + effectivePushWindow()
+                            + ", packSize " + effectiveUartPackSize() + ")");
         } catch (Exception e) {
             besSupportsBatchedAcks = false;
+            besSupportsBigPacks = false;
         }
 
         try {
@@ -1730,7 +1765,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
 
-        currentFileTransfer = new FileTransferSession(filePath, fileName, fileData);
+        currentFileTransfer = new FileTransferSession(filePath, fileName, fileData, effectiveUartPackSize());
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
 
@@ -1824,9 +1859,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         long methodStartTime = System.currentTimeMillis();
 
         // Calculate packet data
-        int offset = packetIndex * BesWireFormat.getFilePackSize();
+        int offset = packetIndex * currentFileTransfer.packSize;
         int packSize =
-                Math.min(BesWireFormat.getFilePackSize(), currentFileTransfer.fileSize - offset);
+                Math.min(currentFileTransfer.packSize, currentFileTransfer.fileSize - offset);
 
         // Extract packet data
         byte[] packetData = new byte[packSize];

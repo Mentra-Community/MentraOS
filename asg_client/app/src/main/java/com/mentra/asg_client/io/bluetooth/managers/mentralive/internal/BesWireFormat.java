@@ -55,6 +55,11 @@ public class BesWireFormat {
     // incl. 32B overhead + 3B ATT). Phones with MTU >= 435 get full-size packs; smaller
     // MTUs still negotiate down via set_ble_mtu -> setFilePackSizeFromMtu.
     public static final int FILE_PACK_SIZE_MAX = 400;
+    // Max data bytes per UART file pack. Firmware >= 17.26.7.8 accepts 800B UART
+    // packs and splits them into standard 400B BLE frames itself, so the phone
+    // wire format (and MTU budget) is unaffected; the win is halved framing and
+    // ack overhead on the UART leg, which is the throughput bottleneck.
+    public static final int FILE_UART_PACK_SIZE_MAX = 800;
     public static final int FILE_PACK_SIZE_DEFAULT =
             FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
@@ -963,7 +968,7 @@ public class BesWireFormat {
             String fileName,
             int flags,
             byte fileType) {
-        if (fileData == null || packSize > getFilePackSize()) {
+        if (fileData == null || packSize > FILE_UART_PACK_SIZE_MAX) {
             return null;
         }
 
