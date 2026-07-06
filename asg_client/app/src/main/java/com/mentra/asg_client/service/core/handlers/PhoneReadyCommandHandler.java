@@ -96,11 +96,21 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                 serviceManager.onPhoneReadyHandshakeComplete();
             }
 
-            if (sent && k900Manager != null && k900Manager.isBesBinaryRelaySupported()) {
-                Log.d(TAG, "📱 🤝 Sending BLE wire v2 handshake after glasses_ready");
-                k900Manager.sendWireV2Handshake();
-            } else if (sent && k900Manager != null) {
-                Log.d(TAG, "📱 🤝 Staying on legacy BLE wire path; BES binary relay not advertised");
+            // Wire v2 activation is RESPONDER-ONLY on the glasses side. glasses_ready
+            // advertises wire_caps (a harmless JSON key to old phones); a v2-capable
+            // phone then initiates the binary handshake (maybeSendWireHandshake in the
+            // phone SDK) and K900BluetoothManager.handleInboundBinaryFrame replies and
+            // activates. Proactively handshaking here - gated on the BES firmware's
+            // caps, which say nothing about the PHONE - flipped the entire phone-facing
+            // TX path to binary frames that pre-v2 phone apps cannot parse, muting the
+            // glasses toward them.
+            if (sent && k900Manager != null) {
+                Log.d(
+                        TAG,
+                        "📱 🤝 glasses_ready sent"
+                                + (k900Manager.isBesBinaryRelaySupported()
+                                        ? " with wire_caps; awaiting phone-initiated v2 handshake"
+                                        : "; legacy wire path (BES binary relay not advertised)"));
             }
 
             // Auto-send WiFi status after glasses_ready
