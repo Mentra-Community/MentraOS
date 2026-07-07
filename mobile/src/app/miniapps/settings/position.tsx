@@ -4,17 +4,18 @@ import {View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import SliderSetting from "@/components/settings/SliderSetting"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useKonamiCode} from "@/utils/dev/konami"
+import {toolkit} from "@mentra/island"
 
 export default function ScreenSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
   const [dashboardDepth, setDashboardDepth] = useSetting(SETTINGS.dashboard_depth.key)
   const [dashboardHeight, setDashboardHeight] = useSetting(SETTINGS.dashboard_height.key)
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
-  const deviceModel = useGlassesStore((state) => state.deviceModel)
+  const deviceModel = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange)).model
   const {setEnabled} = useKonamiCode()
 
   const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"

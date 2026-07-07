@@ -3,6 +3,7 @@ jest.mock("@mentra/bluetooth-sdk", () => {
   return {
     __esModule: true,
     default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
   }
 })
 
@@ -138,14 +139,14 @@ import {render, fireEvent, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
-import {usePushUnder} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
 import {useCoreStore} from "@/stores/core"
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
@@ -167,6 +168,15 @@ describe("pairing scan screen", () => {
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
+    // The screen reads scan results through the pairing facade now; delegate the
+    // mocked facade to the real core store this test seeds via setState().
+    ;(toolkit.pairing.searchResults as jest.Mock).mockImplementation(() => [
+      ...useCoreStore.getState().searchResults,
+    ])
+    ;(toolkit.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
+      useCoreStore.subscribe((s) => s.searchResults, cb),
+    )
+    ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, push, goBack})
     ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
@@ -189,26 +199,60 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(BluetoothSdk.startScan).toHaveBeenCalledWith("Mentra Live")
+      expect(toolkit.pairing.scan).toHaveBeenCalledWith("Mentra Live")
     })
 
     fireEvent.press(getByText("001"))
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/btclassic")
+      expect(replace).toHaveBeenCalledWith("/pairing/btclassic", {
+        device: JSON.stringify({id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}),
+      })
       expect(pushUnder).toHaveBeenCalledWith("/pairing/loading", {
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",
       })
     })
 
-    expect(BluetoothSdk.setDefaultDevice).toHaveBeenCalledWith({
-      id: "a",
-      model: "Mentra Live",
-      name: "MENTRA_LIVE_BLE_001",
-      address: "a",
+    // Two-phase identity: picking a device must NOT write the default identity —
+    // the scan marks the model pending and the native layer promotes on success.
+    expect(toolkit.pairing.setDefault).not.toHaveBeenCalled()
+    expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("")
+    expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
+  })
+
+  it("marks the chosen model pending on entry", async () => {
+    render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
     })
-    expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("MENTRA_LIVE_BLE_001")
+  })
+
+  it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
+    // No entry snapshot: the abandon decision must come from the LIVE
+    // default-device read, because a pairing can promote while the flow is
+    // open — an entry snapshot would forget that brand-new pairing.
+    render(<SelectGlassesBluetoothScreen />)
+
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler({actionType: "GO_BACK"})
+
+    await waitFor(() => {
+      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith()
+    })
+    expect(goBack).toHaveBeenCalled()
+    expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
+  })
+
+  it("forward navigation (replace to btclassic) skips the back-out cleanup", async () => {
+    render(<SelectGlassesBluetoothScreen />)
+
+    const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
+    backHandler({actionType: "REPLACE"})
+
+    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(goBack).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {

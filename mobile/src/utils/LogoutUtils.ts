@@ -1,6 +1,7 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {Session} from "@supabase/supabase-js"
 
+import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import {useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -21,10 +22,13 @@ export class LogoutUtils {
       // Step 1: Disconnect and forget any connected glasses
       await this.disconnectAndForgetGlasses()
 
-      // Step 2: Clear Supabase authentication
+      // Step 2: Stop island runtime services before clearing auth/session state
+      await this.stopToolkitRuntime()
+
+      // Step 3: Clear Supabase authentication
       await this.clearSupabaseAuth()
 
-      // Step 3: Clear backend communication tokens
+      // Step 4: Clear backend communication tokens
       await this.clearBackendTokens()
 
       // Step 5: Clear all app settings and user data
@@ -51,7 +55,7 @@ export class LogoutUtils {
 
     try {
       // First try to disconnect any connected glasses
-      await BluetoothSdk.disconnect()
+      await toolkit.glasses.disconnect()
       console.log(`${this.TAG}: Disconnected glasses`)
     } catch (error) {
       console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
@@ -59,10 +63,36 @@ export class LogoutUtils {
 
     try {
       // Then forget the glasses completely
-      await BluetoothSdk.forget()
+      await toolkit.glasses.forget()
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
+    }
+  }
+
+  /**
+   * Stop island runtime services that were started by toolkit.start().
+   *
+   * MantleManager.cleanup() runs first: it tears down the host-side wiring from
+   * the previous session AND resets its `initialized` guard, so the next login in
+   * the same process re-runs mantle.init() → toolkit.configure()/start() instead
+   * of leaving the stopped runtime dead until an app restart.
+   */
+  private static async stopToolkitRuntime(): Promise<void> {
+    console.log(`${this.TAG}: Stopping island runtime...`)
+
+    try {
+      await mantle.cleanup()
+      console.log(`${this.TAG}: Cleaned up MantleManager`)
+    } catch (error) {
+      console.warn(`${this.TAG}: Error cleaning up MantleManager:`, error)
+    }
+
+    try {
+      await toolkit.stop()
+      console.log(`${this.TAG}: Stopped island runtime`)
+    } catch (error) {
+      console.warn(`${this.TAG}: Error stopping island runtime:`, error)
     }
   }
 

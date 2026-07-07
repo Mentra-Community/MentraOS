@@ -342,6 +342,8 @@ const en = {
   home: {
     title: "MentraOS",
     pairGlasses: "Pair glasses",
+    finishPairingGlasses: "Finish pairing",
+    pairDifferentGlasses: "Pair different glasses",
     pairController: "Pair ring",
     setupWithoutGlasses: "Setup without glasses",
     connectGlasses: "Connect glasses",
@@ -1031,6 +1033,7 @@ const en = {
     lmaLoader: "Side Loader",
   },
   appInfo: {
+    notInstalled: "App not installed",
     share: "Share",
     addToHome: "Add to Home",
     removeFromHome: "Remove from Home",

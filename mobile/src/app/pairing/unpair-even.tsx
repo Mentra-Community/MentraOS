@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
 import {View} from "react-native"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
@@ -24,7 +24,10 @@ export default function UnpairEvenScreen() {
   }
 
   const handleTryAgain = () => {
-    BluetoothSdk.forget()
+    // Clears the failed attempt; a pre-existing pairing (re-pair) is preserved.
+    void toolkit.pairing.abandonAttempt().catch((error) => {
+      console.warn("Pairing retry cleanup failed:", error)
+    })
     clearHistory()
     replace("/pairing/prep", {deviceModel})
   }

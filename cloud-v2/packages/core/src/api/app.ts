@@ -7,6 +7,7 @@
  *   /api/* + request-context    — per-request reqId + logger
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
+ *   /api/client/reports/*       — device-filed reports
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -25,6 +26,7 @@ import { OauthError } from "../types/oauth.types";
 import { requestContext } from "./middleware/context.middleware";
 import adminPreinstalled from "./admin/preinstalled.api";
 import clientAuth from "./client/auth.api";
+import clientReports from "./client/reports.api";
 import clientMiniapps from "./client/miniapps.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
@@ -73,6 +75,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
 
   // Audience mounts. Device-called auth lives under /api/client/*.
   app.route("/api/client/auth", clientAuth);
+  app.route("/api/client/reports", clientReports);
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);

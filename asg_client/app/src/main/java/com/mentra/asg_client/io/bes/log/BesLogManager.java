@@ -245,7 +245,8 @@ public class BesLogManager {
   }
 
   /**
-   * JSON body for POST /api/incidents/.../logs with {@code source: glasses_firmware}.
+   * JSON body for POST /api/client/reports/.../artifacts with {@code source:
+   * glasses_firmware}.
    */
   public static String buildFirmwareUploadJson(String fullLog) {
     try {
@@ -265,12 +266,13 @@ public class BesLogManager {
         }
       }
       JSONObject body = new JSONObject();
+      body.put("type", "logs");
       body.put("source", "glasses_firmware");
-      body.put("logs", logs);
+      body.put("entries", logs);
       return body.toString();
     } catch (Exception e) {
       Log.e(TAG, "buildFirmwareUploadJson failed", e);
-      return "{\"source\":\"glasses_firmware\",\"logs\":[]}";
+      return "{\"type\":\"logs\",\"source\":\"glasses_firmware\",\"entries\":[]}";
     }
   }
 
@@ -302,7 +304,7 @@ public class BesLogManager {
       String baseUrl = (!mApiBaseUrl.isEmpty())
           ? mApiBaseUrl
           : ServerConfigUtil.getServerBaseUrl(mContext);
-      String url = baseUrl + "/api/incidents/" + mIncidentId + "/logs";
+      String url = buildReportArtifactsUrl(baseUrl, mIncidentId);
 
       String bodyStr = buildFirmwareUploadJson(logText);
       JSONObject body = new JSONObject(bodyStr);
@@ -323,11 +325,11 @@ public class BesLogManager {
           .post(requestBody)
           .build();
 
-      JSONArray logs = body.optJSONArray("logs");
+      JSONArray logs = body.optJSONArray("entries");
       int logCount = logs != null ? logs.length() : 0;
       int bodyPreviewLen = Math.min(bodyStr.length(), 1500);
       Log.i(TAG, "[LOGS] Glasses firmware (BES) full request: method=POST url=" + url
-          + " body.source=glasses_firmware body.logs.length=" + logCount
+          + " body.source=glasses_firmware body.entries.length=" + logCount
           + " bodyPreview=" + (bodyStr.length() > bodyPreviewLen ? bodyStr.substring(0, bodyPreviewLen) + "..." : bodyStr));
 
       client.newCall(request).enqueue(new Callback() {
@@ -352,5 +354,13 @@ public class BesLogManager {
     } catch (Exception e) {
       Log.e(TAG, "Error preparing BES logs upload for incident " + mIncidentId, e);
     }
+  }
+
+  private static String buildReportArtifactsUrl(String baseUrl, String reportId) {
+    String trimmed = baseUrl != null ? baseUrl.trim() : "";
+    while (trimmed.endsWith("/")) {
+      trimmed = trimmed.substring(0, trimmed.length() - 1);
+    }
+    return trimmed + "/api/client/reports/" + reportId + "/artifacts";
   }
 }

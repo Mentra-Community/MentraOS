@@ -15,6 +15,11 @@ mock.module("../AppRegistry", () => ({
     getMiniappEntryPaths: () => ({background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}),
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
   },
+  // MiniappLauncher imports these named exports for its autostart path; none of
+  // these tests exercise autostart, but the bindings must exist for the module
+  // graph to load. Keep them inert.
+  getLocalAppRunningState: () => false,
+  saveLocalAppRunningState: () => {},
 }))
 mock.module("../DevServerBridge", () => ({default: {connect: () => {}}}))
 
@@ -46,12 +51,10 @@ mock.module("expo-file-system", () => ({
 }))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
-let configureLauncher: typeof import("../MiniappLauncher").configureLauncher
 
 beforeAll(async () => {
   const mod = await import("../MiniappLauncher")
   miniappLauncher = mod.miniappLauncher
-  configureLauncher = mod.configureLauncher
 })
 
 // Fresh router (mutable registered set) per test.
@@ -81,7 +84,7 @@ describe("MiniappLauncher", () => {
     activeVersion = "1.0.0"
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
-    configureLauncher({router: mockRouter.router})
+    miniappLauncher.configure({router: mockRouter.router})
   })
 
   test("ensureRunning spawns the background context when not registered", async () => {

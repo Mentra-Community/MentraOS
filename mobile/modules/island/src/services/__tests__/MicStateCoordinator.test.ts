@@ -1,73 +1,90 @@
-const mockSetMicRequirements = jest.fn()
+/// <reference types="bun-types" />
+
+import {beforeEach, describe, expect, mock, test} from "bun:test"
+
+const mockUpdateBluetoothSettings = mock(() => Promise.resolve())
+
+mock.module("@mentra/bluetooth-sdk/internal", () => ({
+  __esModule: true,
+  default: {
+    updateBluetoothSettings: mockUpdateBluetoothSettings,
+  },
+}))
 
 // Import AFTER the mock is registered
-
-const {configureRuntime} = require("../../runtime/config")
 const MicStateCoordinator = require("../MicStateCoordinator").default
 
+/** Mic-requirement writes are debounced (300ms, merged) — wait out the window. */
+const flushMicWrite = () => new Promise((r) => setTimeout(r, 320))
+
 describe("MicStateCoordinator", () => {
-  beforeEach(() => {
-    configureRuntime({setMicRequirements: mockSetMicRequirements})
+  beforeEach(async () => {
     MicStateCoordinator.reset()
-    mockSetMicRequirements.mockClear()
+    // Drain any write scheduled by reset() before clearing the mock.
+    await flushMicWrite()
+    mockUpdateBluetoothSettings.mockClear()
   })
 
-  test("cloud-only PCM requirement", () => {
-    MicStateCoordinator.setCloudRequirements({pcm: true, lc3: false, transcript: false})
-    expect(mockSetMicRequirements).toHaveBeenCalledWith(
+  test("local PCM requirement", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false})
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: true,
+        should_send_pcm: true,
+        should_send_lc3: false,
+        should_send_transcript: false,
       }),
     )
   })
 
-  test("local-only LC3 requirement", () => {
+  test("local LC3 requirement", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
-    expect(mockSetMicRequirements).toHaveBeenCalledWith(
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        shouldSendLc3: true,
+        should_send_pcm: false,
+        should_send_lc3: true,
+        should_send_transcript: false,
       }),
     )
   })
 
-  test("union of cloud + local", () => {
-    MicStateCoordinator.setCloudRequirements({
-      pcm: true,
-      lc3: false,
-      transcript: true,
-    })
-    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+  test("local PCM and LC3 can be enabled together", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: true})
+    await flushMicWrite()
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: true,
-        shouldSendTranscript: true,
+        should_send_pcm: true,
+        should_send_lc3: true,
+        should_send_transcript: false,
       }),
     )
   })
 
-  test("both off means all false", () => {
-    MicStateCoordinator.setCloudRequirements({pcm: false, lc3: false, transcript: false})
+  test("both off means all false", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+    await flushMicWrite()
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendPcm: false,
-        shouldSendLc3: false,
+        should_send_pcm: false,
+        should_send_lc3: false,
+        should_send_transcript: false,
       }),
     )
   })
 
-  test("local unsubscribe doesn't kill cloud mic", () => {
-    MicStateCoordinator.setCloudRequirements({pcm: false, lc3: true, transcript: true})
+  test("local unsubscribe turns mic requirements off (debounce merges the burst)", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
-    const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
+    await flushMicWrite()
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
     expect(lastCall[0]).toEqual(
       expect.objectContaining({
-        shouldSendLc3: true,
+        should_send_pcm: false,
+        should_send_lc3: false,
+        should_send_transcript: false,
       }),
     )
   })

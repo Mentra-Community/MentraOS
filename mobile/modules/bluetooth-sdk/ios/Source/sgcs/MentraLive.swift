@@ -1531,7 +1531,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("Found already-connected peripheral: \(peripheral.name ?? "Unknown")")
             if let name = peripheral.name,
                name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
-               || name.hasPrefix("MENTRA_LIVE_BT")
+               || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
             {
                 Bridge.log("Found already-connected peripheral: \(name)")
                 discoveredPeripherals[name] = peripheral
@@ -3592,7 +3592,7 @@ class MentraLive: NSObject, SGCManager {
         let basePath = components.path.hasSuffix("/")
             ? String(components.path.dropLast())
             : components.path
-        components.path = basePath + "/api/incidents/\(relay.incidentId)/logs"
+        components.path = basePath + "/api/client/reports/\(relay.incidentId)/artifacts"
         guard let url = components.url else {
             sendTransferCompleteConfirmation(fileName: fileName, success: false)
             if let existing = bleIncidentLogRelays[relay.fileBaseKey] {

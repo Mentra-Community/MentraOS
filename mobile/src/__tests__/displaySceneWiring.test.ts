@@ -1,33 +1,14 @@
 /**
  * Scene wiring integration tests — LocalDisplayManager + SceneRenderer against
- * mocked runtime hooks. Locks the contract the SDK's render() relies on:
- * exactly-once resolvers (displayed/blocked), legacy sugar→scene conversion on
- * positioning devices, degrade routing on non-positioning devices, and
- * restore/replay emitting create-based frames.
+ * the island stores + mocked Bluetooth SDK (dev wrote these against the
+ * since-removed runtime hooks; island reads its own stores and sends via
+ * BluetoothSdk.displayEvent directly). Locks the contract the SDK's render()
+ * relies on: exactly-once resolvers (displayed/blocked), legacy sugar→scene
+ * conversion on positioning devices, degrade routing on non-positioning
+ * devices, and restore/replay emitting create-based frames.
  */
 
 const mockSentEvents: Record<string, unknown>[] = []
-let mockDeviceModel = "Even Realities G2"
-let mockGlassesConnected = true
-let mockStatusListener: ((changed: Record<string, unknown>) => void) | null = null
-
-jest.mock("../../modules/island/src/runtime/config", () => ({
-  ISLAND_SETTINGS_KEYS: {defaultWearable: "default_wearable"},
-  getRuntimeHooks: () => ({
-    settings: {getSetting: (key: string) => (key === "default_wearable" ? mockDeviceModel : undefined)},
-    glassesStatus: {get: () => ({connected: mockGlassesConnected, mockDeviceModel})},
-    subscribeGlassesStatus: (cb: (changed: Record<string, unknown>) => void) => {
-      mockStatusListener = cb
-      return () => {
-        mockStatusListener = null
-      }
-    },
-    sendDisplayEvent: (event: Record<string, unknown>) => {
-      mockSentEvents.push(event)
-      return Promise.resolve()
-    },
-  }),
-}))
 
 jest.mock("../../modules/island/src/utils/timers", () => ({
   BgTimer: {
@@ -38,6 +19,19 @@ jest.mock("../../modules/island/src/utils/timers", () => ({
 
 import localDisplayManager from "../../modules/island/src/services/LocalDisplayManager"
 import type {DisplayRequestResult} from "../../modules/island/src/services/LocalDisplayManager"
+import {useGlassesStore} from "../../modules/island/src/stores/glasses"
+import {useSettingsStore, SETTINGS} from "../../modules/island/src/stores/settings"
+import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+
+function setDeviceModel(model: string) {
+  useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, model, false)
+}
+
+function setGlassesConnected(connected: boolean) {
+  useGlassesStore
+    .getState()
+    .setGlassesInfo({connection: connected ? {state: "connected", fullyBooted: true} : {state: "disconnected"}})
+}
 
 function lastScene(): Record<string, unknown> {
   const withScene = mockSentEvents.filter((e) => e.scene)
@@ -47,8 +41,12 @@ function lastScene(): Record<string, unknown> {
 beforeEach(() => {
   jest.useFakeTimers()
   mockSentEvents.length = 0
-  mockDeviceModel = "Even Realities G2"
-  mockGlassesConnected = true
+  ;(bluetoothSdkMock.displayEvent as jest.Mock).mockImplementation((event: Record<string, unknown>) => {
+    mockSentEvents.push(event)
+    return Promise.resolve()
+  })
+  setDeviceModel("Even Realities G2")
+  setGlassesConnected(true)
   localDisplayManager._resetForTest()
 })
 
@@ -123,7 +121,7 @@ describe("scene requests through arbitration", () => {
   })
 
   it("degrades scenes to legacy layouts on non-positioning devices (G1)", () => {
-    mockDeviceModel = "Even Realities G1"
+    setDeviceModel("Even Realities G1")
     let result: DisplayRequestResult | undefined
     localDisplayManager.request(
       "com.app.a",
@@ -152,10 +150,8 @@ describe("scene requests through arbitration", () => {
     })
     const before = mockSentEvents.length
 
-    mockGlassesConnected = false
-    mockStatusListener?.({connected: false})
-    mockGlassesConnected = true
-    mockStatusListener?.({connected: true})
+    setGlassesConnected(false)
+    setGlassesConnected(true)
 
     expect(mockSentEvents.length).toBeGreaterThan(before)
     const replay = lastScene()

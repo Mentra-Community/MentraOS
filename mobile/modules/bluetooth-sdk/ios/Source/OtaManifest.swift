@@ -78,7 +78,7 @@ enum OtaManifestChecker {
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             throw BluetoothSdkError(
                 code: "ota_manifest_request_failed",
-                message: "OTA manifest request failed with HTTP \(httpResponse.statusCode)."
+                message: "OTA manifest request failed with HTTP \(httpResponse.statusCode) for \(otaVersionUrl)."
             )
         }
         return try JSONDecoder().decode(OtaManifest.self, from: data)

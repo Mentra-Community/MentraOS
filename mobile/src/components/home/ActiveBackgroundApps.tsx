@@ -24,19 +24,12 @@ export const ActiveBackgroundApps: React.FC = () => {
         return
       }
 
-      // Check if app has webviewURL and navigate directly to it
-      if (applet.webviewUrl && applet.healthy) {
-        push("/applet/webview", {
-          webviewURL: applet.webviewUrl,
-          appName: applet.name,
-          packageName: applet.packageName,
-        })
-      } else {
-        push("/applet/settings", {
-          packageName: applet.packageName,
-          appName: applet.name,
-        })
-      }
+      // (Cloud V1 apps opened /applet/webview here; removed with Cloud V1 app
+      // end-of-life.)
+      push("/applet/settings", {
+        packageName: applet.packageName,
+        appName: applet.name,
+      })
     }
   }
 

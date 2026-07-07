@@ -22,6 +22,11 @@
       "types": "./build/react/index.d.ts",
       "default": "./build/react/index.js"
     },
+    "./types": {
+      "react-native": "./src/types/index.ts",
+      "types": "./build/types/index.d.ts",
+      "default": "./build/types/index.js"
+    },
     "./photo-receiver": {
       "react-native": "./src/photo-receiver/index.ts",
       "types": "./build/photo-receiver/index.d.ts",

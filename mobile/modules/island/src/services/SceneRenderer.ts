@@ -12,7 +12,9 @@
  */
 
 import displayProcessor from "./DisplayProcessor"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {useGlassesStore} from "../stores/glasses"
 import {DeviceTypes, getModelCapabilities} from "../types"
 import {
   degradeScene,
@@ -59,10 +61,11 @@ class SceneRenderer {
    * display block. Read on demand — same model source the CONNECT_ACK uses.
    */
   public currentCapabilities(): SceneDisplayCapabilities | null {
-    const hooks = getRuntimeHooks()
+    // dev read these via the (since-removed) settings/glassesStatus runtime
+    // hooks; island reads its own stores directly.
     const model =
-      (hooks.settings?.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as string | undefined) ??
-      (hooks.glassesStatus?.get()?.deviceModel as string | undefined)
+      (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as string | undefined) ??
+      (useGlassesStore.getState().deviceModel as string | undefined)
     const display = getModelCapabilities((model ?? DeviceTypes.NONE) as DeviceTypes)?.display
     if (!display) return null
     return {
@@ -261,12 +264,11 @@ class SceneRenderer {
 
   private sendFrame(frame: SceneFrame): void {
     try {
-      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
-      if (sendDisplayEvent) {
-        void Promise.resolve(sendDisplayEvent({view: frame.view, scene: frame})).catch((err) => {
-          console.error(`${LOG_TAG}: native scene send failed:`, err)
-        })
-      }
+      // sendDisplayEvent hook -> direct BluetoothSdk.displayEvent (the exact
+      // wiring the deleted MantleManager hook provided).
+      void Promise.resolve(BluetoothSdk.displayEvent({view: frame.view, scene: frame})).catch((err) => {
+        console.error(`${LOG_TAG}: native scene send failed:`, err)
+      })
     } catch (err) {
       console.error(`${LOG_TAG}: native scene send failed:`, err)
     }

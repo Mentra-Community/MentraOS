@@ -57,7 +57,7 @@ internal object OtaManifestChecker {
         return try {
             val status = connection.responseCode
             if (status !in 200..299) {
-                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status.")
+                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status for $otaVersionUrl.")
             }
             JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {

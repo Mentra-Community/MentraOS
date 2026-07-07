@@ -1,5 +1,6 @@
 import {render} from "@testing-library/react-native"
 
+import {toolkit} from "@mentra/island"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useDisplayStore} from "@/stores/display"
 
@@ -61,6 +62,12 @@ describe("GlassesDisplayMirror", () => {
       mainEvent: {},
       view: "main",
     })
+    // The mirror reads through toolkit.display.mirror now; delegate the mocked
+    // facade to the real display store this test seeds via setState().
+    ;(toolkit.display.mirror.current as jest.Mock).mockImplementation(() => useDisplayStore.getState().currentEvent)
+    ;(toolkit.display.mirror.onMirror as jest.Mock).mockImplementation((cb: (event: unknown) => void) =>
+      useDisplayStore.subscribe((s) => s.currentEvent, cb),
+    )
   })
 
   it("renders clear_view as an empty mirror instead of an unknown layout error", () => {

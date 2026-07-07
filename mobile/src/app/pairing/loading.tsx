@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
-import {waitForGlassesReady, BluetoothSdk} from "@mentra/island"
-import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/island"
+import {toolkit} from "@mentra/island"
+import type {PairFailureEvent} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
@@ -10,8 +10,7 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
-import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
 export default function GlassesPairingLoadingScreen() {
@@ -19,18 +18,18 @@ export default function GlassesPairingLoadingScreen() {
   const route = useRoute()
   const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const showGlassesBootingRef = useRef(false)
-  const hasSubmittedTimeoutIncidentRef = useRef(false)
   const hasNavigatedRef = useRef(false)
-  const glassesFullyBooted = useGlassesStore(selectGlassesReady)
+  const glassesFullyBooted = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  ).fullyBooted
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   useEffect(() => {
-    let sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+    let unsub = toolkit.pairing.onGlassesNotReady(() => {
       setShowGlassesBooting(true)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [])
 
@@ -42,7 +41,11 @@ export default function GlassesPairingLoadingScreen() {
 
   const handlePairFailure = useCallback(
     (error: string) => {
-      BluetoothSdk.forget()
+      // Clears the failed attempt; when a real pairing predates this attempt
+      // (re-pair), it is preserved instead of forgotten.
+      void toolkit.pairing.abandonAttempt().catch((cleanupError) => {
+        console.warn("Pairing failure cleanup failed:", cleanupError)
+      })
       if (error === "errors:pairNeedDisconnect") {
         replace("/pairing/unpair-even", {deviceModel: deviceModel})
         return
@@ -53,57 +56,23 @@ export default function GlassesPairingLoadingScreen() {
   )
 
   useEffect(() => {
-    let sub = BluetoothSdk.addListener("pair_failure", (event: PairFailureEvent) => {
+    let unsub = toolkit.pairing.onPairFailure((event: PairFailureEvent) => {
       handlePairFailure(event.error)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [handlePairFailure])
 
   useEffect(() => {
-    showGlassesBootingRef.current = showGlassesBooting
-  }, [showGlassesBooting])
-
-  useEffect(() => {
-    hasSubmittedTimeoutIncidentRef.current = false
     const controller = new AbortController()
 
-    void waitForGlassesReady({
-      getConnection: () => useGlassesStore.getState().connection,
-      subscribe: (listener) => useGlassesStore.subscribe((s) => s.connection, listener),
+    void toolkit.pairing.waitForReady({
+      deviceModel,
+      deviceName,
       timeoutMs: 35_000,
+      route: "/pairing/loading",
       signal: controller.signal,
-    }).then((ready) => {
-      // Booted in time (or the screen unmounted) — nothing to report.
-      if (ready || controller.signal.aborted || hasSubmittedTimeoutIncidentRef.current) {
-        return
-      }
-      hasSubmittedTimeoutIncidentRef.current = true
-      const actualBehavior = JSON.stringify(
-        {
-          deviceModel,
-          deviceName,
-          showGlassesBooting: showGlassesBootingRef.current,
-          elapsedMs: 35_000,
-          route: "/pairing/loading",
-        },
-        null,
-        2,
-      )
-
-      void submitAutomaticBugIncident({
-        categorization: {
-          submissionMode: "AUTOMATIC",
-          triggerArea: "pairing_loading",
-          triggerReason: "glasses_connect_timeout",
-        },
-        expectedBehavior: "Glasses should connect successfully within 35 seconds.",
-        actualBehavior,
-        severityRating: 4,
-        dedupeKey: `pairing_timeout|${deviceModel}|${deviceName || "unknown"}`,
-        logTag: "PairingTimeoutBugReport",
-      })
     })
 
     return () => {

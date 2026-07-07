@@ -1,9 +1,10 @@
+import {toolkit} from "@mentra/island"
 import {TouchableOpacity, View} from "react-native"
 import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 interface MicIconProps {
   color?: string
@@ -14,8 +15,9 @@ interface MicIconProps {
 
 const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIconProps) => {
   const {theme} = useAppTheme()
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const glassesMicEnabled = useGlassesStore((state) => state.micEnabled)
+  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, toolkit.glasses.onStatus)
+  const glassesConnected = glassesStatus.state === "connected"
+  const glassesMicEnabled = glassesStatus.micEnabled
 
   const iconColor = color || theme.colors.icon
 

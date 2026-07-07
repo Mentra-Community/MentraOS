@@ -21,10 +21,10 @@ import {
   saveLastOpenTime,
   sortAppsByLastOpenTime,
   useActiveApps,
-  useAppStatusStore,
   useSetForeground,
   type ClientApp,
 } from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 import AppIcon from "@/components/home/AppIcon"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -653,14 +653,6 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
-    } else if (applet.webviewUrl && applet.healthy) {
-      saveLastOpenTime(applet.packageName)
-      push("/applet/webview", {
-        webviewURL: applet.webviewUrl,
-        appName: applet.name,
-        packageName: applet.packageName,
-        transition: "fade",
-      })
     } else if (applet.local) {
       // Local miniapps are rendered by the Compositor overlay rather than a
       // pushed route — foreground the app and let <Compositor /> mount its

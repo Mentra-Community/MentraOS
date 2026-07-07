@@ -762,6 +762,15 @@ export type OtaStartAckEvent = {
   timestamp: number
 }
 
+export type OtaUpdateAvailableEvent = {
+  type: "ota_update_available"
+  version_code?: number
+  version_name?: string
+  updates?: string[]
+  total_size?: number
+  cache_ready?: boolean
+}
+
 export type OtaStatusEvent = {
   type: "ota_status"
   session_id: string
@@ -838,6 +847,7 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
+  ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
@@ -908,6 +918,7 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
+  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -1086,6 +1097,7 @@ export interface OtaUpdateInfo {
   versionName: string
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
+  cacheReady?: boolean
 }
 
 export interface OtaProgress {

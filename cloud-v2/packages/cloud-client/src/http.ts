@@ -37,6 +37,7 @@ export interface HttpClient {
   get<T>(path: string, opts?: ReqOpts): Promise<T>;
   head(path: string, opts?: ReqOpts): Promise<Response>;
   post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T>;
+  postForm<T>(path: string, form: FormData, opts?: ReqOpts): Promise<T>;
   put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T>;
   delete<T>(path: string, opts?: ReqOpts): Promise<T>;
   url(path: string): string;
@@ -170,6 +171,50 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     return await parseJson<T>(res);
   }
 
+  async function requestForm<T>(
+    path: string,
+    form: FormData,
+    opts?: ReqOpts,
+  ): Promise<T> {
+    const url = joinUrl(baseUrl, path);
+    const bearer = await resolveBearer(opts);
+    const headers: Record<string, string> = {};
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+
+    let lastNetworkError: unknown;
+    for (let attempt = 0; attempt <= (opts?.idempotent ? MAX_RETRIES : 0); attempt++) {
+      if (attempt > 0) {
+        const backoff = RETRY_BASE_MS * 2 ** (attempt - 1);
+        logger.debug("http retrying form request", { method: "POST", path, attempt });
+        await delay(backoff);
+      }
+
+      let res: Response;
+      try {
+        // Do not set Content-Type here: fetch/FormData must generate the
+        // multipart boundary.
+        res = await fetch(url, { method: "POST", headers, body: form });
+      } catch (err) {
+        lastNetworkError = err;
+        logger.warn("http form network error", { method: "POST", path, attempt });
+        continue;
+      }
+
+      if (!res.ok) {
+        throw await toHttpError(res, "POST", path);
+      }
+
+      return await parseJson<T>(res);
+    }
+
+    throw new HttpError(
+      `Network request failed: POST ${path}`,
+      0,
+      "NETWORK_ERROR",
+    );
+    void lastNetworkError;
+  }
+
   /**
    * Turn a non-2xx response into an `HttpError`, reading a machine-readable
    * `code` from the JSON body when the server provides one. We swallow any body
@@ -222,6 +267,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     },
     post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T> {
       return request<T>("POST", path, body, opts);
+    },
+    postForm<T>(path: string, form: FormData, opts?: ReqOpts): Promise<T> {
+      return requestForm<T>(path, form, opts);
     },
     put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T> {
       return request<T>("PUT", path, body, opts);

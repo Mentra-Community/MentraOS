@@ -1,4 +1,4 @@
-import BluetoothSdk, {WifiSearchResult} from "@mentra/bluetooth-sdk"
+import {toolkit, type WifiSearchResult} from "@mentra/island"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
@@ -12,8 +12,8 @@ import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
@@ -26,7 +26,10 @@ export default function WifiScanScreen() {
   networksRef.current = networks
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
-  const connectedWifi = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi : null))
+  const wifiStatus = useToolkitSnapshot(toolkit.glasses.wifi.status, (onChange) =>
+    toolkit.glasses.wifi.onStatus(onChange),
+  )
+  const connectedWifi = wifiStatus.state === "connected" ? wifiStatus : null
   const connectedWifiSsid = connectedWifi?.ssid
   const {push, goBack, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
     useNavigationStore.getState()
@@ -78,12 +81,12 @@ export default function WifiScanScreen() {
 
     // The glasses stream networks one by one while the scan runs; show them as
     // they arrive instead of waiting for the final requestWifiScan() result.
-    const sub = BluetoothSdk.addListener("wifi_scan_result", (event) => {
-      if (event.networks.length > 0) {
-        setNetworks(mapNetworks(event.networks))
+    const unsubscribe = toolkit.glasses.wifi.onScanResult((scanned) => {
+      if (scanned.length > 0) {
+        setNetworks(mapNetworks(scanned))
       }
     })
-    return () => sub.remove()
+    return unsubscribe
   }, [refreshSavedNetworks])
 
   const mapNetworks = (scanResults: WifiSearchResult[]): WifiSearchResult[] =>
@@ -100,7 +103,7 @@ export default function WifiScanScreen() {
     setNetworks([])
 
     try {
-      const scanResults = await BluetoothSdk.requestWifiScan()
+      const scanResults = await toolkit.glasses.wifi.scan()
       console.log(`WIFI_SCAN: Received ${scanResults.length} WiFi scan results`)
       setNetworks(mapNetworks(scanResults))
       setIsScanning(false)
@@ -134,7 +137,7 @@ export default function WifiScanScreen() {
             onPress: async () => {
               try {
                 console.log(`WIFI_SCAN: Forgetting network: ${selectedNetwork.ssid}`)
-                await BluetoothSdk.forgetWifiNetwork(selectedNetwork.ssid)
+                await toolkit.glasses.wifi.forget(selectedNetwork.ssid)
                 // Also remove from local saved credentials
                 WifiCredentialsService.removeCredentials(selectedNetwork.ssid)
                 setSavedNetworks((prev) => prev.filter((ssid) => ssid !== selectedNetwork.ssid))

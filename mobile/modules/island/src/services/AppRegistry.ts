@@ -24,7 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {getRuntimeHooks} from "../runtime/config"
+import {getConfigValues} from "../runtime/bootstrap"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -629,6 +629,11 @@ class AppRegistry {
   public getInstalledVersions(packageName: string): string[] {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
+      // Not installed yet is an expected state (e.g. preinstall sync probing
+      // versions before first install) — return [] without the error noise.
+      if (!lmaDir.exists) {
+        return []
+      }
       const lma = lmaDir.list()
       return lma.map((lma) => lma.name)
     } catch (error) {
@@ -942,7 +947,7 @@ function configuredDevHost(): string | undefined {
       if (/^[\w.-]+$/.test(explicit)) return explicit
     }
   }
-  return getRuntimeHooks().devServerHost?.()
+  return getConfigValues().devServerHost?.()
 }
 
 function isPrivateLanHost(hostname: string): boolean {

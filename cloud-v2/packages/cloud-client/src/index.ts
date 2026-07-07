@@ -54,3 +54,17 @@ export type {
   RuntimeTtsSpeakOptions,
   RuntimeTtsSpeechSource,
 } from "./modules/runtime/runtime";
+
+export type {
+  AddReportArtifactsResult,
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportKind,
+  ReportLogEntry,
+  ReportStatus,
+  ReportSystemPriority,
+  ReportTrigger,
+  SubmitReportInput,
+  SubmitReportResult,
+} from "./modules/core/core";

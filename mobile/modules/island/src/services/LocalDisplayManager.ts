@@ -27,9 +27,12 @@
  * does not need sub-second background fidelity.
  */
 
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import displayProcessor from "./DisplayProcessor"
+import {useDisplayStore} from "../stores/display"
 import sceneRenderer from "./SceneRenderer"
-import {getRuntimeHooks} from "../runtime/config"
+import {isGlassesConnected} from "./GlassesReadiness"
+import {useGlassesStore} from "../stores/glasses"
 import type {SceneElementInput} from "../utils/display/scene"
 import {BgTimer} from "../utils/timers"
 
@@ -444,13 +447,14 @@ class LocalDisplayManager {
     }
 
     try {
-      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
-      if (sendDisplayEvent) {
-        void Promise.resolve(sendDisplayEvent(processedEvent)).catch((err) => {
-          console.error(`${LOG_TAG}: native display failed:`, err)
-        })
-      }
-      getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
+      // The display output path is a direct btsdk call now (was a host sendDisplayEvent
+      // hook) so a bare OEM renders to the glasses without wiring it.
+      void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+        console.error(`${LOG_TAG}: native display failed:`, err)
+      })
+      // The mirror store also lives in island, so display requests update the
+      // phone-side preview without any host hook.
+      useDisplayStore.getState().setDisplayEvent(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }
@@ -606,16 +610,14 @@ class LocalDisplayManager {
    */
   public attachToRuntime(): void {
     if (this.runtimeAttached) return
-    const hooks = getRuntimeHooks()
-    if (!hooks.subscribeGlassesStatus) return
-
-    this.glassesWasConnected = hooks.glassesStatus?.get()?.connected === true
-    this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus((changed) => {
-      if (changed.connected === undefined) return
-      const connected = changed.connected === true
-      const reconnected = connected && !this.glassesWasConnected
+    // dev wired this through the (since-removed) glassesStatus runtime hooks;
+    // island reads its own glasses store directly.
+    this.glassesWasConnected = isGlassesConnected(useGlassesStore.getState().connection)
+    this.unsubscribeGlassesStatus = useGlassesStore.subscribe(() => {
+      const connected = isGlassesConnected(useGlassesStore.getState().connection)
+      if (connected === this.glassesWasConnected) return
       this.glassesWasConnected = connected
-      if (reconnected) {
+      if (connected) {
         this.replayCurrent()
       }
     })

@@ -5,7 +5,6 @@ import {ScrollView, View} from "react-native"
 import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
-import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -16,7 +15,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import navigationService from "@/services/NavigationService"
+import {navigationService} from "@mentra/island/internal"
 import ws from "@/services/WebSocketManager"
 import socketComms from "@/services/SocketComms"
 import showAlert from "@/utils/AlertUtils"
@@ -161,24 +160,10 @@ export default function DebugSettingsScreen() {
                 push("/onboarding/os")
               }}
             />
-
-            <RouteButton
-              label="Test switcher"
-              onPress={() => {
-                clearHistoryAndGoHome()
-                push("/test/switcher")
-              }}
-            />
           </Group>
 
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
-
-            <RouteButton
-              label="Buffer Recording Debug"
-              subtitle="Control 30-second video buffer on glasses"
-              onPress={() => push("/miniapps/settings/buffer-debug")}
-            />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}
@@ -278,12 +263,6 @@ export default function DebugSettingsScreen() {
               onValueChange={async (value) => {
                 const frameSize = parseInt(value, 10)
                 setLc3FrameSize(frameSize)
-                // Apply immediately to native encoder and cloud
-                try {
-                  await socketComms.configureAudioFormat()
-                } catch (err) {
-                  console.error("Failed to apply LC3 frame size:", err)
-                }
               }}
               description="Higher bitrates improve transcription quality but use more bandwidth."
             />
@@ -294,8 +273,6 @@ export default function DebugSettingsScreen() {
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />
           </Group>
-
-          <StoreUrl />
 
           {/* Super mode only: a wrong OTA manifest can brick glasses */}
           {superMode && <OtaVersionUrl />}
