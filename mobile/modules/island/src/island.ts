@@ -4,9 +4,9 @@
  * typed facade over the runtime. (Exported from the `@mentra/island` module, whose
  * name stays `island` in code; the public API surface is `toolkit`.)
  *
- * This is additive: it grows one facade at a time and lives *alongside* the flat
- * named exports in `index.ts` during the migration. The flat exports (and the
- * `BluetoothSdk` passthrough) stay until every screen has moved onto `island.*`.
+ * It grows one facade at a time. The migration-era flat store/service exports
+ * live on the `@mentra/island/internal` entry (and the debug singletons on
+ * `@mentra/island/devtools`); they shrink as screens move onto `toolkit.*`.
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
@@ -40,11 +40,6 @@ import {pairing} from "./facades/pairing"
 import {phoneNotifications} from "./facades/phoneNotifications"
 import {permissions} from "./facades/permissions"
 import {notifications} from "./facades/notifications"
-import {useDisplayStore} from "./stores/display"
-import {useCoreStore} from "./stores/core"
-import {useConnectionStore} from "./stores/connection"
-import {useCloudClientStatusStore} from "./stores/cloudClientStatus"
-import {useSettingsStore} from "./stores/settings"
 import {logBuffer} from "./utils/devLogging"
 
 export const toolkit = {
@@ -175,15 +170,4 @@ export const toolkit = {
   /** Inbound alerts island→host (crashloop, version-incompatible, connection loss). */
   notifications,
   display,
-  /**
-   * Temporary host migration stores. Device/glasses and gallery runtime state
-   * must stay behind typed facades, not this escape hatch.
-   */
-  stores: {
-    display: useDisplayStore,
-    core: useCoreStore,
-    connection: useConnectionStore,
-    cloudClientStatus: useCloudClientStatusStore,
-    settings: useSettingsStore,
-  },
 }

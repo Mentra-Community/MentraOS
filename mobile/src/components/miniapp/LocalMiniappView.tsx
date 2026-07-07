@@ -7,15 +7,15 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
+import {BgTimer} from "@mentra/island"
 import {
-  BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
   DEV_APP_PACKAGE_NAME,
-  devServerBridge,
   miniappLauncher,
   useAppStatusStore,
-} from "@mentra/island"
+} from "@mentra/island/internal"
+import {devServerBridge} from "@mentra/island/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"

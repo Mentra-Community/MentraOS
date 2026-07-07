@@ -5,6 +5,10 @@ import {subscribeWithSelector} from "zustand/middleware"
 
 import restComms from "../services/RestComms"
 import {storage} from "../utils/storage"
+import {getBluetoothSettingKeysForDevice} from "./bluetoothSettingKeys"
+import {useGlassesStore} from "./glasses"
+
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./bluetoothSettingKeys"
 
 export interface Setting {
   key: string
@@ -18,6 +22,14 @@ export interface Setting {
   override?: () => any
   // onWrite?: () => void
   persist: boolean
+  // Pairing-identity keys are NATIVE-authoritative: the native layer writes
+  // them on pairing success (handleDeviceReady) / forget and echoes them down
+  // via save_setting; JS→native they travel only in the explicit SEEDS
+  // (hydration, pre-connect, post-demotion, abandon re-seed) — never the
+  // change-push and never the on-connect replay, whose mid-relay snapshot can
+  // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
+  // this flag so the sync exclusions can't drift from the descriptors.
+  nativeAuthoritative?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -237,6 +249,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   default_wearable: {
     key: "default_wearable",
@@ -244,14 +257,23 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
-  device_name: {key: "device_name", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
+  device_name: {
+    key: "device_name",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
   device_address: {
     key: "device_address",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   default_controller: {
     key: "default_controller",
@@ -259,6 +281,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   pending_controller: {
     key: "pending_controller",
@@ -266,6 +289,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_device_name: {
     key: "controller_device_name",
@@ -273,6 +297,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   controller_address: {
     key: "controller_address",
@@ -280,6 +305,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    nativeAuthoritative: true,
   },
   // ui state:
   home_background: {
@@ -721,6 +747,23 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.nex_lc3_audio_playback.key,
 ]
 
+// Pairing identity is NATIVE-authoritative: the native layer writes it on
+// pairing success (handleDeviceReady) / forget and echoes it down via
+// save_setting; JS persists those echoes. JS→native, identity travels ONLY in
+// the explicit full seeds (device-store hydration, pre-connect push,
+// post-demotion re-push) — never in the change-push subscription. Relaying an
+// echoed identity change back up would make the sync bidirectional with loop
+// gain 1: two identity values in flight (e.g. a boot demotion crossing a
+// native promotion) then chase each other through push→apply→echo→push
+// forever, flapping the UI.
+//
+// Derived from the `nativeAuthoritative` descriptor flag (not maintained as a
+// parallel list) so the change-push exclusion in GlassesSettingsSync can't
+// drift from the setting declarations.
+export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
+  .filter((setting) => setting.nativeAuthoritative)
+  .map((setting) => setting.key)
+
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
 export interface SettingsState {
@@ -972,16 +1015,18 @@ export const useSettingsStore = create<SettingsState>()(
     },
     getBluetoothSettings: () => {
       const state = get()
+      // Device-model-filtered key set (wire v2): Mentra Live (no display) gets
+      // the reduced MENTRA_LIVE_SETTING_KEYS; display glasses get the full set.
+      const deviceModel = useGlassesStore.getState().deviceModel || state.getSetting(SETTINGS.default_wearable.key)
+      const keys = getBluetoothSettingKeysForDevice(deviceModel, BLUETOOTH_SETTING_KEYS)
       const bluetoothSettings: Record<string, any> = {}
-      Object.values(SETTINGS).forEach((setting) => {
-        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
-          const value = state.getSetting(setting.key)
-          if (setting.key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
-            return
-          }
-          bluetoothSettings[setting.key] = value
+      for (const key of keys) {
+        const value = state.getSetting(key)
+        if (key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
+          continue
         }
-      })
+        bluetoothSettings[key] = value
+      }
       return bluetoothSettings
     },
     resetAllSettingsLocally: () => {

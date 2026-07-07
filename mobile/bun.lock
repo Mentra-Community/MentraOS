@@ -296,6 +296,7 @@
         "expo-task-manager": "*",
         "react": "*",
         "react-native": "*",
+        "react-native-ble-manager": "*",
         "react-native-localize": "*",
         "react-native-mmkv": "*",
         "react-native-nitro-bg-timer": "*",

@@ -11,16 +11,15 @@ import org.json.JSONObject;
 /**
  * Splits large JSON messages into compact chunks that fit through the K900/BES BLE path.
  *
- * <p>This mirrors the phone-to-glasses chunk envelope: t="ck", id=session id, c=chunk index,
- * n=total chunks, d=raw JSON slice.
+ * <p>v1: JSON chunk envelope (t="ck"). v2: binary fragments ({@link BesWireFormat#CMD_TYPE_BINARY_MSG}).
  */
 public class MessageChunker {
     private static final String TAG = "MessageChunker";
 
-    private static final int MESSAGE_SIZE_THRESHOLD = 200;
+    private static final int MESSAGE_SIZE_THRESHOLD_V1 = 200;
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
-    private static final int MAX_PACKED_CHUNK_SIZE = 253;
+    public static final int MAX_PACKED_CHUNK_SIZE = BesWireFormat.MAX_PACKED_FRAME_SIZE;
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
     public static boolean needsChunking(String message) {
@@ -29,14 +28,18 @@ public class MessageChunker {
         }
 
         int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
-        boolean needsChunking = messageBytes > MESSAGE_SIZE_THRESHOLD;
+        int threshold =
+                BesWireFormat.isBinaryProtocolActive()
+                        ? BesWireFormat.MAX_FRAGMENT_PAYLOAD
+                        : MESSAGE_SIZE_THRESHOLD_V1;
+        boolean needsChunking = messageBytes > threshold;
         if (needsChunking) {
             Log.d(
                     TAG,
                     "Message size "
                             + messageBytes
                             + " exceeds threshold "
-                            + MESSAGE_SIZE_THRESHOLD
+                            + threshold
                             + ", will chunk");
         }
         return needsChunking;
@@ -77,6 +80,59 @@ public class MessageChunker {
 
         throw new JSONException(
                 "Unable to create K900 chunks within " + MAX_PACKED_CHUNK_SIZE + " bytes");
+    }
+
+    /**
+     * Split a JSON message into v2 binary wire frames.
+     *
+     * @param originalJson Raw JSON to send (C/V/B wrapper applied per Phase 3 rules)
+     * @param msgId 16-bit message id shared across fragments
+     */
+    public static List<byte[]> createBinaryFragments(String originalJson, int msgId)
+            throws JSONException {
+        if (originalJson == null) {
+            throw new IllegalArgumentException("Cannot chunk null message");
+        }
+
+        byte[] messageBytes = BesWireFormat.buildOutboundPayloadBytes(originalJson);
+        List<byte[]> payloadChunks = splitUtf8Bytes(messageBytes, BesWireFormat.MAX_FRAGMENT_PAYLOAD);
+        int totalFragments = payloadChunks.size();
+        List<byte[]> frames = new ArrayList<>(totalFragments);
+
+        for (int i = 0; i < totalFragments; i++) {
+            byte flags = 0;
+            if (i == 0) {
+                flags |= BesWireFormat.FLAG_FIRST_FRAG;
+            }
+            if (i == totalFragments - 1) {
+                flags |= BesWireFormat.FLAG_LAST_FRAG;
+            }
+            byte[] frame =
+                    BesWireFormat.packBinaryFragment(
+                            flags, msgId, i, totalFragments, payloadChunks.get(i));
+            if (frame == null || frame.length > MAX_PACKED_CHUNK_SIZE) {
+                throw new JSONException(
+                        "Binary fragment "
+                                + i
+                                + " exceeds "
+                                + MAX_PACKED_CHUNK_SIZE
+                                + " bytes ("
+                                + (frame != null ? frame.length : 0)
+                                + ")");
+            }
+            frames.add(frame);
+        }
+
+        Log.d(
+                TAG,
+                "Created "
+                        + frames.size()
+                        + " binary fragments for "
+                        + messageBytes.length
+                        + " payload bytes (msgId="
+                        + msgId
+                        + ")");
+        return frames;
     }
 
     private static List<JSONObject> buildChunks(
@@ -122,6 +178,19 @@ public class MessageChunker {
             }
         }
         return true;
+    }
+
+    private static List<byte[]> splitUtf8Bytes(byte[] messageBytes, int chunkSize) {
+        List<byte[]> chunkDataList = new ArrayList<>();
+        int offset = 0;
+        while (offset < messageBytes.length) {
+            int endIndex = findUtf8ChunkEnd(messageBytes, offset, chunkSize);
+            byte[] slice = new byte[endIndex - offset];
+            System.arraycopy(messageBytes, offset, slice, 0, slice.length);
+            chunkDataList.add(slice);
+            offset = endIndex;
+        }
+        return chunkDataList;
     }
 
     private static List<String> splitUtf8(byte[] messageBytes, int chunkSize) {

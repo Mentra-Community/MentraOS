@@ -25,6 +25,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
 import {pushAllBluetoothSettings} from "./GlassesSettingsSync"
+import {demoteDefaultToPending} from "./PairingIdentity"
 import {DeviceTypes} from "../types"
 
 let hydrationPromise: Promise<void> | null = null
@@ -119,15 +120,10 @@ export async function demoteOrphanedDefaultWearable(): Promise<void> {
   if (await BluetoothSdk.getDefaultDevice()) return
 
   console.log(`DeviceStoreHydration: demoting orphaned default_wearable "${model}" to pending_wearable`)
-  // The user's LATEST selection wins: only backfill the pending marker when
-  // none exists — a fresher pending model (a pairing started after the orphan
-  // formed) must not be replaced by the stale orphaned model.
-  if (!settings.getSetting(SETTINGS.pending_wearable.key)) {
-    await settings.setSetting(SETTINGS.pending_wearable.key, model)
-  }
-  await settings.setSetting(SETTINGS.default_wearable.key, "")
-  await settings.setSetting(SETTINGS.device_name.key, "")
-  await settings.setSetting(SETTINGS.device_address.key, "")
+  // The identity write set (latest-selection-wins backfill + identity-triplet
+  // clear) lives with PairingIdentity, the single writer of the JS-side
+  // identity keys; this boot repair owns only the guards above.
+  await demoteDefaultToPending(model)
   // The hydration seed already landed the pre-demotion values in the native
   // store; re-push so native mirrors the demoted identity too.
   await pushAllBluetoothSettings()

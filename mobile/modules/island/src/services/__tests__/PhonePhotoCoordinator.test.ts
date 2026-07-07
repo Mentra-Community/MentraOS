@@ -105,10 +105,12 @@ describe("PhonePhotoCoordinator", () => {
       expect(startManagedPhoto).toHaveBeenCalledWith({size: "medium"})
       expect(awaitManagedPhotoReady).toHaveBeenCalledWith("rq-test-1")
 
-      // BLE call shape (no appId: local miniapp photos are phone-owned).
+      // BLE call shape: wire v2 sends a short 4-hex correlation id (not the
+      // cloud UUID) plus the owning appId.
       expect(requestPhotoNative).toHaveBeenCalledTimes(1)
       const arg = requestPhotoNative.mock.calls[0]![0] as {
         requestId: string
+        appId: string
         size: string
         webhookUrl: string
         authToken: string | null
@@ -117,7 +119,8 @@ describe("PhonePhotoCoordinator", () => {
         sound: boolean
         exposureTimeNs: number | null
       }
-      expect(arg.requestId).toBe("rq-test-1")
+      expect(arg.requestId).toMatch(/^[0-9a-f]{4}$/)
+      expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
       expect(arg.webhookUrl).toBe(PRESIGN.uploadUrl)
       expect(arg.authToken).toBeNull()
@@ -178,6 +181,36 @@ describe("PhonePhotoCoordinator", () => {
       await coord.takePhoto("com.a", {})
       expect(observedDuring).toBe(true)
       expect(coord.owns("rq-test-1")).toBe(false)
+    })
+
+    test("sends a short BLE requestId while keeping the cloud UUID internally", async () => {
+      const coord = new PhonePhotoCoordinator()
+      let bleIdDuringFlight = ""
+      awaitManagedPhotoReady.mockImplementationOnce(async () => {
+        bleIdDuringFlight = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
+        expect(bleIdDuringFlight).toHaveLength(4)
+        expect(coord.resolveCloudRequestId(bleIdDuringFlight)).toBe("rq-test-1")
+        return {readUrl: "https://r2.test/signed"}
+      })
+
+      const result = await coord.takePhoto("com.a", {size: "medium"})
+      expect(result.requestId).toBe("rq-test-1")
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect((requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId).toBe(bleIdDuringFlight)
+      // Mapping is cleaned up after completion.
+      expect(coord.owns(bleIdDuringFlight)).toBe(false)
+    })
+
+    test("owns() accepts short BLE ids while a capture is in flight", async () => {
+      const coord = new PhonePhotoCoordinator()
+      awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+      void coord.takePhoto("com.a", {}).catch(() => {})
+      await new Promise(r => setTimeout(r, 5))
+      const bleId = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
+      expect(coord.owns(bleId)).toBe(true)
+      expect(coord.resolveCloudRequestId(bleId)).toBe("rq-test-1")
+      // Settle the hanging request so it can't leak into the next test.
+      coord.handlePhotoError(bleId, "TEST_TEARDOWN", "teardown")
     })
   })
 

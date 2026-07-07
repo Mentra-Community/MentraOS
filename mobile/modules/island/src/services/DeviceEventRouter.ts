@@ -25,8 +25,9 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore, SETTINGS} from "../stores/settings"
+import {useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
+import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
 
@@ -117,13 +118,16 @@ export function startDeviceEventRouter(): void {
   // The inbound complement to GlassesSettingsSync (which only pushes store→device).
   subs.push(
     BluetoothSdk.addListener("save_setting", async (event) => {
-      await useSettingsStore.getState().setSetting(event.key, event.value)
-      // Two-phase identity: the native layer promotes the default wearable on
-      // pairing success (handleDeviceReady) and echoes it here — a promoted
-      // default retires the pending selection marker.
-      if (event.key === SETTINGS.default_wearable.key && event.value) {
-        await useSettingsStore.getState().setSetting(SETTINGS.pending_wearable.key, "")
+      const settings = useSettingsStore.getState()
+      // Damp the relay: native re-echoes some settings unconditionally (e.g.
+      // the identity block at every handleDeviceReady) — a same-value echo
+      // must not become a store write (persistence churn + change-push noise).
+      if (settings.getSetting(event.key) !== event.value) {
+        await settings.setSetting(event.key, event.value)
       }
+      // Two-phase identity: a promoted default retires the pending selection
+      // marker. The rule lives with PairingIdentity (a no-op for other keys).
+      await retirePendingSelectionOnPromotion(event.key, event.value)
     }),
   )
 
@@ -132,12 +136,15 @@ export function startDeviceEventRouter(): void {
   // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).
   // Non-owned photo responses used to forward to the Cloud V1 photo pipeline via
   // restComms; that relay was removed with Cloud V1 app end-of-life, so they drop.
+  // Wire v2 sends a short 4-hex BLE requestId; the coordinator maps it back to
+  // the cloud requestId (resolveCloudRequestId) before ownership checks.
   subs.push(
     BluetoothSdk.addListener("photo_response", (event) => {
-      if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+      const cloudRequestId = event.requestId ? phonePhotoCoordinator.resolveCloudRequestId(event.requestId) : ""
+      if (cloudRequestId && phonePhotoCoordinator.owns(cloudRequestId)) {
         if (event.state === "error") {
           phonePhotoCoordinator.handlePhotoError(
-            event.requestId,
+            event.requestId ?? cloudRequestId,
             event.errorCode ?? "GLASSES_ERROR",
             event.errorMessage ?? "Glasses reported an error",
           )

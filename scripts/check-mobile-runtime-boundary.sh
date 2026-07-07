@@ -70,8 +70,14 @@ report_count() {
 }
 
 echo "boundary burn-down (informational):"
-report_count "raw island stores (settings/core/display/connection/cloudClientStatus/appStatus)" \
+# Raw stores are only importable via @mentra/island/internal now (directly or
+# through the @/stores/* shims, which re-export from it). The hook-name
+# pattern counts every consumer regardless of route, so the number stays
+# comparable across the burn-down campaign.
+report_count "raw island stores via /internal + shims (settings/core/display/connection/cloudClientStatus/appStatus)" \
   'useSettingsStore|useCoreStore|useDisplayStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore'
-report_count "toolkit.stores escape hatch" 'toolkit\.stores\.'
+report_count "@mentra/island/internal importers" 'from "@mentra/island/internal"'
+report_count "@mentra/island/devtools importers" 'from "@mentra/island/devtools"'
+report_count "toolkit.stores escape hatch (deleted; should stay 0)" 'toolkit\.stores\.'
 report_count "bluetooth-sdk internal surface in host" '@mentra/bluetooth-sdk-internal|@mentra/bluetooth-sdk/internal'
 report_count "flat island OTA helpers in host" 'checkBesUpdate|findMatchingMtkPatch|fetchVersionInfo|getAsgOtaVersionUrl'

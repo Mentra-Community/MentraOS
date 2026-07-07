@@ -123,20 +123,39 @@ that asserts snapshot mutation never reaches the store, so the class dies.
 
 ### D. Remaining escape hatches (the next boundary campaign)
 
+> **Status (2026-07-03):** ✅ **Phase 4 (entry-point split) is done** on
+> `codex/island-entrypoint-split`:
+>
+> - [x] `@mentra/island` main = `toolkit` + contract/read-model types + pure
+>       helpers host UI renders with (judgment rule: read models, commands,
+>       pure functions, types = main; store/service-shaped = not main)
+> - [x] `@mentra/island/internal` = raw stores + service singletons; all
+>       `@/stores/*` / `@/utils/*` shims and host services repointed
+> - [x] `@mentra/island/devtools` = `miniappRunningRegistry`, `devServerBridge`
+> - [x] `toolkit.stores.*` deleted (its 2 remaining mentions were shim comments)
+> - [x] guardrail counts `/internal` (39 files) + `/devtools` (2 files)
+>       imports report-only; raw-store count unchanged at 41 files
+>
+> Phase 5 (per-store burn-down) remains open.
+
 The glasses/gallery discipline does not yet extend to the rest of the runtime
-state. Present today:
+state. Present at review time (phase-4 disposition in brackets):
 
 - `toolkit.stores.{display, core, connection, cloudClientStatus, settings}` —
-  self-described "temporary host migration" hatch ([island.ts:148–154](../../../../mobile/modules/island/src/island.ts)).
+  self-described "temporary host migration" hatch. [**Deleted** in phase 4.]
 - Flat index.ts exports of the same stores plus service singletons
   (`appRegistry`, `cloudClientService`, `restComms`, `gallerySyncService`,
   `asgCameraApi`, `localStorageService`, `mediaProcessingQueue`,
   `miniappRunningRegistry`, `localMiniappRuntime`, `miniappLauncher`,
-  OTA check helpers, clock-fix helpers…).
+  OTA check helpers, clock-fix helpers…). [**Moved off the main entry** in
+  phase 4: stores + services on `@mentra/island/internal`, debug singletons on
+  `@mentra/island/devtools`; the main barrel keeps toolkit + types + pure
+  helpers.]
 - Host shim files `@/stores/{core, connection, display, settings,
   cloudClientStatus}` re-exporting island stores; ~36 host files /
   150+ accesses, heaviest: `useSettingsStore` (~38 files), `useAppStatusStore`
-  (~24 files), `useCoreStore` in pairing/status UI.
+  (~24 files), `useCoreStore` in pairing/status UI. [Still present — phase 5
+  burns these down per store; the shims now re-export from `/internal`.]
 
 Not a regression — these predate the PR and plan 020 scoped them out — but they
 are the reason the host still can't be handed to an OEM. Recommended shape:
@@ -206,7 +225,7 @@ Actions, all behavior-safe:
 | 1 | C (snapshot copies) + F hygiene (import idiom, dead links, guardrail report-mode extension) + E delete-nows + commit WP9 audit doc | S | tsc + jest + boundary script |
 | 2 | A+B: OTA state machine into island (`OtaInstallCoordinator`), facade diet, unified snapshot types; characterization tests FIRST from the WP 8B/8C list; timers/durations copied verbatim | L | the new island tests + on-device OTA of both a ≥37 and a <37 build before deleting `progress-legacy` |
 | 3 | 8D: delete `progress-legacy.tsx` + `<37` branch + flat OTA helper exports | M | grep exit-criteria from the plan |
-| 4 | D: entry-point split (`/internal`, `/devtools`) + shims repointed + guardrail patterns armed | M | no runtime change at all — pure module topology |
+| 4 ✅ | D: entry-point split (`/internal`, `/devtools`) + shims repointed + guardrail patterns armed — done, see §D status note | M | no runtime change at all — pure module topology |
 | 5 | D burn-down per store (core → pairing; display → display.mirror; session; miniapps hooks; settings last) | L (mechanical) | per-store PRs, boundary script ratchets |
 
 Phase 2 is the one that needs real care: OTA is device-flashing. The plan's own
@@ -214,3 +233,56 @@ rule applies — move behavior, never change it; every timer, fallback and
 sequencing rule is copied with its current values, and the legacy screen is
 deleted only after the unified path demonstrably reproduces old-build behavior
 on hardware.
+
+## Residual scaffolding (reconciled from the PR #3298 review)
+
+PR #3298 (`notes/pr3167-island-scaffolding-review.md`, written against #3167 at
+`5919f03fb`) inventoried 11 pieces of migration scaffolding. Post-#3331 (merged
+into dev as `9574928e6`) that inventory reconciles as follows; #3298 is closed
+as superseded by this section.
+
+Done or superseded by the landed work:
+
+- **`toolkit.stores.*` escape hatch** — deleted by the entry-point split
+  (#3342): explicit `@mentra/island/internal` + `/devtools` entries replaced the
+  documented escape hatch; the guardrail keeps `toolkit.stores` at zero.
+- **`REQUEST_WIFI_SETUP_TYPE` literal** — replaced with the
+  `MiniappRequestType` enum.
+- **`mentraJsBootstrap`** — island owns the engine (`ensureMiniappEngine`); the
+  host shim attaches only Sentry tags + alert copy via `router.onCrashloop` /
+  `onRestartToast`.
+- **Bluetooth SDK passthrough** — public entry exports event *types* only; the
+  singleton passthrough is `/internal`-only and host usage is a tracked
+  burn-down counter.
+- **OTA orchestration** — WP 8A–8D: `OtaUpdateCheckService` +
+  `OtaInstallCoordinator` own check/install/watchdogs; `progress.tsx` is a pure
+  renderer; verified on-device.
+- **`cloudClient` wrapper** — island constructs/owns the client; the host keeps
+  only dev endpoint resolution (documented keystone, a deliberate seam).
+- **`ws-types` / `MmkvSecureStore` / `RestComms` shims** — one-line re-exports;
+  `RestComms` retires with the tier-5 Cloud V1 removal.
+
+Addressed by the residual-scaffolding follow-up PR (stacked on this section):
+
+- **`configureRuntime({wifiSetup})`** — folded into
+  `toolkit.configure({ui: {requestWifiSetup}})`; `configureRuntime` deleted.
+- **`installAppStoreHooks({beforeStart})`** — split into named seams
+  (`onIncompatibleBlocked`, `onMissingSpeechModel`, `onOpenRequested`) with the
+  decisions island-side (compatibility gate; `requiresLocalSttModel`
+  registration flag + `sttModelManager`) and rendering host-side; the
+  `has_ever_activated_app` mark moved into island `start()`.
+- **Gallery pre-sync connectivity gate** — the island sync pre-flight owns the
+  bluetooth-adapter check (new `bluetooth_off` notice) alongside its existing
+  location-services notice and location-permission request/degrade step; the
+  gallery screen renders notices only.
+
+Still open (the ongoing campaign):
+
+- **Host store re-export shims** — `glasses` + `gallerySync` are deleted and
+  enforced at zero by the failing guardrail pattern; `settings`, `display`,
+  `core`, `connection`, `cloudClientStatus` remain as `/internal` re-export
+  shims tracked by the §F report-only counters. Burn down per §D slices; flip
+  each counter to a failing pattern as its migration completes.
+- **`GlobalEventEmitter`** — still a live island-internal bus (OTA ack listener,
+  gallery events) behind a deprecated host shim; retire once its remaining
+  events have typed SDK/toolkit subscriptions.

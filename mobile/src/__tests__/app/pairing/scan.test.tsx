@@ -230,37 +230,30 @@ describe("pairing scan screen", () => {
     })
   })
 
-  it("back-out of a FRESH pairing forgets the partial attempt but keeps the pending marker", async () => {
-    ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(false)
+  it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
+    // No entry snapshot: the abandon decision must come from the LIVE
+    // default-device read, because a pairing can promote while the flow is
+    // open — an entry snapshot would forget that brand-new pairing.
     render(<SelectGlassesBluetoothScreen />)
-    await waitFor(() => {
-      expect(toolkit.glasses.hasDefaultDevice).toHaveBeenCalled()
-    })
 
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
     backHandler({actionType: "GO_BACK"})
 
     await waitFor(() => {
-      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith(false)
+      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith()
     })
     expect(goBack).toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
   })
 
-  it("back-out of a RE-PAIR preserves the existing pairing", async () => {
-    ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+  it("forward navigation (replace to btclassic) skips the back-out cleanup", async () => {
     render(<SelectGlassesBluetoothScreen />)
-    await waitFor(() => {
-      expect(toolkit.glasses.hasDefaultDevice).toHaveBeenCalled()
-    })
 
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
-    backHandler({actionType: "GO_BACK"})
+    backHandler({actionType: "REPLACE"})
 
-    await waitFor(() => {
-      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith(true)
-    })
-    expect(goBack).toHaveBeenCalled()
+    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(goBack).not.toHaveBeenCalled()
   })
 
   it("routes a pair kickoff rejection to the failure screen instead of leaving loading stuck", async () => {

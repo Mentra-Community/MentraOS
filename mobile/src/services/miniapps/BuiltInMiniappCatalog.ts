@@ -2,17 +2,14 @@ import {createElement} from "react"
 import {Platform} from "react-native"
 
 import {
-  appRegistry,
   decideDevLaunchRoute,
   HardwareRequirementLevel,
   HardwareType,
-  installAppStoreHooks,
-  sttModelManager as STTModelManager,
   toolkit,
   type ClientApp,
   type StartOptions,
-  useAppStatusStore,
 } from "@mentra/island"
+import {appRegistry, installAppStoreHooks, useAppStatusStore} from "@mentra/island/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
@@ -60,11 +57,20 @@ class BuiltInMiniappCatalog {
     this.initialized = true
 
     for (const app of this.buildOfflineApps()) {
-      appRegistry.installOfflineApp(app)
+      // Captions cannot start without the on-device STT model; island gates
+      // start() on this flag and calls onMissingSpeechModel when it blocks.
+      appRegistry.installOfflineApp(app, {requiresLocalSttModel: app.packageName === captionsPackageName})
     }
 
     installAppStoreHooks({
-      beforeStart: (app, opts) => this.beforeStart(app, opts),
+      onIncompatibleBlocked: (app) => this.showIncompatibleAlert(app),
+      onMissingSpeechModel: (app) => void this.showMissingSpeechModelAlert(app),
+      onOpenRequested: (app, opts) => {
+        const nav = useNavigationStore.getState()
+        if (!opts?.skipNavigation && nav.getCurrentRoute() === "/home") {
+          this.navigateForApp(app)
+        }
+      },
     })
 
     useAppStatusStore.subscribe(() => {
@@ -74,57 +80,43 @@ class BuiltInMiniappCatalog {
     void this.syncGlassesMenuApps()
   }
 
-  private async beforeStart(app: ClientApp, opts?: StartOptions): Promise<boolean> {
-    const nav = useNavigationStore.getState()
-
-    if (!app.compatibility?.isCompatible) {
-      const missingTypes = app.compatibility?.missingRequired?.map((req) => req.type) || []
-      if (missingTypes.includes(HardwareType.EXIST)) {
-        await showAlert({
-          title: translate("home:glassesRequired"),
-          buttons: [{text: translate("common:ok")}],
-          message: translate("home:glassesRequiredMessage", {app: app.name}),
-        })
-        return false
-      }
-
-      const missingHardware =
-        missingTypes
-          .filter((type) => type !== HardwareType.EXIST)
-          .map((type) => type.toLowerCase())
-          .join(", ") || "required features"
-      await showAlert({
-        title: translate("home:hardwareIncompatible"),
+  /** Branded incompatible-launch alert (island already blocked the start). */
+  private showIncompatibleAlert(app: ClientApp): void {
+    const missingTypes = app.compatibility?.missingRequired?.map((req) => req.type) || []
+    if (missingTypes.includes(HardwareType.EXIST)) {
+      void showAlert({
+        title: translate("home:glassesRequired"),
         buttons: [{text: translate("common:ok")}],
-        message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+        message: translate("home:glassesRequiredMessage", {app: app.name}),
       })
-      return false
+      return
     }
 
-    if (app.packageName === captionsPackageName) {
-      const modelAvailable = await STTModelManager.isModelAvailable()
-      if (!modelAvailable) {
-        const result = await showAlert({
-          title: translate("transcription:noModelInstalled"),
-          message: translate("transcription:noModelInstalledMessage"),
-          buttons: [
-            {text: translate("common:cancel"), style: "cancel"},
-            {text: translate("transcription:goToSettings"), style: "default"},
-          ],
-        })
-        if (result === 1) {
-          nav.push("/miniapps/settings/speech")
-        }
-        return false
-      }
-    }
+    const missingHardware =
+      missingTypes
+        .filter((type) => type !== HardwareType.EXIST)
+        .map((type) => type.toLowerCase())
+        .join(", ") || "required features"
+    void showAlert({
+      title: translate("home:hardwareIncompatible"),
+      buttons: [{text: translate("common:ok")}],
+      message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+    })
+  }
 
-    if (!opts?.skipNavigation && nav.getCurrentRoute() === "/home") {
-      this.navigateForApp(app)
+  /** Missing on-device STT model alert + optional settings navigation (island already blocked). */
+  private async showMissingSpeechModelAlert(_app: ClientApp): Promise<void> {
+    const result = await showAlert({
+      title: translate("transcription:noModelInstalled"),
+      message: translate("transcription:noModelInstalledMessage"),
+      buttons: [
+        {text: translate("common:cancel"), style: "cancel"},
+        {text: translate("transcription:goToSettings"), style: "default"},
+      ],
+    })
+    if (result === 1) {
+      useNavigationStore.getState().push("/miniapps/settings/speech")
     }
-
-    useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
-    return true
   }
 
   private navigateForApp(app: ClientApp): void {

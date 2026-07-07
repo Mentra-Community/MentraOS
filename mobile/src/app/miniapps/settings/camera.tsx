@@ -13,7 +13,6 @@ import {translate} from "@/i18n"
 import Toast from "react-native-toast-message"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {toolkit} from "@mentra/island"
 
 type PhotoSize = "low" | "medium" | "high" | "max"
@@ -153,7 +152,6 @@ export default function CameraSettingsScreen() {
       return
     }
     setPhotoSize(size)
-    BluetoothSdk.updateBluetoothSettings({button_photo_size: size})
   }
 
   const handleVideoResolutionChange = (resolution: VideoResolution) => {
@@ -163,14 +161,8 @@ export default function CameraSettingsScreen() {
     }
     const width = resolution === "1080p" ? 1920 : 1280
     const height = resolution === "1080p" ? 1080 : 720
-    // Preserve the user's chosen fps across a resolution change.
     const fps = videoSettings?.fps ?? 30
     setVideoSettings({width, height, fps})
-    BluetoothSdk.updateBluetoothSettings({
-      button_video_width: width,
-      button_video_height: height,
-      button_video_fps: fps,
-    })
   }
 
   const handleVideoFpsChange = (fpsKey: VideoFps) => {
@@ -178,17 +170,9 @@ export default function CameraSettingsScreen() {
       console.log("Cannot change video fps - glasses not connected")
       return
     }
-    // Keep the current resolution, but normalize any stale/unsupported stored
-    // dimensions (e.g. legacy 1440p/4K) down to a supported one — the glasses
-    // reject anything other than 1080p/720p.
     const {width, height} = normalizeVideoResolution(videoSettings?.width, videoSettings?.height)
     const fps = parseInt(fpsKey, 10)
     setVideoSettings({width, height, fps})
-    BluetoothSdk.updateBluetoothSettings({
-      button_video_width: width,
-      button_video_height: height,
-      button_video_fps: fps,
-    })
   }
 
   const handleMaxRecordingTimeChange = (time: MaxRecordingTime) => {
@@ -198,7 +182,6 @@ export default function CameraSettingsScreen() {
     }
     const minutes = parseInt(time.replace("m", ""))
     setMaxRecordingTime(minutes)
-    BluetoothSdk.updateBluetoothSettings({button_max_recording_time: minutes})
   }
 
   const handleCameraFovChange = (fov: number, roiPosition: CameraRoiPosition) => {

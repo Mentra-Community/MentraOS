@@ -1,5 +1,5 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor} from "@mentra/island"
+import {displayProcessor} from "@mentra/island/internal"
 
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
@@ -111,8 +111,7 @@ class SocketComms {
     } catch (err) {
       console.error("SOCKET: native display failed:", err)
     }
-    const displayEventStr = JSON.stringify(processedEvent)
-    useDisplayStore.getState().setDisplayEvent(displayEventStr)
+    useDisplayStore.getState().setDisplayEvent(processedEvent)
   }
 
   // Message Handling

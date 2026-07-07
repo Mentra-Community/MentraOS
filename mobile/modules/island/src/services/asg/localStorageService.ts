@@ -7,7 +7,7 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo} from "../../types/asg"
 import {BgTimer} from "../../utils/timers"
-import {storage} from "../../utils/storage"
+import {storage, StorageValueNotFoundError} from "../../utils/storage"
 
 export interface DownloadedFile {
   name: string
@@ -121,7 +121,11 @@ export class LocalStorageService {
     const res = storage.load<SyncState>(this.SYNC_STATE_KEY)
 
     if (res.is_error()) {
-      console.error("Error getting sync state:", res.error)
+      // A missing key is the expected first-sync state (fresh install / never
+      // synced) — start from scratch quietly. Real storage failures still log.
+      if (!(res.error instanceof StorageValueNotFoundError)) {
+        console.error("Error getting sync state:", res.error)
+      }
       return {
         last_sync_time: 0,
         client_id: clientId,

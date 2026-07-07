@@ -6,11 +6,20 @@
  * (Connect-the-already-paired-default is `toolkit.glasses.connectDefault()`; this
  * facade is the first-time discovery + pair flow.)
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+// Internal btsdk surface — updateBluetoothSettings (the Bluetooth Classic
+// target hint) lives on the full surface, not the public entry (same reason
+// the glasses facade imports internal).
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {ConnectOptions, Device, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
+import {
+  markPendingSelection,
+  projectPairingIdentity,
+  subscribePairingIdentity,
+  type IdentitySnapshot,
+} from "../services/PairingIdentity"
 import {
   isGlassesConnected,
   isGlassesLinkLayerBusy,
@@ -24,6 +33,8 @@ import {
 } from "../services/AutomaticReportResult"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
 import {submitAutomaticReport} from "./reports"
+
+export type {IdentitySnapshot} from "../services/PairingIdentity"
 
 export interface PairingReadyWaitOptions {
   deviceModel?: string
@@ -183,6 +194,17 @@ export const pairing = {
     })
   },
 
+  // --- pairing-identity lifecycle (the PairingIdentity read-model + the JS-owned
+  // identity writes; promotion to `paired` only ever happens natively) ---
+  /** The identity lifecycle snapshot: none | pending (chosen, never paired) | paired. */
+  identity: (): IdentitySnapshot => projectPairingIdentity(),
+  /** Subscribe to identity changes; fires only when the projected snapshot changes.
+   * Returns an unsubscribe. */
+  onIdentity: (cb: (identity: IdentitySnapshot) => void): (() => void) => subscribePairingIdentity(cb),
+  /** Mark the chosen model as the pending selection (the scan-entry write); the
+   * host renders it as a finish-pairing affordance until pairing succeeds. */
+  markPendingSelection: (model: string) => markPendingSelection(model),
+
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (...args: Parameters<typeof BluetoothSdk.startScan>) => BluetoothSdk.startScan(...args),
   /** Whether a scan is currently in progress. */
@@ -230,36 +252,62 @@ export const pairing = {
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */
   setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
   /**
+   * Prime the native Bluetooth Classic audio watcher with the picked device.
+   * The iOS Mentra Live flow pairs Classic audio BEFORE any BLE connect
+   * exists, and native detects the pairing by matching the connected audio
+   * route against its device_name — which two-phase identity no longer sets
+   * at selection time. This is native-only routing state (device_name has no
+   * native→JS echo): the phone's persisted identity is untouched, and
+   * promotion still happens only at pairing success.
+   */
+  setBluetoothClassicTarget: (device: Device): Promise<void> =>
+    BluetoothSdk.updateBluetoothSettings({device_name: device.name}),
+  /**
    * Abandon an in-flight pairing attempt (back-out, failure retry, conflict
-   * retry) without destroying an existing pairing:
-   * - Re-pair with the old glasses still connected (nothing tapped yet — an
+   * retry) without destroying an existing pairing. The decision comes from the
+   * LIVE hydrated default-device read — never from flow-entry state, because a
+   * pairing can PROMOTE while the flow is open (the glasses finish pairing
+   * even as the user backs out of the UI), and an entry snapshot would forget
+   * that brand-new pairing:
+   * - Default device exists and glasses are connected (nothing in flight — an
    *   attempt drops the link first): stop the scan, touch nothing else.
-   * - Re-pair with an attempt in flight: cancel it, then re-seed the native
-   *   identity from the phone's persisted settings — the attempt's
+   * - Default device exists with an attempt in flight: cancel it, then re-seed
+   *   the native identity from the phone's persisted settings — the attempt's
    *   connect-by-name overwrote the native device_name, so a later
    *   connectDefault() would otherwise target the abandoned device.
-   * - Fresh pairing (no default device): also forget, clearing the partial
-   *   native pairing state.
-   * The `pending_wearable` marker is deliberately left alone — the host renders
-   * it as a finish-pairing affordance.
-   *
-   * `hadDefaultDevice` lets a screen pass the state it captured at entry (the
-   * scan screen does); when omitted, a live hydrated read is used, failing OPEN
-   * to "preserve" — a transient read failure must never wipe a real pairing.
+   * - No default device (genuinely unpaired attempt): also forget, clearing
+   *   the partial native pairing state.
+   * The read fails OPEN to "preserve" — a transient failure must never wipe a
+   * real pairing. The `pending_wearable` marker is deliberately left alone —
+   * the host renders it as a finish-pairing affordance.
    */
-  abandonAttempt: async (hadDefaultDevice?: boolean): Promise<void> => {
-    const preserve = hadDefaultDevice ?? (await hasDefaultDevice().catch(() => true))
-    if (preserve && isGlassesConnected(useGlassesStore.getState().connection)) {
+  abandonAttempt: async (): Promise<void> => {
+    const nativeHasDefault = await hasDefaultDevice().catch(() => true)
+    if (nativeHasDefault && isGlassesConnected(useGlassesStore.getState().connection)) {
       // Still connected means no connect attempt is in flight (an attempt drops
       // the existing link first): the user browsed the scan and backed out.
       // Stop the scan and leave the live pairing untouched.
+      console.log("PairingIdentity: abandonAttempt — pairing intact and connected; stopping scan only")
       await BluetoothSdk.stopScan()
       return
     }
     await BluetoothSdk.disconnect()
-    if (preserve) {
+    if (projectPairingIdentity().kind === "paired") {
+      // The persisted settings describe a COMPLETE pairing: restore it to
+      // native (the attempt's connect-by-name overwrote the native
+      // device_name; and if native somehow lost its default entirely, this
+      // repairs the divergence instead of forgetting a real pairing).
+      console.log("PairingIdentity: abandonAttempt — preserving pairing; attempt cancelled, native identity re-seeded")
       await pushAllBluetoothSettings()
+    } else if (nativeHasDefault) {
+      // Mid-relay: native promoted and its echoes are still landing — the
+      // incomplete JS snapshot must not be pushed over the fresher native
+      // identity (the on-connect replay's race). Native holds the truth.
+      console.log("PairingIdentity: abandonAttempt — preserving pairing; JS identity mid-relay, native kept as-is")
     } else {
+      // Forgetting requires CONSENSUS: no native default AND no complete
+      // persisted pairing — a genuinely partial attempt.
+      console.log("PairingIdentity: abandonAttempt — no pairing on either layer; forgetting the partial attempt")
       await BluetoothSdk.forget()
     }
   },

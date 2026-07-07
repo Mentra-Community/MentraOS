@@ -10,13 +10,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {
-  decideDevLaunchRoute,
-  registerDevApp,
-  useAppStatusStore,
-  DEV_APP_PACKAGE_NAME,
-  type DevAppRecord,
-} from "@mentra/island"
+import {decideDevLaunchRoute} from "@mentra/island"
+import {registerDevApp, useAppStatusStore, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "@mentra/island/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"

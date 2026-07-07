@@ -2,7 +2,7 @@
 // which jest mocks) so the actual logic runs under the mobile jest CI runner.
 import * as bootstrap from "../../modules/island/src/runtime/bootstrap"
 import {displayMirror} from "../../modules/island/src/facades/displayMirror"
-import {useDisplayStore} from "../../modules/island/src/stores/display"
+import {useDisplayStore, flushDisplayCoalesceForTests} from "../../modules/island/src/stores/display"
 
 describe("island bootstrap front door", () => {
   beforeEach(async () => {
@@ -36,6 +36,7 @@ describe("toolkit.display.mirror read facade over the display store", () => {
   it("current() returns the store's current display event", () => {
     const event = {view: "main", layout: {layoutType: "text_wall", text: "hi"}}
     useDisplayStore.getState().setDisplayEvent(JSON.stringify(event))
+    flushDisplayCoalesceForTests()
     expect(displayMirror.current()).toEqual(event)
   })
 
@@ -43,10 +44,12 @@ describe("toolkit.display.mirror read facade over the display store", () => {
     const cb = jest.fn()
     const unsub = displayMirror.onMirror(cb)
     useDisplayStore.getState().setDisplayEvent(JSON.stringify({view: "main", layout: {layoutType: "text_wall", text: "x"}}))
+    flushDisplayCoalesceForTests()
     expect(cb).toHaveBeenCalled()
     unsub()
     cb.mockClear()
     useDisplayStore.getState().setDisplayEvent(JSON.stringify({view: "main", layout: {layoutType: "text_wall", text: "y"}}))
+    flushDisplayCoalesceForTests()
     expect(cb).not.toHaveBeenCalled()
   })
 })

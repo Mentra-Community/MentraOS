@@ -8,6 +8,7 @@ import NetInfo from "@react-native-community/netinfo"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
 import {AppState, AppStateStatus, Platform} from "react-native"
+import BleManager from "react-native-ble-manager"
 import WifiManager from "react-native-wifi-reborn"
 
 import {useGallerySyncStore, HotspotInfo} from "../../stores/gallerySync"
@@ -400,6 +401,30 @@ class GallerySyncService {
     }
   }
 
+  /**
+   * Mirrors the host's old PermissionsUtils.isBluetoothEnabled exactly: poll
+   * BleManager for up to 500ms while the adapter reports "unknown"; assume
+   * enabled on a timeout (a slow adapter must not block the sync) and disabled
+   * on a check error.
+   */
+  private async isBluetoothAdapterEnabled(): Promise<boolean> {
+    try {
+      await BleManager.start({showAlert: false})
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const state = await BleManager.checkState()
+        if (state !== "unknown") {
+          return state === "on"
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      console.warn("[GallerySyncService] Bluetooth state still unknown after 500ms - assuming enabled")
+      return true
+    } catch (error) {
+      console.error("[GallerySyncService] Error checking Bluetooth state:", error)
+      return false
+    }
+  }
+
   private shouldAbortPreFlight(): boolean {
     if (this.startAborted) {
       this.startAborted = false
@@ -443,12 +468,20 @@ class GallerySyncService {
       return
     }
 
-    // The BT + Android-location connectivity gate now runs host-side before sync() is
-    // triggered (it shows host UI); island only does the store-based glasses check.
+    // Island-owned pre-flight: glasses reachable + bluetooth adapter on. The host
+    // renders the alerts off the structured notices; Android location permission
+    // and services are handled in the permission steps below.
     if (!glassesConnected) {
       console.warn("[GallerySyncService] Sync aborted - Glasses not connected")
       store.setSyncError("Glasses not connected")
       emitGalleryNotice({code: "glasses_disconnected"})
+      return
+    }
+
+    if (!(await this.isBluetoothAdapterEnabled())) {
+      console.warn("[GallerySyncService] Sync aborted - Bluetooth is disabled")
+      store.setSyncError("Bluetooth disabled - enable Bluetooth and try again")
+      emitGalleryNotice({code: "bluetooth_off"})
       return
     }
 

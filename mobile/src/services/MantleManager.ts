@@ -13,12 +13,11 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {gallerySyncService} from "@mentra/island"
+import {toolkit, BgTimer} from "@mentra/island"
 import {
   appRegistry,
-  configureRuntime,
   displayProcessor,
-  toolkit,
+  gallerySyncService,
   phoneLocationService,
   localDisplayManager,
   localMiniappRuntime,
@@ -26,9 +25,8 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
-  BgTimer,
   useAppStatusStore,
-} from "@mentra/island"
+} from "@mentra/island/internal"
 import {useDisplayStore} from "@/stores/display"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -151,10 +149,10 @@ class MantleManager {
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
       config: cloudConfigValues(),
-    })
-    configureRuntime({
-      wifiSetup: {
-        requestSetup: (reason?: string) => {
+      // Named host-UI seams: island dispatches the miniapp request, the host
+      // owns the screen (branding/navigation).
+      ui: {
+        requestWifiSetup: (reason?: string) => {
           router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
         },
       },
@@ -235,7 +233,7 @@ class MantleManager {
 
   private async syncTimezone() {
     const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone, timezone: timezone})
+    const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
     } else {
@@ -647,6 +645,13 @@ class MantleManager {
 
   private async sendCalendarEvents() {
     try {
+      // Ungranted CALENDAR permission is the default state — skip quietly
+      // instead of letting getCalendarsAsync throw into the catch as an error.
+      const {status} = await Calendar.getCalendarPermissionsAsync()
+      if (status !== "granted") {
+        console.log("MANTLE: sendCalendarEvents() skipped - calendar permission not granted")
+        return
+      }
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)

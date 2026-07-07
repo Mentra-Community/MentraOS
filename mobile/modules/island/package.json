@@ -3,7 +3,28 @@
   "version": "0.1.0",
   "description": "Mentra Manager Island — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
+  "react-native": "src/index.ts",
   "types": "build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./build/index.js"
+    },
+    "./internal": {
+      "types": "./build/internal.d.ts",
+      "react-native": "./src/internal.ts",
+      "default": "./build/internal.js"
+    },
+    "./devtools": {
+      "types": "./build/devtools.d.ts",
+      "react-native": "./src/devtools.ts",
+      "default": "./build/devtools.js"
+    },
+    "./build/*": null,
+    "./src/*": null,
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "expo-module build",
     "clean": "expo-module clean",
@@ -64,6 +85,7 @@
     "expo-notifications": "*",
     "react-native-share": "*",
     "react-native-localize": "*",
+    "react-native-ble-manager": "*",
     "react-native-permissions": "*",
     "react-native-wifi-reborn": "*",
     "@react-native-community/netinfo": "*",

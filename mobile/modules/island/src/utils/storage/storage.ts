@@ -2,6 +2,18 @@
 import {createMMKV, type MMKV} from "react-native-mmkv"
 import {result as Res, Result} from "typesafe-ts"
 
+/**
+ * Thrown by load() when the key has no stored value. Callers that treat a
+ * missing key as an expected state (e.g. first run) should branch on
+ * `instanceof StorageValueNotFoundError` rather than matching the message.
+ */
+export class StorageValueNotFoundError extends Error {
+  constructor(key: string) {
+    super(`No value found for ${key}`)
+    this.name = "StorageValueNotFoundError"
+  }
+}
+
 class MMKVStorage {
   private _store?: MMKV
 
@@ -20,7 +32,7 @@ class MMKVStorage {
     return Res.try(() => {
       const loadedString = this.store.getString(key) ?? ""
       if (loadedString === "") {
-        throw new Error(`No value found for ${key}`)
+        throw new StorageValueNotFoundError(key)
       }
       const value = JSON.parse(loadedString) as T
       return value

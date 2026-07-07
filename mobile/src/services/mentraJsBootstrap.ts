@@ -14,7 +14,7 @@
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine, useAppStatusStore} from "@mentra/island"
+import {ensureMiniappEngine, getMiniappEngine, useAppStatusStore} from "@mentra/island/internal"
 
 import showAlert from "@/utils/AlertUtils"
 
