@@ -141,7 +141,7 @@ export const NEX_PROFILE: DisplayProfile = {
     renderFormula: (glyphWidth: number) => glyphWidth,
 
     uniformScripts: {
-      cjk: 18,
+      cjk: 20,
       hiragana: 18,
       katakana: 18,
       korean: 24,
