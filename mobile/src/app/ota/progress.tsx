@@ -10,6 +10,8 @@ import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {useGlassesStore} from "@/stores/glasses"
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -20,6 +22,7 @@ import {useNavigationStore} from "@/stores/navigation"
 export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
+  const [superMode] = useSetting(SETTINGS.super_mode.key)
   const install = useToolkitSnapshot(toolkit.ota.installSession.snapshot, toolkit.ota.installSession.onSnapshot)
   const {
     displayState,
@@ -77,6 +80,14 @@ export default function OtaProgressScreen() {
     push("/wifi/scan")
   }, [push])
 
+  const handleSkipSuper = useCallback(() => {
+    toolkit.ota.installSession.finish()
+    const store = useGlassesStore.getState()
+    store.setOtaStatus(null)
+    store.setOtaProgress(null)
+    replace("/ota/check-for-updates")
+  }, [replace])
+
   const renderContent = () => {
     if (displayState === "starting") {
       return (
@@ -102,10 +113,10 @@ export default function OtaProgressScreen() {
       const isApkOnlyInstalling = otaStatus?.stepType === "apk" && otaStatus?.phase === "install" && totalSteps === 1
 
       const rawPercent = isDownload
-        ? otaStatus?.stepPercent ?? 0
+        ? (otaStatus?.stepPercent ?? 0)
         : totalSteps >= 2
-        ? otaStatus?.overallPercent ?? 0
-        : otaStatus?.stepPercent ?? 0
+          ? (otaStatus?.overallPercent ?? 0)
+          : (otaStatus?.stepPercent ?? 0)
       // Legacy (< 37) MTK install stall simulation (WP 8C-e): the coordinator projects a
       // display-only percent while the MTK system install goes quiet; render whichever is
       // further along. Null for unified sessions and outside legacy MTK installs.
@@ -213,15 +224,22 @@ export default function OtaProgressScreen() {
     }
 
     return (
-      <View className="flex-1 items-center justify-center px-6">
-        <Icon name="bluetooth-off" size={64} color={theme.colors.error} />
-        <View className="h-6" />
-        <Text text="Glasses disconnected" className="font-semibold text-xl text-center" />
-        <View className="h-2" />
-        <Text text="Reconnecting..." className="text-sm text-center" style={{color: theme.colors.textDim}} />
-        <View className="h-4" />
-        <ActivityIndicator size="large" color={theme.colors.foreground} />
-      </View>
+      <>
+        <View className="flex-1 items-center justify-center px-6">
+          <Icon name="bluetooth-off" size={64} color={theme.colors.error} />
+          <View className="h-6" />
+          <Text text="Glasses disconnected" className="font-semibold text-xl text-center" />
+          <View className="h-2" />
+          <Text text="Reconnecting..." className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          <View className="h-4" />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+        </View>
+        {superMode ? (
+          <View className="gap-3">
+            <Button preset="secondary" text="Skip (super)" flexContainer onPress={handleSkipSuper} />
+          </View>
+        ) : null}
+      </>
     )
   }
 
