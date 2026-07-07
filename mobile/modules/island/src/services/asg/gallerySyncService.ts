@@ -13,7 +13,7 @@ import WifiManager from "react-native-wifi-reborn"
 
 import {useGallerySyncStore, HotspotInfo} from "../../stores/gallerySync"
 import {selectGlassesConnected, useGlassesStore} from "../../stores/glasses"
-import {isGlassesConnected} from "../GlassesReadiness"
+import {isGlassesConnected, waitForGlassesReady} from "../GlassesReadiness"
 import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
@@ -46,6 +46,13 @@ const TIMING = {
   // Cap the native location-services (GPS) check so a hung CrustModule call can't freeze
   // the sync pre-flight (mirrors the host's former PermissionsUtils guard).
   LOCATION_SERVICES_CHECK_TIMEOUT_MS: 5000,
+  // Gallery status query resilience (incident 4127a9ca): the glasses SOC can be
+  // mid-boot right after a (re)connect and miss the query, so wait for it to report
+  // ready and retry a few times instead of silently giving up — otherwise the
+  // "Sync N items" button never appears even though there are photos to sync.
+  GALLERY_STATUS_MAX_ATTEMPTS: 3,
+  GALLERY_STATUS_RETRY_DELAY_MS: 3000,
+  GALLERY_STATUS_READY_TIMEOUT_MS: 15000,
 } as const
 
 type SyncManifestData = {
@@ -76,6 +83,10 @@ class GallerySyncService {
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
   private syncStartPromise: Promise<void> | null = null
   private startAborted = false
+  // Coalesces overlapping gallery status queries — the native layer rejects a
+  // second query while one is in flight, and queryGlassesGalleryStatus() already
+  // retries internally, so a concurrent caller would just collide.
+  private galleryStatusQueryInFlight = false
 
   private constructor() {}
 
@@ -149,6 +160,7 @@ class GallerySyncService {
     }
 
     this.syncStartPromise = null
+    this.galleryStatusQueryInFlight = false
     this.isInitialized = false
     console.log("[GallerySyncService] Cleaned up")
   }
@@ -2137,13 +2149,60 @@ class GallerySyncService {
   }
 
   /**
-   * Query glasses for gallery status
+   * Query glasses for gallery status.
+   *
+   * This is a single BLE round-trip: we send `query_gallery_status` and wait for
+   * the glasses to answer with a `gallery_status` event, which populates
+   * `glassesGalleryStatus` — and therefore whether the Gallery screen's
+   * "Sync N items" button appears. If the glasses SOC isn't ready to answer (e.g.
+   * it's still booting right after a (re)connect) the round-trip times out; we
+   * used to swallow that error and never retry, so the sync button silently never
+   * appeared even when there were photos to sync (incident 4127a9ca — the SOC
+   * reported ready ~8s into the query's 15s timeout, and nothing re-queried).
+   *
+   * So: wait (bounded) for the glasses to report ready before each attempt and
+   * retry a few times on failure. The readiness flag can lag reality, so we still
+   * fire the query even if the wait times out — as long as the link is up.
    */
   async queryGlassesGalleryStatus(): Promise<void> {
+    if (this.galleryStatusQueryInFlight) {
+      console.log("[GallerySyncService] Gallery status query already in flight — skipping duplicate")
+      return
+    }
+    this.galleryStatusQueryInFlight = true
     try {
-      await BluetoothSdk.queryGalleryStatus()
-    } catch (error) {
-      console.error("[GallerySyncService] Failed to query gallery status:", error)
+      for (let attempt = 1; attempt <= TIMING.GALLERY_STATUS_MAX_ATTEMPTS; attempt++) {
+        // Give a mid-boot SOC time to come up before firing — resolves immediately
+        // when the glasses already report ready.
+        await waitForGlassesReady({
+          getConnection: () => useGlassesStore.getState().connection,
+          subscribe: (listener) => useGlassesStore.subscribe((state) => state.connection, listener),
+          timeoutMs: TIMING.GALLERY_STATUS_READY_TIMEOUT_MS,
+        })
+
+        // Nothing to query if the glasses are gone.
+        if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+          console.log("[GallerySyncService] Glasses not connected — abandoning gallery status query")
+          return
+        }
+
+        try {
+          await BluetoothSdk.queryGalleryStatus()
+          return // handleGalleryStatus() updated the store from the glasses' reply
+        } catch (error) {
+          console.error(
+            `[GallerySyncService] Failed to query gallery status (attempt ${attempt}/${TIMING.GALLERY_STATUS_MAX_ATTEMPTS}):`,
+            error,
+          )
+          if (attempt < TIMING.GALLERY_STATUS_MAX_ATTEMPTS) {
+            await new Promise<void>((resolve) =>
+              BgTimer.setTimeout(() => resolve(), TIMING.GALLERY_STATUS_RETRY_DELAY_MS),
+            )
+          }
+        }
+      }
+    } finally {
+      this.galleryStatusQueryInFlight = false
     }
   }
 

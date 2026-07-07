@@ -194,6 +194,72 @@ describe("GallerySyncService", () => {
     )
   })
 
+  describe("queryGlassesGalleryStatus", () => {
+    // Regression coverage for incident 4127a9ca: the glasses SOC was still booting
+    // when the Gallery screen fired its one-shot status query, so the BLE round-trip
+    // timed out. The old code swallowed the error and never retried, so the
+    // "Sync N items" button silently never appeared. Now we retry.
+    const READY = {connection: {state: "connected" as const, fullyBooted: true}}
+
+    it("retries and recovers when a later attempt succeeds", async () => {
+      useGlassesStore.getState().setGlassesInfo(READY)
+      const queryMock = BluetoothSdk.queryGalleryStatus as jest.Mock
+      queryMock.mockReset()
+      queryMock.mockRejectedValueOnce({code: "ERR_UNEXPECTED"}).mockResolvedValueOnce(undefined)
+
+      const promise = gallerySyncService.queryGlassesGalleryStatus()
+      // Advance past the inter-attempt retry delay so the second attempt runs.
+      await jest.advanceTimersByTimeAsync(3000)
+      await promise
+
+      expect(queryMock).toHaveBeenCalledTimes(2)
+    })
+
+    it("gives up after the max attempts without throwing", async () => {
+      useGlassesStore.getState().setGlassesInfo(READY)
+      const queryMock = BluetoothSdk.queryGalleryStatus as jest.Mock
+      queryMock.mockReset()
+      queryMock.mockRejectedValue({code: "ERR_UNEXPECTED"})
+
+      const promise = gallerySyncService.queryGlassesGalleryStatus()
+      await jest.advanceTimersByTimeAsync(3000 * 3)
+      await expect(promise).resolves.toBeUndefined()
+
+      expect(queryMock).toHaveBeenCalledTimes(3)
+    })
+
+    it("does not query when the glasses are disconnected", async () => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      const queryMock = BluetoothSdk.queryGalleryStatus as jest.Mock
+      queryMock.mockReset()
+
+      const promise = gallerySyncService.queryGlassesGalleryStatus()
+      // Not ready and never becomes ready — the bounded wait times out, then we bail.
+      await jest.advanceTimersByTimeAsync(15000)
+      await promise
+
+      expect(queryMock).not.toHaveBeenCalled()
+    })
+
+    it("coalesces overlapping queries onto the in-flight one", async () => {
+      useGlassesStore.getState().setGlassesInfo(READY)
+      const queryMock = BluetoothSdk.queryGalleryStatus as jest.Mock
+      queryMock.mockReset()
+      let resolveQuery: () => void = () => {}
+      queryMock.mockImplementation(() => new Promise<void>((resolve) => (resolveQuery = resolve)))
+
+      const first = gallerySyncService.queryGlassesGalleryStatus()
+      // Let the first call get past waitForGlassesReady and invoke the BLE query.
+      await jest.advanceTimersByTimeAsync(0)
+      await gallerySyncService.queryGlassesGalleryStatus() // second call — coalesced, returns immediately
+
+      expect(queryMock).toHaveBeenCalledTimes(1)
+
+      resolveQuery()
+      await first
+    })
+  })
+
   it("cancels an active sync if glasses disconnect", () => {
     gallerySyncService.initialize()
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
