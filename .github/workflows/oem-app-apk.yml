@@ -1,0 +1,143 @@
+name: OEM Example App APK
+
+# Publishes an installable APK of sdk/example-oem-app — the reference second
+# host built against the public @mentra/island entry — as a workflow artifact
+# on every dev push that touches its inputs (mirroring how the MentraOS app
+# APK is produced on dev pushes by "Mobile App Android Build").
+#
+# Retention IS the cleanup story: artifacts expire after RETENTION_DAYS, so
+# nothing accumulates and no delete step is needed. The APK is a release
+# build signed with the debug keystore (the expo-generated default when no
+# upload key is configured): installable anywhere, JS bundled, no secrets.
+#
+# The pull_request trigger fires only on changes to THIS file, so workflow
+# edits prove the full build before they land on dev.
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "mobile/modules/island/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
+      - "sdk/example-oem-app/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/oem-app-apk.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/oem-app-apk.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: oem-app-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Same runner class as the MentraOS Android build: an ubuntu compile job
+    # that doesn't need the self-hosted Mac pool.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Free up disk space
+        # RN Android release builds (NDK + Gradle + workspace installs) can
+        # exhaust the runner's free tier disk; drop toolchains we never use.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('sdk/example-oem-app/app.json', 'sdk/bun.lock') }}
+          restore-keys: |
+            gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-oem-${{ runner.environment }}-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-oem-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('sdk/bun.lock') }}
+          restore-keys: |
+            bun-oem-${{ runner.environment }}-${{ runner.os }}-
+
+      - name: Install SDK workspace
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      - name: Build bluetooth-sdk
+        working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build
+
+      - name: Build crust
+        working-directory: mobile/modules/crust
+        run: bun run build
+
+      - name: Build island
+        working-directory: mobile/modules/island
+        run: bun run build
+
+      - name: Run Expo prebuild
+        working-directory: sdk/example-oem-app
+        run: bun expo prebuild --platform android
+
+      - name: Build release APK (debug-signed)
+        working-directory: sdk/example-oem-app/android
+        run: ./gradlew assembleRelease --build-cache --parallel
+
+      - name: Stamp APK with commit
+        id: apk
+        run: |
+          sha="${GITHUB_SHA::7}"
+          src=sdk/example-oem-app/android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$src" ] || { echo "::error::APK not produced at $src"; exit 1; }
+          out="example-oem-app-${sha}.apk"
+          cp "$src" "$out"
+          echo "name=$out" >> "$GITHUB_OUTPUT"
+          ls -lh "$out"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+          # The whole cleanup policy: GitHub deletes expired artifacts itself.
+          retention-days: 14
