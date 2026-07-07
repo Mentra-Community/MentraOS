@@ -2,7 +2,7 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "./streamConfig"
+import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../streamConfig"
 
 describe("stream config normalizers", () => {
   test("preserves local miniapp video fps", () => {

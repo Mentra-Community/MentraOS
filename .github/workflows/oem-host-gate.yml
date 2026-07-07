@@ -59,15 +59,20 @@ jobs:
 
       - name: Install SDK workspace
         working-directory: sdk
-        # --ignore-scripts: the sdk postinstall builds @mentra/miniapp, which
-        # this gate doesn't consume — the island/bluetooth-sdk builds it does
-        # need are explicit steps below.
-        run: bun install --frozen-lockfile --ignore-scripts
+        # The sdk postinstall builds @mentra/miniapp, whose types island's
+        # build imports — let it run.
+        run: bun install --frozen-lockfile
 
       - name: Build bluetooth-sdk types
         # island's public entry re-exports event types from
         # @mentra/bluetooth-sdk, so its build/*.d.ts must exist first.
         working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build
+
+      - name: Build crust types
+        # island's services import @mentra/crust, whose types point at its
+        # build output.
+        working-directory: mobile/modules/crust
         run: bun run build
 
       - name: Build island public types

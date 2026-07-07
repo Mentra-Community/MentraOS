@@ -49,8 +49,9 @@
   "license": "MIT",
   "homepage": "https://github.com/Mentra-Community/MentraOS#readme",
   "dependencies": {
-    "typesafe-ts": "^1.7.1",
-    "@types/semver": "^7.7.1"
+    "@types/semver": "^7.7.1",
+    "buffer": "^6.0.3",
+    "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {
     "@mentra/bluetooth-sdk": "workspace:*",

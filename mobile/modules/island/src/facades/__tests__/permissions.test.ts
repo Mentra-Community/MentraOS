@@ -62,7 +62,7 @@ mock.module("react-native-permissions", () => ({
   request: mock(async () => "granted"),
 }))
 
-mock.module("../services/AppRegistry", () => ({
+mock.module("../../services/AppRegistry", () => ({
   default: {getInstalledMiniapps: mock(async () => [])},
   // bun test runs every file in one process and this file registers the
   // AppRegistry mock first (directory order). A later mock.module for the same
@@ -73,7 +73,7 @@ mock.module("../services/AppRegistry", () => ({
   saveLocalAppRunningState: () => {},
 }))
 
-const {PermissionFeatures, permissions} = await import("./permissions")
+const {PermissionFeatures, permissions} = await import("../permissions")
 
 describe("permissions facade", () => {
   beforeEach(() => {
