@@ -8,7 +8,7 @@ import {WebSocketStatus} from "@/services/WebSocketManager"
 import {toolkit, useRefresh} from "@mentra/island"
 import {BgTimer} from "@mentra/island"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"

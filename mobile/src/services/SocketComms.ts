@@ -3,7 +3,7 @@ import {displayProcessor} from "@mentra/island/internal"
 
 import ws from "@/services/WebSocketManager"
 import {useDisplayStore} from "@/stores/display"
-import {useSettingsStore} from "@/stores/settings"
+import {useSettingsStore} from "@mentra/island/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
 import {logE2EMetric} from "@/utils/e2eMetrics"
 
 class SocketComms {

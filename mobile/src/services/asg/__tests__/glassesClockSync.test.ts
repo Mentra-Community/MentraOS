@@ -17,18 +17,6 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => ({
   },
 }))
 
-jest.mock("@/stores/settings", () => ({
-  SETTINGS: {
-    ota_version_url: {key: "ota_version_url"},
-    super_mode: {key: "super_mode"},
-  },
-  useSettingsStore: {
-    getState: jest.fn(() => ({
-      getSetting: jest.fn(() => false),
-    })),
-  },
-}))
-
 jest.mock("../../../../modules/island/src/utils/timers", () => ({
   BgTimer: {
     setTimeout: (fn: () => void) => {

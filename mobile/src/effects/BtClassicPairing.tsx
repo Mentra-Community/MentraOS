@@ -2,7 +2,7 @@ import {useEffect, useRef} from "react"
 import {Platform} from "react-native"
 
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {usePathname} from "expo-router"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import showAlert from "@/utils/AlertUtils"

@@ -269,6 +269,7 @@ const mockIslandEntries = () => {
   // Settings store + RestComms moved into island; tests used the real host store
   // before the move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/island/src/stores/settings")
+  const realBtSettingKeys = jest.requireActual("./modules/island/src/stores/bluetoothSettingKeys")
   const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
@@ -342,6 +343,12 @@ const mockIslandEntries = () => {
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
+    // Settings contract on the public entry (real store-backed): SETTINGS registry,
+    // per-key hook, and the pure device-model key helpers.
+    SETTINGS: realSettings.SETTINGS,
+    useSetting: realSettings.useSetting,
+    MENTRA_LIVE_SETTING_KEYS: realBtSettingKeys.MENTRA_LIVE_SETTING_KEYS,
+    getBluetoothSettingKeysForDevice: realBtSettingKeys.getBluetoothSettingKeysForDevice,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -552,11 +559,20 @@ const mockIslandEntries = () => {
         },
       },
       settings: {
-        get: jest.fn(() => undefined),
-        set: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
-        onChanged: jest.fn(() => () => {}),
-        descriptor: jest.fn(() => undefined),
-        keys: jest.fn(() => []),
+        // Real store-backed (host services converted to toolkit.settings assert
+        // settings-driven behavior, not just delegation) — jest.fn-wrapped so
+        // call assertions still work.
+        get: jest.fn((key) => realSettings.useSettingsStore.getState().getSetting(key)),
+        set: jest.fn((key, value, syncToServer = true) =>
+          realSettings.useSettingsStore.getState().setSetting(key, value, syncToServer),
+        ),
+        onChanged: jest.fn((key, cb) => realSettings.useSettingsStore.subscribe((st) => st.getSetting(key), cb)),
+        descriptor: jest.fn((key) => realSettings.SETTINGS[key]),
+        keys: jest.fn(() => Object.keys(realSettings.SETTINGS)),
+        resetAllLocal: jest.fn(() => realSettings.useSettingsStore.getState().resetAllSettingsLocally()),
+        loadAll: jest.fn(() => realSettings.useSettingsStore.getState().loadAllSettings()),
+        getAll: jest.fn(() => ({...realSettings.useSettingsStore.getState().settings})),
+        setManyLocal: jest.fn((values) => realSettings.useSettingsStore.getState().setManyLocally(values)),
       },
       dev: {
         minimumClientVersion: jest.fn(() =>

@@ -35,6 +35,14 @@ export type {
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
+// Settings contract: the typed key registry (schema descriptors — the same
+// surface toolkit.settings.descriptor()/keys() reads), the per-key React hook
+// (the hook layer, same precedent as the apps hooks below), and the pure
+// device-model key helpers. The raw useSettingsStore stays internal;
+// imperative access goes through toolkit.settings.
+export {SETTINGS, useSetting} from "./stores/settings"
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stores/bluetoothSettingKeys"
+
 // Runtime-shared constants and contract DTOs.
 export {ISLAND_SETTINGS_KEYS} from "./runtime/config"
 export type {

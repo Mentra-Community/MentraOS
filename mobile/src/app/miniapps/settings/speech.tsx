@@ -15,7 +15,7 @@ import {
   ttsModelManager as TTSModelManager,
   type OfflineModelDownloadStatus as DownloadStatus,
 } from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import showAlert from "@/utils/AlertUtils"
 
 export default function SpeechSettingsScreen() {

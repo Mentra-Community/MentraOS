@@ -1,4 +1,4 @@
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, toolkit} from "@mentra/island"
 
 /**
  * Flip the latent per-account "this user is a developer" signal.
@@ -10,7 +10,6 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
  * cheap: once set, it skips the write (and the server push) entirely.
  */
 export function markMiniappDevMode(): void {
-  const store = useSettingsStore.getState()
-  if (store.getSetting(SETTINGS.miniapp_dev_mode.key)) return
-  void store.setSetting(SETTINGS.miniapp_dev_mode.key, true)
+  if (toolkit.settings.get(SETTINGS.miniapp_dev_mode.key)) return
+  void toolkit.settings.set(SETTINGS.miniapp_dev_mode.key, true)
 }

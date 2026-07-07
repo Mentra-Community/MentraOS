@@ -11,7 +11,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {toolkit} from "@mentra/island"
 import {gallerySettingsService, localStorageService} from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
