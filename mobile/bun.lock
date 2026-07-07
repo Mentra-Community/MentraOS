@@ -232,7 +232,9 @@
       "name": "@mentra/bluetooth-sdk",
       "version": "0.1.18",
       "devDependencies": {
+        "@types/node": "^25.9.3",
         "expo-module-scripts": "^55.0.2",
+        "typescript": "~5.9.2",
       },
       "peerDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -249,7 +251,9 @@
         "@mentra/jspolyfill": "workspace:*",
       },
       "devDependencies": {
+        "@types/react": "~19.2.14",
         "expo-module-scripts": "^55.0.2",
+        "typescript": "~5.9.2",
       },
       "peerDependencies": {
         "expo": "*",
@@ -262,6 +266,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@types/semver": "^7.7.1",
+        "buffer": "^6.0.3",
+        "events": "^3.3.0",
         "typesafe-ts": "^1.7.1",
       },
       "devDependencies": {
@@ -272,6 +278,7 @@
         "expo-module-scripts": "^55.0.2",
         "expo-modules-core": "55.0.25",
         "react-native-nitro-modules": "^0.31.10",
+        "typescript": "~5.9.2",
       },
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",

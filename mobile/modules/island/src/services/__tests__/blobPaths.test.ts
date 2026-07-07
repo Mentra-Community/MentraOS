@@ -1,6 +1,6 @@
 import {describe, expect, it} from "bun:test"
 
-import {extForMime, sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
+import {extForMime, sanitizeSegment, shareFileName, withDiskExt} from "../blobPaths"
 
 describe("sanitizeSegment", () => {
   it("keeps safe chars, replaces the rest", () => {
