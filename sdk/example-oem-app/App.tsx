@@ -1,8 +1,10 @@
-import {miniappRunningRegistry, useApps, useStart, useStop} from "@mentra/island"
+import {useApps, useStart, useStop} from "@mentra/island"
+import {miniappRunningRegistry} from "@mentra/island/devtools"
 import {StatusBar} from "expo-status-bar"
 import {useCallback, useEffect, useState} from "react"
 import {SafeAreaView, ScrollView, StyleSheet, Text, View} from "react-native"
 
+import {startIslandRuntime} from "./src/islandRuntime"
 import {ActionButton, Section, StatusRow} from "./src/ui"
 import {useLog} from "./src/useLog"
 
@@ -14,6 +16,24 @@ export default function App() {
   const start = useStart()
   const stop = useStop()
   const [running, setRunning] = useState<string[]>(() => miniappRunningRegistry.getAll())
+
+  // Configure + start the island runtime once (the OEM bootstrap contract);
+  // demo listeners feed the console below.
+  useEffect(() => {
+    let cleanup: (() => void) | undefined
+    let unmounted = false
+    startIslandRuntime(log)
+      .then((unsubscribe) => {
+        if (unmounted) unsubscribe()
+        else cleanup = unsubscribe
+      })
+      .catch((error) => logger.logError(`island start failed: ${String(error)}`))
+    return () => {
+      unmounted = true
+      cleanup?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap
+  }, [])
 
   useEffect(() => {
     setRunning(miniappRunningRegistry.getAll())

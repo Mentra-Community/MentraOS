@@ -43,6 +43,7 @@
       ]
     },
     "plugins": [
+      "./plugins/withMentraStackGradle",
       [
         "@mentra/bluetooth-sdk",
         {

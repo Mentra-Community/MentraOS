@@ -68,8 +68,13 @@ class DevServerBridge {
    * bootstrap) should kill + respawn the JSContext to pick up the
    * change. WebView reload is separate (see `onReload`).
    */
-  public onRespawnBackground(handler: (packageName: string) => void): void {
+  public onRespawnBackground(handler: ((packageName: string) => void) | null): void {
     this.globalRespawnBackgroundHandler = handler
+  }
+
+  /** Clear the background-respawn handler when the miniapp engine is stopped. */
+  public clearRespawnBackgroundHandler(): void {
+    this.globalRespawnBackgroundHandler = null
   }
 
   /** Open (or re-open) a bridge to the given dev server. */

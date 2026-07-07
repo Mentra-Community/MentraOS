@@ -6,6 +6,8 @@
     "miniapp-cli",
     "../cloud-v2/packages/*",
     "../mobile/modules/miniapp",
+    "../mobile/modules/jspolyfill",
+    "../mobile/modules/crust",
     "../mobile/modules/island",
     "../mobile/modules/bluetooth-sdk",
     "../miniapps/*"

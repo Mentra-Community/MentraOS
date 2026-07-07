@@ -1,37 +1,11 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
-
-/** Mentra Live has no display — omit dashboard/brightness keys from BLE sync. */
-export const MENTRA_LIVE_SETTING_KEYS: string[] = [
-  "sensing_enabled",
-  "lc3_frame_size",
-  "preferred_mic",
-  "core_token",
-  "auth_email",
-  "button_photo_size",
-  "button_video_settings",
-  "button_max_recording_time",
-  "camera_fov",
-  "offline_mode",
-  "offline_captions_running",
-  "local_stt_fallback_active",
-  "gallery_mode",
-  "default_wearable",
-  "pending_wearable",
-  "device_name",
-  "device_address",
-  "default_controller",
-  "pending_controller",
-  "controller_device_name",
-  "controller_address",
-]
-
-function isMentraLiveDevice(model: string | undefined): boolean {
-  return model === DeviceTypes.LIVE || model === "Mentra Live"
-}
-
-export function getBluetoothSettingKeysForDevice(
-  deviceModel: string | undefined,
-  fullKeys: string[],
-): string[] {
-  return isMentraLiveDevice(deviceModel) ? MENTRA_LIVE_SETTING_KEYS : fullKeys
-}
+/**
+ * @fileoverview Re-export shim — the device-model-filtered Bluetooth setting
+ * key list lives in @mentra/island next to the settings store that consumes it
+ * (getBluetoothSettings). Kept so `@/stores/bluetoothSettingKeys` importers
+ * (settings.test.ts) resolve unchanged.
+ *
+ * Imports the island FILE (not the @mentra/island/internal barrel) so the
+ * bun-run settings.test.ts doesn't drag react-native through the barrel —
+ * the file's own imports (island types) are pure TS.
+ */
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "../../modules/island/src/stores/bluetoothSettingKeys"

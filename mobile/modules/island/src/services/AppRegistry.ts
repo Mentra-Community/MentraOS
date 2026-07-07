@@ -24,7 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
-import {getRuntimeHooks} from "../runtime/config"
+import {getConfigValues} from "../runtime/bootstrap"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -320,6 +320,8 @@ class AppRegistry {
   // Offline apps live in a separate layer so they survive the disk-rebuild
   // path in getInstalledMiniapps (which reassigns cachedApps).
   private offlineApps: ClientApp[] = []
+  /** Package names whose start() requires the on-device STT model (host-declared). */
+  private sttModelRequired = new Set<string>()
   private refreshNeeded: boolean = true
   private listeners = new Set<Listener>()
 
@@ -629,6 +631,11 @@ class AppRegistry {
   public getInstalledVersions(packageName: string): string[] {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
+      // Not installed yet is an expected state (e.g. preinstall sync probing
+      // versions before first install) — return [] without the error noise.
+      if (!lmaDir.exists) {
+        return []
+      }
       const lma = lmaDir.list()
       return lma.map((lma) => lma.name)
     } catch (error) {
@@ -851,7 +858,10 @@ class AppRegistry {
   }
 
   // Register an offline (locally-routed) app. Survives disk rebuilds.
-  public installOfflineApp(app: ClientApp): void {
+  public installOfflineApp(app: ClientApp, opts?: {requiresLocalSttModel?: boolean}): void {
+    if (opts?.requiresLocalSttModel) {
+      this.sttModelRequired.add(app.packageName)
+    }
     this.offlineApps.push({
       ...app,
       onStart: () => saveLocalAppRunningState(app.packageName, true),
@@ -859,6 +869,14 @@ class AppRegistry {
     })
     this.refreshNeeded = true
     this.notify()
+  }
+
+  /**
+   * Registered as needing the on-device STT model before it can start (the
+   * host declares this per offline app; the apps store gates start() on it).
+   */
+  public requiresLocalSttModel(packageName: string): boolean {
+    return this.sttModelRequired.has(packageName)
   }
 
   public getMiniappHtml(packageName: string, version: string): Result<string, Error> {
@@ -942,7 +960,7 @@ function configuredDevHost(): string | undefined {
       if (/^[\w.-]+$/.test(explicit)) return explicit
     }
   }
-  return getRuntimeHooks().devServerHost?.()
+  return getConfigValues().devServerHost?.()
 }
 
 function isPrivateLanHost(hostname: string): boolean {

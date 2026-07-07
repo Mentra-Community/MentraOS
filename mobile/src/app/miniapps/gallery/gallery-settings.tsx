@@ -9,9 +9,8 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySettingsService} from "@/services/asg/gallerySettingsService"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
+import {toolkit} from "@mentra/island"
+import {gallerySettingsService, localStorageService} from "@mentra/island/internal"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -103,9 +102,7 @@ export default function GallerySettingsScreen() {
             // console.log("[GallerySettings] 🗑️ Clearing all downloaded files and sync queue")
             await localStorageService.clearAllFiles()
 
-            // Clear the sync queue in Zustand store to remove zombie files
-            const gallerySyncStore = useGallerySyncStore.getState()
-            gallerySyncStore.clearQueue()
+            toolkit.gallery.clearQueue()
             // console.log("[GallerySettings] ✅ Cleared sync queue from store")
 
             showAlert("Success", "All photos deleted from device storage", [{text: translate("common:ok")}])

@@ -2,10 +2,10 @@ import {useEffect, useRef, useState} from "react"
 import {TouchableOpacity, View} from "react-native"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefresh} from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
+import {toolkit, useRefresh} from "@mentra/island"
 import {BgTimer} from "@mentra/island"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -35,7 +35,9 @@ const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string
 }
 
 export default function WebsocketStatus() {
-  const connectionStatus = useConnectionStore((state) => state.status)
+  const connectionStatus = useToolkitSnapshot(toolkit.session.legacyWebsocketStatus, (onChange) =>
+    toolkit.session.onLegacyWebsocketStatus(onChange),
+  )
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)

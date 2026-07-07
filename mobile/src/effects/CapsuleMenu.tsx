@@ -8,7 +8,8 @@ import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp, useAppStatusStore} from "@mentra/island"
+import {ClientApp} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
@@ -267,21 +268,10 @@ export async function captureScreenshot(
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])
 
-//     const handleShare = useCallback(() => {
-//       const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
-//       // on Android, Share.share ignores `url` and only uses `message`
-//       Share.share(
-//         Platform.OS === "android"
-//           ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
-//           : {message: app?.name ?? packageName, url: storeUrl},
-//       )
-//     }, [packageName, app?.name])
-
 //     const handleFeedback = useCallback(() => {
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().push("/miniapps/settings/feedback", {
-//         submissionMode: "USER_INITIATED",
-//         triggerArea: "applet_capsule_menu",
+//         triggerSource: "applet_capsule_menu",
 //         triggerReason: "manual_bug_report",
 //         sourceAppletPackageName: packageName,
 //         sourceAppletName: app?.name,

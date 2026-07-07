@@ -14,7 +14,6 @@ import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityI
 import Video from "react-native-video"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {submitGalleryVideoPlaybackBugReport} from "@/services/bugReport/galleryVideoPlaybackBugReport"
 import {ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 
@@ -184,7 +183,6 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekin
           setErrorMessage(isCorrupted ? "Video file corrupted or unsupported format" : "Failed to play video")
           setIsPlaying(false)
           setIsBuffering(false)
-          void submitGalleryVideoPlaybackBugReport(photo, error, isActive)
         }}
         onEnd={() => {
           console.log("🎥 [VideoPlayerItem] Video playback ended:", photo.name)

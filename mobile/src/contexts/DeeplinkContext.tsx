@@ -4,8 +4,6 @@ import {FC, ReactNode, createContext, useContext, useEffect} from "react"
 import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
-import miniappCatalog from "@/services/miniapps/MiniappCatalog"
-import {useAppStatusStore} from "@mentra/island"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer} from "@mentra/island"
 import { useNavigationStore } from "@/stores/navigation"
@@ -148,66 +146,6 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     requiresAuth: true,
   },
 
-  // Smart start: activates the app if installed, otherwise shows the store page
-  {
-    pattern: "/package/:packageName/start",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const {packageName, preloaded, authed} = params
-      if (preloaded && authed) {
-        // Deep links can fire while the app is still in the background state.
-        // Navigation calls made before the app is active get lost, so wait first.
-        await waitForActive()
-        // Reset stack to home, then push store on top so back always goes home.
-        useNavigationStore.getState().replaceAll("/home")
-        await miniappCatalog.refresh()
-        const applet = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
-        console.log("[DEEPLINK] Smart start for package:", packageName, "applet found:", !!applet)
-        if (applet) {
-          setTimeout(() => useAppStatusStore.getState().start(applet), 150)
-          return
-        } else {
-          setTimeout(() => nav.push("/miniapps/store/store", {packageName}), 150)
-          return
-        }
-      }
-      // Cold start or not authenticated — store raw URL so processUrl re-matches it after init
-      nav.setPendingRoute(url)
-      nav.replace(`/`)
-    },
-    requiresAuth: true,
-  },
-
-  // Store routes
-  {
-    pattern: "/store",
-    handler: (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const {packageName} = params
-      nav.replace(`/store?packageName=${packageName}`)
-    },
-    requiresAuth: true,
-  },
-  {
-    pattern: "/package/:packageName",
-    handler: async (url: string, params: Record<string, string>) => {
-      const nav = useNavigationStore.getState()
-      const {packageName, preloaded, authed} = params
-      if (preloaded && authed) {
-        // Deep links can fire while the app is still in the background state.
-        // Navigation calls made before the app is active get lost, so wait first.
-        await waitForActive()
-        // Reset stack to home, then push store on top so back always goes home.
-        nav.replaceAll("/home")
-        setTimeout(() => nav.push("/miniapps/store/store", {packageName}), 150)
-        return
-      }
-      // Cold start or not authenticated — store raw URL so processUrl re-matches it after init
-      nav.setPendingRoute(url)
-      nav.replace(`/`)
-    },
-    requiresAuth: true,
-  },
   {
     pattern: "/applet/local",
     handler: async (url: string, params: Record<string, string>) => {
@@ -430,13 +368,15 @@ const deepLinkRoutes: DeepLinkRoute[] = [
     },
   },
 
-  // Universal app link routes (for apps.mentra.glass)
+  // Universal app link routes (for apps.mentra.glass). The /applet/webview
+  // target for Cloud V1 apps is gone (Cloud V1 app end-of-life); app links
+  // land on the installed app's info screen instead.
   {
     pattern: "/apps/:packageName",
     handler: async (url: string, params: Record<string, string>) => {
       const nav = useNavigationStore.getState()
       const {packageName} = params
-      nav.push(`/applet/webview?packageName=${packageName}`)
+      nav.push(`/applet/settings?packageName=${packageName}`)
     },
     requiresAuth: true,
   },

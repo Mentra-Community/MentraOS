@@ -2,6 +2,18 @@
 import {createMMKV, type MMKV} from "react-native-mmkv"
 import {result as Res, Result} from "typesafe-ts"
 
+/**
+ * Thrown by load() when the key has no stored value. Callers that treat a
+ * missing key as an expected state (e.g. first run) should branch on
+ * `instanceof StorageValueNotFoundError` rather than matching the message.
+ */
+export class StorageValueNotFoundError extends Error {
+  constructor(key: string) {
+    super(`No value found for ${key}`)
+    this.name = "StorageValueNotFoundError"
+  }
+}
+
 class MMKVStorage {
   private _store?: MMKV
 
@@ -20,7 +32,7 @@ class MMKVStorage {
     return Res.try(() => {
       const loadedString = this.store.getString(key) ?? ""
       if (loadedString === "") {
-        throw new Error(`No value found for ${key}`)
+        throw new StorageValueNotFoundError(key)
       }
       const value = JSON.parse(loadedString) as T
       return value
@@ -49,6 +61,30 @@ class MMKVStorage {
       return Res.error(new Error("Failed to remove one or more keys"))
     }
     return Res.ok(undefined)
+  }
+
+  public loadSubKeys(key: string): Result<Record<string, unknown>, Error> {
+    return Res.try(() => {
+      // return the key value pair of any keys that start with the given key and contain a colon:
+      const keys = this.store.getAllKeys()
+
+      const subKeys = keys.filter((k) => k.startsWith(key) && k.includes(":"))
+
+      if (subKeys.length === 0) {
+        throw new Error(`No subkeys found for ${key}`)
+      }
+
+      let subKeysObject: Record<string, unknown> = {}
+
+      for (const subKey of subKeys) {
+        const res = this.load(subKey)
+        if (res.is_ok()) {
+          subKeysObject[subKey] = res.value
+        }
+      }
+
+      return subKeysObject
+    })
   }
 
   public remove(key: string): Result<void, Error> {

@@ -7,14 +7,14 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {showAlert} from "@/contexts/ModalContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
@@ -28,9 +28,10 @@ const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/
  * wiring in one place.
  */
 export function useHasDeviceInfo(): boolean {
-  const wifiLocalIp = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi.localIp : undefined))
-  const bluetoothName = useGlassesStore((state) => state.bluetoothName)
-  const buildNumber = useGlassesStore((state) => state.buildNumber)
+  const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
+  const wifiLocalIp = glassesInfo.wifi.state === "connected" ? glassesInfo.wifi.localIp : undefined
+  const bluetoothName = glassesInfo.bluetoothName
+  const buildNumber = glassesInfo.buildNumber
   return Boolean(bluetoothName || buildNumber || wifiLocalIp)
 }
 
@@ -59,12 +60,14 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
+  const glassesConnected = glassesStatus.state === "connected"
 
   const {push} = useNavigationStore.getState()
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
-  const otaProgress = useGlassesStore((state) => state.otaProgress)
+  const otaProgress = otaSnapshot.legacyProgress
 
   const confirmForgetGlasses = async () => {
     let result = await showAlert({
@@ -74,7 +77,7 @@ export function DeviceSettingsSection() {
       options: {allowDismiss: false},
     })
     if (result === 1) {
-      BluetoothSdk.forget()
+      toolkit.glasses.forget()
     }
   }
 
@@ -87,7 +90,7 @@ export function DeviceSettingsSection() {
     })
 
     if (result === 1) {
-      BluetoothSdk.disconnect()
+      toolkit.glasses.disconnect()
     }
   }
 

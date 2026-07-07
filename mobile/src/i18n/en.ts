@@ -342,6 +342,8 @@ const en = {
   home: {
     title: "MentraOS",
     pairGlasses: "Pair glasses",
+    finishPairingGlasses: "Finish pairing",
+    pairDifferentGlasses: "Pair different glasses",
     pairController: "Pair ring",
     setupWithoutGlasses: "Setup without glasses",
     connectGlasses: "Connect glasses",
@@ -859,6 +861,8 @@ const en = {
     invalidEmail: "Invalid email address.",
     pairNeedDisconnect:
       "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
+    pairingCouldNotStart:
+      "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
   common: {
     ok: "OK",
@@ -1031,6 +1035,7 @@ const en = {
     lmaLoader: "Side Loader",
   },
   appInfo: {
+    notInstalled: "App not installed",
     share: "Share",
     addToHome: "Add to Home",
     removeFromHome: "Remove from Home",

@@ -1,7 +1,8 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-import {localStorageService} from "@/services/asg/localStorageService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
+import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
+import {reportInvalidGalleryMedia} from "../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService"
+import {useGallerySyncStore} from "../../../modules/island/src/stores/gallerySync"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   exists: jest.fn(),
@@ -16,26 +17,30 @@ jest.mock("@mentra/crust", () => ({
   default: {},
 }))
 
-jest.mock("@/services/asg/asgCameraApi", () => ({
+jest.mock("../../../modules/island/src/services/asg/asgCameraApi", () => ({
   asgCameraApi: {
     deleteFilesFromServer: jest.fn(),
   },
 }))
 
-jest.mock("@/services/asg/localStorageService", () => ({
+jest.mock("../../../modules/island/src/services/asg/localStorageService", () => ({
   localStorageService: {
     convertToDownloadedFile: jest.fn((info: any) => info),
     saveDownloadedFile: jest.fn(),
   },
 }))
 
-jest.mock("@/utils/permissions/MediaLibraryPermissions", () => ({
+jest.mock("../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService", () => ({
+  reportInvalidGalleryMedia: jest.fn(),
+}))
+
+jest.mock("../../../modules/island/src/utils/permissions/MediaLibraryPermissions", () => ({
   MediaLibraryPermissions: {
     saveToLibrary: jest.fn(),
   },
 }))
 
-import {mediaProcessingQueue} from "./mediaProcessingQueue"
+import {mediaProcessingQueue} from "../../../modules/island/src/services/asg/mediaProcessingQueue"
 
 describe("mediaProcessingQueue", () => {
   beforeEach(() => {
@@ -61,6 +66,14 @@ describe("mediaProcessingQueue", () => {
     await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
 
     expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
+    expect(reportInvalidGalleryMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "VID_zero",
+        mediaKind: "video",
+        stage: "processing_validation",
+        reason: expect.stringContaining("zero-byte file VID_zero"),
+      }),
+    )
     expect(useGallerySyncStore.getState().failedFiles).toContain("VID_zero")
   })
 

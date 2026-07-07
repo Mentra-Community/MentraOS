@@ -32,9 +32,11 @@
     "@mentra/jspolyfill": "workspace:*"
   },
   "devDependencies": {
-    "expo-module-scripts": "^55.0.2"
+    "expo-module-scripts": "^55.0.2",
+    "typescript": "~5.9.2"
   },
   "peerDependencies": {
+    "@types/react": "*",
     "expo": "*",
     "react": "*",
     "react-native": "*"

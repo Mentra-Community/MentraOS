@@ -1,7 +1,8 @@
 import {useMemo} from "react"
 import {useShallow} from "zustand/react/shallow"
 
-import {useApps, useAppStatusStore} from "@mentra/island"
+import {useApps} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 import {SETTINGS, useSetting} from "@/stores/settings"
 

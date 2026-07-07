@@ -1,15 +1,26 @@
 import React from "react"
 import {render, act, fireEvent} from "@testing-library/react-native"
 
-import {useGlassesStore} from "@/stores/glasses"
+import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
+import {useNavigationStore} from "@/stores/navigation"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
-import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
+import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/island"
 
 const mockReplace = jest.fn()
+
+let mockSuperModeEnabled = false
+
+jest.mock("@/stores/settings", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  useSetting: (key: string) => {
+    if (key === "super_mode") return [mockSuperModeEnabled, jest.fn()]
+    return [undefined, jest.fn()]
+  },
+}))
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
   focusEffectPreventBack: jest.fn(),
@@ -34,10 +45,9 @@ jest.mock("@/components/brands/MentraLogoStandalone", () => ({
   MentraLogoStandalone: () => null,
 }))
 
-jest.mock("@/utils/GlobalEventEmitter", () => {
-  const {EventEmitter} = require("events")
-  return {__esModule: true, default: new EventEmitter()}
-})
+// NOTE: @/utils/GlobalEventEmitter is intentionally NOT re-mocked here — the shim
+// resolves to the shared island emitter instance, which is the one the island
+// OtaInstallCoordinator listens on for ota_start_ack / mtk_update_complete.
 
 jest.mock("@/components/ignite", () => {
   const {View, Text: RNText, TouchableOpacity} = require("react-native")
@@ -74,6 +84,7 @@ function setGlassesDisconnected() {
 
 beforeEach(() => {
   jest.useFakeTimers()
+  mockSuperModeEnabled = false
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
@@ -210,6 +221,43 @@ describe("progress.tsx display states", () => {
     setGlassesDisconnected()
     const {getByText} = render(<OtaProgressScreen />)
     expect(getByText("Glasses disconnected")).toBeDefined()
+  })
+
+  it("shows Skip (super) when disconnected in super mode", () => {
+    mockSuperModeEnabled = true
+    setGlassesDisconnected()
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "download",
+      stepPercent: 10,
+      overallPercent: 10,
+      status: "in_progress",
+    })
+    const replaceSpy = jest.spyOn(useNavigationStore.getState(), "replace")
+    const {getByText, getByTestId} = render(<OtaProgressScreen />)
+    expect(getByText("Skip (super)")).toBeDefined()
+    fireEvent.press(getByTestId("button-Skip (super)"))
+    expect(replaceSpy).toHaveBeenCalledWith("/ota/check-for-updates")
+    replaceSpy.mockRestore()
+  })
+
+  it("hides Skip (super) when disconnected without super mode", () => {
+    setGlassesDisconnected()
+    useGlassesStore.getState().setOtaStatus({
+      sessionId: "s1",
+      totalSteps: 1,
+      currentStep: 1,
+      stepType: "apk",
+      phase: "download",
+      stepPercent: 10,
+      overallPercent: 10,
+      status: "in_progress",
+    })
+    const {queryByText} = render(<OtaProgressScreen />)
+    expect(queryByText("Skip (super)")).toBeNull()
   })
 
   it("does NOT override complete state on disconnect", () => {

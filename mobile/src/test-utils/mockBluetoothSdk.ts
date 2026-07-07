@@ -1,3 +1,11 @@
+// The pure predicates come from the side-effect-free types subpath so the mock
+// can never drift from the real SDK's connection semantics.
+import {
+  isBusyGlassesConnectionStatus,
+  isConnectedGlassesConnectionStatus,
+  isReadyGlassesConnectionStatus,
+} from "@mentra/bluetooth-sdk/types"
+
 type Listener = (payload: any) => void
 
 const listeners = new Map<string, Set<Listener>>()
@@ -17,6 +25,9 @@ const addListener = jest.fn((eventName: string, listener: Listener) => {
 
 export const bluetoothSdkMock = {
   addListener,
+  isConnectedGlassesConnectionStatus,
+  isReadyGlassesConnectionStatus,
+  isBusyGlassesConnectionStatus,
   requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
   getBluetoothStatus: jest.fn(() =>
     Promise.resolve({

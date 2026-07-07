@@ -2,10 +2,10 @@ import {useEffect} from "react"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useApps, useStart} from "@mentra/island"
+import {useApps, useStart, toolkit} from "@mentra/island"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
+import {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 
 export function ButtonActions() {
   const applets = useApps()
@@ -134,10 +134,10 @@ export function ButtonActions() {
       startApplet(targetApp, {skipNavigation: true})
     }
 
-    let sub = BluetoothSdk.addListener("button_press", onButtonPress)
+    let unsub = toolkit.glasses.onButtonPress(onButtonPress)
 
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [applets, startApplet, theme, defaultWearable])
 

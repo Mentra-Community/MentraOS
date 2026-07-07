@@ -22,6 +22,11 @@
       "types": "./build/react/index.d.ts",
       "default": "./build/react/index.js"
     },
+    "./types": {
+      "react-native": "./src/types/index.ts",
+      "types": "./build/types/index.d.ts",
+      "default": "./build/types/index.js"
+    },
     "./photo-receiver": {
       "react-native": "./src/photo-receiver/index.ts",
       "types": "./build/photo-receiver/index.d.ts",
@@ -102,7 +107,9 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "expo-module-scripts": "^55.0.2"
+    "@types/node": "^25.9.3",
+    "expo-module-scripts": "^55.0.2",
+    "typescript": "~5.9.2"
   },
   "peerDependencies": {
     "@expo/config-plugins": ">=8.0.0",

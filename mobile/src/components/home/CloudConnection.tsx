@@ -5,15 +5,17 @@ import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefresh} from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
+import {toolkit, useRefresh} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {BgTimer} from "@mentra/island"
 
 export default function CloudConnection() {
-  const connectionStatus = useConnectionStore((state) => state.status)
+  const connectionStatus = useToolkitSnapshot(toolkit.session.legacyWebsocketStatus, (onChange) =>
+    toolkit.session.onLegacyWebsocketStatus(onChange),
+  )
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)
   const [hideCloudConnection, setHideCloudConnection] = useState(true)

@@ -1,3 +1,7 @@
+/// <reference types="bun-types" />
+
+import {afterEach, beforeEach, describe, expect, jest, mock, test} from "bun:test"
+
 /**
  * Unit tests for LocalDisplayManager.
  *
@@ -6,21 +10,55 @@
  * Uses jest fake timers + an injected clock.
  */
 
-const displayEventMock = jest.fn()
+const displayEventMock = mock(() => {})
 
 // DisplayProcessor: pass through unchanged so we can assert on the raw event.
-jest.doMock("../DisplayProcessor", () => ({
+mock.module("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))
 
-const setDisplayEventMock = jest.fn()
+mock.module("@mentra/bluetooth-sdk/internal", () => ({
+  __esModule: true,
+  default: {
+    displayEvent: displayEventMock,
+  },
+}))
+
+// The store ports (SceneRenderer reads settings/glasses; attachToRuntime
+// subscribes to the glasses store) pull native modules bun can't parse —
+// stub the stores like the PhonePhotoCoordinator suite does.
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {default_wearable: {key: "default_wearable"}},
+  useSettingsStore: {
+    // No device model: keeps these suites on the legacy (non-scene) path, the
+    // same effective condition they ran under on dev (unset runtime hooks).
+    getState: () => ({getSetting: () => undefined}),
+  },
+}))
+mock.module("../../stores/glasses", () => ({
+  useGlassesStore: {
+    getState: () => ({connection: {state: "connected", fullyBooted: true}, deviceModel: undefined}),
+    subscribe: () => () => {},
+  },
+}))
+mock.module("../GlassesReadiness", () => ({
+  isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
+}))
+
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+  },
+}))
 
 // Import AFTER mocks
 
-const {configureRuntime} = require("../../runtime/config")
 const {LocalDisplayManager} = require("../LocalDisplayManager")
 
 type Mgr = InstanceType<typeof LocalDisplayManager>
@@ -57,11 +95,6 @@ describe("LocalDisplayManager", () => {
   beforeEach(() => {
     jest.useFakeTimers()
     displayEventMock.mockClear()
-    setDisplayEventMock.mockClear()
-    configureRuntime({
-      sendDisplayEvent: displayEventMock,
-      setDisplayEvent: setDisplayEventMock,
-    })
     now = 1_000_000
     // Fresh singleton per test.
     mgr = LocalDisplayManager.getInstance()
