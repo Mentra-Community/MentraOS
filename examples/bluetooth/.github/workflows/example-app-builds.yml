@@ -263,13 +263,13 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:compileDebugKotlin --no-daemon
 
-      - name: Build Android app
+      - name: Build release Android app
         working-directory: examples/react-native/android
         run: |
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon
 
       - name: Collect APK
-        run: cp examples/react-native/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-react-native.apk
+        run: cp examples/react-native/android/app/build/outputs/apk/release/app-release.apk mentra-example-react-native.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -350,13 +350,13 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:compileDebugKotlin --no-daemon
 
-      - name: Build Android app
+      - name: Build release Android app
         working-directory: examples/react-native-elevenlabs-audio/android
         run: |
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleRelease --no-daemon
 
       - name: Collect APK
-        run: cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/debug/app-debug.apk mentra-example-rn-elevenlabs-audio.apk
+        run: cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/release/app-release.apk mentra-example-rn-elevenlabs-audio.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
