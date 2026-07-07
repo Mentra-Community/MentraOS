@@ -190,11 +190,13 @@ export default defineConfig([
       "**/app.plugin.js",
       "**/babel.config.js",
       "**/metro.config.js",
+      "**/*.log",
 
       // Mobile-specific ignores
       "mobile/ios/**",
       "mobile/android/**",
       "mobile/.expo/**",
+      "mobile/.bundle/**",
       "mobile/ignite/ignite.json",
       "mobile/package.json",
 
