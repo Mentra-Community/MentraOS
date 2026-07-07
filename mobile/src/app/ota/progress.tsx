@@ -11,7 +11,6 @@ import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useGlassesStore} from "@/stores/glasses"
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -81,10 +80,7 @@ export default function OtaProgressScreen() {
   }, [push])
 
   const handleSkipSuper = useCallback(() => {
-    toolkit.ota.installSession.finish()
-    const store = useGlassesStore.getState()
-    store.setOtaStatus(null)
-    store.setOtaProgress(null)
+    toolkit.ota.installSession.discard()
     replace("/ota/check-for-updates")
   }, [replace])
 
