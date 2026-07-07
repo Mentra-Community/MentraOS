@@ -107,6 +107,7 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "@types/node": "^25.9.3",
     "expo-module-scripts": "^55.0.2",
     "typescript": "~5.9.2"
   },
