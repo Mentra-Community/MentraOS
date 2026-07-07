@@ -16,6 +16,7 @@ import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
+import {routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
@@ -144,6 +145,7 @@ export default function SelectGlassesBluetoothScreen() {
       setTimeout(() => {
         toolkit.pairing.pair(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
+          routePairingKickoffFailure(device.model)
         })
       }, 2000)
       push("/pairing/loading", {deviceModel: device.model, deviceName: device.name})

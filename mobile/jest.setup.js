@@ -502,6 +502,8 @@ const mockIslandEntries = () => {
         scanning: jest.fn(() => false),
         searchResults: jest.fn(() => []),
         onFound: jest.fn(() => () => {}),
+        otherBtConnected: jest.fn(() => false),
+        onOtherBtConnected: jest.fn(() => () => {}),
         pair: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),
         setBluetoothClassicTarget: jest.fn(() => Promise.resolve()),
