@@ -45,15 +45,17 @@ export async function startIslandRuntime(log: IslandLogger): Promise<() => void>
     toolkit.ota.installSession.onSnapshot((snapshot) => log(`ota install: ${snapshot.displayState}`)),
   ]
 
-  // From here on we own live subscriptions — if a later bootstrap read fails,
-  // release them before surfacing the error so a failed start leaves nothing
-  // behind.
+  // From here on we own live subscriptions and a started runtime — if a later
+  // bootstrap read fails, release the listeners AND stop the toolkit before
+  // surfacing the error, so "start failed" is actually true and nothing keeps
+  // running behind a failed bootstrap.
   try {
     const hasDefault = await toolkit.glasses.hasDefaultDevice()
     log(`paired device on record: ${hasDefault ? "yes" : "no"}`)
     log(`ota update available: ${toolkit.ota.updateAvailable()?.versionName ?? "none"}`)
   } catch (error) {
     unsubs.forEach((unsub) => unsub())
+    await toolkit.stop().catch(() => {})
     throw error
   }
 
