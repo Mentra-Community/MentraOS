@@ -250,6 +250,7 @@
       "version": "0.1.18",
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
+        "typescript": "~5.9.2",
       },
       "peerDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -289,6 +290,7 @@
         "expo-module-scripts": "^55.0.2",
         "expo-modules-core": "55.0.25",
         "react-native-nitro-modules": "^0.31.10",
+        "typescript": "~5.9.2",
       },
       "peerDependencies": {
         "@craftzdog/react-native-buffer": "*",
