@@ -13,12 +13,22 @@ const config = getDefaultConfig(projectRoot)
 // SDK packages live under mobile/modules. Metro must watch the workspace store
 // (sdk/node_modules/.bun/*) and the modules folder so every symlinked package —
 // including transitive deps of `expo` — resolves.
-config.watchFolders = [sdkRoot, modulesRoot]
+const cloudPackagesRoot = path.resolve(repoRoot, "cloud-v2", "packages")
+
+config.watchFolders = [sdkRoot, modulesRoot, cloudPackagesRoot]
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
+  // Every monorepo package island imports at runtime, mapped explicitly so
+  // bundling never depends on which node_modules layout the installer chose
+  // (bun's member-planting differs across versions).
   "@mentra/bluetooth-sdk": path.resolve(modulesRoot, "bluetooth-sdk"),
   "@mentra/island": path.resolve(modulesRoot, "island"),
+  "@mentra/crust": path.resolve(modulesRoot, "crust"),
+  "@mentra/jspolyfill": path.resolve(modulesRoot, "jspolyfill"),
+  "@mentra/miniapp": path.resolve(modulesRoot, "miniapp"),
+  "@mentra/cloud-client": path.resolve(cloudPackagesRoot, "cloud-client"),
+  "@mentra/cloud-runtime": path.resolve(cloudPackagesRoot, "cloud-runtime"),
 }
 
 // Search the app's own node_modules first (so React / React Native resolve to a

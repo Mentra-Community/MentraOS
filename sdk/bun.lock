@@ -284,6 +284,7 @@
       "dependencies": {
         "@types/semver": "^7.7.1",
         "buffer": "^6.0.3",
+        "events": "^3.3.0",
         "typesafe-ts": "^1.7.1",
       },
       "devDependencies": {
@@ -379,7 +380,12 @@
       "dependencies": {
         "@dr.pogodin/react-native-fs": "^2.37.0",
         "@mentra/bluetooth-sdk": "workspace:*",
+        "@mentra/cloud-client": "workspace:*",
+        "@mentra/cloud-runtime": "workspace:*",
+        "@mentra/crust": "workspace:*",
         "@mentra/island": "workspace:*",
+        "@mentra/jspolyfill": "workspace:*",
+        "@mentra/miniapp": "workspace:*",
         "expo": "~55.0.24",
         "expo-battery": "^55.0.13",
         "expo-build-properties": "~55.0.14",
