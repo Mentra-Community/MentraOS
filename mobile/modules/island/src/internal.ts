@@ -151,8 +151,6 @@ export {logBuffer, type LogEntry} from "./utils/devLogging"
 // needs (its event TYPES stay on the main entry).
 export {default as BluetoothSdk} from "@mentra/bluetooth-sdk/internal"
 
-// Host-runtime wiring hooks (the Mentra app's MantleManager installs these).
-export {configureRuntime, getRuntimeHooks} from "./runtime/config"
 
 // Island-owned MMKV instance + debug helper.
 export {storage, printDirectory} from "./utils/storage"

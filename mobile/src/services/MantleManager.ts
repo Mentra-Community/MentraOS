@@ -16,7 +16,6 @@ import {cloudConfigValues} from "@/services/cloudClient"
 import {toolkit, BgTimer} from "@mentra/island"
 import {
   appRegistry,
-  configureRuntime,
   displayProcessor,
   gallerySyncService,
   phoneLocationService,
@@ -150,10 +149,10 @@ class MantleManager {
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
       config: cloudConfigValues(),
-    })
-    configureRuntime({
-      wifiSetup: {
-        requestSetup: (reason?: string) => {
+      // Named host-UI seams: island dispatches the miniapp request, the host
+      // owns the screen (branding/navigation).
+      ui: {
+        requestWifiSetup: (reason?: string) => {
           router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
         },
       },

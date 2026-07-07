@@ -40,11 +40,25 @@ export interface IslandConfigValues {
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void
 
+/**
+ * Named host-UI seams: island dispatches the runtime request, the host owns the
+ * screen/navigation/branding. Keep each entry a single narrow purpose — this is
+ * a contract of specific UI capabilities, not a generic runtime-hook bag.
+ */
+export interface IslandUiSeams {
+  /**
+   * `session.glasses.requestWifiSetup` — open the host's glasses Wi-Fi setup
+   * flow. Absent ⇒ miniapps get NOT_IMPLEMENTED for the request.
+   */
+  requestWifiSetup?: (reason?: string) => Promise<void> | void
+}
+
 export interface IslandConfigureOptions {
   /** REQUIRED — the only must-have seam. The host owns login; island owns the rest. */
   auth: IslandAuth
   config?: IslandConfigValues
   analytics?: IslandAnalytics
+  ui?: IslandUiSeams
 }
 
 let options: IslandConfigureOptions | null = null
@@ -96,4 +110,9 @@ export function getConfigValues(): IslandConfigValues {
 
 export function getAnalytics(): IslandAnalytics | null {
   return options?.analytics ?? null
+}
+
+/** The host-supplied UI seams ({} until configure() provides them). */
+export function getUiSeams(): IslandUiSeams {
+  return options?.ui ?? {}
 }
