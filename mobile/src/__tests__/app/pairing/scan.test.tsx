@@ -178,7 +178,14 @@ describe("pairing scan screen", () => {
     )
     ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, push, goBack})
+    // history models the stack after push("/pairing/loading") — only the
+    // kickoff-failure guard reads it.
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
+      replace,
+      push,
+      goBack,
+      history: ["/pairing/scan", "/pairing/loading"],
+    })
     ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
     ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(true)
     setPlatformOS("ios")
@@ -287,6 +294,42 @@ describe("pairing scan screen", () => {
         deviceModel: "Mentra Live",
       })
     })
+    // Parity with loading.tsx's handlePairFailure: the failed attempt is
+    // cleared before the failure screen shows.
+    expect(toolkit.pairing.abandonAttempt).toHaveBeenCalled()
+  })
+
+  it("suppresses the kickoff-failure route when the user already left loading", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    // The user backed out of /pairing/loading during the 2s kickoff delay —
+    // the stale rejection must not yank them to the failure screen.
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
+      replace,
+      push,
+      goBack,
+      history: ["/pairing/scan"],
+    })
+    ;(toolkit.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    useCoreStore.setState({
+      searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
+    })
+
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    fireEvent.press(getByText("001"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalled()
+    })
+
+    act(() => {
+      jest.advanceTimersByTime(2_000)
+    })
+    await act(async () => {})
+
+    expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
+    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {

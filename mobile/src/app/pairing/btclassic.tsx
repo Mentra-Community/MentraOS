@@ -7,7 +7,8 @@ import {translate} from "@/i18n"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {toolkit} from "@mentra/island"
 import type {Device} from "@mentra/bluetooth-sdk"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -15,7 +16,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import CrustModule from "@mentra/crust"
 
 export default function BtClassicPairingScreen() {
-  const {goBack, replace} = useNavigationStore.getState()
+  const {goBack} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
   const route = useRoute()
   // The device the user picked on the scan screen, threaded through the route.
@@ -42,30 +43,24 @@ export default function BtClassicPairingScreen() {
     toolkit.pairing.onOtherBtConnected(onChange),
   )
   const [savedDeviceName] = useSetting(SETTINGS.device_name.key)
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = device?.name || savedDeviceName || ""
   const {theme} = useAppTheme()
 
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    // A connect kickoff rejection (e.g. Bluetooth powered off, native-bridge
-    // error) emits no pair_failure event, so the loading screen revealed by
-    // pushPrevious() would spin forever — replace it with the failure screen.
-    const routeKickoffFailure = (model?: string) => {
-      replace("/pairing/failure", {error: "errors:pairingCouldNotStart", deviceModel: model})
-    }
     if (device) {
       toolkit.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
         console.error("Failed to connect glasses after Bluetooth Classic pairing:", error)
-        routeKickoffFailure(device.model)
+        routePairingKickoffFailure(device.model)
       })
     } else {
       // Paired contexts (success step stack / recovery alert): reconnect the
-      // saved default device.
+      // saved default device. The failure copy names the default model as of
+      // rejection time, not render time.
       toolkit.glasses.connectDefault().catch((error) => {
         console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
-        routeKickoffFailure(defaultWearable)
+        routePairingKickoffFailure(useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key))
       })
     }
     pushPrevious()

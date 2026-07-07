@@ -77,7 +77,15 @@ describe("btclassic pairing screen", () => {
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
     ;(useRoute as jest.Mock).mockReturnValue({params: {device: JSON.stringify(device)}})
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({goBack, replace})
+    // history models the stack at rejection time — after handleSuccess()'s
+    // pushPrevious() reveals the loading screen pushed under this one. Only
+    // the kickoff-failure guard reads it; it suppresses the failure route
+    // when loading is no longer on top (e.g. paired recovery contexts).
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
+      goBack,
+      replace,
+      history: ["/pairing/scan", "/pairing/loading"],
+    })
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
   })
 
@@ -114,9 +122,12 @@ describe("btclassic pairing screen", () => {
       })
     })
     expect(pushPrevious).toHaveBeenCalled()
+    // Parity with loading.tsx's handlePairFailure: the failed attempt is
+    // cleared before the failure screen shows.
+    expect(toolkit.pairing.abandonAttempt).toHaveBeenCalled()
   })
 
-  it("routes a paired-context connectDefault rejection to the failure screen", async () => {
+  it("routes a connectDefault rejection to the failure screen while loading is on top", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {}})
     await useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
     ;(toolkit.glasses.connectDefault as jest.Mock).mockRejectedValueOnce(new Error("no default device"))
