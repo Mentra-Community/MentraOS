@@ -714,6 +714,10 @@ class OtaInstallCoordinator {
     if (!connected) {
       console.log("[OTA_PROGRESS] connect-edge: disconnected")
       this.clearPostApkDelay()
+      // Also drop a pending query-reply fallback: firing ota_start into a dead
+      // link can only produce a false "failed" state, and the reconnect edge
+      // re-queries and re-arms this fallback anyway.
+      this.clearQueryReplyTimeout()
       return
     }
 
