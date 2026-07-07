@@ -111,8 +111,7 @@ class SocketComms {
     } catch (err) {
       console.error("SOCKET: native display failed:", err)
     }
-    const displayEventStr = JSON.stringify(processedEvent)
-    useDisplayStore.getState().setDisplayEvent(displayEventStr)
+    useDisplayStore.getState().setDisplayEvent(processedEvent)
   }
 
   // Message Handling

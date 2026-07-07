@@ -1,7 +1,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {displayProcessor as MockDisplayProcessor} from "@mentra/island/internal"
 
-import {useDisplayStore} from "@/stores/display"
+import {useDisplayStore, flushDisplayCoalesceForTests} from "@/stores/display"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -49,6 +49,7 @@ describe("SocketComms display events", () => {
         text: "Hello display",
       },
     })
+    flushDisplayCoalesceForTests()
 
     expect(MockDisplayProcessor.processDisplayEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -86,6 +87,7 @@ describe("SocketComms display events", () => {
     }
 
     socketComms.handle_display_event(rawEvent)
+    flushDisplayCoalesceForTests()
 
     expect(BluetoothSdk.displayEvent).toHaveBeenCalledWith(rawEvent)
     expect(useDisplayStore.getState().dashboardEvent).toEqual(rawEvent)

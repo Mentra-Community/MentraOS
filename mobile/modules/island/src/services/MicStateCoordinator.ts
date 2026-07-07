@@ -10,7 +10,21 @@
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
+import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
+
 const LOG_TAG = "MIC_COORDINATOR"
+
+/** Mic-requirement flips are debounced (300ms) and merged into one BLE write
+ *  (wire v2 keeps BLE JSON small and infrequent). */
+const flushMicRequirementsPatch = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
+  try {
+    void Promise.resolve(BluetoothSdk.updateBluetoothSettings(patch)).catch((err) => {
+      console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
+    })
+  } catch (err) {
+    console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
+  }
+}, 300)
 
 class MicStateCoordinator {
   private static instance: MicStateCoordinator | null = null
@@ -53,19 +67,11 @@ class MicStateCoordinator {
 
     // The mic control plane is a direct btsdk call now (was a host setMicRequirements
     // hook) so a bare OEM streams audio without wiring it.
-    try {
-      void Promise.resolve(
-        BluetoothSdk.updateBluetoothSettings({
-          should_send_pcm: shouldSendPcm,
-          should_send_lc3: shouldSendLc3,
-          should_send_transcript: false,
-        }),
-      ).catch((err) => {
-        console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
-      })
-    } catch (err) {
-      console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
-    }
+    flushMicRequirementsPatch({
+      should_send_pcm: shouldSendPcm,
+      should_send_lc3: shouldSendLc3,
+      should_send_transcript: false,
+    })
   }
 
   /**

@@ -136,12 +136,15 @@ export function startDeviceEventRouter(): void {
   // Phone-owned photo errors settle the in-flight long-poll fast (vs. timeout).
   // Non-owned photo responses used to forward to the Cloud V1 photo pipeline via
   // restComms; that relay was removed with Cloud V1 app end-of-life, so they drop.
+  // Wire v2 sends a short 4-hex BLE requestId; the coordinator maps it back to
+  // the cloud requestId (resolveCloudRequestId) before ownership checks.
   subs.push(
     BluetoothSdk.addListener("photo_response", (event) => {
-      if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+      const cloudRequestId = event.requestId ? phonePhotoCoordinator.resolveCloudRequestId(event.requestId) : ""
+      if (cloudRequestId && phonePhotoCoordinator.owns(cloudRequestId)) {
         if (event.state === "error") {
           phonePhotoCoordinator.handlePhotoError(
-            event.requestId,
+            event.requestId ?? cloudRequestId,
             event.errorCode ?? "GLASSES_ERROR",
             event.errorMessage ?? "Glasses reported an error",
           )

@@ -8,33 +8,33 @@
   "types": "build/index.d.ts",
   "exports": {
     ".": {
-      "types": "./build/index.d.ts",
       "react-native": "./src/index.ts",
+      "types": "./build/index.d.ts",
       "default": "./build/index.js"
     },
     "./internal": {
-      "types": "./build/_internal.d.ts",
       "react-native": "./src/_internal.ts",
+      "types": "./build/_internal.d.ts",
       "default": "./build/_internal.js"
     },
     "./react": {
-      "types": "./build/react/index.d.ts",
       "react-native": "./src/react/index.ts",
+      "types": "./build/react/index.d.ts",
       "default": "./build/react/index.js"
     },
     "./types": {
-      "types": "./build/types/index.d.ts",
       "react-native": "./src/types/index.ts",
+      "types": "./build/types/index.d.ts",
       "default": "./build/types/index.js"
     },
     "./photo-receiver": {
-      "types": "./build/photo-receiver/index.d.ts",
       "react-native": "./src/photo-receiver/index.ts",
+      "types": "./build/photo-receiver/index.d.ts",
       "default": "./build/photo-receiver/index.js"
     },
     "./debug": {
-      "types": "./build/debug.d.ts",
       "react-native": "./src/debug.ts",
+      "types": "./build/debug.d.ts",
       "default": "./build/debug.js"
     },
     "./_private/*": null,

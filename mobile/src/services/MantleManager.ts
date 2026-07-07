@@ -234,7 +234,7 @@ class MantleManager {
 
   private async syncTimezone() {
     const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone, timezone: timezone})
+    const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
     } else {

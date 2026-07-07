@@ -128,12 +128,13 @@ export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 
 // Raw runtime stores (re-exported via the host @/stores/* shims). Read models
 // live on the toolkit facades; these are the migration escape hatch.
-export {useDisplayStore} from "./stores/display"
+export {useDisplayStore, flushDisplayCoalesceForTests} from "./stores/display"
 export {useCoreStore} from "./stores/core"
 export {useConnectionStore} from "./stores/connection"
 export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
 export {SETTINGS, OFFLINE_APPLETS, useSettingsStore, useSetting} from "./stores/settings"
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stores/bluetoothSettingKeys"
 export {useAppStatusStore, installAppStoreHooks, type AppStoreHooks} from "./stores/apps"
 
 // Cloud client + credentials + v1 comms.

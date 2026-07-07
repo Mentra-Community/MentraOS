@@ -17,7 +17,21 @@ import {shallow} from "zustand/shallow"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useSettingsStore, PAIRING_IDENTITY_KEYS} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
+import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
 import {isGlassesConnected} from "./GlassesReadiness"
+
+/**
+ * Change-pushes are debounced (300ms) and merged so a burst of setSetting
+ * calls becomes ONE BLE write (wire v2 keeps BLE JSON small and infrequent).
+ * The full on-connect/seed pushes stay direct — callers await their ordering.
+ */
+const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
+  // Settings can change while the glasses are disconnected — a native
+  // rejection must not surface as an unhandled promise rejection.
+  void Promise.resolve(BluetoothSdk.updateBluetoothSettings(patch)).catch((error) => {
+    console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
+  })
+}, 300)
 
 /**
  * The changed-keys diff for the change-push, MINUS the pairing-identity keys.
@@ -90,11 +104,7 @@ export function startGlassesSettingsSync(): void {
     (settings: Record<string, unknown>, previous: Record<string, unknown>) => {
       const changed = diffBluetoothSettingsForPush(settings, previous)
       if (Object.keys(changed).length > 0) {
-        // Settings can change while the glasses are disconnected — a native
-        // rejection must not surface as an unhandled promise rejection.
-        void Promise.resolve(BluetoothSdk.updateBluetoothSettings(changed)).catch((error) => {
-          console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
-        })
+        flushBluetoothSettingsPatch(changed)
       }
     },
     {equalityFn: shallow},

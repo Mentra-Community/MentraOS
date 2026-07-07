@@ -5,6 +5,10 @@ import {subscribeWithSelector} from "zustand/middleware"
 
 import restComms from "../services/RestComms"
 import {storage} from "../utils/storage"
+import {getBluetoothSettingKeysForDevice} from "./bluetoothSettingKeys"
+import {useGlassesStore} from "./glasses"
+
+export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./bluetoothSettingKeys"
 
 export interface Setting {
   key: string
@@ -1011,16 +1015,18 @@ export const useSettingsStore = create<SettingsState>()(
     },
     getBluetoothSettings: () => {
       const state = get()
+      // Device-model-filtered key set (wire v2): Mentra Live (no display) gets
+      // the reduced MENTRA_LIVE_SETTING_KEYS; display glasses get the full set.
+      const deviceModel = useGlassesStore.getState().deviceModel || state.getSetting(SETTINGS.default_wearable.key)
+      const keys = getBluetoothSettingKeysForDevice(deviceModel, BLUETOOTH_SETTING_KEYS)
       const bluetoothSettings: Record<string, any> = {}
-      Object.values(SETTINGS).forEach((setting) => {
-        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
-          const value = state.getSetting(setting.key)
-          if (setting.key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
-            return
-          }
-          bluetoothSettings[setting.key] = value
+      for (const key of keys) {
+        const value = state.getSetting(key)
+        if (key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
+          continue
         }
-      })
+        bluetoothSettings[key] = value
+      }
       return bluetoothSettings
     },
     resetAllSettingsLocally: () => {

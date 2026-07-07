@@ -3,9 +3,7 @@ package com.mentra.bluetoothsdk.camera
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class PhotoRequestTest {
@@ -19,7 +17,7 @@ class PhotoRequestTest {
                 sound = true,
             )
 
-        assertTrue(request.requestId.startsWith("photo-"))
+        assertThat(request.requestId).startsWith("photo-")
     }
 
     @Test
@@ -35,7 +33,7 @@ class PhotoRequestTest {
                 )
             )
 
-        assertNull(request.exposureTimeNs)
+        assertThat(request.exposureTimeNs).isNull()
     }
 
     @Test
@@ -60,8 +58,8 @@ class PhotoRequestTest {
                 )
             )
 
-        assertTrue(withoutRequestId.requestId.startsWith("photo-"))
-        assertTrue(blankRequestId.requestId.startsWith("photo-"))
+        assertThat(withoutRequestId.requestId).startsWith("photo-")
+        assertThat(blankRequestId.requestId).startsWith("photo-")
     }
 
     @Test
@@ -77,6 +75,6 @@ class PhotoRequestTest {
                 )
             )
 
-        assertEquals("photo-1", request.requestId)
+        assertThat(request.requestId).isEqualTo("photo-1")
     }
 }
