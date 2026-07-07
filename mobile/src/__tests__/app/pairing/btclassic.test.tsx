@@ -129,7 +129,11 @@ describe("btclassic pairing screen", () => {
 
   it("routes a connectDefault rejection to the failure screen while loading is on top", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {}})
+    // A paired context carries the full promoted identity (default_wearable
+    // AND device_name) — the failure copy reads the model off the identity
+    // read-model (toolkit.pairing.identity()), not raw settings keys.
     await useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, "Mentra Live", false)
+    await useSettingsStore.getState().setSetting(SETTINGS.device_name.key, "MENTRA_LIVE_BLE_001", false)
     ;(toolkit.glasses.connectDefault as jest.Mock).mockRejectedValueOnce(new Error("no default device"))
 
     render(<BtClassicPairingScreen />)

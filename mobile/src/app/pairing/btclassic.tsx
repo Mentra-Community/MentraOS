@@ -7,7 +7,7 @@ import {translate} from "@/i18n"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {toolkit} from "@mentra/island"
 import type {Device} from "@mentra/bluetooth-sdk"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import {routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
@@ -56,11 +56,13 @@ export default function BtClassicPairingScreen() {
       })
     } else {
       // Paired contexts (success step stack / recovery alert): reconnect the
-      // saved default device. The failure copy names the default model as of
-      // rejection time, not render time.
+      // saved default device.
       toolkit.glasses.connectDefault().catch((error) => {
         console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
-        routePairingKickoffFailure(useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key))
+        // Identity read-model, not raw keys: the failure copy names whatever
+        // identity model exists at rejection time (paired or pending).
+        const identity = toolkit.pairing.identity()
+        routePairingKickoffFailure(identity.kind === "none" ? undefined : identity.model)
       })
     }
     pushPrevious()
