@@ -7,6 +7,7 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -34,6 +35,8 @@ public class MessageChunker {
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
     private static final int MAX_PACKED_CHUNK_SIZE = 253;
+    private static final int MAX_BINARY_FRAGMENT_PAYLOAD = BleWireProtocol.MAX_FRAGMENT_PAYLOAD;
+    private static final int MAX_BINARY_FRAME_SIZE = BleWireProtocol.MTU_TARGET;
 
     /**
      * Check if a message needs to be chunked
@@ -205,6 +208,96 @@ public class MessageChunker {
             return json.optInt(fullKey, defaultValue);
         }
         return json.optInt(compactKey, defaultValue);
+    }
+
+    public static boolean needsBinaryFragmenting(byte[] payload) {
+        return payload != null && payload.length > MAX_BINARY_FRAGMENT_PAYLOAD;
+    }
+
+    public static boolean needsBinaryFragmenting(String json) {
+        if (json == null) {
+            return false;
+        }
+        return needsBinaryFragmenting(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Split raw UTF-8 payload into binary wire fragments (v2 path).
+     */
+    public static List<BinaryFragment> createBinaryFragments(
+            byte[] payload, int msgId, boolean wakeup, boolean ackRequested) {
+        if (payload == null) {
+            throw new IllegalArgumentException("Cannot fragment null payload");
+        }
+
+        int fragCount = (payload.length + MAX_BINARY_FRAGMENT_PAYLOAD - 1) / MAX_BINARY_FRAGMENT_PAYLOAD;
+        if (fragCount > 255) {
+            throw new IllegalArgumentException("Payload too large for binary fragmentation");
+        }
+        if (fragCount == 0) {
+            fragCount = 1;
+        }
+
+        List<BinaryFragment> fragments = new ArrayList<>(fragCount);
+        for (int i = 0; i < fragCount; i++) {
+            int offset = i * MAX_BINARY_FRAGMENT_PAYLOAD;
+            int len = Math.min(MAX_BINARY_FRAGMENT_PAYLOAD, payload.length - offset);
+            byte[] fragPayload = Arrays.copyOfRange(payload, offset, offset + len);
+
+            byte flags = 0;
+            if (i == 0) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_FIRST_FRAG;
+            }
+            if (i == fragCount - 1) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_LAST_FRAG;
+            }
+            if (wakeup && i == 0) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_WAKE;
+            }
+            if (ackRequested && i == fragCount - 1) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_ACK_REQUESTED;
+            }
+
+            fragments.add(new BinaryFragment(flags, msgId, i, fragCount, fragPayload));
+        }
+
+        Log.d(TAG, "Created " + fragments.size() + " binary fragments for "
+                + payload.length + " byte payload");
+        return fragments;
+    }
+
+    public static boolean allBinaryFragmentsFit(List<BinaryFragment> fragments) {
+        for (BinaryFragment fragment : fragments) {
+            byte[] packed = K900ProtocolUtils.packBinaryFragment(
+                    fragment.flags,
+                    fragment.msgId,
+                    fragment.fragIdx,
+                    fragment.fragCount,
+                    fragment.payload);
+            if (packed == null || packed.length > MAX_BINARY_FRAME_SIZE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Container for binary wire fragment metadata
+     */
+    public static class BinaryFragment {
+        public final byte flags;
+        public final int msgId;
+        public final int fragIdx;
+        public final int fragCount;
+        public final byte[] payload;
+
+        public BinaryFragment(byte flags, int msgId, int fragIdx, int fragCount, byte[] payload) {
+            this.flags = flags;
+            this.msgId = msgId;
+            this.fragIdx = fragIdx;
+            this.fragCount = fragCount;
+            this.payload = payload;
+        }
     }
 
     /**

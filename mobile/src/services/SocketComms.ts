@@ -14,6 +14,8 @@ import {
 import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import {omitEmptyJsonFields} from "@/services/outboundJson"
+import {slimStreamStatusEvent} from "@/services/streaming/slimStreamStatus"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
@@ -67,6 +69,7 @@ class SocketComms {
   private static instance: SocketComms | null = null
   private coreToken: string = ""
   public userid: string = ""
+  private lastBatteryWsSignature: string | null = null
 
   private constructor() {}
 
@@ -143,9 +146,12 @@ class SocketComms {
   }
 
   public sendStreamStatus(statusMessage: any) {
-    // Forward the status message directly since it's already in the correct format
-    ws.sendText(JSON.stringify(statusMessage))
-    console.log("SOCKET: Sent RTMP stream status:", statusMessage)
+    const slim =
+      statusMessage?.type === "stream_status" || statusMessage?.kind != null
+        ? slimStreamStatusEvent(statusMessage, {includeResolvedConfig: !!statusMessage?.resolvedConfig})
+        : statusMessage
+    ws.sendText(JSON.stringify(omitEmptyJsonFields(slim)))
+    console.log("SOCKET: Sent RTMP stream status:", slim)
   }
 
   public sendKeepAliveAck(ackMessage: any) {
@@ -182,12 +188,15 @@ class SocketComms {
   public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
     const batteryLevel = level ?? useGlassesStore.getState().batteryLevel
     const isCharging = charging ?? useGlassesStore.getState().charging
-    const msg = {
+    const msg = omitEmptyJsonFields({
       type: "glasses_battery_update",
       level: batteryLevel,
       charging: isCharging,
       timestamp,
-    }
+    })
+    const signature = JSON.stringify(msg)
+    if (signature === this.lastBatteryWsSignature) return
+    this.lastBatteryWsSignature = signature
     ws.sendText(JSON.stringify(msg))
   }
 
@@ -531,8 +540,7 @@ class SocketComms {
     }
 
     BluetoothSdk.displayEvent(processedEvent)
-    const displayEventStr = JSON.stringify(processedEvent)
-    useDisplayStore.getState().setDisplayEvent(displayEventStr)
+    useDisplayStore.getState().setDisplayEvent(processedEvent)
   }
 
   private handle_set_location_tier(msg: any) {

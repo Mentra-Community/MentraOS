@@ -180,7 +180,7 @@ public class CommandProcessor {
         Log.d(TAG, "📊 processJsonCommand() started" + json.toString());
         try {
             // Check for ACK first (from phone acknowledging our sent messages)
-            String type = json.optString("type", "");
+            String type = json.optString("type", json.optString("t", ""));
             if ("msg_ack".equals(type)) {
                 long messageId = json.optLong("mId", -1);
                 if (messageId != -1) {

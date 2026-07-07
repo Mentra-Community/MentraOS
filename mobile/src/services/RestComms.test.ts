@@ -117,11 +117,9 @@ describe("RestComms", () => {
     expect(mockRequest).toHaveBeenCalledTimes(1)
   })
 
-  it("syncs core tokens to native state", () => {
-    const BluetoothSdk = require("@mentra/bluetooth-sdk-internal").default
+  it("stores core tokens in memory without a direct native BLE write", () => {
     restComms.setCoreToken("new-core-token")
 
-    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalledWith({core_token: "new-core-token"})
     expect(useSettingsStore.getState().getSetting(SETTINGS.core_token.key)).not.toBe("new-core-token")
   })
 })

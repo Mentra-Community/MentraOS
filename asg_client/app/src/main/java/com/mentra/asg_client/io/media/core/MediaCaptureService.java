@@ -160,24 +160,31 @@ public class MediaCaptureService {
     }
 
     private BleParams resolveBleParams(String requestedSize) {
-        // BLE transfer is limited by BES2700 TX buffer (~88 packets before overflow)
-        // With 221-byte pack size, max reliable transfer is ~19KB
-        // Target file sizes accordingly with aggressive compression
+        // Sized for the push-mode/batched-ack BLE pipe (~45-70 KB/s), not the old
+        // ~19KB single-notification ceiling. Two rules drive the ladder:
+        //  - Resolution first: text is readable only when glyphs survive the
+        //    downscale (~10px x-height), so every tier keeps the long edge at or
+        //    above the old ladder's.
+        //  - Quality stays out of the AVIF smear zone (q >= ~45): below that, AV1's
+        //    loop filters melt text strokes no matter how many pixels there are.
+        // Values are width/height CAPS - the resize preserves aspect ratio, so a
+        // 4:3 capture lands at e.g. 1280x960. Constant-quality mode self-adapts
+        // bytes to content: scenery compresses small, text spends what it needs.
         String tier = PhotoSizeTier.normalize(requestedSize);
         switch (tier) {
             case "low":
-                // Target ~8KB: 400x400 @ quality 28
-                return new BleParams(400, 400, 28);
+                // ~15-25KB typical: readable large text, fastest transfer
+                return new BleParams(800, 800, 50);
             case "high":
-                // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
-                return new BleParams(800, 800, 32);
+                // ~50-90KB typical: document text comfortably readable
+                return new BleParams(1600, 1600, 48);
             case "max":
-                // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
-                return new BleParams(1024, 1024, 35);
+                // ~90-160KB typical: document-grade
+                return new BleParams(1920, 1920, 55);
             case "medium":
             default:
-                // Target ~15KB: 640x640 @ quality 30 - safe for BLE
-                return new BleParams(640, 640, 30);
+                // ~30-55KB typical: matches the WiFi medium resolution
+                return new BleParams(1280, 1280, 50);
         }
     }
 
@@ -3799,11 +3806,23 @@ public class MediaCaptureService {
                                     targetWidth = (int) (targetHeight * aspectRatio);
                                 }
 
-                                // 3. Resize bitmap
-                                android.graphics.Bitmap resized =
+                                // 3. Resize bitmap, then restore edge contrast: the downscale
+                                // low-pass-filters text strokes, and a mild unsharp costs almost
+                                // no bytes while visibly improving glyph legibility.
+                                android.graphics.Bitmap scaled =
                                         android.graphics.Bitmap.createScaledBitmap(
                                                 original, targetWidth, targetHeight, true);
-                                original.recycle();
+                                // createScaledBitmap returns the SAME object when the size
+                                // already matches (medium ladder == capture resolution), so
+                                // recycling unconditionally would kill the bitmap mid-pipeline.
+                                if (scaled != original) {
+                                    original.recycle();
+                                }
+                                android.graphics.Bitmap resized =
+                                        BleImageSharpener.sharpen(mContext, scaled);
+                                if (resized != scaled) {
+                                    scaled.recycle();
+                                }
 
                                 // 4. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
@@ -3957,12 +3976,13 @@ public class MediaCaptureService {
                 recordTiming(requestId, "ble_ready_msg");
                 sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
 
-                // Add delay to ensure JSON packet completes transmission through MCU before file
-                // packets start
-                // This prevents packet interleaving at the BLE MTU boundary
+                // Brief delay so the ble_photo_ready JSON drains ahead of file packets.
+                // Was 200ms; the firmware TX window now queues both in order (and the
+                // phone's reassembly tolerates packets arriving before the JSON), so
+                // 20ms is a safety margin, not a required gap. Hardware-validate: a
+                // regression shows up as first-packet retries in the transfer logs.
                 try {
-                    Thread.sleep(200); // 200ms delay for JSON packet to fully transmit over BLE
-                    Log.d(TAG, "⏱️ Waited 200ms for JSON packet to complete BLE transmission");
+                    Thread.sleep(20);
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Delay interrupted", e);
                 }

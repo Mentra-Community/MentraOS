@@ -38,6 +38,7 @@ import type {
 import {getRuntimeHooks} from "@mentra/island"
 
 import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
+import {slimStreamStatusEvent, streamStatusSignature} from "./slimStreamStatus"
 import {
   getManagedStreamStatus,
   provisionManagedStream,
@@ -205,6 +206,10 @@ export class PhoneStreamCoordinator {
    * collide with the in-flight stopStream.
    */
   private inFlight: Promise<void> = Promise.resolve()
+  /** Drop identical stream_status fanouts within one session. */
+  private lastFanoutSignature: string | null = null
+  /** Send full resolvedConfig only once per stream session. */
+  private resolvedConfigForwarded = false
 
   constructor(timings: CoordinatorTimings = {}) {
     this.timings = {...DEFAULT_TIMINGS, ...timings}
@@ -434,11 +439,18 @@ export class PhoneStreamCoordinator {
     if (event.streamId && event.streamId !== this.current.streamId) return
 
     this.lifecycle?.recordActivity()
+    const includeResolvedConfig = !this.resolvedConfigForwarded && !!event.resolvedConfig
+    if (includeResolvedConfig) this.resolvedConfigForwarded = true
+    const slimData = slimStreamStatusEvent(event, {includeResolvedConfig})
+    const signature = streamStatusSignature(slimData)
+    if (signature === this.lastFanoutSignature) return
+    this.lastFanoutSignature = signature
+
     this.fanout({
       streamId: this.current.streamId,
       source: "glasses",
       status: event.status,
-      data: event as unknown as Record<string, unknown>,
+      data: slimData,
     })
 
     // Glasses-reported TERMINAL states unwind the coordinator. Terminal means
@@ -674,6 +686,9 @@ export class PhoneStreamCoordinator {
     const entry = this.current
     if (!entry) return
     const sendBleStop = options.sendBleStop !== false
+
+    this.lastFanoutSignature = null
+    this.resolvedConfigForwarded = false
 
     // Dispose the lifecycle controller immediately so it doesn't fire one
     // more keep-alive against a stream we're tearing down. The transition

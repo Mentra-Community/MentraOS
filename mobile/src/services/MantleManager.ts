@@ -14,6 +14,7 @@ import navigationService from "@/services/NavigationService"
 import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
 import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
+import {slimStreamStatusEvent} from "@/services/streaming/slimStreamStatus"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
@@ -31,6 +32,7 @@ import {
   configureRuntime,
   getRuntimeHooks,
   displayProcessor,
+  localDisplayManager,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
@@ -58,10 +60,21 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
+import {createDebouncedPatchFlusher} from "@/utils/debouncedPatch"
 import mentraAuth from "@/utils/auth/authClient"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>(
+  (patch) => BluetoothSdk.updateBluetoothSettings(patch),
+  300,
+)
+
+const flushMicRequirementsPatch = createDebouncedPatchFlusher<Record<string, unknown>>(
+  (patch) => BluetoothSdk.updateBluetoothSettings(patch),
+  300,
+)
 
 // ===========================================================================
 // BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove with the
@@ -305,7 +318,7 @@ class MantleManager {
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
       setMicRequirements: (requirements) =>
-        BluetoothSdk.updateBluetoothSettings({
+        flushMicRequirementsPatch({
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
@@ -373,6 +386,11 @@ class MantleManager {
     // the correct profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
     displayProcessor.attachToRuntime()
 
+    // Same late-attach for the local display manager's reconnect-replay hook:
+    // after a glasses reconnect it re-pushes the current owner's frame (scenes
+    // replay from retained state — apps never re-send on reconnect).
+    localDisplayManager.attachToRuntime()
+
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
     miniappCatalog.init()
@@ -427,7 +445,7 @@ class MantleManager {
 
   private async syncTimezone() {
     const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone, timezone: timezone})
+    const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
     } else {
@@ -636,7 +654,7 @@ class MantleManager {
           }
         }
         // console.log("MANTLE: Bluetooth settings changed", bluetoothSettingsObj)
-        BluetoothSdk.updateBluetoothSettings(bluetoothSettingsObj)
+        flushBluetoothSettingsPatch(bluetoothSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -761,10 +779,13 @@ class MantleManager {
           //
           // Error responses are the only photo_response events that settle
           // the coordinator directly.
-          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+          const cloudRequestId = event.requestId
+            ? phonePhotoCoordinator.resolveCloudRequestId(event.requestId)
+            : ""
+          if (cloudRequestId && phonePhotoCoordinator.owns(cloudRequestId)) {
             if (event.state === "error") {
               phonePhotoCoordinator.handlePhotoError(
-                event.requestId,
+                event.requestId ?? cloudRequestId,
                 event.errorCode ?? "GLASSES_ERROR",
                 event.errorMessage ?? "Glasses reported an error",
               )
@@ -923,33 +944,40 @@ class MantleManager {
         }),
       )
 
-      this.subs.push(
-        (CrustModule.addListener as any)("phone_notification", async (event: any) => {
-          // Direct forward to local miniapps subscribed to phone_notification.
-          // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
-          localMiniappRuntime.forwardEvent("phone_notification", {
-            notificationId: event.notificationId,
-            app: event.app,
-            title: event.title,
-            content: event.content,
-            priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
-            timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
-            packageName: event.packageName,
-          })
-          const res = await restComms.sendPhoneNotification({
-            notificationId: event.notificationId,
-            app: event.app,
-            title: event.title,
-            content: event.content,
-            priority: event.priority.toString(),
-            timestamp: parseInt(event.timestamp.toString()),
-            packageName: event.packageName,
-          })
-          if (res.is_error()) {
-            console.error("Failed to send phone notification:", res.error)
-          }
-        }),
-      )
+      const forwardPhoneNotification = async (event: any) => {
+        // Direct forward to local miniapps subscribed to phone_notification.
+        // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
+        localMiniappRuntime.forwardEvent("phone_notification", {
+          notificationId: event.notificationId,
+          app: event.app,
+          title: event.title,
+          content: event.content,
+          priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
+          timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
+          packageName: event.packageName,
+        })
+        const res = await restComms.sendPhoneNotification({
+          notificationId: event.notificationId,
+          app: event.app,
+          title: event.title,
+          content: event.content,
+          priority: event.priority.toString(),
+          timestamp: parseInt(event.timestamp.toString()),
+          packageName: event.packageName,
+        })
+        if (res.is_error()) {
+          console.error("Failed to send phone notification:", res.error)
+        }
+      }
+
+      // Android: Crust's NotificationListenerService reads notifications.
+      this.subs.push((CrustModule.addListener as any)("phone_notification", forwardPhoneNotification))
+
+      // iOS: the phone can't read other apps' notifications, but connected
+      // glasses can (ANCS) — the G2 SGC reports the source app on its
+      // notification service and pipes it up as the SAME event (empty
+      // title/content; app identity only). Feeds the identical path.
+      this.subs.push(BluetoothSdk.addListener("phone_notification" as any, forwardPhoneNotification))
 
       this.subs.push(
         (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
@@ -1211,7 +1239,9 @@ class MantleManager {
             return
           }
           console.log("MANTLE: Forwarding stream status to server:", event)
-          socketComms.sendStreamStatus(event)
+          socketComms.sendStreamStatus(
+            slimStreamStatusEvent(event, {includeResolvedConfig: !!event.resolvedConfig}),
+          )
         }),
       )
 

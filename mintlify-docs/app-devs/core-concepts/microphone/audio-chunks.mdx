@@ -38,7 +38,7 @@ you the audio:
 ```typescript
 session.mic.onVoiceActivity(({ status }) => {
   // status: true while speaking, false when silent.
-  if (status) session.display.showTextWall("Listening…");
+  if (status) session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Listening…"}]);
 });
 ```
 

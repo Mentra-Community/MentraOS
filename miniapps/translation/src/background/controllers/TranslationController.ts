@@ -282,9 +282,7 @@ export class TranslationController {
     }
   }
 
-  private async startTranslation(
-    params: Record<string, unknown>,
-  ): Promise<{targetLanguage: string; status: string}> {
+  private async startTranslation(params: Record<string, unknown>): Promise<{targetLanguage: string; status: string}> {
     const target =
       typeof params.targetLanguage === "string" && params.targetLanguage.trim() ? params.targetLanguage.trim() : null
 
@@ -348,8 +346,7 @@ export class TranslationController {
       })()
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
-      this.settings.showOriginalText =
-        showOrigRaw == null ? DEFAULT_SETTINGS.showOriginalText : showOrigRaw === "true"
+      this.settings.showOriginalText = showOrigRaw == null ? DEFAULT_SETTINGS.showOriginalText : showOrigRaw === "true"
       this.settings.glassesDisplayMode =
         glassesModeRaw === "both" || glassesModeRaw === "translation"
           ? glassesModeRaw
@@ -684,11 +681,15 @@ export class TranslationController {
   }
 
   private showTextWall(text: string): void {
-    try {
-      this.session.display.showTextWall(text, {view: "main"})
-    } catch (err) {
-      console.log("LocalTranslation: display error", err)
-    }
+    // One full-canvas text element with a stable id: successive translations
+    // update it in place on the glasses (no flicker). Box coordinates are raw
+    // device px — read from capabilities, falling back to the largest canvas
+    // (the host clamps to the real one). render() never throws; it resolves
+    // {status: "blocked"} instead.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "translation", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 
   private cleanTranscriptText(text: string): string {
@@ -715,11 +716,7 @@ export class TranslationController {
     this.inactivityTimer = setTimeout(() => {
       this.formatter.clear()
       this.lastSpeakerId = undefined
-      try {
-        this.session.display.clear()
-      } catch (err) {
-        console.log("LocalTranslation: clear error", err)
-      }
+      void this.session.display.render([])
     }, 40000)
   }
 
