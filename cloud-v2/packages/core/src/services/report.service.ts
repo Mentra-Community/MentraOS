@@ -255,24 +255,48 @@ async function addArtifacts(input: {
     }
     return { stored: artifacts.length };
   } catch (error) {
-    await discardReportAssets(reportId, stored);
+    if (stored.length > 0) {
+      // The metadata push may have failed AMBIGUOUSLY (e.g. a network error
+      // after the server applied it), which would leave the report pointing at
+      // payloads the rollback below removes. Sweep the pushed artifactIds
+      // first so both ambiguous outcomes converge on "nothing stored".
+      await ReportModel.updateOne(
+        { reportId, mentraUserId },
+        { $pull: { artifacts: { artifactId: { $in: stored.map((asset) => asset.artifactId) } } } },
+      ).catch((cleanupError) => {
+        logger.error(
+          { cleanupError, reportId },
+          "failed to sweep report artifact metadata during rollback",
+        );
+      });
+      await discardReportAssets(reportId, stored);
+    }
     throw error;
   }
 }
 
-/** Best-effort rollback of stored blobs and asset rows; failures are logged, never thrown. */
+/**
+ * Best-effort rollback of stored blobs and asset rows; failures are logged,
+ * never thrown. The blob goes first, and its asset row is only removed once
+ * the blob delete succeeded: a surviving row keeps a failed blob delete
+ * discoverable (and retryable), whereas removing the row first would leave an
+ * unreferenced blob nothing can find again.
+ */
 async function discardReportAssets(reportId: string, assets: StoredReportAsset[]): Promise<void> {
   for (const asset of assets) {
+    try {
+      await getStorage().deleteObject(asset.storageKey);
+    } catch (cleanupError) {
+      logger.error(
+        { cleanupError, reportId, storageKey: asset.storageKey },
+        "failed to delete stored report artifact; keeping its asset row so the blob stays discoverable",
+      );
+      continue;
+    }
     await ReportAssetModel.deleteOne({ artifactId: asset.artifactId }).catch((cleanupError) => {
       logger.error(
         { cleanupError, reportId, artifactId: asset.artifactId },
         "failed to roll back report asset row",
-      );
-    });
-    await getStorage().deleteObject(asset.storageKey).catch((cleanupError) => {
-      logger.error(
-        { cleanupError, reportId, storageKey: asset.storageKey },
-        "failed to delete stored report artifact",
       );
     });
   }
