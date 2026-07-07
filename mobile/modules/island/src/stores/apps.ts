@@ -21,6 +21,7 @@ import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import {islandNotifications} from "../services/NotificationsEmitter"
+import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {SETTINGS, useSettingsStore} from "./settings"
@@ -35,8 +36,25 @@ export interface StartOptions {
 }
 
 export interface AppStoreHooks {
-  /** Called by start() before applet.onStart. Return false to abort the start. */
-  beforeStart?: (app: ClientApp, opts?: StartOptions) => Promise<boolean> | boolean
+  /**
+   * A start was blocked because the app is hardware-incompatible. Island made
+   * the decision (and raised the `version_incompatible` notification); the host
+   * renders its branded alert here.
+   */
+  onIncompatibleBlocked?: (app: ClientApp) => void
+  /**
+   * A start was blocked because the app requires the on-device STT model
+   * (declared at registration — see AppRegistry.installOfflineApp) and none is
+   * installed. Island decided via its model manager; the host renders the
+   * alert / settings navigation here.
+   */
+  onMissingSpeechModel?: (app: ClientApp) => void
+  /**
+   * An open request passed the gates — fired on EVERY open, including
+   * re-opening an already-running app, so the host's navigation / open
+   * animation always plays.
+   */
+  onOpenRequested?: (app: ClientApp, opts?: StartOptions) => void
 }
 
 let hostHooks: AppStoreHooks = {}
@@ -270,10 +288,11 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
 
     // Skip spawning a NEW app while another is mid-launch — concurrent spawns
-    // race the foreground-only-one teardown. This is checked BEFORE beforeStart
-    // (which navigates/foregrounds) so a gated launch doesn't paint a splash it
-    // can't back. Re-opening an already-running app is exempt: it has nothing to
-    // spawn, so it skips this gate and is allowed to re-navigate/animate below.
+    // race the foreground-only-one teardown. This is checked BEFORE the gates
+    // and the onOpenRequested seam (which navigates/foregrounds) so a gated
+    // launch doesn't paint a splash it can't back. Re-opening an already-running
+    // app is exempt: it has nothing to spawn, so it skips this gate and is
+    // allowed to re-navigate/animate below.
     // That exemption is the fix for the "second tap during another app's launch
     // window silently does nothing" bug.
     if (!app.running && state.apps.some((a) => a.loading)) {
@@ -281,33 +300,50 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // Host gate (incompatible alerts, offline-mode rejection, etc.). This is
-    // ALSO where the host navigates / foregrounds for the open animation
-    // (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground for the
-    // slide). It must run on EVERY open — including
-    // re-opening an already-running app — so the animation always plays.
     if (!app.offline && !app.local) {
       console.warn(`ISLAND: cloud-v1 app entries are no longer supported: ${packageName}`)
       return false
     }
 
-    if (hostHooks.beforeStart) {
-      const proceed = await hostHooks.beforeStart(app, opts)
-      if (!proceed) return false
-    }
-
-    // Island-native incompatibility gate. Block the launch and raise a structured
-    // notification the host can render off toolkit.notifications.
-    if (app.compatibility?.isCompatible === false) {
+    // Hardware-compatibility gate — island decides and blocks; the host renders
+    // its branded alert via onIncompatibleBlocked (and/or the structured
+    // notification below). `!isCompatible` (not `=== false`) keeps the semantics
+    // of the host gate this replaces: an unknown verdict blocks, not launches.
+    if (!app.compatibility?.isCompatible) {
       islandNotifications.emit({
         kind: "version_incompatible",
         packageName,
         reason: `${app.name ?? packageName} is not compatible with the connected glasses`,
-        metadata: {missingRequired: app.compatibility.missingRequired ?? []},
+        metadata: {missingRequired: app.compatibility?.missingRequired ?? []},
         timestamp: Date.now(),
       })
+      hostHooks.onIncompatibleBlocked?.(app)
       return false
     }
+
+    // Missing-speech-model gate for apps registered with requiresLocalSttModel.
+    // Island decides via its own model manager; the host renders the alert and
+    // any settings navigation via onMissingSpeechModel.
+    if (appRegistry.requiresLocalSttModel(packageName) && !(await sttModelManager.isModelAvailable())) {
+      islandNotifications.emit({
+        kind: "missing_speech_model",
+        packageName,
+        reason: `${app.name ?? packageName} needs an on-device speech model before it can start`,
+        timestamp: Date.now(),
+      })
+      hostHooks.onMissingSpeechModel?.(app)
+      return false
+    }
+
+    // Host navigation / open-animation seam. Runs on EVERY accepted open —
+    // including re-opening an already-running app — so the animation always
+    // plays (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground
+    // for the slide).
+    hostHooks.onOpenRequested?.(app, opts)
+
+    // First-activation mark (moved from the host's old beforeStart — island
+    // owns the settings store).
+    useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
 
     // If the tapped app is already running, this is a re-open: the nav/foreground
     // above already drove the animation, and there's nothing to spawn. Short-

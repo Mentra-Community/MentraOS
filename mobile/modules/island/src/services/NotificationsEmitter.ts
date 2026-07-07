@@ -10,6 +10,7 @@
 export type IslandNotificationKind =
   | "miniapp_crashloop"
   | "version_incompatible"
+  | "missing_speech_model"
   | "connection_failed_persistent"
 
 export interface IslandNotification {
