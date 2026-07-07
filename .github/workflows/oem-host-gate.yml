@@ -17,6 +17,8 @@ on:
     paths:
       - "mobile/modules/island/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
       - "sdk/example-oem-app/**"
       - "sdk/package.json"
       - "sdk/bun.lock"
@@ -28,6 +30,8 @@ on:
     paths:
       - "mobile/modules/island/**"
       - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
       - "sdk/example-oem-app/**"
       - "sdk/package.json"
       - "sdk/bun.lock"
