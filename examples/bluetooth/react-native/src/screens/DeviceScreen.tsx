@@ -95,7 +95,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 
           {/* Stat row */}
           <View style={styles.statRow}>
-            <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glasses)} sub={firmwareSubLabel(sdk.glasses)} subColor={colors.greenAccent} />
+            <StatCard label="FIRMWARE" value={firmwareCardLabel(sdk)} sub={firmwareCardSubLabel(sdk)} subColor={colors.greenAccent} />
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
@@ -266,6 +266,20 @@ function shouldShowMentraLiveVersions(sdk: BluetoothSdkExampleModel) {
 
 function versionLabel(version: string | null) {
   return version ?? 'Unknown';
+}
+
+function firmwareCardLabel(sdk: BluetoothSdkExampleModel) {
+  if (shouldShowMentraLiveVersions(sdk) && sdk.mentraLiveVersions.appVersion) {
+    return sdk.mentraLiveVersions.appVersion;
+  }
+  return firmwareLabel(sdk.glasses);
+}
+
+function firmwareCardSubLabel(sdk: BluetoothSdkExampleModel) {
+  if (shouldShowMentraLiveVersions(sdk) && sdk.mentraLiveVersions.appVersion) {
+    return 'ASG client';
+  }
+  return firmwareSubLabel(sdk.glasses);
 }
 
 function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
