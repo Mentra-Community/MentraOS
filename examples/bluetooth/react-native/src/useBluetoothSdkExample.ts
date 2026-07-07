@@ -25,6 +25,7 @@ import BluetoothSdk, {
   type StreamStatusEvent,
   type TouchEvent,
   type VersionInfoEvent,
+  type VersionInfoResult,
   type VideoRecordingStatusEvent,
   type VoiceActivityDetectionStatusEvent,
 } from '@mentra/bluetooth-sdk';
@@ -95,7 +96,7 @@ function otaVersionSignature(glasses: GlassesRuntimeState) {
   ].filter(Boolean).join('|') || 'version-unknown';
 }
 
-function otaVersionInfoSignature(event: VersionInfoEvent) {
+function otaVersionInfoSignature(event: VersionInfoResult) {
   return [
     event.buildNumber,
     event.appVersion,
@@ -103,6 +104,47 @@ function otaVersionInfoSignature(event: VersionInfoEvent) {
     event.besFirmwareVersion,
     event.firmwareVersion,
   ].filter(Boolean).join('|') || 'version-unknown';
+}
+
+function versionValue(value: string | null | undefined) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveMentraLiveVersions(
+  glasses: GlassesRuntimeState,
+  versionInfo: VersionInfoResult | null,
+): MentraLiveVersions {
+  if (!glasses.connected) {
+    return {
+      appVersion: null,
+      besFirmwareVersion: null,
+      mtkFirmwareVersion: null,
+    };
+  }
+
+  return {
+    appVersion:
+      versionValue(versionInfo?.appVersion) ??
+      versionValue(glasses.device.appVersion) ??
+      versionValue(glasses.firmware.appVersion),
+    besFirmwareVersion:
+      versionValue(versionInfo?.besFirmwareVersion) ??
+      (glasses.firmware.source === 'bes' ? versionValue(glasses.firmware.version) : null),
+    mtkFirmwareVersion:
+      versionValue(versionInfo?.mtkFirmwareVersion) ??
+      (glasses.firmware.source === 'mtk' ? versionValue(glasses.firmware.version) : null),
+  };
+}
+
+function isMentraLiveRuntime(glasses: GlassesRuntimeState) {
+  if (!glasses.connected) {
+    return false;
+  }
+  const model = [
+    glasses.device.deviceModel,
+    glasses.device.bluetoothName,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return glasses.device.deviceModel === DeviceModels.MentraLive || model.includes('mentra live');
 }
 
 export type StreamResolvedConfig = {
@@ -336,6 +378,12 @@ export type SdkConsoleEvent = {
   time: string;
 };
 
+export type MentraLiveVersions = {
+  appVersion: string | null;
+  besFirmwareVersion: string | null;
+  mtkFirmwareVersion: string | null;
+};
+
 export type BluetoothSdkExampleState = {
   activeAction: string | null;
   barcodeScan: BarcodeScanDetails;
@@ -352,6 +400,7 @@ export type BluetoothSdkExampleState = {
   lastAction: string;
   lastMicBytes: number;
   lastMicDurationSeconds: number | null;
+  mentraLiveVersions: MentraLiveVersions;
   micAudioRouteStatus: string;
   ledColor: LedColor;
   ledMode: LedMode;
@@ -662,6 +711,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
+  const [latestVersionInfo, setLatestVersionInfo] = useState<VersionInfoResult | null>(null);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
 
   const bluetooth = useMentraBluetooth({
@@ -728,6 +778,38 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       cancelled = true;
     };
   }, []);
+
+  function applyVersionInfo(payload: VersionInfoResult) {
+    if (!glassesConnectedRef.current) {
+      return;
+    }
+    setLatestVersionInfo(payload);
+    setLatestVersionInfoSignature(otaVersionInfoSignature(payload));
+  }
+
+  useEffect(() => {
+    setLatestVersionInfo(null);
+    if (!glassesConnected || !isMentraLiveRuntime(glasses)) {
+      return;
+    }
+
+    let cancelled = false;
+    void BluetoothSdk.requestVersionInfo()
+      .then((payload) => {
+        if (!cancelled) {
+          applyVersionInfo(payload);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled && glassesConnectedRef.current) {
+          addEvent('LIVE', `version info refresh failed: ${formatError(error)}`);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedDeviceKey, glassesConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (didAutoConnectDefaultRef.current || glassesConnected) {
@@ -840,7 +922,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('version_info', (payload: VersionInfoEvent) => {
-        setLatestVersionInfoSignature(otaVersionInfoSignature(payload));
+        applyVersionInfo(payload);
       }),
       BluetoothSdk.addListener('ota_status', applyOtaStatus),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
@@ -3487,6 +3569,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     lastAction,
     lastMicBytes,
     lastMicDurationSeconds,
+    mentraLiveVersions: resolveMentraLiveVersions(glasses, latestVersionInfo),
     ledColor,
     ledMode,
     micAudioRouteStatus,

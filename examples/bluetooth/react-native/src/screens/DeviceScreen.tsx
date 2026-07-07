@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
+import { DeviceModels } from '@mentra/bluetooth-sdk';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
@@ -94,7 +95,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 
           {/* Stat row */}
           <View style={styles.statRow}>
-            <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glasses)} sub={firmwareSubLabel(sdk.glasses)} subColor={colors.greenAccent} />
+            <StatCard label="FIRMWARE" value={firmwareCardLabel(sdk)} sub={firmwareCardSubLabel(sdk)} subColor={colors.greenAccent} />
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
@@ -197,6 +198,13 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </View>} />
           <StatusRow label="TARGET" value={connectionTargetLabel(sdk)} mono />
           <StatusRow label="DEVICE" value={deviceLabel(sdk.glasses)} mono />
+          {shouldShowMentraLiveVersions(sdk) ? (
+            <>
+              <StatusRow label="ASG CLIENT" value={versionLabel(sdk.mentraLiveVersions.appVersion)} mono selectable />
+              <StatusRow label="MTK" value={versionLabel(sdk.mentraLiveVersions.mtkFirmwareVersion)} mono selectable />
+              <StatusRow label="BES" value={versionLabel(sdk.mentraLiveVersions.besFirmwareVersion)} mono selectable />
+            </>
+          ) : null}
           <StatusRow label="BATTERY" custom={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={[styles.statusValue, { fontWeight: '600' }]}>{batteryLabel(sdk.glasses)}</Text>
             {charging ? <View style={styles.chargingPill}>
@@ -243,6 +251,35 @@ function connectionTargetLabel(sdk: BluetoothSdkExampleModel) {
     return 'Choose a discovered device';
   }
   return sdk.defaultDevice?.name ?? 'Scan required';
+}
+
+function shouldShowMentraLiveVersions(sdk: BluetoothSdkExampleModel) {
+  if (!isGlassesConnected(sdk.glasses)) {
+    return false;
+  }
+  const model = [
+    sdk.glasses.device.deviceModel,
+    sdk.glasses.device.bluetoothName,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return sdk.glasses.device.deviceModel === DeviceModels.MentraLive || model.includes('mentra live');
+}
+
+function versionLabel(version: string | null) {
+  return version ?? 'Unknown';
+}
+
+function firmwareCardLabel(sdk: BluetoothSdkExampleModel) {
+  if (shouldShowMentraLiveVersions(sdk) && sdk.mentraLiveVersions.appVersion) {
+    return sdk.mentraLiveVersions.appVersion;
+  }
+  return firmwareLabel(sdk.glasses);
+}
+
+function firmwareCardSubLabel(sdk: BluetoothSdkExampleModel) {
+  if (shouldShowMentraLiveVersions(sdk) && sdk.mentraLiveVersions.appVersion) {
+    return 'ASG client';
+  }
+  return firmwareSubLabel(sdk.glasses);
 }
 
 function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
