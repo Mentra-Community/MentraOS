@@ -1,5 +1,5 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
@@ -9,7 +9,6 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -256,7 +255,7 @@ export default function NexDeveloperSettings() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const [glassesConnected, setGlassesConnected] = useState(() => toolkit.glasses.status().state === "connected")
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   // Mentra Display BLE test state variables
@@ -269,8 +268,8 @@ export default function NexDeveloperSettings() {
   const [commandSender, setCommandSender] = useState<BleCommand | null>(null)
   const [commandReceiver, setCommandReceiver] = useState<BleCommand | null>(null)
 
-  // LC3 Audio Control — persisted feature flag synced to the Bluetooth SDK (off by default).
-  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
+  // LC3 Audio Control — local-only dev flag synced to the Bluetooth SDK (off by default, not saved to cloud).
+  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_lc3_audio_playback.key)
 
   // Chinese captions — persisted feature flag synced to the Bluetooth SDK (off by default).
   // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
@@ -286,6 +285,13 @@ export default function NexDeveloperSettings() {
   // BLE Command display state variables
   const [showFullSenderCommand, setShowFullSenderCommand] = useState(false)
   const [showFullReceiverCommand, setShowFullReceiverCommand] = useState(false)
+
+  useEffect(() => {
+    setGlassesConnected(toolkit.glasses.status().state === "connected")
+    return toolkit.glasses.onStatus((status) => {
+      setGlassesConnected(status.state === "connected")
+    })
+  }, [])
 
   // Mentra Display BLE test event handlers
   useEffect(() => {
@@ -324,7 +330,7 @@ export default function NexDeveloperSettings() {
         ])
         return
       }
-      await BluetoothSdk.displayText(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
+      await toolkit.display.text(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -360,7 +366,7 @@ export default function NexDeveloperSettings() {
 
   const onClearDisplayClick = async () => {
     if (glassesConnected) {
-      await BluetoothSdk.clearDisplay()
+      await toolkit.display.clear()
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -663,8 +669,8 @@ export default function NexDeveloperSettings() {
             <View style={themed($settingsGroup)}>
               <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
               <Text style={themed($description)}>
-                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
-                before being sent to the glasses.
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII before
+                being sent to the glasses.
               </Text>
 
               <ToggleSetting

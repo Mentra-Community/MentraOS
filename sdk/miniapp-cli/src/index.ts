@@ -3,7 +3,6 @@
 import { dev } from './dev.js';
 import { release } from './release.js';
 import { pack } from './pack.js';
-import { buildProduction } from './build.js';
 import { schemaPrint, regenerateSchemaFile } from './schema.js';
 import { addPermissionCmd, listPermissionsCmd, removePermissionCmd } from './permission.js';
 import { addHardwareCmd, listHardwareCmd, removeHardwareCmd } from './hardware.js';
@@ -40,10 +39,7 @@ switch (subcommand) {
     // Build with NODE_ENV=production before zipping, so `pack` never ships
     // a stale dev-mode dist/ left behind by `dev`. `--no-build` zips dist/
     // as-is for callers that manage the build themselves.
-    if (!process.argv.includes('--no-build')) {
-      await buildProduction(process.cwd());
-    }
-    await pack();
+    await pack({build: !process.argv.includes('--no-build')});
     break;
   case 'manifest':
     await runManifestWizard();

@@ -23,6 +23,7 @@ import { Connection, type ConnectionDeps } from "./connection";
 import { RuntimeEmitter } from "./emitter";
 import { Subscriptions } from "./subscriptions";
 import { Camera } from "./camera";
+import { Maps } from "./maps";
 import { Tts } from "./tts";
 import { UdpAudio } from "./audio-udp";
 import type { WebSocketLike, UdpSocketLike } from "../../transports";
@@ -142,6 +143,7 @@ function fakeHttp(): HttpClient {
     get: async () => undefined as never,
     head: async () => new Response(null, { status: 200, headers: { "content-type": "audio/mpeg" } }),
     post: async () => undefined as never,
+    postForm: async () => undefined as never,
     put: async () => undefined as never,
     delete: async () => undefined as never,
     url: (path: string) => `https://runtime.test${path}`,
@@ -201,6 +203,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -263,6 +266,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
       logger: noopLogger,
@@ -336,6 +340,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -393,6 +398,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,
@@ -450,6 +456,7 @@ describe("Runtime transcript delivery survives a multi-attempt reconnect", () =>
       emitter,
       subscriptions,
       camera: new Camera({ http: fakeHttp() }),
+      maps: new Maps({ http: fakeHttp() }),
       tts: fakeTts(),
       audio: new UdpAudio({ udp: fakeUdp }),
       logger: noopLogger,

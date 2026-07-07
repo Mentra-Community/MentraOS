@@ -5,7 +5,6 @@ import {ScrollView, View} from "react-native"
 import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
-import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -16,7 +15,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import navigationService from "@/services/NavigationService"
+import {navigationService} from "@mentra/island/internal"
 import ws from "@/services/WebSocketManager"
 import socketComms from "@/services/SocketComms"
 import showAlert from "@/utils/AlertUtils"
@@ -41,6 +40,8 @@ export default function DebugSettingsScreen() {
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
+  const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
+  const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
@@ -96,6 +97,20 @@ export default function DebugSettingsScreen() {
               value={enableSquircles}
               onValueChange={(value) => setEnableSquircles(value)}
             />
+
+            <ToggleSetting
+              label="Appearance Menu"
+              subtitle="Show the Appearance settings menu"
+              value={appearanceMenuEnabled}
+              onValueChange={(value) => setAppearanceMenuEnabled(value)}
+            />
+
+            <ToggleSetting
+              label="App Boot Extra Info"
+              subtitle="Show the current boot state under the logo on the loading screen"
+              value={appBootExtraInfo}
+              onValueChange={(value) => setAppBootExtraInfo(value)}
+            />
           </Group>
 
           <Group title="Quick Links">
@@ -145,37 +160,10 @@ export default function DebugSettingsScreen() {
                 push("/onboarding/os")
               }}
             />
-
-            <RouteButton
-              label="Test switcher"
-              onPress={() => {
-                clearHistoryAndGoHome()
-                push("/test/switcher")
-              }}
-            />
-          </Group>
-
-          <Group title={translate("debugSettings:miniappDevGroupTitle")}>
-            <RouteButton
-              label={translate("debugSettings:miniappDevLoadUrlLabel")}
-              subtitle={translate("debugSettings:miniappDevLoadUrlSubtitle")}
-              onPress={() => push("/miniapps/miniappdev/developer-url")}
-            />
-            <RouteButton
-              label={translate("debugSettings:miniappDevScanLabel")}
-              subtitle={translate("debugSettings:miniappDevScanSubtitle")}
-              onPress={() => push("/miniapps/miniappdev/scanner")}
-            />
           </Group>
 
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
-
-            <RouteButton
-              label="Buffer Recording Debug"
-              subtitle="Control 30-second video buffer on glasses"
-              onPress={() => push("/miniapps/settings/buffer-debug")}
-            />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}
@@ -275,12 +263,6 @@ export default function DebugSettingsScreen() {
               onValueChange={async (value) => {
                 const frameSize = parseInt(value, 10)
                 setLc3FrameSize(frameSize)
-                // Apply immediately to native encoder and cloud
-                try {
-                  await socketComms.configureAudioFormat()
-                } catch (err) {
-                  console.error("Failed to apply LC3 frame size:", err)
-                }
               }}
               description="Higher bitrates improve transcription quality but use more bandwidth."
             />
@@ -291,8 +273,6 @@ export default function DebugSettingsScreen() {
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />
           </Group>
-
-          <StoreUrl />
 
           {/* Super mode only: a wrong OTA manifest can brick glasses */}
           {superMode && <OtaVersionUrl />}

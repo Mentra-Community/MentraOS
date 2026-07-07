@@ -67,12 +67,12 @@ describe("RestComms", () => {
     }
     mockRequest
       .mockRejectedValueOnce(noActiveSessionError)
-      .mockResolvedValueOnce({data: {success: true, data: [{packageName: "com.demo"}]}})
+      .mockResolvedValueOnce({data: {success: true, data: {settings: {theme: "dark"}}}})
 
     const noActiveSessionSpy = jest.fn()
     GlobalEventEmitter.on("NO_ACTIVE_SESSION", noActiveSessionSpy)
 
-    const resultPromise = (async () => await restComms.getApplets())()
+    const resultPromise = (async () => await restComms.loadUserSettings())()
 
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(noActiveSessionSpy).toHaveBeenCalled())
@@ -82,7 +82,7 @@ describe("RestComms", () => {
     const result = await resultPromise
 
     expect(result.is_ok()).toBe(true)
-    expect(result.value).toEqual([{packageName: "com.demo"}])
+    expect(result.value).toEqual({theme: "dark"})
     expect(mockRequest).toHaveBeenCalledTimes(2)
     expect(mockRequest).toHaveBeenNthCalledWith(
       2,
@@ -105,7 +105,7 @@ describe("RestComms", () => {
       },
     })
 
-    const resultPromise = (async () => await restComms.getApplets())()
+    const resultPromise = (async () => await restComms.loadUserSettings())()
 
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1))
 
@@ -117,11 +117,12 @@ describe("RestComms", () => {
     expect(mockRequest).toHaveBeenCalledTimes(1)
   })
 
-  it("syncs core tokens to native state", () => {
+  it("keeps legacy core tokens out of native Bluetooth state", () => {
     const BluetoothSdk = require("@mentra/bluetooth-sdk-internal").default
+    ;(BluetoothSdk.updateBluetoothSettings as jest.Mock).mockClear()
     restComms.setCoreToken("new-core-token")
 
-    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalledWith({core_token: "new-core-token"})
+    expect(BluetoothSdk.updateBluetoothSettings).not.toHaveBeenCalledWith({core_token: "new-core-token"})
     expect(useSettingsStore.getState().getSetting(SETTINGS.core_token.key)).not.toBe("new-core-token")
   })
 })

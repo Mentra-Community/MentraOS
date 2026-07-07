@@ -1,9 +1,7 @@
 import {EventEmitter} from "events"
 
-import restComms from "@/services/RestComms"
 import {WebSocketStatus} from "@/services/ws-types"
 import {useConnectionStore} from "@/stores/connection"
-import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BgTimer} from "@mentra/island"
@@ -107,7 +105,9 @@ class WebSocketManager extends EventEmitter {
   private handleBackendUrlChanged(newBackendUrl: string, prevBackendUrl: string | undefined): void {
     const currentStoreUrl = useConnectionStore.getState().url
     console.log(
-      `WSM: backend_url changed ${prevBackendUrl ?? "(unset)"} → ${newBackendUrl} (WS currently pointed at ${currentStoreUrl ?? "(none)"})`,
+      `WSM: backend_url changed ${prevBackendUrl ?? "(unset)"} → ${newBackendUrl} (WS currently pointed at ${
+        currentStoreUrl ?? "(none)"
+      })`,
     )
 
     if (this.manuallyDisconnected) {
@@ -160,12 +160,6 @@ class WebSocketManager extends EventEmitter {
     }
   }
 
-  // things to run when the websocket status changes to connected:
-  private onConnect() {
-    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())
-    restComms.updateGlassesState(statusObj)
-  }
-
   // Only emit when status actually changes
   private updateStatus(newStatus: WebSocketStatus) {
     if (newStatus !== this.previousStatus) {
@@ -174,10 +168,6 @@ class WebSocketManager extends EventEmitter {
       // Update the connection store
       const store = useConnectionStore.getState()
       store.setStatus(newStatus)
-
-      if (newStatus === WebSocketStatus.CONNECTED) {
-        this.onConnect()
-      }
     }
   }
 
@@ -320,11 +310,9 @@ class WebSocketManager extends EventEmitter {
     const store = useConnectionStore.getState()
     store.setUrl(url)
 
-    // Attach auth and feature flags as query params.
+    // Attach auth as a query param.
     const wsUrl = new URL(url)
     wsUrl.searchParams.set("token", coreToken)
-    wsUrl.searchParams.set("livekit", "true")
-    wsUrl.searchParams.set("udpEncryption", "true")
 
     console.log("WSM: Connecting to WebSocket URL:", wsUrl.toString().replace(/token=[^&]+/, "token=REDACTED"))
 
@@ -528,20 +516,6 @@ class WebSocketManager extends EventEmitter {
       this.webSocket?.send(text)
     } catch (error) {
       console.log("WSM: Error sending text message:", error)
-    }
-  }
-
-  // Send binary data (for audio)
-  public sendBinary(data: ArrayBuffer | Uint8Array) {
-    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {
-      console.log("WSM: Cannot send binary data: WebSocket not connected")
-      return
-    }
-
-    try {
-      this.webSocket?.send(data)
-    } catch (error) {
-      console.log("WSM: Error sending binary data:", error)
     }
   }
 

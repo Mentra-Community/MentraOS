@@ -37,7 +37,7 @@ miniapp's own package name.
 ```ts
 auth?: {
   mentraUserId: string
-  oemId?: string
+  tenantId?: string
   token: string
   expiresAt: number
 }
@@ -50,7 +50,7 @@ The host may also push:
   type: "miniapp_auth_update",
   auth: {
     mentraUserId: string
-    oemId?: string
+    tenantId?: string
     token: string
     expiresAt: number
   }

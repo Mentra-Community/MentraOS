@@ -118,7 +118,10 @@ class BlePhotoUploadService {
             "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
         )
 
-        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
+        // 1.0: the source already went through a lossy AVIF pass on the glasses,
+        // so this re-encode must not compound the loss. Phone CPU and upload
+        // bandwidth are cheap relative to what was paid to get the bytes over BLE.
+        guard var jpegData = image.jpegData(compressionQuality: 1.0) else {
             throw NSError(
                 domain: "BlePhotoUpload",
                 code: -2,
@@ -497,6 +500,7 @@ private enum K900ProtocolUtils {
     static let CMD_START_CODE: [UInt8] = [0x23, 0x23] // ##
     static let CMD_END_CODE: [UInt8] = [0x24, 0x24] // $$
     static let CMD_TYPE_STRING: UInt8 = 0x30 // String/JSON type
+    static let CMD_TYPE_BINARY_MSG: UInt8 = 0x40
 
     // JSON Field constants
     static let FIELD_C = "C" // Command/Content field
@@ -1134,9 +1138,13 @@ extension MentraLive: CBPeripheralDelegate {
 
     nonisolated func peripheral(_: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
         let errorDescription = error?.localizedDescription
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             if let errorDescription {
                 Bridge.log("LIVE: Error writing characteristic: \(errorDescription)")
+                self?.logBleWriteTrace("write_callback", self?.pending?.trace, extra: [
+                    "success": false,
+                    "errorMessage": errorDescription,
+                ])
             } else {
                 Bridge.log("LIVE: Characteristic write successful")
             }
@@ -1214,6 +1222,12 @@ class MentraLive: NSObject, SGCManager {
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
             incomingChunkReassembler.clear()
+            peerWireProtocolVersion = 0
+            useBinaryWireProtocol = false
+            wireHandshakeQueued = false
+            peerK900Le = false
+            peerWireCapsBinary = false
+            BleJsonCompact.resetSession()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1358,6 +1372,8 @@ class MentraLive: NSObject, SGCManager {
     private let SIGNAL_STRENGTH_READ_INTERVAL_MS: TimeInterval = 10.0
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
     private let READINESS_CHECK_INTERVAL_MS: TimeInterval = 2.5 // 2.5 seconds
+    private let SIGNIFICANT_BLE_TRACE_DELAY_MS: TimeInterval = 250
+    private let SIGNIFICANT_BLE_TRACE_QUEUE_SIZE = 5
 
     /// Device Settings Keys
     private let PREFS_DEVICE_NAME = "MentraLiveLastConnectedDeviceName"
@@ -1374,7 +1390,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
-    private let bes2700MtuLimit = 256
+    private let bes2700MtuLimit = 509
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -1383,8 +1399,17 @@ class MentraLive: NSObject, SGCManager {
     private var isKilled = false
     private var reconnectAttempts = 0
     private var isNewVersion = false
+    private var peerWireProtocolVersion = 0
+    private var useBinaryWireProtocol = false
+    private var wireHandshakeQueued = false
+    // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to legacy
+    // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
+    // v2 binary handshake succeeds, which implies wire-v2 LE).
+    private var peerK900Le = false
+    private var peerWireCapsBinary = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
+    private var bleWriteTraceSequence = 0
 
     private var fullyBooted: Bool {
         get { DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
@@ -1506,7 +1531,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("Found already-connected peripheral: \(peripheral.name ?? "Unknown")")
             if let name = peripheral.name,
                name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
-               || name.hasPrefix("MENTRA_LIVE_BT")
+               || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
             {
                 Bridge.log("Found already-connected peripheral: \(name)")
                 discoveredPeripherals[name] = peripheral
@@ -1616,13 +1641,12 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) appId=\(request.appId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
             "type": "take_photo",
             "requestId": request.requestId,
-            "appId": request.appId,
         ]
 
         // Always generate BLE ID for potential fallback
@@ -1675,6 +1699,32 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func warmUpCamera(
+        requestId: String,
+        size: PhotoSize,
+        exposureTimeNs: Double?,
+        durationMs: Int
+    ) {
+        Bridge.log(
+            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) durationMs=\(durationMs)"
+        )
+
+        let allowedSizes = ["low", "medium", "high", "max"]
+        let sizeRaw = size.rawValue
+        var json: [String: Any] = [
+            "type": "camera_warm_up",
+            "requestId": requestId,
+            "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
+            "durationMs": durationMs > 0 ? durationMs : 15000,
+        ]
+
+        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            json["exposureTimeNs"] = Int64(e)
+        }
+
+        sendJson(json, wakeUp: true)
+    }
+
     func startStream(_ message: [String: Any]) {
         Bridge.log("Starting stream")
         var json = message
@@ -1716,15 +1766,40 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Command Queue
 
     class PendingMessage {
-        init(data: Data, id: String, retries: Int) {
+        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil) {
             self.data = data
             self.id = id
             self.retries = retries
+            self.trace = trace
         }
 
         let data: Data
         let retries: Int
         let id: String
+        let trace: BleWriteTrace?
+    }
+
+    struct OutgoingBleCommandTraceInfo {
+        let commandType: String
+        let requestId: String?
+        let appId: String?
+        let messageId: Int64?
+    }
+
+    struct BleWriteTrace {
+        let sequence: Int
+        let commandType: String
+        let requestId: String?
+        let appId: String?
+        let messageId: Int64?
+        let chunkId: String?
+        let chunkIndex: Int?
+        let totalChunks: Int?
+        let payloadBytes: Int?
+        let packedBytes: Int
+        let wakeup: Bool
+        let chunked: Bool
+        let queuedAtMs: TimeInterval
     }
 
     private var pending: PendingMessage?
@@ -1733,12 +1808,14 @@ class MentraLive: NSObject, SGCManager {
     actor CommandQueue {
         private var commands: [PendingMessage] = []
 
-        func enqueue(_ command: PendingMessage) {
+        func enqueue(_ command: PendingMessage) -> Int {
             commands.append(command)
+            return commands.count
         }
 
-        func pushToFront(_ command: PendingMessage) {
+        func pushToFront(_ command: PendingMessage) -> Int {
             commands.insert(command, at: 0)
+            return commands.count
         }
 
         func dequeue() -> PendingMessage? {
@@ -1766,18 +1843,28 @@ class MentraLive: NSObject, SGCManager {
         guard let peripheral = connectedPeripheral,
               let txChar = txCharacteristic
         else {
+            logBleWriteTrace("write_dropped", message.trace, extra: [
+                "errorMessage": "missing peripheral or TX characteristic",
+            ])
             return
         }
 
         // Enforce rate limiting
         let currentTime = Date().timeIntervalSince1970 * 1000
         let timeSinceLastSend = currentTime - lastSendTimeMs
+        let queueDelayMs = message.trace.map { currentTime - $0.queuedAtMs }
 
         try? await Task.sleep(nanoseconds: UInt64(1_000_000))
         lastSendTimeMs = Date().timeIntervalSince1970 * 1000
 
         // Send the data
         peripheral.writeValue(message.data, for: txChar, type: .withResponse)
+        logBleWriteTrace("write_requested", message.trace, extra: [
+            "queueDelayMs": queueDelayMs,
+            "timeSinceLastSendMs": timeSinceLastSend,
+            "currentMtu": currentMtu,
+            "writeType": "withResponse",
+        ])
 
         // don't do the retry system on the old glasses versions
         if !isNewVersion {
@@ -1819,12 +1906,19 @@ class MentraLive: NSObject, SGCManager {
             let retryMessage = PendingMessage(
                 data: pendingMessage.data,
                 id: pendingMessage.id,
-                retries: pendingMessage.retries + 1
+                retries: pendingMessage.retries + 1,
+                trace: pendingMessage.trace
             )
 
             // Push to front of queue for immediate retry
             Task {
-                await self.commandQueue.pushToFront(retryMessage)
+                let queueSize = await self.commandQueue.pushToFront(retryMessage)
+                await MainActor.run {
+                    self.logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
+                        "retryDelayMs": 0,
+                        "queueSizeAfterAdd": queueSize,
+                    ])
+                }
             }
 
             Bridge.log(
@@ -2030,17 +2124,17 @@ class MentraLive: NSObject, SGCManager {
             return // Exit after processing file packet
         }
 
-        let payloadLength: Int
+        if commandType == K900ProtocolUtils.CMD_TYPE_BINARY_MSG {
+            processBinaryWireFrame(data)
+            return
+        }
 
-        // Determine endianness based on device name
-        if let deviceName = connectedPeripheral?.name,
-           deviceName.hasPrefix("XyBLE_") || deviceName.lowercased().hasPrefix("mentra_live")
-        {
-            // K900 device - big-endian
-            payloadLength = (Int(bytes[3]) << 8) | Int(bytes[4])
-        } else {
-            // Standard device - little-endian
-            payloadLength = (Int(bytes[4]) << 8) | Int(bytes[3])
+        // Auto-detect the length endianness so we parse both legacy big-endian and wire-v2
+        // little-endian frames, and learn the glasses' endianness for future outbound frames.
+        let detected = k900DetectStringLength(bytes)
+        let payloadLength = detected?.length ?? (Int(bytes[3]) | (Int(bytes[4]) << 8))
+        if let detected {
+            peerK900Le = detected.isLe
         }
 
         // Bridge.log(
@@ -2074,9 +2168,14 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func processJsonObject(_ json: [String: Any]) {
+    private func processJsonObject(_ incoming: [String: Any]) {
+        guard let json = expandCompactWireJson(incoming) else {
+            Bridge.log("LIVE: Rejected unsupported compact wire form")
+            return
+        }
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
+        BleTraceLogger.logJson(direction: "glasses_to_phone", layer: "sdk_ble_event", payload: json)
 
         if MessageChunker.isChunkedMessage(json) {
             processChunkedJsonObject(json)
@@ -2122,6 +2221,7 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            parsePeerWireCaps(json)
             handleGlassesReady()
 
         case "battery_status":
@@ -2171,6 +2271,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "photo_status":
             emitPhotoStatus(json)
+
+        case "camera_status":
+            emitCameraStatus(json)
 
         case "photo_response":
             emitPhotoResponse(json)
@@ -2383,6 +2486,8 @@ class MentraLive: NSObject, SGCManager {
                 if let buildNumber = fields["build_number"] as? String {
                     isNewVersion = (Int(buildNumber) ?? 0) >= 5
                     DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
+                    parsePeerWireCaps(json)
+                    maybeSendWireHandshake()
                 }
                 if let deviceModel = fields["device_model"] as? String {
                     DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
@@ -2977,6 +3082,7 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
         isNewVersion = (Int(buildNumber) ?? 0) >= 5
+        maybeSendWireHandshake()
         DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
         DeviceStore.shared.apply("glasses", "androidVersion", androidVersion)
 
@@ -3486,7 +3592,7 @@ class MentraLive: NSObject, SGCManager {
         let basePath = components.path.hasSuffix("/")
             ? String(components.path.dropLast())
             : components.path
-        components.path = basePath + "/api/incidents/\(relay.incidentId)/logs"
+        components.path = basePath + "/api/client/reports/\(relay.incidentId)/artifacts"
         guard let url = components.url else {
             sendTransferCompleteConfirmation(fileName: fileName, success: false)
             if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
@@ -3623,9 +3729,368 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Sending Data
 
     func queueSend(_ data: Data, id: String) {
+        queueSend(data, id: id, trace: nil)
+    }
+
+    func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
+        let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         Task {
-            await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0))
+            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace))
+            guard trace != nil, queueSize >= significantQueueSize else {
+                return
+            }
+            await MainActor.run {
+                self.logBleChunkTrace("queued", trace, extra: [
+                    "queueSizeAfterAdd": queueSize,
+                ])
+            }
         }
+    }
+
+    private func outgoingBleCommandTraceInfo(_ json: [String: Any]) -> OutgoingBleCommandTraceInfo {
+        OutgoingBleCommandTraceInfo(
+            commandType: nonBlankString(json["type"]) ?? "unknown",
+            requestId: nonBlankString(json["requestId"]),
+            appId: nonBlankString(json["appId"]),
+            messageId: traceInt64(json["mId"])
+        )
+    }
+
+    private func createBleWriteTrace(
+        commandInfo: OutgoingBleCommandTraceInfo,
+        chunkId: String?,
+        chunkIndex: Int?,
+        totalChunks: Int?,
+        payloadBytes: Int?,
+        packedBytes: Int,
+        wakeup: Bool,
+        chunked: Bool
+    ) -> BleWriteTrace {
+        let sequence = bleWriteTraceSequence
+        bleWriteTraceSequence += 1
+        return BleWriteTrace(
+            sequence: sequence,
+            commandType: commandInfo.commandType,
+            requestId: commandInfo.requestId,
+            appId: commandInfo.appId,
+            messageId: commandInfo.messageId,
+            chunkId: chunkId,
+            chunkIndex: chunkIndex,
+            totalChunks: totalChunks,
+            payloadBytes: payloadBytes,
+            packedBytes: packedBytes,
+            wakeup: wakeup,
+            chunked: chunked,
+            queuedAtMs: Date().timeIntervalSince1970 * 1000
+        )
+    }
+
+    private func logBleChunkTrace(
+        _ stage: String,
+        _ trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        logBleTrace(layer: "sdk_ble_chunk", stage: stage, trace: trace, extra: extra)
+    }
+
+    private func logBleWriteTrace(
+        _ stage: String,
+        _ trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        logBleTrace(layer: "sdk_ble_write", stage: stage, trace: trace, extra: extra)
+    }
+
+    private func logBleTrace(
+        layer: String,
+        stage: String,
+        trace: BleWriteTrace?,
+        extra: [String: Any?] = [:]
+    ) {
+        guard let trace,
+              let warningReason = bleTraceWarningReason(stage: stage, extra: extra)
+        else {
+            return
+        }
+
+        var payload: [String: Any] = [
+            "level": "warning",
+            "warningReason": warningReason,
+            "stage": stage,
+            "sequence": trace.sequence,
+            "commandType": trace.commandType,
+            "packedBytes": trace.packedBytes,
+            "wakeup": trace.wakeup,
+            "chunked": trace.chunked,
+            "queuedAtMs": trace.queuedAtMs,
+        ]
+        if let requestId = trace.requestId { payload["requestId"] = requestId }
+        if let appId = trace.appId { payload["appId"] = appId }
+        if let messageId = trace.messageId { payload["messageId"] = messageId }
+        if let chunkId = trace.chunkId { payload["chunkId"] = chunkId }
+        if let chunkIndex = trace.chunkIndex {
+            payload["chunkIndex"] = chunkIndex
+            payload["chunkNumber"] = chunkIndex + 1
+        }
+        if let totalChunks = trace.totalChunks { payload["totalChunks"] = totalChunks }
+        if let payloadBytes = trace.payloadBytes { payload["payloadBytes"] = payloadBytes }
+        for (key, value) in extra {
+            if let value {
+                payload[key] = value
+            }
+        }
+
+        BleTraceLogger.logMap(direction: "phone_to_glasses", layer: layer, type: trace.commandType, payload: payload)
+    }
+
+    private func bleTraceWarningReason(stage: String, extra: [String: Any?]) -> String? {
+        if extraValue(extra, "errorClass") != nil || extraValue(extra, "errorMessage") != nil {
+            return "ble_write_error"
+        }
+        if let success = extraValue(extra, "success") as? Bool, !success {
+            return "ble_write_failed"
+        }
+        if let writeAccepted = extraValue(extra, "writeAccepted") as? Bool, !writeAccepted {
+            return "ble_write_rejected"
+        }
+        if traceDouble(extraValue(extra, "queueDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "queue_delay"
+        }
+        if traceDouble(extraValue(extra, "callbackDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "write_callback_delay"
+        }
+        if traceDouble(extraValue(extra, "remainingDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "rate_limit_delay"
+        }
+        if traceDouble(extraValue(extra, "nextProcessDelayMs")).map({ $0 >= SIGNIFICANT_BLE_TRACE_DELAY_MS }) == true {
+            return "next_process_delay"
+        }
+        if extraValue(extra, "retryDelayMs") != nil {
+            return "write_retry"
+        }
+        if stage == "queued",
+           traceInt(extraValue(extra, "queueSizeAfterAdd")).map({ $0 >= SIGNIFICANT_BLE_TRACE_QUEUE_SIZE }) == true
+        {
+            return "queue_depth"
+        }
+        return nil
+    }
+
+    private func extraValue(_ extra: [String: Any?], _ key: String) -> Any? {
+        extra[key] ?? nil
+    }
+
+    private func nonBlankString(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        let string: String
+        if let value = value as? String {
+            string = value
+        } else {
+            string = String(describing: value)
+        }
+        return string.isEmpty ? nil : string
+    }
+
+    private func traceInt64(_ value: Any?) -> Int64? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Int64:
+            return value
+        case let value as Int:
+            return Int64(value)
+        case let value as NSNumber:
+            return value.int64Value
+        case let value as String:
+            return Int64(value)
+        default:
+            return nil
+        }
+    }
+
+    private func traceInt(_ value: Any?) -> Int? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Int:
+            return value
+        case let value as NSNumber:
+            return value.intValue
+        case let value as String:
+            return Int(value)
+        default:
+            return nil
+        }
+    }
+
+    private func traceDouble(_ value: Any?) -> Double? {
+        guard let value else { return nil }
+        switch value {
+        case let value as Double:
+            return value
+        case let value as Int:
+            return Double(value)
+        case let value as NSNumber:
+            return value.doubleValue
+        case let value as String:
+            return Double(value)
+        default:
+            return nil
+        }
+    }
+
+    private func maybeSendWireHandshake() {
+        // Only attempt the v2 binary handshake once the glasses have advertised binary support via
+        // wire_caps. Older builds that report new version but lack wire_caps stay on the legacy path.
+        guard isNewVersion,
+              peerWireCapsBinary,
+              !wireHandshakeQueued,
+              peerWireProtocolVersion < BleWireProtocol.protocolV2
+        else { return }
+        sendWireHandshake()
+    }
+
+    private func sendWireHandshake() {
+        guard isNewVersion else { return }
+        var flags = BleWireProtocol.flagHandshake
+        flags |= BleWireProtocol.flagFirstFrag
+        flags |= BleWireProtocol.flagLastFrag
+        let payload = Data(BleWireProtocol.handshakePayloadV2.utf8)
+        guard let packed = BleWireProtocol.packBinaryFragment(
+            flags: flags,
+            msgId: 0,
+            fragIdx: 0,
+            fragCount: 1,
+            payload: payload
+        ) else {
+            return
+        }
+        Bridge.log("LIVE: Sending BLE wire v2 handshake")
+        wireHandshakeQueued = true
+        queueSend(packed, id: "-1")
+    }
+
+    private func activateBinaryWireV2Session(logMessage: String) {
+        peerWireProtocolVersion = BleWireProtocol.protocolV2
+        useBinaryWireProtocol = true
+        wireHandshakeQueued = false
+        peerK900Le = true
+        BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
+        Bridge.log(logMessage)
+    }
+
+    private func handlePeerWireHandshake() {
+        activateBinaryWireV2Session(logMessage: "LIVE: Peer confirmed BLE wire protocol v2")
+    }
+
+    private func processBinaryWireFrame(_ data: Data) {
+        guard let info = BleWireProtocol.extractBinaryFragmentInfo(data) else {
+            Bridge.log("LIVE: Failed to parse binary wire frame")
+            return
+        }
+
+        if BleWireProtocol.isHandshakeV2(info) {
+            handlePeerWireHandshake()
+            return
+        }
+
+        if !useBinaryWireProtocol, isNewVersion {
+            activateBinaryWireV2Session(logMessage: "LIVE: Auto-enabled BLE wire v2 from incoming binary frame")
+        }
+
+        guard let reassembled = incomingChunkReassembler.addBinaryFragment(
+            msgId: info.msgId,
+            fragIdx: Int(info.fragIdx),
+            fragCount: Int(info.fragCount),
+            data: info.payload
+        ) else {
+            return
+        }
+
+        guard let jsonString = String(data: reassembled, encoding: .utf8) else {
+            Bridge.log("LIVE: Failed to decode reassembled binary wire payload")
+            return
+        }
+
+        logWireMetrics(
+            payloadBytes: reassembled.count,
+            wireBytes: data.count,
+            packetCount: Int(info.fragCount),
+            protocolVersion: BleWireProtocol.protocolV2,
+            direction: "glasses_to_phone"
+        )
+        processJsonMessage(jsonString)
+    }
+
+    private func compactWireJson(_ json: [String: Any]) -> [String: Any] {
+        guard useBinaryWireProtocol, isNewVersion else { return json }
+        return BleJsonCompact.encode(json)
+    }
+
+    private func expandCompactWireJson(_ json: [String: Any]) -> [String: Any]? {
+        guard useBinaryWireProtocol, isNewVersion else { return json }
+        return BleJsonCompact.decodeIfSupported(json)
+    }
+
+    private func logWireMetrics(
+        payloadBytes: Int,
+        wireBytes: Int,
+        packetCount: Int,
+        protocolVersion: Int,
+        direction: String
+    ) {
+        Bridge.log(
+            "BLE_TRACE direction=\(direction) proto=v\(protocolVersion) payload=\(payloadBytes) wire=\(wireBytes) packets=\(packetCount)"
+        )
+    }
+
+    private func sendJsonBinary(
+        jsonString: String,
+        messageId: Int64,
+        trackingId: String,
+        wakeUp: Bool,
+        requireAck: Bool
+    ) {
+        let payload = Data(jsonString.utf8)
+        let msgId = UInt16(truncatingIfNeeded: messageId)
+        let fragments = MessageChunker.createBinaryFragments(
+            payload: payload,
+            msgId: msgId,
+            wakeUp: wakeUp,
+            ackRequested: requireAck && messageId >= 0
+        )
+        guard !fragments.isEmpty else {
+            Bridge.log("LIVE: Failed to create binary wire fragments")
+            return
+        }
+
+        var totalWireBytes = 0
+        for (index, fragment) in fragments.enumerated() {
+            guard let packed = BleWireProtocol.packBinaryFragment(
+                flags: fragment.flags,
+                msgId: fragment.msgId,
+                fragIdx: fragment.fragIdx,
+                fragCount: fragment.fragCount,
+                payload: fragment.payload
+            ) else {
+                continue
+            }
+            totalWireBytes += packed.count
+            let isFinalChunk = index == fragments.count - 1
+            let chunkTrackingId = (requireAck && isFinalChunk) ? trackingId : "-1"
+            queueSend(packed, id: chunkTrackingId)
+
+            if index < fragments.count - 1 {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        logWireMetrics(
+            payloadBytes: payload.count,
+            wireBytes: totalWireBytes,
+            packetCount: fragments.count,
+            protocolVersion: BleWireProtocol.protocolV2,
+            direction: "phone_to_glasses"
+        )
+        Bridge.log("LIVE: Binary v2 queued \(fragments.count) fragments, wireBytes=\(totalWireBytes)")
     }
 
     func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool = false, requireAck: Bool = true) {
@@ -3641,8 +4106,27 @@ class MentraLive: NSObject, SGCManager {
                 globalMessageId += 1
             }
 
-            let jsonData = try JSONSerialization.data(withJSONObject: json)
+            let jsonData = try JSONSerialization.data(withJSONObject: compactWireJson(json))
             if let jsonString = String(data: jsonData, encoding: .utf8) {
+                let commandInfo = outgoingBleCommandTraceInfo(json)
+                BleTraceLogger.logJson(
+                    direction: "phone_to_glasses",
+                    layer: "sdk_ble_command",
+                    payload: json,
+                    bytes: jsonData.count
+                )
+
+                if useBinaryWireProtocol, isNewVersion {
+                    sendJsonBinary(
+                        jsonString: jsonString,
+                        messageId: messageId,
+                        trackingId: trackingId,
+                        wakeUp: wakeUp,
+                        requireAck: requireAck
+                    )
+                    return
+                }
+
                 // First check if the message needs chunking
                 // Create a test C-wrapped version to check size
                 var testWrapper: [String: Any] = [K900ProtocolUtils.FIELD_C: jsonString]
@@ -3679,7 +4163,21 @@ class MentraLive: NSObject, SGCManager {
                             // All other chunks get "-1" (no ACK tracking)
                             let isFinalChunk = (index == chunks.count - 1)
                             let chunkTrackingId = (requireAck && isFinalChunk) ? trackingId : "-1"
-                            queueSend(packedData, id: chunkTrackingId)
+                            let trace = createBleWriteTrace(
+                                commandInfo: commandInfo,
+                                chunkId: chunk["id"] as? String,
+                                chunkIndex: index,
+                                totalChunks: chunks.count,
+                                payloadBytes: chunkStr.data(using: .utf8)?.count,
+                                packedBytes: packedData.count,
+                                wakeup: wakeUp && index == 0,
+                                chunked: true
+                            )
+                            logBleChunkTrace("created", trace, extra: [
+                                "chunkJsonBytes": chunkStr.data(using: .utf8)?.count,
+                                "messageBytes": jsonData.count,
+                            ])
+                            queueSend(packedData, id: chunkTrackingId, trace: trace)
 
                             // Add small delay between chunks to avoid overwhelming the connection
                             if index < chunks.count - 1 {
@@ -3696,7 +4194,20 @@ class MentraLive: NSObject, SGCManager {
                     }
                     Bridge.log("LIVE: Sending data to glasses: \(jsonString)")
                     let packedData = packJson(jsonString, wakeUp: wakeUp) ?? Data()
-                    queueSend(packedData, id: trackingId)
+                    let trace = createBleWriteTrace(
+                        commandInfo: commandInfo,
+                        chunkId: nil,
+                        chunkIndex: nil,
+                        totalChunks: nil,
+                        payloadBytes: jsonData.count,
+                        packedBytes: packedData.count,
+                        wakeup: wakeUp,
+                        chunked: false
+                    )
+                    logBleChunkTrace("created", trace, extra: [
+                        "messageBytes": jsonData.count,
+                    ])
+                    queueSend(packedData, id: trackingId, trace: trace)
                 }
             }
         } catch {
@@ -4309,6 +4820,10 @@ class MentraLive: NSObject, SGCManager {
         Bridge.sendPhotoStatus(json)
     }
 
+    private func emitCameraStatus(_ json: [String: Any]) {
+        Bridge.sendCameraStatus(json)
+    }
+
     private func emitPhotoResponse(_ json: [String: Any]) {
         Bridge.sendPhotoResponse(json)
     }
@@ -4365,6 +4880,12 @@ class MentraLive: NSObject, SGCManager {
         // Stop all timers
         stopAllTimers()
         incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        wireHandshakeQueued = false
+        peerK900Le = false
+        peerWireCapsBinary = false
+        BleJsonCompact.resetSession()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
@@ -4424,11 +4945,57 @@ extension MentraLive {
     }
 
     /**
+     * Heuristically detect the K900 STRING length field's endianness for a received frame. Mirrors
+     * the firmware and Android codec: a length is plausible when it is non-zero, within the 512-byte
+     * cap, and the full framed command fits inside the buffer; when both fit, prefer the one landing
+     * on the trailing `$$`, then the smaller. Returns (length, isLittleEndian) or nil.
+     */
+    private func k900DetectStringLength(_ bytes: [UInt8]) -> (length: Int, isLe: Bool)? {
+        guard bytes.count >= 7 else { return nil }
+        let leLen = Int(bytes[3]) | (Int(bytes[4]) << 8)
+        let beLen = (Int(bytes[3]) << 8) | Int(bytes[4])
+
+        let leOk = leLen > 0 && leLen <= 512 && leLen + 7 <= bytes.count
+        let beOk = beLen > 0 && beLen <= 512 && beLen + 7 <= bytes.count
+
+        func endsWithEndCode(_ end: Int) -> Bool {
+            end + 1 < bytes.count && bytes[end] == 0x24 && bytes[end + 1] == 0x24
+        }
+
+        if leOk, beOk {
+            if endsWithEndCode(5 + leLen) { return (leLen, true) }
+            if endsWithEndCode(5 + beLen) { return (beLen, false) }
+            return leLen <= beLen ? (leLen, true) : (beLen, false)
+        }
+        if leOk { return (leLen, true) }
+        if beOk { return (beLen, false) }
+        return nil
+    }
+
+    /**
+     * Parse a `wire_caps` object from a version_info/glasses_ready message and update the negotiated
+     * per-link endianness and binary support. Missing wire_caps leaves the legacy defaults (BE, no
+     * binary) untouched so older glasses keep working.
+     */
+    private func parsePeerWireCaps(_ json: [String: Any]) {
+        guard let caps = json["wire_caps"] as? [String: Any] else { return }
+        if (caps["k900_le"] as? Bool) == true {
+            if !peerK900Le {
+                peerK900Le = true
+                Bridge.log("LIVE: wire_caps negotiated k900 endian=LE")
+            }
+        }
+        if caps.keys.contains("binary") {
+            peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        }
+    }
+
+    /**
      * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication
      * Format: ## + command_type + length(2bytes) + data + $$
      * Uses little-endian byte order for length field
      */
-    private func packDataToK900(_ data: Data?, cmdType: UInt8) -> Data? {
+    private func packDataToK900(_ data: Data?, cmdType: UInt8, littleEndian: Bool = false) -> Data? {
         guard let data else { return nil }
 
         let dataLength = data.count
@@ -4442,9 +5009,14 @@ extension MentraLive {
         // Command type
         result.append(cmdType)
 
-        // Length (2 bytes, little-endian for phone-to-device)
-        result.append(UInt8(dataLength & 0xFF)) // LSB first
-        result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB second
+        // Length (2 bytes, negotiated endianness)
+        if littleEndian {
+            result.append(UInt8(dataLength & 0xFF)) // LSB first
+            result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB second
+        } else {
+            result.append(UInt8((dataLength >> 8) & 0xFF)) // MSB first
+            result.append(UInt8(dataLength & 0xFF)) // LSB second
+        }
 
         // Copy the data
         result.append(data)
@@ -4474,9 +5046,13 @@ extension MentraLive {
             let jsonData = try JSONSerialization.data(withJSONObject: wrapper)
             guard let wrappedJson = String(data: jsonData, encoding: .utf8) else { return nil }
 
-            // Then pack with BES2700 protocol format using little-endian
+            // Then pack with BES2700 protocol format using the negotiated endianness
             let jsonBytes = wrappedJson.data(using: .utf8)!
-            return packDataToK900(jsonBytes, cmdType: K900ProtocolUtils.CMD_TYPE_STRING)
+            return packDataToK900(
+                jsonBytes,
+                cmdType: K900ProtocolUtils.CMD_TYPE_STRING,
+                littleEndian: peerK900Le
+            )
 
         } catch {
             Bridge.log("Error creating JSON wrapper for K900: \(error)")
@@ -4769,7 +5345,11 @@ extension MentraLive {
             }
             let commandData = try JSONSerialization.data(withJSONObject: payload)
             guard
-                let packet = packDataToK900(commandData, cmdType: K900ProtocolUtils.CMD_TYPE_STRING)
+                let packet = packDataToK900(
+                    commandData,
+                    cmdType: K900ProtocolUtils.CMD_TYPE_STRING,
+                    littleEndian: peerK900Le
+                )
             else {
                 Bridge.log("LIVE: Failed to pack raw K900 command")
                 return false
@@ -5297,6 +5877,25 @@ extension MentraLive {
                 "fov": fov,
                 "roi_position": roiPosition,
             ],
+        ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {
+        Bridge.log("Sending camera tuning config: anr=\(anrOn), gain=\(gainOn)")
+
+        guard connectionState == ConnTypes.CONNECTED else {
+            Bridge.log("Cannot send camera tuning config - not connected")
+            return
+        }
+
+        var json: [String: Any] = [
+            "type": "camera_tuning_config",
+            "anr": anrOn,
+            "gain": gainOn,
         ]
         if let requestId, !requestId.isEmpty {
             json["request_id"] = requestId

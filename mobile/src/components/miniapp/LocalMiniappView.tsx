@@ -7,15 +7,15 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
+import {BgTimer} from "@mentra/island"
 import {
-  BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
   DEV_APP_PACKAGE_NAME,
-  devServerBridge,
   miniappLauncher,
   useAppStatusStore,
-} from "@mentra/island"
+} from "@mentra/island/internal"
+import {devServerBridge} from "@mentra/island/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
@@ -447,10 +447,7 @@ function LocalMiniappView({
     )
   }
 
-  let isDevApp = packageName == DEV_APP_PACKAGE_NAME
-  if (isDevApp) {
-    appName = undefined
-  }
+  const isDevApp = packageName == DEV_APP_PACKAGE_NAME
 
   if (!uiUri) {
     return (
@@ -494,7 +491,7 @@ function LocalMiniappView({
   }
 
   return (
-    <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
+    <View className="flex-1 bg-black">
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -531,7 +528,7 @@ function LocalMiniappView({
         // react-native-webview#1649, manuelstofer/pinchzoom#115.
         nestedScrollEnabled={true}
         webviewDebuggingEnabled={__DEV__}
-        style={{flex: 1, borderRadius: theme.spacing.s12}}
+        style={{flex: 1}}
       />
       <MiniappSplash
         name={appName}

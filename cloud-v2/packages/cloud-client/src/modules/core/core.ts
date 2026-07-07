@@ -6,9 +6,9 @@
  * helper, which attaches the access token from `cloud.auth` as the Bearer, so
  * core never touches credentials itself.
  *
- * Today it exposes only the miniapp lookups the device needs at launch: list the
- * miniapps available to this user, and fetch the downloadable bundle for one. It
- * is meant to grow as miniapp-service is specced.
+ * Today it exposes the miniapp lookups the device needs at launch plus the
+ * unified report submission surface. It is meant to grow as miniapp-service and
+ * other core resources are specced.
  *
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
@@ -17,6 +17,29 @@
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";
+import {
+  Reports,
+  type AddReportArtifactsResult,
+  type ReportAttachmentInput,
+  type ReportLogEntry,
+  type ReportStatus,
+  type SubmitReportInput,
+  type SubmitReportResult,
+} from "./reports";
+
+export type {
+  AddReportArtifactsResult,
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportKind,
+  ReportLogEntry,
+  ReportStatus,
+  ReportSystemPriority,
+  ReportTrigger,
+  SubmitReportInput,
+  SubmitReportResult,
+} from "./reports";
 
 /**
  * A single miniapp entry as returned by the listing.
@@ -67,6 +90,29 @@ export interface MiniappBundle {
   manifest: MiniappManifest;
 }
 
+export type PreinstalledInstallPolicy =
+  | "install_once"
+  | "keep_updated"
+  | "mandatory";
+
+export interface PreinstalledMiniappRegistryEntry {
+  packageName: string;
+  version: string;
+  bundleUrl: string;
+  bundleSha256: string;
+  required: boolean;
+  installPolicy: PreinstalledInstallPolicy;
+  channel: string;
+  minMobileVersion?: string;
+  maxMobileVersion?: string;
+  tenantId?: string;
+}
+
+export interface PreinstalledMiniappRegistry {
+  generatedAt: string;
+  entries: PreinstalledMiniappRegistryEntry[];
+}
+
 /** The dependencies `cloud.core` is wired with. */
 export interface CoreDeps {
   http: HttpClient;
@@ -84,10 +130,25 @@ export class Core {
   readonly miniapps: {
     list(): Promise<MiniappListing[]>;
     getBundle(packageName: string, version?: string): Promise<MiniappBundle>;
+    getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
+  };
+  readonly reports: {
+    submit(input: SubmitReportInput): Promise<SubmitReportResult>;
+    addLogs(
+      reportId: string,
+      source: string,
+      entries: ReportLogEntry[],
+    ): Promise<AddReportArtifactsResult>;
+    addScreenshots(
+      reportId: string,
+      images: ReportAttachmentInput[],
+    ): Promise<AddReportArtifactsResult>;
+    complete(reportId: string): Promise<{ status: ReportStatus }>;
   };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
+    const reports = new Reports({ http });
 
     this.miniapps = {
       /**
@@ -117,6 +178,25 @@ export class Core {
             : `${base}?version=${encodeURIComponent(version)}`;
         return http.get<MiniappBundle>(path);
       },
+
+      /**
+       * Fetch the admin-managed preinstalled miniapp registry for this device.
+       *
+       * The mobile client owns reconciliation: Core only returns the desired
+       * bundle versions and install policy for the current user/OEM/channel.
+       */
+      getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry> {
+        const query = opts?.environment
+          ? `?environment=${encodeURIComponent(opts.environment)}`
+          : "";
+        return http.get<PreinstalledMiniappRegistry>(`/api/client/miniapps/registry${query}`);
+      },
+    };
+    this.reports = {
+      submit: reports.submit.bind(reports),
+      addLogs: reports.addLogs.bind(reports),
+      addScreenshots: reports.addScreenshots.bind(reports),
+      complete: reports.complete.bind(reports),
     };
   }
 }

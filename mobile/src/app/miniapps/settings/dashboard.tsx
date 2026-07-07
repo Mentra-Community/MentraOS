@@ -7,10 +7,11 @@ import HeadUpAngleComponent from "@/components/settings/HeadUpAngleComponent"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {toolkit} from "@mentra/island"
 
 export default function DashboardSettingsScreen() {
   const {theme} = useAppTheme()
@@ -22,7 +23,8 @@ export default function DashboardSettingsScreen() {
   const [metricSystemEnabled, setMetricSystemEnabled] = useSetting(SETTINGS.metric_system.key)
   const [twelveHourTimeEnabled, setTwelveHourTimeEnabled] = useSetting(SETTINGS.twelve_hour_time.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
 
   // -- Handlers --
   const onSaveHeadUpAngle = async (newHeadUpAngle: number) => {

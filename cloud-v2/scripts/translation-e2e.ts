@@ -54,7 +54,7 @@ console.log(`[e2e] user=${USER} sub=${JSON.stringify(subscription)}`);
 const mint = await fetch(`${TEST_OEM_URL}/test-oem/mint-jwt`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ oemUserId: USER }),
+  body: JSON.stringify({ tenantUserId: USER }),
 });
 if (!mint.ok) throw new Error(`[e2e] mint-jwt failed: ${mint.status} ${await mint.text()}`);
 const { jwt } = (await mint.json()) as { jwt: string };

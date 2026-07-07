@@ -23,25 +23,24 @@ import {
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
-import {useShallow} from "zustand/react/shallow"
 
 import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySyncService} from "@/services/asg/gallerySyncService"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {MediaLibraryPermissions, toolkit} from "@mentra/island"
+import {localStorageService} from "@mentra/island/internal"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
 import showAlert from "@/utils/AlertUtils"
-import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
+import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
@@ -83,26 +82,20 @@ export function GalleryScreen() {
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
 
-  // Subscribe to sync store
-  const syncState = useGallerySyncStore((state) => state.syncState)
-  const currentFile = useGallerySyncStore((state) => state.currentFile)
-  const currentFileProgress = useGallerySyncStore((state) => state.currentFileProgress)
-  const completedFiles = useGallerySyncStore((state) => state.completedFiles)
-  const totalFiles = useGallerySyncStore((state) => state.totalFiles)
-  const failedFiles = useGallerySyncStore((state) => state.failedFiles)
-  const processingFiles = useGallerySyncStore((state) => state.processingFiles)
-  const processedFiles = useGallerySyncStore((state) => state.processedFiles)
-  const syncQueue = useGallerySyncStore((state) => state.queue)
-  const glassesGalleryStatus = useGallerySyncStore(
-    useShallow((state) => ({
-      photos: state.glassesPhotoCount,
-      videos: state.glassesVideoCount,
-      total: state.glassesTotalCount,
-      hasContent: state.glassesHasContent,
-    })),
-  )
+  const galleryStatus = useToolkitSnapshot(toolkit.gallery.status, (onChange) => toolkit.gallery.onStatus(onChange))
+  const syncState = galleryStatus.syncState
+  const currentFile = galleryStatus.currentFile
+  const currentFileProgress = galleryStatus.currentFileProgress
+  const completedFiles = galleryStatus.completedFiles
+  const totalFiles = galleryStatus.totalFiles
+  const failedFiles = galleryStatus.failedFiles
+  const processingFiles = useMemo(() => new Set(galleryStatus.processingFiles), [galleryStatus.processingFiles])
+  const processedFiles = galleryStatus.processedFiles
+  const syncQueue = galleryStatus.queue
+  const glassesGalleryStatus = galleryStatus.glassesGallery
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -137,6 +130,72 @@ export function GalleryScreen() {
 
   // Animation for smooth transition from placeholders to photos
   const fadeAnim = useRef(new Animated.Value(1)).current
+
+  // Render the island gallery sync's structured notices (it no longer shows its own
+  // alerts). The host owns the alert text/buttons/i18n + the OS-settings deep-links.
+  useEffect(() => {
+    return toolkit.gallery.onNotice((notice) => {
+      switch (notice.code) {
+        case "glasses_disconnected":
+          showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+          break
+        case "insufficient_storage":
+          showAlert(
+            "Insufficient Storage",
+            `Only ${notice.data?.freeSpaceMB ?? 0} MB free. Please free up at least 500 MB before syncing.`,
+            [{text: "OK"}],
+          )
+          break
+        case "wifi_initializing":
+          showAlert("Please Wait", "WiFi is initializing. Please wait a moment before trying to sync again.", [
+            {text: "OK"},
+          ])
+          break
+        case "wifi_off":
+          showAlert(
+            "WiFi is Disabled",
+            "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
+            [
+              // Cancel arms nothing — the island only arms the retry/cooldown via ack().
+              {text: "Cancel", style: "cancel"},
+              {
+                text: "Open Settings",
+                onPress: () => {
+                  // Affirmative choice → let the island arm its WiFi auto-retry + cooldown,
+                  // then navigate to OS settings (host-owned UI).
+                  notice.ack?.()
+                  void SettingsNavigationUtils.openWifiSettings()
+                },
+              },
+            ],
+            {cancelable: false},
+          )
+          break
+        case "location_services_off":
+          showAlert(
+            "Location Services Required",
+            "Android requires Location Services to be enabled to connect to your glasses WiFi hotspot. Would you like to enable it?",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
+            ],
+            {cancelable: false},
+          )
+          break
+        case "connect_to_glasses": {
+          const ssid = (notice.data?.ssid as string) ?? ""
+          const message =
+            notice.data?.platform === "ios"
+              ? translate("glasses:wifiJoinExplanationIos", {ssid})
+              : translate("glasses:wifiJoinExplanationAndroid", {ssid})
+          showAlert(translate("glasses:connectToGlassesTitle"), message, [
+            {text: translate("common:ok"), onPress: () => notice.ack?.()},
+          ])
+          break
+        }
+      }
+    })
+  }, [])
 
   // DEBUG: Log state changes
   useEffect(() => {
@@ -516,9 +575,9 @@ export function GalleryScreen() {
     }
   }
 
-  // Handle sync button press - delegate to service
-  const handleSyncPress = () => {
-    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
+  // Handle sync button press - delegate to the island gallery service.
+  const handleSyncPress = async () => {
+    if (galleryStatus.isSyncing || galleryStatus.isStarting) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
@@ -529,7 +588,12 @@ export function GalleryScreen() {
       return
     }
 
-    gallerySyncService.startSync()
+    // Connectivity gate (BT + Android location) — host-side UI; the island sync no
+    // longer runs it. Shows the right alert + aborts if requirements aren't met.
+    const connectivityOk = await checkConnectivityRequirementsUI()
+    if (!connectivityOk) return
+
+    void toolkit.gallery.sync()
   }
 
   // Handle deletion of selected photos
@@ -575,7 +639,7 @@ export function GalleryScreen() {
 
             if (deletedPhotoNames.length > 0) {
               setDownloadedPhotos((prev) => prev.filter((photo) => !deletedPhotoNames.includes(photo.name)))
-              useGallerySyncStore.getState().removeFilesFromQueue(deletedPhotoNames)
+              toolkit.gallery.removeFilesFromQueue(deletedPhotoNames)
             }
 
             // Refresh gallery
@@ -727,7 +791,7 @@ export function GalleryScreen() {
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
       console.log("[GalleryScreen] Glasses connected with gallery capability - querying gallery status")
-      gallerySyncService.queryGlassesGalleryStatus()
+      void toolkit.gallery.refreshStatus()
     }
 
     // Note: Sync service is initialized globally in GallerySyncEffect
@@ -737,7 +801,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (!glassesConnected) {
       console.log("[GalleryScreen] Glasses disconnected - clearing gallery state")
-      useGallerySyncStore.getState().clearGlassesGalleryStatus()
+      toolkit.gallery.clearGlassesGalleryStatus()
     }
   }, [glassesConnected])
 
@@ -977,12 +1041,12 @@ export function GalleryScreen() {
                       ? "item"
                       : "items"
                     : glassesGalleryStatus.photos > 0
-                      ? glassesGalleryStatus.photos === 1
-                        ? "photo"
-                        : "photos"
-                      : glassesGalleryStatus.videos === 1
-                        ? "video"
-                        : "videos"}
+                    ? glassesGalleryStatus.photos === 1
+                      ? "photo"
+                      : "photos"
+                    : glassesGalleryStatus.videos === 1
+                    ? "video"
+                    : "videos"}
                 </Text>
               </View>
             </View>

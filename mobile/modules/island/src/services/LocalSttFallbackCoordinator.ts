@@ -1,4 +1,7 @@
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {useSettingsStore} from "../stores/settings"
+import {cloudClientService} from "./CloudClientService"
 import sttModelManager from "./STTModelManager"
 
 /**
@@ -22,8 +25,7 @@ class LocalSttFallbackCoordinator {
   private activeLanguage: string | null = null
   /**
    * Default to "cloud is up" so we never accidentally activate local STT before
-   * the host has had a chance to wire the cloud-client adapter via
-   * `configureRuntime`. The adapter is attached lazily on the first
+   * the cloud client has had a chance to start. We attach lazily on the first
    * subscription/reconcile pass; once attached, this field reflects the real
    * cloud-client runtime status.
    */
@@ -32,26 +34,22 @@ class LocalSttFallbackCoordinator {
   private cloudAdapterAttached = false
 
   private constructor() {
-    const settings = getRuntimeHooks().settings
     // Reset the persisted mirror flag on boot — the in-memory state in this
     // coordinator is the source of truth, and a stale "true" left from the
     // previous session would cause native to feed Sherpa before any miniapp
     // registered a subscription.
-    settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
   }
 
   /**
-   * Lazy-attach the cloud connection adapter. The coordinator is constructed
-   * at module load (singleton import), before `configureRuntime` runs on the
-   * host. We defer reading the adapter until the first place we actually
-   * need cloud state — which is reconcile().
+   * Lazy-attach the island cloud connection listener. The coordinator is
+   * constructed at module load, before toolkit.start() brings up the cloud
+   * client, so we defer until the first reconcile.
    */
   private attachCloudAdapterIfReady(): void {
     if (this.cloudAdapterAttached) return
-    const cloud = getRuntimeHooks().cloud
-    if (!cloud) return
-    this.cloudConnected = cloud.isConnected()
-    cloud.onStatusChanged((status) => {
+    this.cloudConnected = cloudClientService.isConnected()
+    cloudClientService.onStatusChanged((status) => {
       const connected = status.status === "connected"
       if (this.cloudConnected === connected) return
       this.log(`cloud connection -> ${connected ? "up" : "down"}`)
@@ -114,7 +112,8 @@ class LocalSttFallbackCoordinator {
       return
     }
     try {
-      await getRuntimeHooks().restartTranscriber?.()
+      // Direct btsdk call now (was a host restartTranscriber hook).
+      await BluetoothSdk.restartTranscriber()
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
     }
@@ -122,13 +121,13 @@ class LocalSttFallbackCoordinator {
       this.log("local stt activation skipped: cloud recovered during transcriber restart")
       return
     }
-    getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
   }
 
   private stopLocalStt(reason: string): void {
     this.log(`stopping local stt: ${reason}`)
-    getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+    useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
     this.localActive = false
   }
 

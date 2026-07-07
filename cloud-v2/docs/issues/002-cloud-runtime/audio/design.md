@@ -431,7 +431,7 @@ Failover scenarios follow.
    the phone presented in the connection (per
    [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md)).
    On failure: close WS with auth error.
-3. Pod B reads the verified user id and `oemId` from the runtime token.
+3. Pod B reads the verified user id and `tenantId` from the runtime token.
 4. Pod B claims ownership:
    `SET {user:<mentraUserId>}:owner "<podHostname>:<workerIdx>" NX EX 5`.
    On success: continue. On failure (someone else owns): close WS,

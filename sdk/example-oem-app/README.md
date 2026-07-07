@@ -7,14 +7,16 @@ The screen exposes the core miniapp controls:
 
 - **Start miniapp** — launches the first registered app (`useStart`).
 - **Stop miniapp** — stops the running miniapp (`useStop`).
-- **List running miniapps** — reads `miniappRunningRegistry` and the app registry.
+- **List running miniapps** — reads `miniappRunningRegistry` (from
+  `@mentra/island/devtools`) and the app registry.
 
 Every button routes through an on-screen console (bottom of the screen) so you
 can see each call's result or error without a Metro terminal attached.
 
 > Island depends on `@mentra/bluetooth-sdk` (its native module + Expo config
 > plugin), so that package is still installed and wired into the native build —
-> but the app's own code imports only `@mentra/island`.
+> but the app's own code imports only `@mentra/island` (plus the
+> `@mentra/island/devtools` entry for the running-list demo).
 
 ## Layout
 

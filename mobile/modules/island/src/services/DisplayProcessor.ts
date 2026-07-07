@@ -27,7 +27,10 @@ import {
   type BreakMode,
 } from "../utils/display"
 
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {useGlassesStore} from "../stores/glasses"
+import {useSettingsStore} from "../stores/settings"
+import {isGlassesConnected} from "./GlassesReadiness"
 
 // =============================================================================
 // Types
@@ -155,12 +158,13 @@ function getPlaceholderValues(): PlaceholderValues {
   const day = now.getDate()
   const DATE = `${month}/${day}`
 
-  // Get battery level from glasses store
-  const batteryLevel = getRuntimeHooks().glassesStatus?.get().batteryLevel ?? -1
+  // Battery + connection read from the island glasses store directly (was a host
+  // glassesStatus hook).
+  const batteryLevel = useGlassesStore.getState().batteryLevel ?? -1
   const GBATT = batteryLevel === -1 ? "" : `${batteryLevel}%`
 
   // Connection status
-  const connected = getRuntimeHooks().glassesStatus?.get().connected ?? false
+  const connected = isGlassesConnected(useGlassesStore.getState().connection)
   const CONNECTION_STATUS = connected ? "Connected" : ""
 
   return {TIME12, TIME24, DATE, GBATT, CONNECTION_STATUS}
@@ -292,41 +296,47 @@ export class DisplayProcessor {
     this.composer = new ColumnComposer(toolkit.profile, this.options.breakMode)
     this.profile = toolkit.profile
 
-    // Runtime hooks may not be populated yet at module-load time; attachToRuntime()
-    // is called by the host after configureRuntime() runs.
+    // Island stores may not be hydrated yet at module-load time; attachToRuntime()
+    // is called again by the host after app services start.
     this.attachToRuntime()
   }
 
   /**
-   * Read the current default wearable and subscribe to host glasses-status changes.
-   * Idempotent — safe to call again after configureRuntime() once hooks are wired.
+   * Read the current default wearable and subscribe to island glasses-status changes.
+   * Idempotent — safe to call again after app services start.
    */
   public attachToRuntime(): void {
     if (this.runtimeAttached) {
       return
     }
 
-    const hooks = getRuntimeHooks()
-    if (!hooks.settings && !hooks.subscribeGlassesStatus) {
-      // Hooks not configured yet; bail and let the host call us back after configureRuntime().
-      return
-    }
-
-    const defaultWearable = hooks.settings?.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as string | undefined
+    // Seed the device profile from the saved default wearable, read off the island
+    // settings store directly (was a host settings hook).
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | string
+      | undefined
     if (defaultWearable) {
       this.setDeviceModel(defaultWearable)
       console.log(`DISPLAY_PROCESSOR: Initialized DisplayProcessor with default wearable: ${defaultWearable}`)
     }
 
-    if (hooks.subscribeGlassesStatus) {
-      this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus((changed) => {
-        if (changed.deviceModel) {
-          this.setDeviceModel(String(changed.deviceModel))
-        }
-      })
-    }
+    // Track device-model changes off the island glasses store directly (was a host
+    // subscribeGlassesStatus hook).
+    this.unsubscribeGlassesStatus = useGlassesStore.subscribe(
+      (s) => s.deviceModel,
+      (deviceModel) => {
+        if (deviceModel) this.setDeviceModel(String(deviceModel))
+      },
+    )
 
     this.runtimeAttached = true
+  }
+
+  /** Detach runtime subscriptions installed by attachToRuntime(). */
+  public detachFromRuntime(): void {
+    this.unsubscribeGlassesStatus?.()
+    this.unsubscribeGlassesStatus = null
+    this.runtimeAttached = false
   }
 
   /**
@@ -343,9 +353,7 @@ export class DisplayProcessor {
    * Reset the singleton (useful for testing)
    */
   public static resetInstance(): void {
-    if (DisplayProcessor.instance?.unsubscribeGlassesStatus) {
-      DisplayProcessor.instance.unsubscribeGlassesStatus()
-    }
+    DisplayProcessor.instance?.detachFromRuntime()
     DisplayProcessor.instance = null
   }
 

@@ -10,7 +10,7 @@ android {
         applicationId "com.mentra.recovery"
         minSdk 29
         targetSdk 35
-        versionCode 5
+        versionCode 6
         versionName "1.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -51,6 +51,9 @@ dependencies {
     implementation libs.work.runtime
     implementation libs.core
     testImplementation libs.junit
+    // Real org.json on the JVM so RemediationPolicy.fromJson can be unit-tested
+    // (android.jar's org.json is a stub that throws under plain JVM unit tests).
+    testImplementation 'org.json:json:20240303'
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
 }

@@ -401,7 +401,7 @@ Things we looked at and chose not to build, so the reasoning isn't lost:
 
 - **Runtime auth (007).** A connecting phone presents a `cloud-runtime` token. The
   audio path verifies this token against Runtime's configured issuer/JWKS list and
-  uses the normalized user id plus `oemId` from its claims. Hosted deployments may
+  uses the normalized user id plus `tenantId` from its claims. Hosted deployments may
   obtain that runtime token through the Core/Auth OEM exchange; self-hosted
   runtimes can trust the OEM's issuer directly.
 - **OEM portal (002).** Not directly assumed by the audio path. OEM

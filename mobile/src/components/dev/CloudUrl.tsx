@@ -1,5 +1,5 @@
 import {useState} from "react"
-import {TextInput, View} from "react-native"
+import {TextInput, TouchableOpacity, View} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
@@ -15,9 +15,28 @@ const CLOUD_DEBUG_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
 const CLOUD_DEBUG_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 const CLOUD_STAGING_CORE_URL = "https://core.staging.us-west-2.mentraglass.com"
 const CLOUD_STAGING_RUNTIME_URL = "https://runtime.staging.us-west-2.mentraglass.com"
+const CLOUD_PROD_CORE_URL = "https://core.mentraglass.com"
+const CLOUD_PROD_RUNTIME_URL = "https://runtime.mentraglass.com"
 
 const LOCAL_CORE_PORT = 3000
 const LOCAL_RUNTIME_PORT = 3001
+
+/** One bookmarked Cloud V2 endpoint set. Core + runtime are saved together. */
+interface SavedCloudPair {
+  label: string
+  coreUrl: string
+  runtimeUrl: string
+}
+
+/** Short, human-readable label for a bookmark, derived from the core URL host. */
+function pairLabel(coreUrl: string): string {
+  if (coreUrl === METRO_AUTO) return "Local (auto)"
+  try {
+    return new URL(coreUrl).host
+  } catch {
+    return coreUrl
+  }
+}
 
 /**
  * What a saved value means for the healthz test: the METRO_AUTO sentinel
@@ -52,6 +71,10 @@ export default function CloudUrl() {
   const [coreInput, setCoreInput] = useState("")
   const [runtimeInput, setRuntimeInput] = useState("")
   const [isSaving, setIsSaving] = useState(false)
+  const [savedPairs, setSavedPairs] = useSetting(SETTINGS.saved_cloud_url_pairs.key)
+
+  // Persisted setting is untyped; normalize to the bookmark array shape.
+  const bookmarks: SavedCloudPair[] = Array.isArray(savedPairs) ? savedPairs : []
 
   // The dev laptop's live address (only present in Metro-served dev builds).
   // Drives the "Local (auto)" preset; when absent the preset is hidden.
@@ -144,6 +167,45 @@ export default function CloudUrl() {
     setRuntimeInput(runtime)
   }
 
+  // Save the current core + runtime inputs as one bookmark pair.
+  const handleBookmark = () => {
+    const core = coreInput.trim().replace(/\/+$/, "")
+    const runtime = runtimeInput.trim().replace(/\/+$/, "")
+
+    if (!core || !runtime) {
+      showAlert("Empty URL", "Enter both Core and Runtime URLs before bookmarking.", [{text: "OK"}])
+      return
+    }
+
+    const isValid = (u: string) => u === METRO_AUTO || u.startsWith("http://") || u.startsWith("https://")
+    if (!isValid(core) || !isValid(runtime)) {
+      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
+      return
+    }
+
+    if (bookmarks.some((b) => b.coreUrl === core && b.runtimeUrl === runtime)) {
+      showAlert("Already Bookmarked", "This Core + Runtime pair is already saved.", [{text: "OK"}])
+      return
+    }
+
+    const label = pairLabel(core)
+    const updated = [...bookmarks, {label, coreUrl: core, runtimeUrl: runtime}]
+    setSavedPairs(updated)
+    showAlert("Bookmarked", `Saved "${label}" to your Cloud V2 URLs.`, [{text: "OK"}])
+  }
+
+  const handleDeleteBookmark = (index: number) => {
+    const bookmark = bookmarks[index]
+    showAlert("Remove Bookmark", `Remove "${bookmark.label}" from your saved Cloud V2 URLs?`, [
+      {text: "Cancel", style: "cancel"},
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => setSavedPairs(bookmarks.filter((_, i) => i !== index)),
+      },
+    ])
+  }
+
   return (
     <GlassView className="bg-primary-foreground rounded-2xl px-6 py-4">
       <View className="flex-1">
@@ -206,6 +268,37 @@ export default function CloudUrl() {
           />
         </View>
 
+        <View className="mt-3">
+          <Button
+            text="☆ Bookmark"
+            onPress={handleBookmark}
+            disabled={isSaving}
+            preset="alternate"
+            flexContainer={false}
+            flex
+          />
+        </View>
+
+        {/* Saved Cloud V2 bookmarks: tap a chip to fill both inputs at once. */}
+        {bookmarks.length > 0 && (
+          <View className="mt-3.5 mb-1">
+            <Text className="mb-2 text-xs font-semibold text-muted-foreground">My Cloud V2 URLs</Text>
+            <View className="flex-row flex-wrap gap-2">
+              {bookmarks.map((bookmark, index) => (
+                <TouchableOpacity
+                  key={`${bookmark.coreUrl}-${bookmark.runtimeUrl}-${index}`}
+                  className="rounded-lg border border-primary bg-background px-3 py-1.5"
+                  onPress={() => applyPreset(bookmark.coreUrl, bookmark.runtimeUrl)}
+                  onLongPress={() => handleDeleteBookmark(index)}
+                  activeOpacity={0.7}>
+                  <Text className="text-xs text-foreground">{bookmark.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text className="mt-1 text-[10px] italic text-muted-foreground">Tap to fill · Long-press to remove</Text>
+          </View>
+        )}
+
         {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
         <View className="mt-3 gap-3">
           <View className="flex-row gap-3">
@@ -232,6 +325,15 @@ export default function CloudUrl() {
               flexContainer={false}
               flex
             />
+            <Button
+              compact
+              text="Cloud Prod"
+              onPress={() => applyPreset(CLOUD_PROD_CORE_URL, CLOUD_PROD_RUNTIME_URL)}
+              flexContainer={false}
+              flex
+            />
+          </View>
+          <View className="flex-row gap-3">
             {/* Only offered when a Metro dev server is actually detectable.
                 Fills both fields with the metro-auto sentinel: the SAVED value
                 is "my laptop", resolved live on every connect, so it follows

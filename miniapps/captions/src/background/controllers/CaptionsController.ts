@@ -15,7 +15,8 @@
  *           + session.transcription.configure({languageHints})
  *           + session.transcription.on(h) for "auto"
  *   appSession.layouts.showTextWall(text, {view, durationMs})
- *        -> session.display.showTextWall(text, {view: "main", durationMs})
+ *        -> session.display.render([full-canvas text element]) — the scene API;
+ *           a stable element id updates in place, render([]) clears
  *   appSession.simpleStorage.get/set
  *        -> session.storage.get/set (JSON-encode yourself)
  *   SSE broadcast(type, payload)
@@ -76,6 +77,7 @@ const STORAGE_KEYS = {
   displayWidth: "displayWidth",
   wordBreaking: "wordBreaking",
 } as const
+const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 
 // ── Profile selection (verbatim from DisplayManager) ───────────────────────
 function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
@@ -423,6 +425,15 @@ export class CaptionsController {
   // ───────────────────────────────────────────────────────────────────────
 
   private async handleTranscription(data: TranscriptionData): Promise<void> {
+    const controllerReceivedAt = Date.now()
+    const hostReceivedAt = (data as {__hostReceivedAt?: number}).__hostReceivedAt
+    if (TRANSCRIPT_TIMING_TELEMETRY) {
+      console.log(
+        `LocalCaptions: transcript bg_recv t=${controllerReceivedAt} final=${data.isFinal} hostDelta=${
+          hostReceivedAt ? controllerReceivedAt - hostReceivedAt : -1
+        }ms text="${data.text.slice(0, 48)}"`,
+      )
+    }
     // On-device TranscriptionData has only {text, isFinal, language?}. There is
     // no utteranceId/speakerId, so we take the legacy interim/final path and
     // attribute every utterance to Speaker 1.
@@ -442,6 +453,14 @@ export class CaptionsController {
     }
 
     // 2. Broadcast this transcript frame to the UI.
+    if (TRANSCRIPT_TIMING_TELEMETRY) {
+      const now = Date.now()
+      console.log(
+        `LocalCaptions: transcript ui_send t=${now} final=${entry.isFinal} bgDelta=${
+          now - controllerReceivedAt
+        }ms text="${entry.text.slice(0, 48)}"`,
+      )
+    }
     this.ui.send("captions:live-transcript", {
       type: entry.isFinal ? "final" : "interim",
       id: entry.id,
@@ -636,11 +655,15 @@ export class CaptionsController {
   }
 
   private showTextWall(text: string): void {
-    try {
-      this.session.display.showTextWall(text, {view: "main"})
-    } catch (err) {
-      console.log("LocalCaptions: display error", err)
-    }
+    // One full-canvas text element with a stable id: successive captions update
+    // it in place on the glasses (no flicker). Box coordinates are raw device
+    // px — read from capabilities, falling back to the largest canvas (the host
+    // clamps to the real one). render() never throws; it resolves {status:
+    // "blocked"} instead.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "caption", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 
   private cleanTranscriptText(text: string): string {
@@ -667,11 +690,7 @@ export class CaptionsController {
     this.inactivityTimer = setTimeout(() => {
       this.formatter.clear()
       this.lastSpeakerId = undefined
-      try {
-        this.session.display.clear()
-      } catch (err) {
-        console.log("LocalCaptions: clear error", err)
-      }
+      void this.session.display.render([])
     }, 40000)
   }
 

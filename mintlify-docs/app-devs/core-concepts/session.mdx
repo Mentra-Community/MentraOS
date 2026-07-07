@@ -1,157 +1,180 @@
 ---
-title: "MentraSession"
-description: "Your connection to a user's smart glasses"
+title: "The session"
+description: "Your background-layer handle to everything on the glasses."
 icon: "plug"
 ---
 
-When a user starts your app, you get a `MentraSession`. This is your connection to that user - everything you do with their glasses goes through it.
+When your miniapp connects, the SDK hands your
+[`registerMiniapp`](/app-devs/core-concepts/two-layer-architecture#the-background-layer)
+handler a `session`. It lives in the **background layer**, and every capability
+(display, microphone, sensors, storage) is a module on it.
 
-```typescript
-import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
 
-const app = new MiniAppServer({ ... });
-
-app.onSession((session: MentraSession) => {
-  // session.userId        - who this user is
-  // session.sessionId     - unique ID for this session
-  // session.logger        - pino logger scoped to this user
+registerMiniapp((session) => {
+  // session.userId       – who this user is
+  // session.packageName  – your miniapp's package name
+  // session.capabilities – what the connected glasses can do (null until ready)
 
   session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
+    session.display.render([
+      { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+    ]);
   });
 });
 ```
 
-## Managers
+You don't create or connect the session yourself. The host does it and runs your
+handler. Everything you do with the glasses goes through `session`. (For advanced
+or testing use you can `new MiniappSession()` and call `connect()` directly, but a
+normal miniapp never needs to.)
 
-Every capability on the glasses is accessed through a manager on the session object. Type `session.` in your editor and autocomplete will show you everything available.
+## Modules
 
-### Input
-
-| Manager | Access | What it does |
-|---------|--------|-------------|
-| Transcription | `session.transcription` | Real-time speech-to-text. Subscribe to all languages or filter by language. Configure diarization and language hints. |
-| Translation | `session.translation` | Real-time translation. Subscribe to all translations or filter by target language. |
-| Mic | `session.mic` | Raw audio chunks from the microphone and voice activity detection. Independent from transcription - subscribing to one does not give you the other. |
-| Location | `session.location` | GPS coordinates. Get the latest location or subscribe to updates. |
+Type `session.` in your editor and autocomplete shows everything. Each module is
+covered in its own page.
 
 ### Output
 
-| Manager | Access | What it does |
-|---------|--------|-------------|
-| Display | `session.display` | Show text, text walls, double text walls, reference cards, and bitmaps on the glasses HUD. |
-| Speaker | `session.speaker` | Play audio files, text-to-speech, and stream audio in real time. |
-| LED | `session.led` | Control the LED light on supported glasses. |
-| Dashboard | `session.dashboard` | Write to the system dashboard view (the screen users see when they look up). |
+| Module | What it does |
+|---|---|
+| [`session.display`](/app-devs/core-concepts/display/layouts) | Scenes of positioned text, images, and shapes on the glasses HUD. |
+| [`session.speaker`](/app-devs/core-concepts/speakers/text-to-speech) | Play audio and text-to-speech. |
+| [`session.led`](/app-devs/core-concepts/led/overview) | The LED on supported glasses. |
 
-### Device & State
+### Input & audio
 
-| Manager | Access | What it does |
-|---------|--------|-------------|
-| Device | `session.device` | Hardware state (battery, model, connection), button/touch events, WiFi, and device capabilities. All state values are reactive Observables. |
-| Phone | `session.phone` | Phone notifications, calendar events, and phone battery. Sub-scoped: `session.phone.notifications` and `session.phone.calendar`. |
-| Permissions | `session.permissions` | Check what your app is allowed to do. Query individual permissions or get all of them. Subscribe to changes. |
+| Module | What it does |
+|---|---|
+| [`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text) | Real-time speech-to-text. |
+| [`session.translation`](/app-devs/core-concepts/translation) | Real-time translation. |
+| [`session.mic`](/app-devs/core-concepts/microphone/audio-chunks) | Raw audio chunks and voice-activity detection. |
+| [`session.input`](/app-devs/core-concepts/input) | Glasses button presses and touchpad gestures. |
 
-### Utilities
+### Sensors & device
 
-| Manager | Access | What it does |
-|---------|--------|-------------|
-| Storage | `session.storage` | Persistent key-value storage for your app. Data survives across sessions. |
-| Time | `session.time` | Timezone-aware time utilities. Get the current time in the user's timezone, format dates, access the timezone string. |
+| Module | What it does |
+|---|---|
+| [`session.glasses`](/app-devs/core-concepts/glasses) | Battery and connection state of the glasses. |
+| [`session.location`](/app-devs/core-concepts/location) | GPS: latest fix or a stream. |
+| [`session.heading`](/app-devs/core-concepts/heading) | Compass heading. |
+| [`session.imu`](/app-devs/core-concepts/imu) | Head position, and raw accelerometer on G2. |
+| [`session.navigation`](/app-devs/core-concepts/navigation) | Turn-by-turn navigation. |
+
+### Phone & system
+
+| Module | What it does |
+|---|---|
+| [`session.phone`](/app-devs/core-concepts/phone) | Notifications, calendar events, and phone battery. |
+| [`session.system`](/app-devs/core-concepts/system) | Share sheet, downloads, clipboard, open URL. |
+| [`session.permissions`](/app-devs/core-concepts/permissions) | Which permissions your miniapp declared, and changes to them. |
+
+### Storage & data
+
+| Module | What it does |
+|---|---|
+| [`session.storage`](/app-devs/core-concepts/storage) | Persistent string key-value storage. |
+| [`session.blob`](/app-devs/core-concepts/blob) | Persistent binary storage (files, images, audio). |
+| [`session.auth`](/app-devs/core-concepts/auth) | A miniapp-scoped backend token and an authenticated `fetch`. |
+
+### Glasses with cameras
+
+| Module | What it does |
+|---|---|
+| [`session.camera`](/app-devs/core-concepts/camera/photos) | Photos and video on camera glasses. |
+| [`session.stream`](/app-devs/core-concepts/stream) | Live streaming on camera glasses. |
+
+### Interop & UI
+
+| Module | What it does |
+|---|---|
+| [`session.actions`](/app-devs/core-concepts/miniapp-interop) | Expose actions Mentra AI can call. |
+| [`session.ui`](/app-devs/core-concepts/two-layer-architecture#talking-between-layers) | The message bus to your UI layer. |
+| [`session.cloud`](/app-devs/core-concepts/cloud) | Cloud-connection status. |
 
 ## Lifecycle
 
-A session goes through these states:
-
-1. **Connected** - `onSession` fires. The user opened your app.
-2. **Running** - Your code is active. Subscriptions are delivering data.
-3. **Transport down** - The WebSocket connection dropped briefly (network blip, cloud deploy). Your session stays alive. Subscriptions are preserved.
-4. **Reconnected** - The connection was restored. `session.onReconnected()` fires. No action needed - everything resumes automatically.
-5. **Stopped** - The session ended (user closed the app, or the grace period expired). `session.onStopped()` fires.
+Subscribe to lifecycle events with `session.on(event, handler)`. Each returns an
+unsubscribe function.
 
 ```typescript
-app.onSession((session) => {
-  // 1. Connected - set up your app
-  session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
+registerMiniapp((session) => {
+  session.on("ready", () => {
+    // CONNECT_ACK received. session.capabilities / userId are now populated.
   });
 
-  // 4. Reconnected - connection restored after a blip
-  session.onReconnected(() => {
-    session.logger.info("Reconnected - subscriptions still active");
+  session.on("visibility", (state) => {
+    // "foreground" | "background": the user opened or left your miniapp.
   });
 
-  // 5. Stopped - clean up
-  session.onStopped((reason) => {
-    session.logger.info("Session ended:", reason);
+  session.on("disconnect", (reason) => {
+    // The session ended.
   });
 });
 ```
 
-The key thing: **a transport blip does not kill your session**. In v3, the SDK holds the session alive during brief disconnections. Your subscriptions, your state, your handlers - all preserved. The user doesn't notice unless the disconnection lasts longer than the grace period.
+<Warning>
+`session.capabilities`, `session.userId`, and the user's permissions are
+populated from the connect handshake, which lands **after** your handler first
+runs. Subscribe to events immediately, but read `capabilities` inside
+`session.on("ready", …)` (or `session.onCapabilitiesChange`). It's `null` before
+then.
+</Warning>
+
+If the background context crashes, the host respawns it and re-runs your handler
+with backoff. See [crash recovery](/app-devs/core-concepts/two-layer-architecture#crash-recovery).
 
 ## Subscriptions
 
-When you register a handler on a manager, the SDK automatically subscribes to the right data stream. When you remove the handler, it unsubscribes. You never manage subscriptions manually.
+Registering a handler subscribes; calling the returned function unsubscribes. You
+never manage subscriptions by hand.
 
 ```typescript
-// Registering a handler subscribes automatically
-const cleanup = session.transcription.on((data) => {
-  session.display.showTextWall(data.text);
+const stop = session.transcription.on((data) => {
+  session.display.render([
+    { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+  ]);
 });
 
-// Calling cleanup() unsubscribes
-cleanup();
+stop(); // unsubscribe
 ```
 
-Every `.on()`, `.forLanguage()`, `.to()`, `.onUpdate()`, `.onChange()`, `.onChunk()`, etc. returns a cleanup function. Call it when you're done.
+Every `.on()`, `.onUpdate()`, `.onChunk()`, `.onButtonPress()`, and the rest
+return this cleanup function. Subscriptions are ref-counted internally: the SDK
+only talks to the phone on the first subscribe and last unsubscribe of a given
+stream.
+
+<Note>
+A successful request means **accepted**, not **done**. For streaming capabilities,
+watch the stream for the real result rather than assuming the call already
+succeeded.
+</Note>
 
 ## Properties
 
 | Property | Type | Description |
-|----------|------|-------------|
-| `session.userId` | `string` | The user's ID |
-| `session.sessionId` | `string` | Unique ID for this session instance |
-| `session.logger` | `Logger` | Pino logger scoped to this user. Use `session.logger.info(...)` for per-user logging. |
-| `session.settingsData` | `AppSettings` | Current app settings from the user |
-| `session.mentraosSettings` | `Record<string, any>` | MentraOS system settings |
-| `session.appConfig` | `AppConfig \| null` | Your app's configuration from the developer console |
-| `session.capabilities` | `Capabilities \| null` | What the connected glasses can do (display, camera, microphone, etc.) |
+|---|---|---|
+| `session.userId` | `string` | The user's ID (available after `ready`). |
+| `session.packageName` | `string` | Your miniapp's package name. |
+| `session.capabilities` | `GlassesCapabilities \| null` | What the connected glasses can do. `null` until `ready`. |
+| `session.visibility` | `"foreground" \| "background"` | Whether the user is currently in your miniapp. |
+| `session.colorScheme` | `"light" \| "dark"` | The host's current color scheme. |
+| `session.ready` | `boolean` | Whether the connect handshake has completed. |
 
-## Multiple Users
-
-Your app serves many users at once. Each user gets their own `MentraSession` with isolated state:
-
-```typescript
-const users = new Map<string, { name: string }>();
-
-app.onSession((session) => {
-  const userId = session.userId;
-  users.set(userId, { name: userId });
-
-  session.display.showTextWall(`Welcome! You are user #${users.size}`);
-
-  session.onStopped(() => {
-    users.delete(userId);
-  });
-});
-```
-
-Each session has its own subscriptions, its own managers, its own state. Nothing leaks between users.
-
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Transcription" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
-    Capture and process speech in real time
-  </Card>
   <Card title="Display" icon="display" href="/app-devs/core-concepts/display/layouts">
-    Show text and graphics on the glasses
+    Show text and graphics on the glasses.
   </Card>
-  <Card title="Camera, Photos, And Streaming" icon="camera" href="/app-devs/core-concepts/camera/README">
-    Use the standalone Bluetooth SDK for camera workflows
+  <Card title="Transcription" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
+    Turn speech into text in real time.
   </Card>
-  <Card title="Device" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
-    Hardware state, capabilities, and events
+  <Card title="Storage" icon="database" href="/app-devs/core-concepts/storage">
+    Persist data across sessions.
+  </Card>
+  <Card title="Actions" icon="arrows-left-right" href="/app-devs/core-concepts/miniapp-interop">
+    Let Mentra AI call your miniapp.
   </Card>
 </CardGroup>

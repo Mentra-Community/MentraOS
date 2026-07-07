@@ -10,7 +10,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.content.Intent;
-import dagger.hilt.android.EntryPointAccessors;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,12 +18,11 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
-import com.mentra.asg_client.io.bes.BesOtaManager;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
-
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -84,9 +82,9 @@ public class OtaHelper {
     private static final ReentrantLock versionCheckLock = new ReentrantLock();
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
     private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
+
     private Handler handler;
     private Context context;
-    private final BesOtaRegistry besOtaRegistry;
 
 
     // Update order configuration - can be easily modified to change update sequence
@@ -153,38 +151,9 @@ public class OtaHelper {
     private String lastOtaPhoneEventStatus;
     private String lastOtaPhoneError;
 
-    // ========== Singleton Pattern ==========
+    private final IBesOtaRegistry besOtaRegistry;
 
-    private static volatile OtaHelper instance;
-
-    /**
-     * Get the singleton instance of OtaHelper.
-     * Must call initialize(Context) first.
-     * @return The OtaHelper instance, or null if not initialized
-     */
-    public static OtaHelper getInstance() {
-        return instance;
-    }
-
-    /**
-     * Initialize the singleton instance.
-     * Should be called once during app startup (e.g., from OtaService).
-     * @param context Application context
-     * @return The OtaHelper instance
-     */
-    public static synchronized OtaHelper initialize(Context context) {
-        if (instance == null) {
-            instance = new OtaHelper(context);
-            Log.i(TAG, "OtaHelper singleton initialized");
-        }
-        return instance;
-    }
-
-    public OtaHelper(Context context) {
-        this(context, new BesOtaRegistry());
-    }
-
-    public OtaHelper(Context context, BesOtaRegistry besOtaRegistry) {
+    public OtaHelper(Context context, IBesOtaRegistry besOtaRegistry) {
         this.besOtaRegistry = besOtaRegistry;
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
@@ -194,6 +163,22 @@ public class OtaHelper {
         EventBus.getDefault().register(this);
 
         Log.i(TAG, "OTA helper initialized - updates only via phone app");
+    }
+
+    /**
+     * @return the active BES OTA controller, or null if BES OTA is not initialized (non-K900
+     *     devices, or before the transport is ready)
+     */
+    private IBesOtaController getOtaController() {
+        return besOtaRegistry.getInstance();
+    }
+
+    /**
+     * @return true if a BES OTA update is currently in progress; false when no controller exists
+     */
+    private boolean isBesOtaInProgress() {
+        IBesOtaController controller = getOtaController();
+        return controller != null && controller.isBesOtaInProgress();
     }
 
     public void cleanup() {
@@ -329,8 +314,6 @@ public class OtaHelper {
             Log.w(TAG, "Failed deleting " + label + ": " + path);
         }
     }
-
-    // Wakelock timeout for OTA process (10 minutes)
     private static final long OTA_WAKELOCK_TIMEOUT_MS = 600000;
 
     private List<String> buildStepSequence(JSONObject rootJson, JSONObject apps, Context context) {
@@ -473,12 +456,11 @@ public class OtaHelper {
                 + ", lockHeld=" + versionCheckLock.isLocked()
                 + ", isUpdating=" + isUpdating
                 + ", mtkInProgress=" + isMtkOtaInProgress
-                + ", besInProgress=" + BesOtaManager.isBesOtaInProgress
+                + ", besInProgress=" + isBesOtaInProgress()
                 + ", versionJsonUrl=" + resolvedVersionJsonUrl);
 
-        // // Check battery status before proceeding with OTA update
-        // if (!isBatterySufficientForUpdates()) {
-        //     Log.w(TAG, "🚨 Battery insufficient for OTA updates - skipping version check");
+        // if (!isNetworkAvailable(context)) {
+        //     Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
         //     return;
         // }
 
@@ -524,6 +506,17 @@ public class OtaHelper {
                 Log.i(TAG, "OTA execution mode -> phone-started install");
                 stage[0] = "process_updates";
                 if (json.has("apps")) {
+                    // If the installed ASG version is in the remediation range, the recovery
+                    // worker sidecar owns the ASG update for this device. Remove ASG from the
+                    // apps map so the normal OTA loop skips it; the recovery worker will install
+                    // it autonomously. Once installed, the version exceeds maxVersionCode and
+                    // normal OTA resumes ownership on the next ota_start.
+                    // TODO: re-enable once remediation is activated in the prod manifest.
+                    // if (isAsgDeferredToRemediation(json, context)) {
+                    //     json.getJSONObject("apps").remove("com.mentra.asg_client");
+                    //     Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
+                    //             + "com.mentra.asg_client; recovery worker will handle it");
+                    // }
                     processAppsSequentially(json, context);
                 } else {
                     Log.d(TAG, "Using legacy version.json format");
@@ -826,6 +819,32 @@ public class OtaHelper {
         }
     }
 
+    /**
+     * Returns {@code true} when the installed ASG version falls within the remediation range
+     * declared in the manifest's {@code remediation} block, meaning the recovery worker sidecar
+     * owns the ASG update for this device.
+     *
+     * <p>When this returns true, the normal OTA loop removes {@code com.mentra.asg_client} from
+     * the apps map so it is not downloaded or installed by the phone-triggered OTA path.
+     * Once the recovery worker installs the target version, {@code installedVersion} exceeds
+     * {@code maxVersionCode} and this method returns {@code false}, handing ownership back to
+     * the normal OTA path automatically.
+     */
+    private boolean isAsgDeferredToRemediation(JSONObject rootJson, Context context) {
+        try {
+            JSONObject remediation = rootJson.optJSONObject("remediation");
+            if (remediation == null) return false;
+            if (!remediation.optBoolean("enabled", false)) return false;
+            long maxVersionCode = remediation.optLong("maxVersionCode", -1);
+            if (maxVersionCode < 0) return false;
+            long installed = getInstalledVersion("com.mentra.asg_client", context);
+            return installed <= maxVersionCode;
+        } catch (Exception e) {
+            Log.w(TAG, "Could not evaluate remediation block; proceeding with normal OTA", e);
+            return false;
+        }
+    }
+
     private boolean checkAndUpdateApp(String packageName, JSONObject appInfo, Context context) {
         try {
             // Always reset currentUpdateType before the fresh download begins so progress
@@ -834,7 +853,7 @@ public class OtaHelper {
             lastApkFailureErrorCode = null;
 
             // Check for mutual exclusion - don't start APK update if firmware update in progress
-            if (BesOtaManager.isBesOtaInProgress) {
+            if (isBesOtaInProgress()) {
                 Log.w(TAG, "BES firmware update in progress - skipping APK update");
                 return false;
             }
@@ -1479,8 +1498,7 @@ public class OtaHelper {
 
             // Install the backup APK
             Log.i(TAG, "Installing backup APK version: " + info.getLongVersionCode());
-            installApk(context, backupPath);
-            return true;
+            return installApk(context, backupPath);
         } catch (Exception e) {
             Log.e(TAG, "Failed to reinstall backup APK: " + e.getMessage(), e);
             return false;
@@ -1761,7 +1779,7 @@ public class OtaHelper {
             }
 
             // Check if BES OTA already in progress
-            if (BesOtaManager.isBesOtaInProgress) {
+            if (isBesOtaInProgress()) {
                 Log.w(TAG, "BES firmware update already in progress");
                 return false;
             }
@@ -1786,17 +1804,23 @@ public class OtaHelper {
                     return false;
                 }
             } else {
-                // Legacy BES schema: versionCode/versionName.
+                // Legacy BES schema: versionCode/versionName, compared via IBesOtaController.
                 long serverVersion = firmwareInfo.optLong("versionCode", 0);
                 String versionName = firmwareInfo.optString("versionName", "unknown");
 
                 Log.i(TAG, "BES firmware available - Version: " + versionName + " (code: " + serverVersion + ")");
 
-                byte[] currentVersion = BesOtaManager.getCurrentFirmwareVersion();
-                byte[] serverVersionBytes = BesOtaManager.parseServerVersionCode(serverVersion);
+                IBesOtaController legacyController = getOtaController();
+                if (legacyController == null) {
+                    Log.w(TAG, "BES OTA controller not available - skipping BES firmware update");
+                    return false;
+                }
+
+                byte[] currentVersion = legacyController.getCurrentFirmwareVersion();
+                byte[] serverVersionBytes = legacyController.parseServerVersionCode(serverVersion);
 
                 if (currentVersion != null && serverVersionBytes != null) {
-                    boolean isNewer = BesOtaManager.isNewerVersion(serverVersionBytes, currentVersion);
+                    boolean isNewer = legacyController.isNewerVersion(serverVersionBytes, currentVersion);
                     Log.d(TAG, "Current firmware: " + (currentVersion[0] & 0xFF) + "." +
                           (currentVersion[1] & 0xFF) + "." + (currentVersion[2] & 0xFF) + "." + (currentVersion[3] & 0xFF));
                     Log.d(TAG, "Server firmware: " + (serverVersionBytes[0] & 0xFF) + "." +
@@ -1834,7 +1858,7 @@ public class OtaHelper {
             }
 
             Log.i(TAG, "BES firmware ready - starting install phase");
-            BesOtaManager manager = besOtaRegistry.getInstance();
+            IBesOtaController manager = besOtaRegistry.getInstance();
             if (manager != null) {
                 Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
                 boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
@@ -2040,7 +2064,7 @@ public class OtaHelper {
                 return false;
             }
 
-            if (BesOtaManager.isBesOtaInProgress) {
+            if (isBesOtaInProgress()) {
                 Log.w(TAG, "BES firmware update in progress - skipping MTK firmware update");
                 return false;
             }
@@ -2752,8 +2776,13 @@ public class OtaHelper {
      */
     public static boolean debugInstallBesFirmware(Context context) {
         try {
+            IBesOtaRegistry registry =
+                    dagger.hilt.android.EntryPointAccessors.fromApplication(
+                                    context.getApplicationContext(), AsgClientEntryPoint.class)
+                            .besOtaRegistry();
             // Check if BES OTA is already in progress - don't interrupt it!
-            if (BesOtaManager.isBesOtaInProgress) {
+            IBesOtaController activeController = registry.getInstance();
+            if (activeController != null && activeController.isBesOtaInProgress()) {
                 Log.w(TAG, "DEBUG: BES OTA already in progress - skipping to avoid interruption");
                 return false;
             }
@@ -2769,19 +2798,14 @@ public class OtaHelper {
             Log.w(TAG, "⚠️ DEBUG: File size: " + firmwareFile.length() + " bytes");
             Log.w(TAG, "⚠️ DEBUG: Skipping all checks - version, mutual exclusion, SHA256");
 
-            BesOtaRegistry registry =
-                    EntryPointAccessors.fromApplication(
-                                    context.getApplicationContext(), AsgClientEntryPoint.class)
-                            .besOtaRegistry();
-
-            // Get BesOtaManager singleton
-            BesOtaManager manager = registry.getInstance();
+            // Get the active BES OTA controller
+            IBesOtaController manager = registry.getInstance();
             if (manager == null) {
-                Log.e(TAG, "DEBUG: BesOtaManager not available - is this a K900 device?");
+                Log.e(TAG, "DEBUG: BES OTA controller not available - is this a K900 device?");
                 return false;
             }
 
-            Log.i(TAG, "DEBUG: Starting BES firmware update via BesOtaManager");
+            Log.i(TAG, "DEBUG: Starting BES firmware update via BES OTA controller");
             boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
 
             if (started) {

@@ -13,7 +13,7 @@ set -e
 
 STOCK_PKG="com.mentra.asg_client"
 DEV_PKG="com.mentra.asg_client.thirdparty"
-OTA_URL="https://ota.mentraglass.com/prod_live_version.json"
+OTA_URL="https://ota.mentraglass.com/prod_live_version_v2.json"
 
 echo "=== Restore Stock MentraOS ==="
 echo ""

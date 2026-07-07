@@ -1,8 +1,8 @@
 /**
  * @fileoverview User aggregate. Identity lookup and first-sight creation.
  *
- * The user aggregate is immutable identity-only state: given an (oemId,
- * oemUserId) pair we either find the existing `mentraUserId` for it, or
+ * The user aggregate is immutable identity-only state: given an (tenantId,
+ * tenantUserId) pair we either find the existing `mentraUserId` for it, or
  * mint a new one. Created on first sight during token exchange; thereafter
  * reused for every session that user opens under that OEM.
  *
@@ -16,29 +16,29 @@ import { UserModel, type User } from "../models/user.model";
 const logger = createLogger("core").child({ service: "user.service" });
 
 /**
- * Look up the user record for an (oemId, oemUserId) pair; insert one if it
+ * Look up the user record for an (tenantId, tenantUserId) pair; insert one if it
  * doesn't exist. Idempotent under concurrent calls (relies on the unique
  * compound index to deduplicate races).
  */
 export async function findOrCreateUser(args: {
-  oemId: string;
-  oemUserId: string;
+  tenantId: string;
+  tenantUserId: string;
 }): Promise<User> {
-  const { oemId, oemUserId } = args;
+  const { tenantId, tenantUserId } = args;
 
-  const existing = await UserModel.findOne({ oemId, oemUserId }).lean();
+  const existing = await UserModel.findOne({ tenantId, tenantUserId }).lean();
   if (existing) return existing;
 
   const mentraUserId = `mu_${ulid()}`;
   try {
-    const created = await UserModel.create({ mentraUserId, oemId, oemUserId });
-    logger.info({ mentraUserId, oemId }, "minted user record on first sight");
+    const created = await UserModel.create({ mentraUserId, tenantId, tenantUserId });
+    logger.info({ mentraUserId, tenantId }, "minted user record on first sight");
     return created.toObject();
   } catch (err) {
-    // Race: another request created the same (oemId, oemUserId) between our
+    // Race: another request created the same (tenantId, tenantUserId) between our
     // findOne and create. Re-read and return the winning row.
     if (isDuplicateKeyError(err)) {
-      const winner = await UserModel.findOne({ oemId, oemUserId }).lean();
+      const winner = await UserModel.findOne({ tenantId, tenantUserId }).lean();
       if (winner) return winner;
     }
     throw err;

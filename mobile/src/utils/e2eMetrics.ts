@@ -32,6 +32,7 @@ export const extractDisplayText = (displayEvent: any): string[] => {
   switch (layout.layoutType) {
     case "text_wall":
     case "text_line":
+    case "positioned_text":
       return typeof layout.text === "string" ? layout.text.split("\n") : []
     case "double_text_wall":
       return [layout.topText, layout.bottomText].filter((value): value is string => typeof value === "string")

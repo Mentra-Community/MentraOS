@@ -1,8 +1,8 @@
+const {warmUpCameraParamsForNative} = require("../_private/cameraRequestPayload")
 const {photoRequestParamsForNative} = require("../_private/photoRequestPayload")
 
 const baseParams = {
   requestId: "photo-1",
-  appId: "com.test.app",
   size: "medium",
   webhookUrl: "https://example.com/upload",
   authToken: null,
@@ -14,8 +14,20 @@ describe("photoRequestParamsForNative", () => {
   it("produces only supported native payload keys", () => {
     const payload = photoRequestParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(
-      ["appId", "compress", "requestId", "size", "sound", "webhookUrl"].sort(),
+      ["compress", "requestId", "size", "sound", "webhookUrl"].sort(),
     )
+  })
+
+  it("omits requestId when omitted or blank so native can generate it", () => {
+    const {requestId: _requestId, ...withoutRequestId} = baseParams
+
+    expect(photoRequestParamsForNative(withoutRequestId)).not.toHaveProperty("requestId")
+    expect(photoRequestParamsForNative({...baseParams, requestId: ""})).not.toHaveProperty("requestId")
+    expect(photoRequestParamsForNative({...baseParams, requestId: "  "})).not.toHaveProperty("requestId")
+  })
+
+  it("preserves explicit requestId", () => {
+    expect(photoRequestParamsForNative(baseParams).requestId).toBe("photo-1")
   })
 
   it("includes ISO only with manual exposure", () => {
@@ -50,5 +62,24 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.zsl).toBe(false)
     expect(payload.aeExposureDivisor).toBe(3)
     expect(payload.isoCap).toBe(800)
+  })
+})
+
+describe("warmUpCameraParamsForNative", () => {
+  it("omits requestId and normalizes warm-up fields so native can generate it", () => {
+    const payload = warmUpCameraParamsForNative({
+      size: "large",
+      exposureTimeNs: 8_333_333,
+      durationMs: 12_345.6,
+    })
+
+    expect(payload).not.toHaveProperty("requestId")
+    expect(payload.size).toBe("high")
+    expect(payload.exposureTimeNs).toBe(8_333_333)
+    expect(payload.durationMs).toBe(12_346)
+  })
+
+  it("preserves explicit warm-up requestId", () => {
+    expect(warmUpCameraParamsForNative({requestId: "warm-1", size: "medium"}).requestId).toBe("warm-1")
   })
 })

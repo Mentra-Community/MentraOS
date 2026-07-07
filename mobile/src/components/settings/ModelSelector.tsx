@@ -16,7 +16,7 @@ import {
 import {Icon, Text, Button} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {STTModelManager} from "@mentra/island"
+import {STTModelManager} from "@mentra/island/internal"
 import {ThemedStyle} from "@/theme"
 
 type SelectableModelInfo = {

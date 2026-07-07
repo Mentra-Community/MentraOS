@@ -19,6 +19,7 @@ export {MiniappSession, NotConnectedError} from "./session"
 export type {
   AuthUpdatePayload,
   ConnectAckPayload,
+  DisplayCapabilities,
   GlassesCapabilities,
   MiniappAuthState,
   MiniappRequestError,
@@ -56,25 +57,15 @@ export type {Transport, TransportDisconnectHandler, TransportMessageHandler} fro
 
 // Module types — useful for typing handlers in consumer code
 export type {
-  BitmapView,
-  ClearView,
-  DashboardCard,
-  DisplayOptions,
-  DoubleTextWall,
-  Layout,
-  LayoutType,
-  ReferenceCard,
-  TextWall,
+  DisplayBreakMode,
+  RenderBox,
+  RenderElement,
+  RenderOptions,
+  RenderRectStyle,
+  RenderResult,
+  RenderTextStyle,
   ViewType,
 } from "./modules/display"
-export {CanvasOperation} from "./modules/canvas"
-export type {
-  BaseOptions as CanvasBaseOptions,
-  Box as CanvasBox,
-  BitmapOptions as CanvasBitmapOptions,
-  ClearOptions as CanvasClearOptions,
-  TextOptions as CanvasTextOptions,
-} from "./modules/canvas"
 export type {
   AccelData,
   AudioChunkData,
@@ -92,6 +83,7 @@ export type {
   TranslationData,
   UnsubscribeFn,
   VadData,
+  WifiData,
 } from "./modules/events"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
 export type {
@@ -102,6 +94,7 @@ export type {
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
+  StopVideoRecordingOptions,
   TakePhotoOptions,
   VideoRecordingStarted,
 } from "./modules/camera"
@@ -109,12 +102,11 @@ export type {DashboardMode} from "./modules/dashboard"
 export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {
-  ManagedStreamResult,
-  StartManagedOptions,
-  StartUnmanagedOptions,
+  RestreamDestination,
+  StartStreamOptions,
   StreamAudioConfig,
-  StreamPublisherStartResult,
   StreamResolvedConfig,
+  StreamResult,
   StreamStatus,
   StreamVideoConfig,
 } from "./modules/stream"
@@ -125,7 +117,6 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/action
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
-export type {CanvasManager} from "./modules/canvas"
 export type {MiniappsModule} from "./modules/miniapps"
 export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"
@@ -146,6 +137,8 @@ export type {
   NavManeuver,
   NavOffRoute,
   NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
   NavRerouting,
   NavRoute,
   NavState,

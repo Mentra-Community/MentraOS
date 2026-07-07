@@ -270,6 +270,15 @@ export type PhotoStatusEvent = {
   errorMessage?: string
 }
 
+export type CameraStatusEvent = {
+  type: "camera_status"
+  requestId: string
+  state: "warming" | "ready" | "stopped" | "error" | string
+  timestamp: number
+  errorCode?: string
+  errorMessage?: string
+}
+
 export type VideoRecordingStatusEvent = {
   type: "video_recording_status"
   requestId?: string
@@ -310,9 +319,7 @@ export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "
   status: "recording_stopped"
 }
 
-export type VideoRecordingSuccessStatusEvent =
-  | VideoRecordingStartedStatusEvent
-  | VideoRecordingStoppedStatusEvent
+export type VideoRecordingSuccessStatusEvent = VideoRecordingStartedStatusEvent | VideoRecordingStoppedStatusEvent
 
 export type MediaUploadSuccessEvent = {
   type: "media_success"
@@ -398,6 +405,7 @@ export type SettingsAckSetting =
   | "button_video_recording"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_tuning"
 
 export type SettingsAckEvent = {
   type: "settings_ack"
@@ -415,6 +423,10 @@ export type SettingsAckEvent = {
   fps?: number
   enabled?: boolean
   minutes?: number
+  /** ANR enabled flag; present when setting === "camera_tuning" */
+  anr?: boolean
+  /** Stock-gain flag; present when setting === "camera_tuning" */
+  gain?: boolean
   errorCode?: string
   errorMessage?: string
 }
@@ -478,6 +490,7 @@ export const DeviceModels = {
   Mach1: "Mentra Mach1",
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
+  Nimo: "NIMO",
   R1: "Even Realities R1",
 } as const
 
@@ -528,8 +541,8 @@ export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
 export type PhotoRequestParams = {
-  requestId: string
-  appId: string
+  requestId?: string
+  appId?: string
   size: PhotoSize
   webhookUrl: string | null
   authToken: string | null
@@ -550,6 +563,13 @@ export type PhotoRequestParams = {
   zsl?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
+}
+
+export type WarmUpCameraParams = {
+  requestId?: string
+  size: PhotoSize
+  exposureTimeNs?: number | null
+  durationMs?: number
 }
 
 export type StreamVideoConfig = {
@@ -742,6 +762,15 @@ export type OtaStartAckEvent = {
   timestamp: number
 }
 
+export type OtaUpdateAvailableEvent = {
+  type: "ota_update_available"
+  version_code?: number
+  version_name?: string
+  updates?: string[]
+  total_size?: number
+  cache_ready?: boolean
+}
+
 export type OtaStatusEvent = {
   type: "ota_status"
   session_id: string
@@ -794,6 +823,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
+  camera_status: (event: CameraStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
   media_success: (event: MediaUploadSuccessEvent) => void
   media_error: (event: MediaUploadErrorEvent) => void
@@ -817,6 +847,7 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
+  ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
@@ -870,6 +901,7 @@ export type BluetoothSdkEventMap = {
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
+  camera_status: CameraStatusEvent
   video_recording_status: VideoRecordingStatusEvent
   media_success: MediaUploadSuccessEvent
   media_error: MediaUploadErrorEvent
@@ -886,6 +918,7 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
+  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -943,8 +976,23 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   *
+   * The phone sends a {@code camera_tuning_config} BLE command; the glasses relay it as a
+   * {@code camconfig} broadcast to the camera HAL so parameters take effect without a reboot.
+   *
+   * **Scan-mode convention**: call with `(false, false)` when activating scan mode to disable ANR
+   * and pixsmart gain for sharper text/barcode captures. Call with `(true, true)` to restore
+   * defaults when exiting scan mode.
+   *
+   * @param anrOn  `true` = ANR enabled (default), `false` = ANR disabled
+   * @param gainOn `true` = stock gain params (default), `false` = pixsmart gain-off params
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   startVideoRecording(
     requestId: string,
     save: boolean,
@@ -1049,6 +1097,7 @@ export interface OtaUpdateInfo {
   versionName: string
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
+  cacheReady?: boolean
 }
 
 export interface OtaProgress {

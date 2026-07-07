@@ -28,3 +28,6 @@ packages/*/src/**/*.d.ts.map
 # Logs
 *.log
 logs/
+
+# Local Core storage provider output
+.cloud-v2-storage/

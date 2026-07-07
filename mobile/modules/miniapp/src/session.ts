@@ -7,7 +7,7 @@
  * Lifecycle:
  *   const session = new MiniappSession()
  *   await session.connect()          // sends CONNECT, resolves on CONNECT_ACK
- *   session.display.showTextWall(...)
+ *   session.display.render([...])
  *   ...
  *   session.disconnect()
  */
@@ -20,7 +20,6 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./proto
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
-import {CanvasManager} from "./modules/canvas"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
@@ -45,13 +44,39 @@ import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
+import {BlobModule} from "./modules/blob"
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Typed display capabilities for the scene API. All limit fields are optional
+ * in the type because older hosts don't send them — treat absence as "unknown",
+ * not zero. Populated on the "ready" event (null in `start()`).
+ */
+export interface DisplayCapabilities {
+  /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
+  width?: number
+  height?: number
+  /** False ⇒ the device can't position elements; scenes degrade to text walls host-side. */
+  canPosition?: boolean
+  /** Element budgets. Rects share the text pool on container-based devices. */
+  maxTextElements?: number
+  maxImageElements?: number
+  /** Per-image dimension cap (box-level), when the device has one. */
+  maxImagePx?: {width: number; height: number}
+  shapes?: string[]
+  intensityLevels?: number
+  partialUpdate?: boolean
+  /** Legacy capability fields (resolution, isColor, maxTextLines, …) ride along. */
+  [key: string]: unknown
+}
+
 /** Minimal snapshot of the currently-connected glasses. Phone-provided. */
 export interface GlassesCapabilities {
+  /** Display block — null/absent on displayless devices (e.g. Mentra Live). */
+  display?: DisplayCapabilities | null
   [key: string]: unknown
 }
 
@@ -134,9 +159,20 @@ interface PendingRequest {
   requestId: string
   resolve: (value: unknown) => void
   reject: (error: MiniappRequestError) => void
+  /** Timeout handle; cleared when the response (or a transport failure) settles the request. */
+  timer?: ReturnType<typeof setTimeout>
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
+
+// Hard ceiling on how long a single bridge request waits for the host's
+// REQUEST_RESULT. Without it, a host that never responds (a hung cloud call, a
+// GPS fix that never arrives, a native handler that stalls) leaves the request
+// promise pending FOREVER — which is what stalled navigation at "Starting…"
+// (the controller's `starting` guard never reset because start() never settled).
+// 60s is generous: it covers a slow route computation while still guaranteeing
+// the promise eventually rejects so callers can roll back / surface an error.
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
 
 type SessionEmitterEvents = {
   ready: () => void
@@ -145,7 +181,7 @@ type SessionEmitterEvents = {
    * Last-chance hook before the transport closes. Fires when the phone
    * sends WILL_DISCONNECT, or when this session calls `disconnect()`
    * locally. Handlers run synchronously and may issue one final
-   * `sendOneShot` (e.g. `display.clear()`); async work won't complete
+   * `sendOneShot`/`sendRequest` (e.g. `display.render([])`); async work won't complete
    * before the socket closes.
    */
   beforeDisconnect: (reason: string) => void
@@ -160,7 +196,6 @@ type SessionEmitterEvents = {
 
 export class MiniappSession {
   public readonly auth: AuthModule
-  public readonly canvas: CanvasManager
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -186,6 +221,13 @@ export class MiniappSession {
   public readonly permissions: PermissionsModule
   public readonly phone: PhoneModule
   public readonly storage: SimpleStorage
+  /**
+   * Phone-local persistent BINARY storage (`session.blob`) — the binary
+   * counterpart to `session.storage`. Files on disk, scoped to this miniapp.
+   * Writes/reads are chunked so large payloads (e.g. captured audio fed in via
+   * `session.mic.onAudioChunk`) never cross the bridge in one message.
+   */
+  public readonly blob: BlobModule
   public readonly stream: StreamModule
   public readonly system: SystemModule
   public readonly transcription: TranscriptionModule
@@ -263,7 +305,6 @@ export class MiniappSession {
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
-    this.canvas = new CanvasManager(this)
     this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
@@ -278,6 +319,7 @@ export class MiniappSession {
     this.permissions = new PermissionsModule(this)
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)
+    this.blob = new BlobModule(this)
     this.stream = new StreamModule(this)
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)
@@ -420,7 +462,7 @@ export class MiniappSession {
     if (this.disposed) return
     this.disposed = true
     // Give listeners one synchronous chance to flush final messages
-    // (e.g. display.clear()) before we tear down the transport.
+    // (e.g. display.render([])) before we tear down the transport.
     try {
       this.emitter.emit("beforeDisconnect", "disconnect called")
     } catch (err) {
@@ -450,18 +492,42 @@ export class MiniappSession {
   /**
    * Send a request and get a Promise that resolves with the REQUEST_RESULT payload.
    * Rejects with a MiniappRequestError if the phone returns an error result.
+   *
+   * `opts.timeoutMs` overrides the default request timeout. Pass `0` to disable
+   * it entirely for inherently long-running requests whose duration is unbounded
+   * (e.g. audio playback that resolves only when the clip finishes) — those still
+   * settle via REQUEST_RESULT or `failAllPending` on disconnect, so they can't
+   * leak. Most requests should keep the default ceiling.
    */
-  sendRequest<TResult = unknown>(payload: object): Promise<TResult> {
+  sendRequest<TResult = unknown>(payload: object, opts?: {timeoutMs?: number}): Promise<TResult> {
     if (this.disposed) {
       return Promise.reject(new NotConnectedError())
     }
     const requestId = makeRequestId()
     const envelope: MiniappEnvelope = {payload, requestId}
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     return new Promise<TResult>((resolve, reject) => {
+      // Reject (and drop) the request if the host never sends a REQUEST_RESULT,
+      // so the promise can't hang forever. The REQUEST_RESULT / failAllPending
+      // paths clear this timer before settling. A non-positive timeout opts out
+      // (long-running requests rely on the host result / disconnect to settle).
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              const pending = this.pendingRequests.get(requestId)
+              if (!pending) return
+              this.pendingRequests.delete(requestId)
+              pending.reject({
+                code: MiniappErrorCode.ACTION_TIMEOUT,
+                message: "Request timed out waiting for a response from the host",
+              })
+            }, timeoutMs)
+          : undefined
       this.pendingRequests.set(requestId, {
         requestId,
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       })
       this.enqueueOrSend(serializeEnvelope(envelope))
     })
@@ -485,7 +551,7 @@ export class MiniappSession {
    * phone notifies the session of an imminent disconnect (~50ms grace
    * window before the socket is torn down) or when this session's
    * `disconnect()` is called locally. Use it to flush final cleanup
-   * messages — e.g. `display.clear()` — synchronously. Async work
+   * messages — e.g. `display.render([])` — synchronously. Async work
    * started here will not complete before the socket closes.
    */
   onBeforeDisconnect(handler: (reason: string) => void): () => void {
@@ -659,6 +725,7 @@ export class MiniappSession {
         const pending = this.pendingRequests.get(requestId)
         if (!pending) return
         this.pendingRequests.delete(requestId)
+        if (pending.timer) clearTimeout(pending.timer)
         if (payload.ok === false) {
           const err = (payload.error as MiniappRequestError | undefined) ?? {
             code: MiniappErrorCode.INTERNAL,
@@ -701,6 +768,7 @@ export class MiniappSession {
 
   private failAllPending(error: MiniappRequestError): void {
     for (const pending of this.pendingRequests.values()) {
+      if (pending.timer) clearTimeout(pending.timer)
       pending.reject(error)
     }
     this.pendingRequests.clear()

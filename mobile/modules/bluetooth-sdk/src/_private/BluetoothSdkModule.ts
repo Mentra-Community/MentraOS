@@ -14,6 +14,7 @@ import {
   CameraFovResult,
   CameraFovSetting,
   CameraRoiPosition,
+  CameraStatusEvent,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -43,9 +44,11 @@ import {
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
   VersionInfoResult,
+  WarmUpCameraParams,
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
+import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
 
 /**
@@ -125,8 +128,18 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /**
+   * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
+   * Sends a {@code camera_tuning_config} BLE message; the ASG client relays it as a
+   * {@code camconfig} broadcast so the HAL picks up new parameters without a reboot.
+   *
+   * Scan-mode convention: pass `{anr: false, gain: false}` when activating scan mode
+   * (disables ANR and pixsmart gain) and `{anr: true, gain: true}` to restore defaults.
+   */
+  setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
+  warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
 
   // OTA Commands
   setOtaVersionUrl(otaVersionUrl: string): void
@@ -562,6 +575,11 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
+}
+
+const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
+  return nativeWarmUpCamera(warmUpCameraParamsForNative(params) as unknown as WarmUpCameraParams)
 }
 
 export default NativeBluetoothSdkModule

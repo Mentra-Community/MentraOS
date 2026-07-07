@@ -27,7 +27,7 @@ describe("Core JWKS", () => {
     setSigningEnv();
 
     const [{ token }, jwks] = await Promise.all([
-      issueRuntimeToken({ mentraUserId: "user-1", oemId: "oem-1" }),
+      issueRuntimeToken({ mentraUserId: "user-1", tenantId: "oem-1" }),
       getPublicJwks(),
     ]);
 

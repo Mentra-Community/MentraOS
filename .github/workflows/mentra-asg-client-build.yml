@@ -24,9 +24,11 @@ permissions:
 
 jobs:
   build:
-    # Pinned to the mac runners: they have the ASG signing keystore provisioned
-    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
-    runs-on: [self-hosted, macOS, ARM64]
+    # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing
+    # (no longer needs the mac runners' ~/.mentra/credentials), keeping mac
+    # capacity free for iOS + staging/release builds. Faster than the free
+    # ubuntu-latest tier (more vCPU + NVMe); same provider as our cloud builds.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Update PR comment - Build started
@@ -81,6 +83,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free up disk space
+        # GitHub-hosted ubuntu ships ~14GB free; a full ASG release build (NDK +
+        # Gradle + StreamPackLite) can exhaust it. Drop unused preinstalled
+        # toolchains to reclaim ~15GB+. Keep the Android SDK.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -112,10 +126,26 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          # Scope by runner.environment so a cache saved on self-hosted (absolute
+          # symlinks) can't break tar-restore on a github-hosted runner.
+          key: asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            asg-gradle-${{ runner.os }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-
+
+      # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
+      # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-
+      # local fallback this action writes) and signs with the ASG_* gradle props,
+      # so it must run after injection or it falls back to ~/.mentra (the disk
+      # dependency this PR removes) and fails on a clean runner.
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build recovery worker asset
         working-directory: ./asg_client/recovery_worker
@@ -148,6 +178,24 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Verify release signature (not debug)
+        # Guard against silent debug-key fallback: the APK MUST be signed with the
+        # production key, never CN=Android Debug. Fail the build if it is.
+        run: |
+          APK=asg_client/app/build/outputs/apk/release/app-release.apk
+          # Any build-tools apksigner can verify; pick the last one. Avoid
+          # `sort -V` (not portable to older BSD/macOS sort) — plain sort of the
+          # build-tools paths is fine for selecting one that exists.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK")
+          echo "$CERTS"
+          if echo "$CERTS" | grep -qi "CN=Android Debug"; then
+            echo "::error::Release APK is DEBUG-signed — release keystore was not injected."
+            exit 1
+          fi
+          echo "Release APK is signed with the production key."
 
       - name: Run unit tests
         working-directory: ./asg_client

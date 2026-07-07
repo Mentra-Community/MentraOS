@@ -3,7 +3,8 @@ package com.mentra.asg_client.service.core.handlers;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -65,14 +66,22 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
         Log.d(TAG, "📱 Received phone_ready data: " + (data != null ? data.toString() : "null"));
 
         try {
-            // Reset file pack size to default on new connection.
+            // Reset transport packet sizing to default on new connection.
             // Phone will send set_ble_mtu command after glasses_ready to set the correct size.
-            BesWireFormat.resetFilePackSize();
+            ICompanionTransport transport =
+                    serviceManager != null ? serviceManager.getBluetoothManager() : null;
+            if (transport != null) {
+                transport.onTransportReset();
+            }
 
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
 
             Log.d(TAG, "📱 🔨 Building glasses_ready response...");
             JSONObject response = responseBuilder.buildGlassesReadyResponse();
+            K900BluetoothManager k900Manager = getK900BluetoothManager();
+            if (k900Manager != null) {
+                k900Manager.addPhoneWireCapsIfSupported(response);
+            }
             Log.d(TAG, "📱 📤 Sending glasses_ready response: " + response.toString());
 
             boolean sent = communicationManager.sendBluetoothResponse(response);
@@ -85,6 +94,23 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
 
             if (sent && serviceManager != null) {
                 serviceManager.onPhoneReadyHandshakeComplete();
+            }
+
+            // Wire v2 activation is RESPONDER-ONLY on the glasses side. glasses_ready
+            // advertises wire_caps (a harmless JSON key to old phones); a v2-capable
+            // phone then initiates the binary handshake (maybeSendWireHandshake in the
+            // phone SDK) and K900BluetoothManager.handleInboundBinaryFrame replies and
+            // activates. Proactively handshaking here - gated on the BES firmware's
+            // caps, which say nothing about the PHONE - flipped the entire phone-facing
+            // TX path to binary frames that pre-v2 phone apps cannot parse, muting the
+            // glasses toward them.
+            if (sent && k900Manager != null) {
+                Log.d(
+                        TAG,
+                        "📱 🤝 glasses_ready sent"
+                                + (k900Manager.isBesBinaryRelaySupported()
+                                        ? " with wire_caps; awaiting phone-initiated v2 handshake"
+                                        : "; legacy wire path (BES binary relay not advertised)"));
             }
 
             // Auto-send WiFi status after glasses_ready
@@ -117,6 +143,14 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             Log.e(TAG, "📱 💥 Error handling phone ready command", e);
             return false;
         }
+    }
+
+    private K900BluetoothManager getK900BluetoothManager() {
+        if (serviceManager == null
+                || !(serviceManager.getBluetoothManager() instanceof K900BluetoothManager)) {
+            return null;
+        }
+        return (K900BluetoothManager) serviceManager.getBluetoothManager();
     }
 
     /** Send current hotspot status to phone via BLE */

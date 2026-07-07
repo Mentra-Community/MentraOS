@@ -1,5 +1,5 @@
 import {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Platform} from "react-native"
+import {View, Dimensions, Pressable, Platform, BackHandler} from "react-native"
 import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -21,10 +21,10 @@ import {
   saveLastOpenTime,
   sortAppsByLastOpenTime,
   useActiveApps,
-  useAppStatusStore,
   useSetForeground,
   type ClientApp,
 } from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 import AppIcon from "@/components/home/AppIcon"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -294,6 +294,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
+  // JS-thread mirror of swipeProgress open-ness, so the Android hardware back
+  // gesture can dismiss the switcher (the switcher is an overlay, not a route,
+  // so navigation's back handler never sees it). Synced from the swipeProgress
+  // useAnimatedReaction below.
+  const [isOpen, setIsOpen] = useState(false)
   const dotsPanGestureRef = useRef(Gesture.Pan())
 
   // for testing:
@@ -593,10 +598,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       useAppStatusStore.getState().stop(packageName)
       // }, 100)
 
-      // auto-close if there are no more apps left:
-      if (apps.length === 1) {
-        handleClose()
-      }
+      // Auto-close is handled by the drained-list effect (near handleClose)
+      // rather than a guard here: `stop()` updates the store async, and rapid
+      // multi-swipes fire several dismiss callbacks that all close over the
+      // same stale `apps.length`, so an `apps.length === 1` check here never
+      // matches and the switcher gets stuck open on an empty (blurred) screen.
     },
     [apps.length, translateX.value, apps],
   )
@@ -647,14 +653,6 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
-    } else if (applet.webviewUrl && applet.healthy) {
-      saveLastOpenTime(applet.packageName)
-      push("/applet/webview", {
-        webviewURL: applet.webviewUrl,
-        appName: applet.name,
-        packageName: applet.packageName,
-        transition: "fade",
-      })
     } else if (applet.local) {
       // Local miniapps are rendered by the Compositor overlay rather than a
       // pushed route — foreground the app and let <Compositor /> mount its
@@ -685,6 +683,28 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }, 250)
   }, [apps.length])
 
+  // Edge-triggered close when the open switcher's app list has actually drained
+  // to empty. Driven off the real rendered `apps` list (the source of truth),
+  // so it fires exactly once no matter how many cards were flung at once.
+  useEffect(() => {
+    if (isOpen && apps.length === 0) {
+      handleClose()
+    }
+  }, [isOpen, apps.length, handleClose])
+
+  // Android: the hardware/native back gesture should dismiss the switcher. It's an
+  // overlay (not a route), so navigation never sees it — register a BackHandler
+  // while open and consume the event so it doesn't fall through to navigating away
+  // from home.
+  useEffect(() => {
+    if (Platform.OS !== "android" || !isOpen) return
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleClose()
+      return true
+    })
+    return () => sub.remove()
+  }, [isOpen, handleClose])
+
   useAnimatedReaction(
     () => swipeProgress.value,
     (current, previous) => {
@@ -705,6 +725,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
         runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
+        runOnJS(setIsOpen)(true)
         if (apps.length > 0) {
           runOnJS(setShowNoAppsMessage)(false)
         }
@@ -713,6 +734,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // console.log("just closed")
         runOnJS(setBlurPointerEvents)("none")
         runOnJS(setShowNoAppsMessage)(true)
+        runOnJS(setIsOpen)(false)
       }
     },
   )

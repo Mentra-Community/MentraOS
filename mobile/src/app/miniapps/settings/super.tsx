@@ -16,7 +16,9 @@ export default function SuperSettingsScreen() {
     SETTINGS.debug_navigation_history.key,
   )
   const [debugCoreStatusBarEnabled, setDebugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
-  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(
+    SETTINGS.ios_app_switcher_bottom_swipe.key,
+  )
   const {push} = useNavigationStore.getState()
   return (
     <Screen preset="fixed">
@@ -64,7 +66,7 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Mini Apps">
-            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-developer")} />
+            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
           </Group>
         </View>
         <View className="flex h-16" />

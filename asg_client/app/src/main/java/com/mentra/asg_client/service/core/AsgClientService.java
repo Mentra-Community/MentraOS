@@ -19,21 +19,25 @@ import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
-import com.mentra.asg_client.hardware.K900RgbLedController;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
+import com.mentra.asg_client.service.core.processors.CommandProtocolDetector;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
@@ -46,8 +50,10 @@ import dagger.hilt.android.AndroidEntryPoint;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
+import javax.inject.Provider;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
@@ -68,7 +74,23 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject FileManager fileManager;
     @Inject OtaHelper otaHelper;
     @Inject IHardwareManager hardwareManager;
-    @Inject BesOtaRegistry besOtaRegistry;
+    @Inject IBesOtaRegistry besOtaRegistry;
+
+    /** Vendor-supplied protocol detection strategies (e.g. the Mentra Live MCU wire format). */
+    @Inject Set<CommandProtocolDetector.ProtocolDetectionStrategy> protocolStrategies;
+
+    /**
+     * Provider for the device-appropriate companion transport. Using {@link Provider} defers
+     * construction until after {@link #ensureForegroundStarted()} so the K900 serial-port thread
+     * does not open before the foreground notification is posted.
+     */
+    @Inject Provider<ICompanionTransport> companionTransportProvider;
+
+    /**
+     * Provider for the device-appropriate network manager, deferred for the same reason as
+     * {@link #companionTransportProvider}.
+     */
+    @Inject Provider<INetworkManager> networkManagerProvider;
 
     // ---------------------------------------------
     // Constants //TODO: Extract all the Constants and Magic Number/Text to AsgConstants
@@ -201,6 +223,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Apply saved camera FOV on start (K900) so last user choice survives reboot
             applySavedCameraFovOnStart();
+
+            // Apply saved camera tuning config (ANR/gain) so HAL tuning survives reboot.
+            // If FOV restore triggered a HAL restart we must wait for the cooldown window to
+            // expire before sending the camconfig broadcast; otherwise the HAL may not yet be
+            // ready and the tuning settings will be silently dropped.
+            if (CameraRestartCooldown.isActive()) {
+                long delayMs = CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L;
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(this::applySavedCameraTuningOnStart, delayMs);
+            } else {
+                applySavedCameraTuningOnStart();
+            }
 
             // Initialize WiFi debouncing
             Log.d(TAG, "📶 Initializing WiFi debouncing");
@@ -402,8 +436,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             if (hardwareManager.supportsRgbLed()) {
                 sendRgbLedControlAuthority(true);
                 hardwareManager.setRgbLedSolidWhite(
-                        UVC_STREAMING_LED_DURATION_MS,
-                        K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+                        UVC_STREAMING_LED_DURATION_MS, RgbLedConstants.DEFAULT_BRIGHTNESS);
                 Log.i(TAG, "UVC streaming RGB ring LED on (solid white)");
             } else {
                 Log.w(TAG, "RGB LED not supported on this device");
@@ -638,7 +671,14 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         try {
             serviceInitializer =
                     new ServiceInitializer(
-                            this, fileManager, otaHelper, hardwareManager, besOtaRegistry);
+                            this,
+                            companionTransportProvider.get(),
+                            networkManagerProvider.get(),
+                            fileManager,
+                            otaHelper,
+                            hardwareManager,
+                            besOtaRegistry,
+                            protocolStrategies);
             Log.d(TAG, "✅ ServiceInitializer created successfully");
 
             // Initialize container
@@ -733,6 +773,25 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
         } catch (Exception e) {
             Log.w(TAG, "Could not apply saved camera FOV on start", e);
+        }
+    }
+
+    /** Apply saved camera tuning (ANR / gain) on service start so HAL config survives reboot. */
+    private void applySavedCameraTuningOnStart() {
+        try {
+            if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+                return;
+            }
+            var asgSettings = serviceInitializer.getServiceManager().getAsgSettings();
+            if (asgSettings == null) {
+                return;
+            }
+            boolean anrOn = asgSettings.isCameraAnrEnabled();
+            boolean gainOn = asgSettings.isCameraGainEnabled();
+            SystemControllerFactory.get(this).setCameraTuningConfig(anrOn, gainOn);
+            Log.d(TAG, "Applied saved camera tuning on start: anr=" + anrOn + ", gain=" + gainOn);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not apply saved camera tuning on start", e);
         }
     }
 
@@ -1161,6 +1220,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
+                addPhoneWireCapsIfSupported(chunk3);
 
                 Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
                 serviceInitializer
@@ -1179,6 +1239,16 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             Log.e(TAG, "💥 Error creating version info JSON", e);
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending version info", e);
+        }
+    }
+
+    private void addPhoneWireCapsIfSupported(JSONObject message) {
+        if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+            return;
+        }
+        Object bluetoothManager = serviceInitializer.getServiceManager().getBluetoothManager();
+        if (bluetoothManager instanceof K900BluetoothManager) {
+            ((K900BluetoothManager) bluetoothManager).addPhoneWireCapsIfSupported(message);
         }
     }
 

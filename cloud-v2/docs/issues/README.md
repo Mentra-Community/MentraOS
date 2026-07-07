@@ -25,7 +25,7 @@ lands.
 | [auth / spec + design](./001-cloud-core/auth/spec.md) | Specced | [spec.md](./001-cloud-core/auth/spec.md) (endpoints + tokens) and [design.md](./001-cloud-core/auth/design.md) (e2e code changes + the identity model, migration bridge, and miniapp auto-auth + injection): exchange, refresh, miniapp-token mint, JWKS. Open: API-key role |
 | [auth / oem-auth](./001-cloud-core/auth/oem-auth.md) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
-| [miniapp-service](./001-cloud-core/miniapp-service/) | Draft | placeholder plus [preinstalled-local-miniapps.md](./001-cloud-core/miniapp-service/preinstalled-local-miniapps.md), a draft registry spec for default local miniapps and version reconciliation |
+| [miniapp-service](./001-cloud-core/miniapp-service/) | Draft | placeholder plus [preinstalled-local-miniapps.md](./001-cloud-core/miniapp-service/preinstalled-local-miniapps.md), superseded/expanded by [011-miniapp-registry](./011-miniapp-registry/) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |
 | [storage-service](./001-cloud-core/storage-service/) | Stub | needs spec (wrapper around swappable blob providers; used by miniapp-service, dev-console-service) |
 | **[002-cloud-runtime](./002-cloud-runtime/)** | | self-hostable runtime product |
@@ -36,16 +36,24 @@ lands.
 | **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spike (non-blocking; cloud-client is proxy-aware via endpoint config) |
 | **[004-cloud-client](./004-cloud-client/)** | Specced / partial | [architecture.md](./004-cloud-client/architecture.md): the big picture (how a miniapp reaches the cloud, what the cloud-client is and why, auth for Mentra + OEMs, decisions). [spec.md](./004-cloud-client/spec.md): the public API. [design.md](./004-cloud-client/design.md): how it's built (transports, connection lifecycle, token refresh). [udp-liveness-fallback](./004-cloud-client/udp-liveness-fallback/): partially implemented reversible UDP/WS audio transport selection; phone harness and cross-pod probe ack routing remain |
 | **[005-websites](./005-websites/)** | | web frontends |
-| [console](./005-websites/console/) | Stub | needs spec |
+| [console](./005-websites/console/) | Draft | see [013-console2](./013-console2/) |
 | [miniapp-store](./005-websites/miniapp-store/) | Stub | needs spec |
-| [oem-portal](./005-websites/oem-portal/) | Spiked | spike in progress. Left: spec + design |
+| [oem-portal](./005-websites/oem-portal/) | Draft | spike exists; current proposal is [014-enterprise-portal](./014-enterprise-portal/) |
 | **[006-dev-toolkit](./006-dev-toolkit/)** | | developer toolkit |
 | [local-sdk](./006-dev-toolkit/local-sdk/) | Spiked | findings + open questions, not yet a proposal. Left: spec + design |
-| [cli](./006-dev-toolkit/cli/) | Stub | needs spec |
+| [cli](./006-dev-toolkit/cli/) | Draft | see [012-mentra-cli-v2](./012-mentra-cli-v2/) |
 | **[007-runtime-auth-independence](./007-runtime-auth-independence/)** | Draft | runtime auth split issue: make Runtime Services able to accept trusted runtime tokens without live Core dependency; define optional Core endpoint/client behavior |
 | **[008-subscription-seed-overlap](./008-subscription-seed-overlap/)** | Draft | subscription replay/seed overlap issue: prevent duplicated seed and live transcript events when a miniapp subscribes during an active stream |
 | **[009-miniapp-auto-auth](./009-miniapp-auto-auth/)** | Draft | miniapp backend auth: host-minted audience-scoped miniapp tokens exposed through `session.auth`, without leaking Core/runtime credentials |
 | **[010-dev-miniapp-auth-audience](./010-dev-miniapp-auth-audience/)** | Draft | dev-slot versus real-package auth audience issue: keep `com.dev` routing while minting backend tokens only for trusted dev registration package names |
+| **[011-miniapp-registry](./011-miniapp-registry/)** | Draft | package, bundle, release channel, submission, and preinstalled registry data model plus device auto-update contract |
+| **[012-mentra-cli-v2](./012-mentra-cli-v2/)** | Draft | new `@mentra/cli` shape, short commands, CLI login, developer signing key, dev attestation, publish flow |
+| **[013-console2](./013-console2/)** | Draft | new developer console product boundary, WorkOS direction, screens, Console2 data ownership and CLI authorization |
+| **[014-enterprise-portal](./014-enterprise-portal/)** | Draft | separate enterprise/OEM portal with `EnterpriseOrg`, `EnterpriseMembership`, and standards-aligned `TrustedIssuer` model |
+| **[015-internal-admin](./015-internal-admin/)** | Draft | internal admin site and admin CLI for reviews, incidents, preinstalled registry, admin audit logs |
+| **[016-miniapp-signing-and-dev-attestation](./016-miniapp-signing-and-dev-attestation/)** | In progress | PRD and implementation issue for `@mentra/cli` developer signing keys, signed release metadata, and signed dev attestations for miniapp auto-auth |
+| **[019-incident-reporting-migration](./019-incident-reporting-migration/)** | Implemented / partial | initial Cloud V2 core + cloud-client + toolkit filing path is built. Left: durable attachment storage service, admin retrieval, runtime/cloud-log enrichment, and v1 mobile cleanup |
+| **[020-glasses-status-boundary](./020-glasses-status-boundary/)** | Implemented | removed host access to raw glasses/gallery runtime stores and replaced it with typed toolkit read models, events, and commands |
 
 ## Open decisions
 
@@ -62,6 +70,6 @@ lands.
    subscriptions, UDP encryption, the corrected frame), then add the shared zod
    types in `@mentra/cloud-runtime/protocol`.
 2. Spec the `004-cloud-client` runtime module (the client end of the protocol).
-3. Spec the rest of `001-cloud-core` (storage-service first, then miniapp-service
-   and dev-console-service that depend on it) since the websites depend on them.
-4. Promote `oem-portal` and `local-sdk` from spike to spec.
+3. Review and split the new cross-product drafts (`011` through `015`) into
+   build tasks: storage-service, miniapp-service, CLI, Console2, Portal, Admin.
+4. Promote `local-sdk` from spike to spec.

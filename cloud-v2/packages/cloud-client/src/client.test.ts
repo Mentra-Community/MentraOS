@@ -63,7 +63,7 @@ describe("CloudClient construction", () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
     let miniappMints = 0;
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: Request | URL | string) => {
       const url = String(input);
       if (url.endsWith("/api/client/auth/refresh")) {
         return jsonResponse({
@@ -113,18 +113,74 @@ describe("CloudClient construction", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("falls back to subject exchange after a stored refresh token is rejected", async () => {
+    const originalFetch = globalThis.fetch;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const storage = memoryStorage({ "mentra.cloud-client.refreshToken": "stale-refresh" });
+    const calls: string[] = [];
+    let expiredCalls = 0;
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/api/client/auth/refresh")) {
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      }
+      if (url.endsWith("/api/client/auth/exchange")) {
+        return jsonResponse({
+          access_token: testJwt({ sub: "user-1", tenant_id: "tenant-1", exp: nowSeconds + 3600 }),
+          refresh_token: "refresh-2",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const cloud = new CloudClient(
+        config({
+          endpoints: { core: "https://core.example.test", runtime: "https://runtime.example.test" },
+          auth: {
+            core: {
+              getSubjectToken: async () => ({ token: "fresh-subject", type: "supabase" }),
+            },
+            runtime: { getToken: async () => "runtime-token" },
+          },
+          storage,
+        }),
+      );
+      cloud.auth.onExpired(() => {
+        expiredCalls += 1;
+      });
+
+      await expect(cloud.auth.getCoreToken()).resolves.toBeDefined();
+      expect(calls).toEqual([
+        "https://core.example.test/api/client/auth/refresh",
+        "https://core.example.test/api/client/auth/exchange",
+      ]);
+      expect(expiredCalls).toBe(0);
+      expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-2");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 function config(
-  overrides: Pick<CloudClientConfig, "endpoints" | "auth">,
+  overrides: Pick<CloudClientConfig, "endpoints" | "auth"> & {
+    storage?: CloudClientTransports["storage"];
+  },
 ): CloudClientConfig {
+  const { storage, ...clientOverrides } = overrides;
   return {
-    ...overrides,
-    transports: dummyTransports(),
+    ...clientOverrides,
+    transports: dummyTransports(storage),
   };
 }
 
-function dummyTransports(): CloudClientTransports {
+function dummyTransports(storage: CloudClientTransports["storage"] = memoryStorage()): CloudClientTransports {
   return {
     ws: () => dummyWs(),
     udp: () => ({
@@ -132,10 +188,19 @@ function dummyTransports(): CloudClientTransports {
       onMessage: () => undefined,
       close: () => undefined,
     }),
-    storage: {
-      get: async () => null,
-      set: async () => undefined,
-      delete: async () => undefined,
+    storage,
+  };
+}
+
+function memoryStorage(initial: Record<string, string> = {}): CloudClientTransports["storage"] {
+  const values = new Map(Object.entries(initial));
+  return {
+    get: async (key: string) => values.get(key) ?? null,
+    set: async (key: string, value: string) => {
+      values.set(key, value);
+    },
+    delete: async (key: string) => {
+      values.delete(key);
     },
   };
 }

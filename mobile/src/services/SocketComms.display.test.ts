@@ -1,7 +1,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor as MockDisplayProcessor} from "@mentra/island"
+import {displayProcessor as MockDisplayProcessor} from "@mentra/island/internal"
 
-import {useDisplayStore} from "@/stores/display"
+import {useDisplayStore, flushDisplayCoalesceForTests} from "@/stores/display"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -20,29 +20,11 @@ jest.mock("@/services/WebSocketManager", () => ({
     disconnect: jest.fn(),
     isConnected: jest.fn(() => true),
     sendText: jest.fn(),
-    sendBinary: jest.fn(),
     cleanup: jest.fn(),
   },
 }))
 
-jest.mock("@/services/RestComms", () => ({
-  __esModule: true,
-  default: {
-    getApplets: jest.fn(),
-    configureAudioFormat: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
-}))
-
-jest.mock("@/services/AudioPlaybackService", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {}}))
-jest.mock("@/services/UdpManager", () => ({__esModule: true, default: {cleanup: jest.fn()}}))
-jest.mock("@/utils/PermissionsUtils", () => ({
-  PermissionFeatures: {MICROPHONE: "microphone"},
-  checkFeaturePermissions: jest.fn(() => Promise.resolve(true)),
-}))
 jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 
 const socketComms = jest.requireActual("./SocketComms").default
@@ -67,6 +49,7 @@ describe("SocketComms display events", () => {
         text: "Hello display",
       },
     })
+    flushDisplayCoalesceForTests()
 
     expect(MockDisplayProcessor.processDisplayEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -104,6 +87,7 @@ describe("SocketComms display events", () => {
     }
 
     socketComms.handle_display_event(rawEvent)
+    flushDisplayCoalesceForTests()
 
     expect(BluetoothSdk.displayEvent).toHaveBeenCalledWith(rawEvent)
     expect(useDisplayStore.getState().dashboardEvent).toEqual(rawEvent)
@@ -112,80 +96,3 @@ describe("SocketComms display events", () => {
   })
 })
 
-describe("SocketComms stream messages", () => {
-  const streamSocketComms = socketComms as typeof socketComms & {
-    handle_start_stream: (msg: unknown) => void
-    handle_keep_stream_alive: (msg: unknown) => void
-  }
-
-  beforeEach(() => {
-    jest.clearAllMocks()
-  })
-
-  it("forwards only ASG-supported start_stream fields", () => {
-    streamSocketComms.handle_start_stream({
-      type: "start_stream",
-      sessionId: "session-1",
-      appId: "com.example",
-      timestamp: Date.now(),
-      streamUrl: "srt://ingest.example/live",
-      streamId: "stream-1",
-      sound: false,
-      flash: false,
-      stream: {durationLimit: 1800},
-      keepAlive: false,
-      keepAliveIntervalSeconds: 1,
-      video: {
-        width: 1280,
-        height: 720,
-        bitrate: 1_000_000,
-        frameRate: 30,
-        fps: 15,
-        ignored: true,
-      },
-      audio: {
-        bitrate: 64_000,
-        sampleRate: 16_000,
-        echoCancellation: true,
-        noiseSuppression: false,
-        ignored: true,
-      },
-      ignored: true,
-    })
-
-    expect(BluetoothSdk.startExternallyManagedStream).toHaveBeenCalledWith({
-      type: "start_stream",
-      streamUrl: "srt://ingest.example/live",
-      streamId: "stream-1",
-      sound: false,
-      video: {
-        width: 1280,
-        height: 720,
-        bitrate: 1_000_000,
-        fps: 30,
-      },
-      audio: {
-        bitrate: 64_000,
-        sampleRate: 16_000,
-        echoCancellation: true,
-        noiseSuppression: false,
-      },
-    })
-  })
-
-  it("forwards keep_stream_alive as its own narrow command", () => {
-    streamSocketComms.handle_keep_stream_alive({
-      type: "keep_stream_alive",
-      streamId: "stream-1",
-      ackId: "ack-1",
-      keepAliveIntervalSeconds: 1,
-      ignored: true,
-    })
-
-    expect(BluetoothSdk.sendExternallyManagedStreamKeepAlive).toHaveBeenCalledWith({
-      type: "keep_stream_alive",
-      streamId: "stream-1",
-      ackId: "ack-1",
-    })
-  })
-})

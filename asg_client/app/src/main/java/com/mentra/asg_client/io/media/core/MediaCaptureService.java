@@ -13,10 +13,10 @@ import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
-import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
@@ -160,24 +160,31 @@ public class MediaCaptureService {
     }
 
     private BleParams resolveBleParams(String requestedSize) {
-        // BLE transfer is limited by BES2700 TX buffer (~88 packets before overflow)
-        // With 221-byte pack size, max reliable transfer is ~19KB
-        // Target file sizes accordingly with aggressive compression
+        // Sized for the push-mode/batched-ack BLE pipe (~45-70 KB/s), not the old
+        // ~19KB single-notification ceiling. Two rules drive the ladder:
+        //  - Resolution first: text is readable only when glyphs survive the
+        //    downscale (~10px x-height), so every tier keeps the long edge at or
+        //    above the old ladder's.
+        //  - Quality stays out of the AVIF smear zone (q >= ~45): below that, AV1's
+        //    loop filters melt text strokes no matter how many pixels there are.
+        // Values are width/height CAPS - the resize preserves aspect ratio, so a
+        // 4:3 capture lands at e.g. 1280x960. Constant-quality mode self-adapts
+        // bytes to content: scenery compresses small, text spends what it needs.
         String tier = PhotoSizeTier.normalize(requestedSize);
         switch (tier) {
             case "low":
-                // Target ~8KB: 400x400 @ quality 28
-                return new BleParams(400, 400, 28);
+                // ~15-25KB typical: readable large text, fastest transfer
+                return new BleParams(800, 800, 50);
             case "high":
-                // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
-                return new BleParams(800, 800, 32);
+                // ~50-90KB typical: document text comfortably readable
+                return new BleParams(1600, 1600, 48);
             case "max":
-                // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
-                return new BleParams(1024, 1024, 35);
+                // ~90-160KB typical: document-grade
+                return new BleParams(1920, 1920, 55);
             case "medium":
             default:
-                // Target ~15KB: 640x640 @ quality 30 - safe for BLE
-                return new BleParams(640, 640, 30);
+                // ~30-55KB typical: matches the WiFi medium resolution
+                return new BleParams(1280, 1280, 50);
         }
     }
 
@@ -403,7 +410,7 @@ public class MediaCaptureService {
      * brightness)
      */
     private void triggerPhotoFlashLed() {
-        triggerPhotoFlashLed(K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+        triggerPhotoFlashLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
     }
 
     /**
@@ -427,7 +434,7 @@ public class MediaCaptureService {
 
     /** Trigger solid white LED for video recording duration (default brightness) */
     private void triggerVideoRecordingLed() {
-        triggerVideoRecordingLed(K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+        triggerVideoRecordingLed(RgbLedConstants.DEFAULT_BRIGHTNESS);
     }
 
     /**
@@ -3799,11 +3806,23 @@ public class MediaCaptureService {
                                     targetWidth = (int) (targetHeight * aspectRatio);
                                 }
 
-                                // 3. Resize bitmap
-                                android.graphics.Bitmap resized =
+                                // 3. Resize bitmap, then restore edge contrast: the downscale
+                                // low-pass-filters text strokes, and a mild unsharp costs almost
+                                // no bytes while visibly improving glyph legibility.
+                                android.graphics.Bitmap scaled =
                                         android.graphics.Bitmap.createScaledBitmap(
                                                 original, targetWidth, targetHeight, true);
-                                original.recycle();
+                                // createScaledBitmap returns the SAME object when the size
+                                // already matches (medium ladder == capture resolution), so
+                                // recycling unconditionally would kill the bitmap mid-pipeline.
+                                if (scaled != original) {
+                                    original.recycle();
+                                }
+                                android.graphics.Bitmap resized =
+                                        BleImageSharpener.sharpen(mContext, scaled);
+                                if (resized != scaled) {
+                                    scaled.recycle();
+                                }
 
                                 // 4. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
@@ -3957,12 +3976,13 @@ public class MediaCaptureService {
                 recordTiming(requestId, "ble_ready_msg");
                 sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
 
-                // Add delay to ensure JSON packet completes transmission through MCU before file
-                // packets start
-                // This prevents packet interleaving at the BLE MTU boundary
+                // Brief delay so the ble_photo_ready JSON drains ahead of file packets.
+                // Was 200ms; the firmware TX window now queues both in order (and the
+                // phone's reassembly tolerates packets arriving before the JSON), so
+                // 20ms is a safety margin, not a required gap. Hardware-validate: a
+                // regression shows up as first-packet retries in the transfer logs.
                 try {
-                    Thread.sleep(200); // 200ms delay for JSON packet to fully transmit over BLE
-                    Log.d(TAG, "⏱️ Waited 200ms for JSON packet to complete BLE transmission");
+                    Thread.sleep(20);
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Delay interrupted", e);
                 }
@@ -4067,6 +4087,190 @@ public class MediaCaptureService {
         return config;
     }
 
+    /**
+     * Open + configure + preview the camera and hold it warm for {@code durationMs} without taking a
+     * photo, so a later {@code take_photo} of the same {@code size}/{@code exposureTimeNs} reuses the
+     * warm session and is near-instant. Emits {@code camera_status}: {@code warming} on accept,
+     * {@code ready} once preview/AE is running, {@code stopped} when the keep-alive expires, and
+     * {@code error} on failure.
+     *
+     * <p><b>Shared-camera safety:</b> if a video recording or RTMP/SRT/WHIP stream already owns the
+     * camera the camera is already warm — emit {@code ready} immediately and do not take ownership.
+     * If a photo job is mid-flight, reject with {@code error} so the in-flight capture is undisturbed.
+     *
+     * @param requestId echoed in every {@code camera_status} event (required)
+     * @param size resolution tier matching the warmed config ("low"/"medium"/"high"/"max")
+     * @param exposureTimeNs optional manual shutter in ns; {@code null} = auto
+     * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the default warm-up hold
+     * @return true if the warm-up was accepted (or the camera was already warm), false otherwise
+     */
+    public boolean warmUpCamera(
+            String requestId, String size, Long exposureTimeNs, long durationMs) {
+        if (requestId == null || requestId.isEmpty()) {
+            Log.w(TAG, "camera_warm_up rejected - missing requestId");
+            return false;
+        }
+
+        // Camera HAL restarting after FOV change — cannot warm right now.
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "camera_warm_up rejected - camera HAL restarting after FOV change");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "camera_restart_cooldown",
+                    "Camera restarting after FOV change");
+            return false;
+        }
+
+        // SHARED-CAMERA SAFETY: a video recording or stream already owns the camera. It is already
+        // warm — report ready and do NOT take ownership or close anything.
+        if (isRecordingVideo
+                || RtmpStreamingService.isStreaming()
+                || SrtStreamingService.isStreaming()
+                || WhipStreamingService.isStreaming()) {
+            Log.d(TAG, "camera_warm_up: camera already owned by video/stream - reporting ready");
+            sendCameraStatus(requestId, "ready", null);
+            return true;
+        }
+
+        // A photo job (capture or BLE handoff) is mid-flight — do not disrupt it.
+        if (isPhotoJobInFlight()) {
+            Log.w(TAG, "camera_warm_up rejected - photo job in flight");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "photo_capture_in_progress",
+                    "Photo capture in progress");
+            return false;
+        }
+        if (isBleTransferInProgress()) {
+            Log.w(TAG, "camera_warm_up rejected - BLE transfer in progress");
+            sendCameraStatus(
+                    requestId,
+                    "error",
+                    "ble_transfer_in_progress",
+                    "Bluetooth photo transfer in progress");
+            return false;
+        }
+
+        Log.i(
+                TAG,
+                "📷 camera_warm_up accepted requestId="
+                        + requestId
+                        + " size="
+                        + size
+                        + " exposureTimeNs="
+                        + exposureTimeNs
+                        + " durationMs="
+                        + durationMs);
+
+        // CameraNeoService.warmUpCamera rejects an overlapping/mid-capture warm-up synchronously
+        // (it fires onCameraError on this thread before returning). Track that so the return value
+        // reflects a synchronous busy rejection instead of always reporting acceptance. Rejections
+        // that resolve later (async, in the service) are surfaced via camera_status as usual.
+        AtomicBoolean warmUpDispatching = new AtomicBoolean(true);
+        AtomicBoolean rejectedSynchronously = new AtomicBoolean(false);
+        CameraNeoService.warmUpCamera(
+                mContext,
+                size,
+                exposureTimeNs,
+                durationMs,
+                new CameraNeoService.CameraWarmUpCallback() {
+                    @Override
+                    public void onWarming() {
+                        // Emitted only once CameraNeoService commits to the warm-up (not on a busy
+                        // rejection), so a serialized/busy request never sees warming then error.
+                        sendCameraStatus(requestId, "warming", null);
+                    }
+
+                    @Override
+                    public void onCameraReady() {
+                        sendCameraStatus(requestId, "ready", null);
+                    }
+
+                    @Override
+                    public void onCameraStopped() {
+                        sendCameraStatus(requestId, "stopped", null);
+                    }
+
+                    @Override
+                    public void onCameraError(String errorMessage) {
+                        if (warmUpDispatching.get()) {
+                            rejectedSynchronously.set(true);
+                        }
+                        sendCameraStatus(
+                                requestId,
+                                "error",
+                                cameraWarmUpErrorCode(errorMessage),
+                                errorMessage);
+                    }
+
+                    @Override
+                    public String getRequestId() {
+                        return requestId;
+                    }
+                });
+        warmUpDispatching.set(false);
+        return !rejectedSynchronously.get();
+    }
+
+    /**
+     * Emit a {@code camera_status} event for a {@code camera_warm_up} request. Mirrors the flat,
+     * top-level JSON shape of {@code photo_status} (sent directly over BLE, not wrapped in {@code
+     * data}) so the phone parses {@code state}/{@code requestId} at the top level.
+     *
+     * @param state one of {@code warming}, {@code ready}, {@code stopped}, {@code error}
+     * @param errorMessage included only for the {@code error} state
+     */
+    public void sendCameraStatus(String requestId, String state, String errorMessage) {
+        sendCameraStatus(requestId, state, null, errorMessage);
+    }
+
+    /**
+     * Emit a {@code camera_status} event for a {@code camera_warm_up} request. Mirrors the flat,
+     * top-level JSON shape of {@code photo_status} (sent directly over BLE, not wrapped in {@code
+     * data}) so the phone parses {@code state}/{@code requestId} at the top level.
+     *
+     * @param state one of {@code warming}, {@code ready}, {@code stopped}, {@code error}
+     * @param errorCode stable machine-readable error code, included only when present
+     * @param errorMessage included only for the {@code error} state
+     */
+    public void sendCameraStatus(
+            String requestId, String state, String errorCode, String errorMessage) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "camera_status");
+            json.put("state", state);
+            json.put("requestId", requestId);
+            json.put("timestamp", System.currentTimeMillis());
+            if (errorCode != null && !errorCode.isEmpty()) {
+                json.put("errorCode", errorCode);
+            }
+            if (errorMessage != null && !errorMessage.isEmpty()) {
+                json.put("errorMessage", errorMessage);
+            }
+
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+                Log.d(TAG, "📷 camera_status sent: state=" + state + " requestId=" + requestId);
+            } else {
+                Log.w(TAG, "Cannot send camera status - service callback unavailable");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating camera status", e);
+        }
+    }
+
+    private static String cameraWarmUpErrorCode(String errorMessage) {
+        if ("camera_busy".equals(errorMessage)) {
+            return "camera_busy";
+        }
+        return "camera_warm_up_failed";
+    }
+
     private void sendPhotoStatus(String requestId, String status) {
         sendPhotoStatus(requestId, status, null, null, null);
     }
@@ -4104,13 +4308,14 @@ public class MediaCaptureService {
                 json.put("resolvedConfig", resolvedConfig);
             }
             if (requestedCaptureConfig != null) {
-                json.put("requestedCaptureConfig", requestedCaptureConfig);
+                logFullPhotoStatusMetadata(
+                        requestId, status, "requestedCaptureConfig", requestedCaptureConfig);
             }
             if (meteredPreview != null) {
                 json.put("meteredPreview", meteredPreview);
             }
             if (captureMetadata != null) {
-                json.put("captureMetadata", captureMetadata);
+                logFullPhotoStatusMetadata(requestId, status, "captureMetadata", captureMetadata);
             }
             if (errorCode != null && !errorCode.isEmpty()) {
                 json.put("errorCode", errorCode);
@@ -4127,6 +4332,23 @@ public class MediaCaptureService {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating photo status", e);
         }
+    }
+
+    private void logFullPhotoStatusMetadata(
+            String requestId, String status, String metadataName, JSONObject metadata) {
+        if (metadata == null) {
+            return;
+        }
+        Log.i(
+                TAG,
+                "📸 photo_status "
+                        + status
+                        + " full "
+                        + metadataName
+                        + " requestId="
+                        + requestId
+                        + " "
+                        + metadata);
     }
 
     /** Send simplified photo error response with only essential fields */

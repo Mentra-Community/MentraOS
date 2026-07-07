@@ -1,143 +1,141 @@
 ---
 title: Quickstart
-description: Build your first MentraOS smart glasses app in under 15 minutes using the MentraOS example app template.
+description: Scaffold a Mentra miniapp and run it on your phone in a few minutes.
 ---
 
-MentraOS is how you write cloud Mini Apps for smart glasses. In this Quickstart, we go from zero to fully functioning app in less than 15 minutes. You just need a phone and some basic TypeScript knowledge to get started, you can get started **without smart glasses**, or use one of [these smart glasses](https://github.com/Mentra-Community/MentraOS/blob/main/glasses-compatibility.md).
+import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
+
+This Quickstart goes from zero to a miniapp running on your glasses. You need a
+phone, [Bun](https://bun.sh/docs/installation), and basic TypeScript. You can do
+the whole thing **without glasses**: the display just won't have anywhere to draw.
 
 <Info>
-Building a mobile app that connects directly to glasses over Bluetooth? Use the [Bluetooth SDK Quickstart](/mentra-live/quickstart).
+Building a mobile app that connects directly to glasses over Bluetooth? Use the
+[Bluetooth SDK Quickstart](/mentra-live/quickstart) instead.
 </Info>
 
-### Step 1: Install the Mentra app on your phone
+<LegacyCloudNote />
 
-Install MentraOS on your Android or iPhone from [MentraGlass.com/OS](https://mentraglass.com/os).
+### Step 1: Install the Mentra App
 
-### Step 2: Set up ngrok
+Install the Mentra App on your Android or iPhone from
+[MentraGlass.com/OS](https://mentraglass.com/os), sign in, and connect your
+glasses (if you have them).
 
-We are going to use ngrok to expose your local app to the internet. This is useful for development, but when you're ready to go live, you'll want to [deploy to a cloud service](/app-devs/getting-started/deployment/overview).
+### Step 2: Scaffold a project
 
-1. [Install ngrok](https://ngrok.com/docs/getting-started/)
-2. Create an ngrok account
-3. [Set up a static address/URL in the ngrok dashboard](https://dashboard.ngrok.com/)
-
-> Make sure you run the `ngrok config add-authtoken <your_authtoken>` line. Make sure you select `Static Domain`, then generate a static domain.
-
-<center>
-  <img width="75%" src="/img/ngrok_guide_1.png"></img>
-</center>
-
-### Step 3: Register your app with the Mentra Relay Server
-
-This example app will send traffic through the Mentra Relay Server, which connects your phone to your app through the internet. Later, you can run your own Relay Server.
-
-1. Log in to [console.mentraglass.com](https://console.mentraglass.com/) with the same account you're using for MentraOS.
-2. Click "Create App". Set a unique package name like `com.yourName.yourAppName`. For "Public URL", enter your ngrok static URL.
-3. Add microphone permission.
-
-> This automatically installs the app for your user - check the Mentra app on your phone. For other people to test the app, they need to install it. You can retrieve your app's install link from "My Apps" page, click the *Share* icon.
-
-### Step 4: Start your app
-
-Ensure you have [Node.js v18 or later](https://nodejs.org/en/download/) and [Bun](https://bun.sh/docs/installation) installed.
-
-1. Start from the **Display Example App**. It displays spoken words as live captions on the glasses HUD and is the recommended cloud Mini App template for developers new to MentraOS.
-
-   **Repository:** [MentraOS-Display-Example-App](https://github.com/Mentra-Community/MentraOS-Display-Example-App)
-
-   Go to the link above and click *Use this Template* then *Create a new repository*.
-
-   <Info>You must be signed into GitHub to see the "Use this template" button.</Info>
-
-   <center>
-   <img src="https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5" alt="Create repo from template" />
-   </center>
-
-   Clone your new repo locally using the URL from your newly created repository.
-
-   <Info>
-   For camera, photo, or streaming apps, use the [Bluetooth SDK Quickstart](/mentra-live/quickstart) instead.
-   </Info>
-2. Navigate to your repo directory and install dependencies:
-   ```bash
-   cd <your-repo-name>
-   bun install
-   ```
-3. Set up your environment variables:
-   * Create a `.env` file in the root directory by copying the example, then edit the `.env` file with your own app's details.
-     ```bash
-     cp .env.example .env
-     ```
-4. Run your app:
-   ```bash
-   bun run dev
-   ```
-5. Expose your app to the internet with ngrok:
-   ```bash
-   ngrok http --url=<YOUR_NGROK_URL_HERE> 3000
-   ```
-   Note: `3000` is the port. It must match what is in the app config.
-
-
-### Step 5: App Running!
-
-Go to your phone and open Mentra. Start your app. Begin speaking, and you'll see what you say overlaid on your smart glasses display. You'll also see logs in the console.
-
-Congratulations, you just built your first smart glasses app!
-
-## Understanding the Code
-
-Once your app is running, here's what's happening under the hood. A MentraOS app has three parts: a server that receives connections, a session for each user, and managers that interact with the glasses.
-
-```typescript
-import { MiniAppServer, type MentraSession } from "@mentra/sdk";
-
-const app = new MiniAppServer({
-  packageName: "com.example.myapp",
-  apiKey: process.env.API_KEY!,
-  port: 3000,
-});
-
-app.onSession((session: MentraSession) => {
-  // This runs once per user when they start your app.
-  // `session` is your connection to that user's glasses.
-
-  // Listen to what the user says
-  session.transcription.on((data) => {
-    // Show their words on the glasses display
-    session.display.showTextWall(data.text);
-  });
-});
-
-await app.start();
+```bash
+bunx create-mentra-miniapp my-miniapp
 ```
 
-**`MiniAppServer`** handles the server - webhooks, WebSocket connections, routing. You create one instance and register callbacks.
+The scaffolder asks for a project name and the kind of glasses you're targeting
+(**display** glasses like Even Realities G1/G2 and Vuzix Z100, or **camera**
+glasses like Mentra Live), then generates a ready-to-run two-layer project.
 
-**`MentraSession`** is your connection to one user. Everything you do with that user goes through the session object. Each capability is a manager you can access directly:
+```bash
+cd my-miniapp
+bun install
+```
 
-| Manager | What it does |
-|---------|-------------|
-| `session.transcription` | Real-time speech-to-text from the microphone |
-| `session.translation` | Real-time translation |
-| `session.display` | Show text, cards, and images on the glasses |
-| `session.speaker` | Play audio and text-to-speech |
-| `session.mic` | Raw audio chunks and voice activity detection |
-| `session.device` | Hardware state, battery, connection, model info |
-| `session.phone` | Notifications, calendar events, phone battery |
-| `session.storage` | Persistent key-value storage for your app |
-| `session.location` | GPS location |
-| `session.permissions` | Check what your app is allowed to do |
-| `session.led` | Control the LED light on supported glasses |
-| `session.dashboard` | Write to the system dashboard view |
-| `session.time` | Timezone-aware time utilities |
+`bun install` pulls in [`@mentra/miniapp`](https://www.npmjs.com/package/@mentra/miniapp)
+(the runtime) and [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli)
+(the `mentra-miniapp` tooling) automatically.
 
-Explore these managers - each one is fully typed, so your editor's autocomplete will show you what's available.
+### Step 3: Start the dev server
 
-For camera, photo, or streaming features, use the [Bluetooth SDK docs](/mentra-live/overview).
+```bash
+bun dev
+```
 
-## Next Steps
+This validates your `miniapp.json`, builds both layers, serves them over your
+LAN, and prints a **QR code** plus a `miniapp://dev?...` URL. It hot-reloads on
+save and forwards the miniapp's console logs back to your terminal.
 
-- Check out our [Example Apps](./example-apps) page for more templates and advanced examples
-- Read the [Migration Guide](/app-devs/migration/overview) if you're updating an existing v2 app
-- Join our [Discord community](https://discord.gg/5ukNvkEAqT) for help and support
+### Step 4: Load it on your phone
+
+In the Mentra App, go to **Settings → Developer settings → Mini App Development
+→ Scan Mini App QR Code** and scan the QR from your terminal.
+
+<Info>
+Your phone and your laptop must be on the **same Wi-Fi network**. `bun dev`
+watches for Wi-Fi changes and reprints the QR if your LAN IP moves.
+</Info>
+
+The miniapp installs and starts. In the starter project, pressing a glasses
+button shows text on the display, and opening the miniapp's UI tile shows a
+round-trip latency demo between the UI and background layers.
+
+## Understanding the starter
+
+A scaffolded miniapp has two entry points wired together by a shared, typed
+channel registry:
+
+```
+my-miniapp/
+├── miniapp.json              # manifest: package name, permissions, hardware, entries
+├── build.ts                  # bundles both layers
+└── src/
+    ├── background/index.ts   # always-on glasses logic: owns the session
+    ├── ui/                   # the on-demand WebView (React)
+    └── shared/channels.ts    # typed messages between the two layers
+```
+
+**Background**: owns the `session` and all glasses logic:
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+import "../shared/channels";
+
+registerMiniapp((session) => {
+  session.input.onButtonPress(() => {
+    // render() replaces the whole frame — a full-canvas text element here.
+    // Box coordinates are raw device px from session.capabilities.display.
+    const d = session.capabilities?.display;
+    session.display.render([
+      { type: "text", id: "hello", box: { x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288 }, text: "Hello from MentraOS" },
+    ]);
+  });
+
+  // Reply to a "ping" from the UI with a "pong".
+  session.ui.on("ping", ({ at }) => {
+    session.ui.send("pong", { at: Date.now(), roundtripMs: Date.now() - at });
+  });
+});
+```
+
+**UI**: a normal React app that talks to the background over `mentra`. It has no
+direct hardware access:
+
+```tsx src/ui/App.tsx
+export function App() {
+  useEffect(() => mentra.on("pong", ({ roundtripMs }) => { /* update UI */ }), []);
+  return <button onClick={() => mentra.send("ping", { at: Date.now() })}>Ping</button>;
+}
+```
+
+**Shared channels**: the single source of truth for what flows between the two
+layers, enforced at compile time:
+
+```typescript src/shared/channels.ts
+export interface Channels {
+  ping: { at: number };                          // UI → background
+  pong: { at: number; roundtripMs: number };     // background → UI
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    How background and UI work and communicate.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    Every capability you can reach on the glasses.
+  </Card>
+  <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
+    Permissions, hardware requirements, and entry points.
+  </Card>
+  <Card title="Ship it" icon="upload" href="/app-devs/getting-started/distribution">
+    Pack a release and put it in front of users.
+  </Card>
+</CardGroup>

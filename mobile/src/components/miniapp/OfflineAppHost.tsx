@@ -36,7 +36,7 @@ import {offlineAppRegistry} from "@/components/miniapp/offlineAppRegistry"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
-import {BgTimer, useAppStatusStore} from "@mentra/island"
+import {useAppStatusStore} from "@mentra/island/internal"
 
 interface OfflineAppHostProps {
   packageName: string
@@ -177,11 +177,14 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
         beginExit()
       },
       handleRightPress: () => {
+        // Stop the app BEFORE playing the exit animation so it clears from the
+        // running-apps tray immediately. The overlay's slide-out is driven by
+        // the Compositor's foreground state (renderedApp is held mounted through
+        // the animation), so stopping now — which only flips the `running` flag
+        // — doesn't interrupt it. Deferring stop() (previously by 1s) left the
+        // app lingering in the tray for the whole animation, then popping out.
+        useAppStatusStore.getState().stop(packageName)
         beginExit()
-        // wait until after the animation is complete to stop the miniapp:
-        BgTimer.setTimeout(() => {
-          useAppStatusStore.getState().stop(packageName)
-        }, 1000)
       },
     }
     useCapsuleStore.getState().setActive(registration)

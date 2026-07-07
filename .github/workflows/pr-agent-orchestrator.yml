@@ -9,6 +9,7 @@ on:
       - "Run Cloud Tests ☁️"
       - "🧪 Test SDK build"
       - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
       - "MentraOS ASG Client Build"
       - "Mobile App Android Build"
     types: [completed]
@@ -25,7 +26,18 @@ on:
         default: false
 
 concurrency:
-  group: pr-agent-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  # For pull_request events: keyed on PR number (stable, deduplicated).
+  # For workflow_run events: keyed on the head branch so successive CI completions
+  # for the same branch cancel the prior run rather than piling up independently.
+  # For workflow_dispatch: keyed on the explicit PR number input.
+  # Fallback to run_id only for unknown event types (no cancellation intended).
+  group: >-
+    pr-agent-${{
+      github.event.pull_request.number ||
+      github.event.inputs.pr_number ||
+      github.event.workflow_run.head_branch ||
+      github.run_id
+    }}
   cancel-in-progress: true
 
 permissions:
@@ -346,11 +358,16 @@ jobs:
     name: Fix
     needs: [resolve-context, plan, aggregate]
     if: |
+      always() &&
+      needs.resolve-context.result == 'success' &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
       needs.aggregate.outputs.should_handoff != 'true' &&
       needs.aggregate.outputs.should_fix == 'true' &&
       needs.resolve-context.outputs.pr_is_fork != 'true' &&
       needs.plan.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:

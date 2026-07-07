@@ -48,6 +48,8 @@ Apply fixes in the working tree. Run relevant tests before finishing.
   const fixModel = process.env.PR_AGENT_FIX_MODEL ?? config.fixModel;
   const maxTurns = config.limits.maxFixAgentTurns;
 
+  let runId: string | undefined;
+
   try {
     await using agent = await Agent.create({
       apiKey,
@@ -57,38 +59,46 @@ Apply fixes in the working tree. Run relevant tests before finishing.
 
     let assistantTurns = 0;
     let cancelledForTurns = false;
-    let activeRun: Run | undefined;
+    // Mutable cell so the onStep closure can cancel even before agent.send returns.
+    const runRef: { current: Run | undefined } = { current: undefined };
 
     const run = await agent.send(`${basePrompt}\n\n---\n\n${context}`, {
       onStep: async ({ step }) => {
         if (step.type !== 'assistantMessage') return;
         assistantTurns += 1;
-        if (assistantTurns >= maxTurns && !cancelledForTurns && activeRun) {
+        if (assistantTurns >= maxTurns && !cancelledForTurns) {
           cancelledForTurns = true;
           console.warn(
             `Fixer hit maxFixAgentTurns (${maxTurns}); cancelling run to commit progress.`,
           );
           try {
-            await activeRun?.cancel();
+            await runRef.current?.cancel();
           } catch (e) {
             console.warn('Run cancel failed:', (e as Error).message);
           }
         }
       },
     });
-    activeRun = run;
-    console.log('Fix agent run id:', run.id);
+    runRef.current = run;
+    runId = run.id;
+    console.log('Fix agent run id:', runId);
 
-    const result = await run.wait();
-    if (result.status === 'error') {
-      console.error('Fix run failed:', result.id);
-      process.exit(2);
+    let result: Awaited<ReturnType<Run['wait']>> | undefined;
+    try {
+      result = await run.wait();
+    } catch (waitErr) {
+      console.error('run.wait() threw:', (waitErr as Error).message ?? waitErr);
+      // Fall through to commit whatever partial changes the agent made.
     }
-    if (cancelledForTurns) {
+
+    if (result?.status === 'error') {
+      console.error('Fix run returned error status:', runId);
+      // Fall through — still try to commit any partial changes.
+    } else if (cancelledForTurns) {
       console.warn(`Fixer stopped after ${assistantTurns} turns (cap ${maxTurns}).`);
+    } else if (result) {
+      console.log(result.result?.slice(0, 2000) ?? '(no text)');
     }
-
-    console.log(result.result?.slice(0, 2000) ?? '(no text)');
 
     const status = execSync('git status --porcelain', { cwd: repoRoot, encoding: 'utf8' });
     if (!status.trim()) {
@@ -117,6 +127,8 @@ Apply fixes in the working tree. Run relevant tests before finishing.
       console.error('Fix startup failed:', err.message);
       process.exit(1);
     }
-    throw err;
+    console.error('Fix agent unexpected error (run', runId ?? 'unknown', '):', (err as Error).message ?? err);
+    // Non-fatal: mark as ran but not committed so the orchestrator records a fix round.
+    process.exit(2);
   }
 }

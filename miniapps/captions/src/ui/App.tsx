@@ -44,7 +44,14 @@ export function App() {
     setShowLanguageSelector(false)
   }
 
-  const presentation = getCloudPresentation(cloudStatus)
+  // Connection-status theming (baby blue when WS-connected, slate gray when
+  // offline/unavailable, etc.) is a debug affordance — gate it behind
+  // developer mode alongside the CloudStatusFooter below. Everyone else gets
+  // the stable brand accent so the app bar/background don't flicker color with
+  // cloud connectivity.
+  const presentation = developerMode
+    ? getCloudPresentation(cloudStatus)
+    : {label: "", detail: "", accentColor: "#6DAEA6", accentForeground: "#FFFFFF", dark: false}
 
   return (
     <div

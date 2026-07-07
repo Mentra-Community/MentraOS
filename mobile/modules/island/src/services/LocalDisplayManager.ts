@@ -7,7 +7,6 @@
  * for the features that matter on the phone:
  *
  *   - boot message ("Starting <AppName>…") with a bounded window
- *   - per-request throttle (leading + trailing, ~300 ms, last-write-wins)
  *   - durationMs auto-clear
  *   - core-app vs background-app arbitration with a background lock
  *
@@ -15,12 +14,26 @@
  * and may race with local displays during dev; that's acceptable per plan
  * (agents/local-display-manager-plan.md).
  *
- * All timers use BgTimer so they keep firing when the phone screen
- * is off.
+ * Display pacing is NOT done here. A JS-side ~300ms throttle used to live in
+ * this class, but JS timers (and therefore the throttle's trailing flush) do
+ * not fire on schedule while the iOS app is suspended in the background — so
+ * under streaming captions, updates accumulated and then flushed in a burst on
+ * the next wake. Pacing + last-wins coalescing now live in the native per-device
+ * queue (e.g. G2's event-driven EvenHub queue), which drains off the same BLE
+ * events that wake the process. This class forwards every request straight
+ * through; the native layer collapses redundant frames per display target.
+ *
+ * The remaining BgTimer use (boot window, durationMs expiry) is timing that
+ * does not need sub-second background fidelity.
  */
 
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import displayProcessor from "./DisplayProcessor"
-import {getRuntimeHooks} from "../runtime/config"
+import {useDisplayStore} from "../stores/display"
+import sceneRenderer from "./SceneRenderer"
+import {isGlassesConnected} from "./GlassesReadiness"
+import {useGlassesStore} from "../stores/glasses"
+import type {SceneElementInput} from "../utils/display/scene"
 import {BgTimer} from "../utils/timers"
 
 // =============================================================================
@@ -29,13 +42,28 @@ import {BgTimer} from "../utils/timers"
 
 export interface DisplayPayload {
   view?: "main" | "dashboard" | string
-  layout: {layoutType: string; [key: string]: unknown}
+  /** Legacy layout (sugar / old bundles / cloud shapes). Either this or `scene`. */
+  layout?: {layoutType: string; [key: string]: unknown}
+  /** Scene elements from display.render(). Either this or `layout`. */
+  scene?: SceneElementInput[]
   durationMs?: number
 }
+
+/** Outcome delivered to an awaiting render() call (REQUEST_RESULT payload). */
+export interface DisplayRequestResult {
+  status: "displayed" | "blocked"
+  degraded?: boolean
+  dropped?: string[]
+  reason?: string
+}
+
+export type DisplayRequestResolver = (result: DisplayRequestResult) => void
 
 interface ActiveDisplay {
   packageName: string
   processedEvent: Record<string, unknown>
+  /** Set when this display is a scene — restore goes through SceneRenderer replay. */
+  scene?: SceneElementInput[]
   expiresAt: number | null
 }
 
@@ -44,6 +72,10 @@ interface BootingApp {
   displayName: string
   startedAt: number
   timerId: number
+  /** Whatever was on the glasses when this boot started, so a boot that times
+   * out without the app rendering can restore it instead of blanking a frame
+   * another (e.g. foreground) app owns. Null if the glasses were empty. */
+  preBoot: ActiveDisplay | null
 }
 
 interface BackgroundLock {
@@ -59,7 +91,6 @@ interface BackgroundLock {
 
 const LOG_TAG = "LOCAL_DISPLAY"
 const BOOT_DURATION_MS = 1500
-const THROTTLE_MS = 300
 // Mirrors cloud lease for a bg app holding the display. The bg app has to
 // keep driving the display to hold the lock; if it goes quiet and the core
 // app wants the screen, we release.
@@ -80,13 +111,14 @@ class LocalDisplayManager {
   private backgroundLock: BackgroundLock | null = null
 
   private bootingApp: BootingApp | null = null
-  private bootQueue: Map<string, DisplayPayload> = new Map()
-
-  private pendingThrottledByApp: Map<string, DisplayPayload> = new Map()
-  private throttleTimerId: number | null = null
-  private lastSendAt = 0
+  private bootQueue: Map<string, {payload: DisplayPayload; resolve?: DisplayRequestResolver}> = new Map()
 
   private expiryTimerId: number | null = null
+
+  /** Reconnect-replay subscription state (attachToRuntime). */
+  private runtimeAttached = false
+  private glassesWasConnected = false
+  private unsubscribeGlassesStatus: (() => void) | null = null
 
   /** Injectable for tests. */
   private now: () => number = () => Date.now()
@@ -115,13 +147,20 @@ class LocalDisplayManager {
     // Cancel any in-flight boot for a prior app.
     this.cancelBoot()
 
-    // Send the boot message directly (bypass throttle + arbitration — this is
-    // a system display).
-    const bootEvent: Record<string, unknown> = {
+    // Snapshot whatever's on the glasses BEFORE the boot text overwrites it.
+    // registerApp fires onMount for every spawn — including a background app or
+    // a crash-respawn while another app is foreground — so a boot that times out
+    // without rendering must put the prior frame back rather than blank it.
+    const preBoot = this.currentDisplay
+
+    // Send the boot message directly (bypass arbitration — this is a system
+    // display). Goes through sendNow so scene devices render it as a scene:
+    // otherwise every app start would be a legacy→scene transition on the
+    // glasses (which costs a blanking clear).
+    this.sendNow(SYSTEM_BOOT_PKG, {
       view: "main",
       layout: {layoutType: "text_wall", text: `Starting ${displayName}…`},
-    }
-    this.sendToNative(SYSTEM_BOOT_PKG, bootEvent, null)
+    })
 
     const timerId = BgTimer.setTimeout(() => {
       this.endBoot(/* triggeredByFirstDisplay */ false)
@@ -132,26 +171,20 @@ class LocalDisplayManager {
       displayName,
       startedAt: this.now(),
       timerId,
+      preBoot,
     }
     this.bootQueue.clear()
   }
 
   /**
    * Mark which miniapp is the "core" (foreground) app. Pass null when no local
-   * miniapp is foreground. When the core app flips, any pending throttled
-   * request from the previous core is dropped.
+   * miniapp is foreground.
    */
   public onCoreAppChange(packageName: string | null): void {
     if (this.coreApp === packageName) return
     console.log(`${LOG_TAG}: onCoreAppChange(${packageName ?? "null"})`)
 
-    const prevCore = this.coreApp
     this.coreApp = packageName
-
-    // Drop stale throttle pending for the old core — new core starts clean.
-    if (prevCore) {
-      this.pendingThrottledByApp.delete(prevCore)
-    }
 
     // No core app means no saved frame to restore on the next unmount.
     // Without this, the previous core's last frame can flicker back onto
@@ -172,8 +205,11 @@ class LocalDisplayManager {
     if (this.bootingApp?.packageName === packageName) {
       this.cancelBoot()
     }
+    this.bootQueue.get(packageName)?.resolve?.({status: "blocked", reason: "app stopped"})
     this.bootQueue.delete(packageName)
-    this.pendingThrottledByApp.delete(packageName)
+
+    // Forget the app's retained scenes — nothing left to replay for it.
+    sceneRenderer.clearApp(packageName)
 
     // Release bg lock if this app held it.
     if (this.backgroundLock?.packageName === packageName) {
@@ -207,33 +243,39 @@ class LocalDisplayManager {
    * A miniapp requested a display. Routes through boot queue, arbitration,
    * and throttle. This is the only public entry point for miniapp display
    * traffic on the local path.
+   *
+   * `resolve`, when provided (render() requests), is guaranteed to be called
+   * exactly once with the request's outcome — including for requests parked in
+   * the boot queue (resolved when drained or superseded).
    */
-  public request(packageName: string, payload: DisplayPayload): void {
+  public request(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     // Dashboard view: pass straight through (no throttle/arbitration). Local
     // dashboard rendering is currently a stub on the phone anyway.
     if (payload.view === "dashboard") {
-      this.sendNow(packageName, payload)
+      this.sendNow(packageName, payload, resolve)
       return
     }
 
     // During boot, any app's requests go into the queue. If the booting app
     // itself makes its first display call, end boot early and drain.
     if (this.bootingApp) {
-      this.bootQueue.set(packageName, payload)
+      const superseded = this.bootQueue.get(packageName)
+      superseded?.resolve?.({status: "blocked", reason: "superseded by a newer frame"})
+      this.bootQueue.set(packageName, {payload, resolve})
       if (this.bootingApp.packageName === packageName) {
         this.endBoot(/* triggeredByFirstDisplay */ true)
       }
       return
     }
 
-    this.arbitrateAndSend(packageName, payload)
+    this.arbitrateAndSend(packageName, payload, resolve)
   }
 
   // ===========================================================================
   // Internals — arbitration
   // ===========================================================================
 
-  private arbitrateAndSend(packageName: string, payload: DisplayPayload): void {
+  private arbitrateAndSend(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     const now = this.now()
 
     // Expire a stale bg lock before arbitrating.
@@ -248,6 +290,7 @@ class LocalDisplayManager {
       this.coreAppDisplay = {
         packageName,
         processedEvent: {}, // filled by sendNow
+        scene: payload.scene,
         expiresAt: payload.durationMs ? now + payload.durationMs : null,
       }
 
@@ -259,6 +302,7 @@ class LocalDisplayManager {
         this.currentDisplay &&
         this.currentDisplay.packageName === this.backgroundLock.packageName
       if (bgHoldsAndDisplays) {
+        resolve?.({status: "blocked", reason: "a background app holds the display"})
         return
       }
 
@@ -268,13 +312,14 @@ class LocalDisplayManager {
         this.backgroundLock = null
       }
 
-      this.throttledSend(packageName, payload)
+      this.sendNow(packageName, payload, resolve)
       return
     }
 
     // Non-core: this is a background app.
     if (this.backgroundLock && this.backgroundLock.packageName !== packageName) {
       // Another bg app already holds the lock — drop.
+      resolve?.({status: "blocked", reason: "another background app holds the display"})
       return
     }
 
@@ -291,84 +336,105 @@ class LocalDisplayManager {
       this.backgroundLock.expiresAt = now + BACKGROUND_LOCK_TIMEOUT_MS
     }
 
-    this.throttledSend(packageName, payload)
-  }
-
-  // ===========================================================================
-  // Internals — throttle
-  // ===========================================================================
-
-  private throttledSend(packageName: string, payload: DisplayPayload): void {
-    const now = this.now()
-    const elapsed = now - this.lastSendAt
-
-    if (elapsed >= THROTTLE_MS) {
-      this.sendNow(packageName, payload)
-      return
-    }
-
-    // Queue (replace any pending request from the same app — last wins).
-    this.pendingThrottledByApp.set(packageName, payload)
-    if (this.throttleTimerId === null) {
-      const delay = THROTTLE_MS - elapsed
-      this.throttleTimerId = BgTimer.setTimeout(() => {
-        this.throttleTimerId = null
-        this.flushThrottled()
-      }, delay)
-    }
-  }
-
-  private flushThrottled(): void {
-    // Prefer the core app if it has something pending. Otherwise, the current
-    // bg lock holder. Otherwise, skip.
-    let candidate: {pkg: string; payload: DisplayPayload} | null = null
-
-    if (this.coreApp) {
-      const p = this.pendingThrottledByApp.get(this.coreApp)
-      if (p) candidate = {pkg: this.coreApp, payload: p}
-    }
-    if (!candidate && this.backgroundLock) {
-      const p = this.pendingThrottledByApp.get(this.backgroundLock.packageName)
-      if (p) candidate = {pkg: this.backgroundLock.packageName, payload: p}
-    }
-    if (!candidate) {
-      this.pendingThrottledByApp.clear()
-      return
-    }
-
-    this.pendingThrottledByApp.delete(candidate.pkg)
-    this.sendNow(candidate.pkg, candidate.payload)
-
-    // If more requests accumulated from other apps during the window, they've
-    // been overwritten by later ones anyway; anything left behind (e.g. a
-    // stale bg request while core is live) we drop.
-    this.pendingThrottledByApp.clear()
+    this.sendNow(packageName, payload, resolve)
   }
 
   // ===========================================================================
   // Internals — send
   // ===========================================================================
 
-  private sendNow(packageName: string, payload: DisplayPayload): void {
-    const rawEvent: Record<string, unknown> = {
-      view: payload.view ?? "main",
-      layout: payload.layout,
-    }
-    if (payload.durationMs !== undefined) {
-      rawEvent.durationMs = payload.durationMs
-    }
+  private sendNow(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
-    this.sendToNative(packageName, rawEvent, expiresAt)
+    const view = (payload.view === "dashboard" ? "dashboard" : "main") as "main" | "dashboard"
+
+    // Scene requests — and legacy layouts a positioning device can render as a
+    // scene (sugar, old bundles) — go through the scene pipeline. Everything
+    // else stays on the legacy path.
+    let sceneElements = payload.scene ?? null
+    if (!sceneElements && payload.layout) {
+      const caps = sceneRenderer.currentCapabilities()
+      if (caps?.canPosition) {
+        sceneElements = sceneRenderer.convertLegacyLayout(payload.layout, caps)
+      }
+    }
+
+    if (sceneElements) {
+      this.sendScene(packageName, view, sceneElements, expiresAt, resolve)
+    } else if (payload.layout) {
+      // This layout bypasses the scene pipeline (clear_view, dashboard_card,
+      // unknown types, or a non-positioning device). If this (app, view) had a
+      // retained scene, the glasses no longer match it — reset the diff
+      // baseline so the next render() repaints from empty instead of skipping
+      // "unchanged" elements.
+      sceneRenderer.resetBaseline(packageName, view)
+      const rawEvent: Record<string, unknown> = {
+        view: payload.view ?? "main",
+        layout: payload.layout,
+      }
+      if (payload.durationMs !== undefined) {
+        rawEvent.durationMs = payload.durationMs
+      }
+      this.sendToNative(packageName, rawEvent, expiresAt)
+      resolve?.({status: "displayed"})
+    } else {
+      // A scene payload on a device with no display block at all.
+      resolve?.({status: "blocked", reason: "no display connected"})
+      return
+    }
 
     // If core app fired, refresh the saved snapshot with the actual processed
-    // event so restore uses the wrapped text.
+    // event so restore uses the wrapped text (legacy) / the retained scene.
     if (packageName === this.coreApp && this.currentDisplay) {
       this.coreAppDisplay = {
         packageName,
         processedEvent: this.currentDisplay.processedEvent,
+        scene: this.currentDisplay.scene,
         expiresAt: this.currentDisplay.expiresAt,
       }
     }
+  }
+
+  /**
+   * Send a scene through SceneRenderer. On positioning devices this emits a
+   * SceneFrame; on degrade devices SceneRenderer hands back a legacy layout
+   * that rides the existing (unchanged) DisplayProcessor path.
+   */
+  private sendScene(
+    packageName: string,
+    view: "main" | "dashboard",
+    elements: SceneElementInput[],
+    expiresAt: number | null,
+    resolve?: DisplayRequestResolver,
+  ): void {
+    const result = sceneRenderer.emitScene(packageName, view, elements)
+
+    if (result.kind === "no-display") {
+      resolve?.({status: "blocked", reason: "no display connected"})
+      return
+    }
+
+    if (result.kind === "legacy") {
+      if (result.layout) {
+        this.sendToNative(packageName, {view, layout: result.layout}, expiresAt)
+      } else {
+        // Scene degraded to nothing (e.g. all-image scene on a text-only
+        // device). render() replaces the frame, so nothing means clear.
+        this.sendClear()
+      }
+      resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
+      return
+    }
+
+    this.currentDisplay = {packageName, processedEvent: {}, scene: elements, expiresAt}
+    this.clearExpiryTimer()
+    if (expiresAt !== null) {
+      const delay = Math.max(0, expiresAt - this.now())
+      this.expiryTimerId = BgTimer.setTimeout(() => {
+        this.expiryTimerId = null
+        this.handleExpiry(packageName)
+      }, delay)
+    }
+    resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
   }
 
   private sendToNative(packageName: string, rawEvent: Record<string, unknown>, expiresAt: number | null): void {
@@ -381,23 +447,18 @@ class LocalDisplayManager {
     }
 
     try {
-      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
-      if (sendDisplayEvent) {
-        void Promise.resolve(sendDisplayEvent(processedEvent)).catch((err) => {
-          console.error(`${LOG_TAG}: native display failed:`, err)
-        })
-      }
-      getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
+      // The display output path is a direct btsdk call now (was a host sendDisplayEvent
+      // hook) so a bare OEM renders to the glasses without wiring it.
+      void Promise.resolve(BluetoothSdk.displayEvent(processedEvent)).catch((err) => {
+        console.error(`${LOG_TAG}: native display failed:`, err)
+      })
+      // The mirror store also lives in island, so display requests update the
+      // phone-side preview without any host hook.
+      useDisplayStore.getState().setDisplayEvent(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }
 
-    // System-originated displays (boot message, clear) don't count toward the
-    // user-throttle budget — they're forced, not requested by a miniapp.
-    const isSystem = packageName === SYSTEM_BOOT_PKG || packageName === "system.clear"
-    if (!isSystem) {
-      this.lastSendAt = this.now()
-    }
     this.currentDisplay = {packageName, processedEvent, expiresAt}
 
     this.clearExpiryTimer()
@@ -436,13 +497,7 @@ class LocalDisplayManager {
       return
     }
     // Re-send the core's saved display.
-    const saved = this.coreAppDisplay
-    const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
-    this.sendNow(saved.packageName, {
-      view: "main",
-      layout: saved.processedEvent.layout as DisplayPayload["layout"],
-      durationMs: remaining,
-    })
+    this.restoreDisplay(this.coreAppDisplay)
   }
 
   private sendClear(): void {
@@ -452,6 +507,10 @@ class LocalDisplayManager {
     }
     this.sendToNative("system.clear", clearEvent, null)
     this.currentDisplay = null
+    // The glasses main view is now blank: every app's retained scene is
+    // replay-only until it re-renders — diffing against it would skip
+    // "unchanged" elements onto the blank screen.
+    sceneRenderer.markViewStale("main")
   }
 
   // ===========================================================================
@@ -466,7 +525,7 @@ class LocalDisplayManager {
 
   private endBoot(triggeredByFirstDisplay: boolean): void {
     if (!this.bootingApp) return
-    const bootedPkg = this.bootingApp.packageName
+    const preBoot = this.bootingApp.preBoot
     BgTimer.clearTimeout(this.bootingApp.timerId)
     this.bootingApp = null
 
@@ -477,18 +536,112 @@ class LocalDisplayManager {
 
     const corePayload = this.coreApp ? queued.find(([pkg]) => pkg === this.coreApp) : undefined
     if (corePayload) {
-      this.arbitrateAndSend(corePayload[0], corePayload[1])
+      this.arbitrateAndSend(corePayload[0], corePayload[1].payload, corePayload[1].resolve)
     }
-    for (const [pkg, payload] of queued) {
+    for (const [pkg, entry] of queued) {
       if (pkg === this.coreApp) continue
-      this.arbitrateAndSend(pkg, payload)
+      this.arbitrateAndSend(pkg, entry.payload, entry.resolve)
     }
 
-    // If the booting app itself never queued a display and was just waiting
-    // on the timeout, clear the boot text so we don't leave "Starting …"
-    // stuck on the glasses.
-    if (!triggeredByFirstDisplay && queued.length === 0 && bootedPkg === this.coreApp) {
-      this.sendClear()
+    // Boot ended on the timeout with nothing queued and no first display — the
+    // app just never rendered. Restore whatever was on the glasses before the
+    // boot text so a background app or crash-respawn can't blank a foreground
+    // app's frame (registerApp fires onMount for every spawn, and the core app
+    // isn't wired on the local path yet). If the glasses were empty before,
+    // clear the lingering "Starting …" instead — otherwise a miniapp that never
+    // renders (e.g. audio-only) would strand it.
+    if (!triggeredByFirstDisplay && queued.length === 0) {
+      // Only restore a frame that's still valid — one whose duration elapsed
+      // during the boot window should clear, not come back.
+      if (preBoot && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+        this.restoreDisplay(preBoot)
+      } else {
+        this.sendClear()
+      }
+    }
+  }
+
+  /**
+   * Re-push a previously-captured on-glasses frame (e.g. the display a boot
+   * window overwrote). Mirrors tryRestoreCoreDisplay: the saved event is already
+   * processed, and any remaining duration is recomputed from its expiry.
+   */
+  private restoreDisplay(saved: ActiveDisplay): void {
+    const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
+
+    // Scene restores must REPLAY (create-based, epoch-bumped): re-emitting the
+    // scene through the normal diff would come back all-"unchanged" and the
+    // device would skip every element (spec §4 — replay is always create-based).
+    if (saved.scene) {
+      const expiresAt = remaining !== undefined ? this.now() + remaining : null
+      if (sceneRenderer.replayApp(saved.packageName, "main")) {
+        this.currentDisplay = {packageName: saved.packageName, processedEvent: {}, scene: saved.scene, expiresAt}
+        this.clearExpiryTimer()
+        if (expiresAt !== null) {
+          const delay = Math.max(0, expiresAt - this.now())
+          this.expiryTimerId = BgTimer.setTimeout(() => {
+            this.expiryTimerId = null
+            this.handleExpiry(saved.packageName)
+          }, delay)
+        }
+      } else {
+        // Retained state gone (app stopped since) — re-render the saved
+        // elements as a fresh scene instead.
+        this.sendNow(saved.packageName, {view: "main", scene: saved.scene, durationMs: remaining})
+      }
+      return
+    }
+
+    this.sendNow(saved.packageName, {
+      view: "main",
+      layout: saved.processedEvent.layout as DisplayPayload["layout"],
+      durationMs: remaining,
+    })
+  }
+
+  // ===========================================================================
+  // Reconnect replay (design doc §3.4.7 — recovery = replay, host-driven)
+  // ===========================================================================
+
+  /**
+   * Subscribe to glasses connection state so the current owner's frame is
+   * replayed after a reconnect. Safe to call repeatedly; attaches once. Wired
+   * from MantleManager next to displayProcessor.attachToRuntime().
+   */
+  public attachToRuntime(): void {
+    if (this.runtimeAttached) return
+    // dev wired this through the (since-removed) glassesStatus runtime hooks;
+    // island reads its own glasses store directly.
+    this.glassesWasConnected = isGlassesConnected(useGlassesStore.getState().connection)
+    this.unsubscribeGlassesStatus = useGlassesStore.subscribe(() => {
+      const connected = isGlassesConnected(useGlassesStore.getState().connection)
+      if (connected === this.glassesWasConnected) return
+      this.glassesWasConnected = connected
+      if (connected) {
+        this.replayCurrent()
+      }
+    })
+    this.runtimeAttached = true
+  }
+
+  /**
+   * Re-push the current on-glasses frame after a device recovery. Scenes replay
+   * from SceneRenderer's retained state (create-based, epoch-bumped); legacy
+   * frames re-send their processed event. Expired frames don't come back.
+   */
+  public replayCurrent(): void {
+    const current = this.currentDisplay
+    if (!current) return
+    if (current.expiresAt !== null && this.now() >= current.expiresAt) return
+
+    console.log(`${LOG_TAG}: replayCurrent(${current.packageName})`)
+    if (current.scene) {
+      if (!sceneRenderer.replayApp(current.packageName, "main")) {
+        // Retained state gone (app stopped between disconnect and reconnect).
+        this.sendClear()
+      }
+    } else if (current.processedEvent.layout) {
+      this.sendToNative(current.packageName, current.processedEvent, current.expiresAt)
     }
   }
 
@@ -516,18 +669,17 @@ class LocalDisplayManager {
   public _resetForTest(): void {
     this.cancelBoot()
     this.clearExpiryTimer()
-    if (this.throttleTimerId !== null) {
-      BgTimer.clearTimeout(this.throttleTimerId)
-      this.throttleTimerId = null
-    }
     this.coreApp = null
     this.coreAppDisplay = null
     this.currentDisplay = null
     this.backgroundLock = null
     this.bootQueue.clear()
-    this.pendingThrottledByApp.clear()
-    this.lastSendAt = 0
     this.now = () => Date.now()
+    this.unsubscribeGlassesStatus?.()
+    this.unsubscribeGlassesStatus = null
+    this.runtimeAttached = false
+    this.glassesWasConnected = false
+    sceneRenderer._resetForTest()
   }
 
   /** Read-only state snapshot — tests only. */

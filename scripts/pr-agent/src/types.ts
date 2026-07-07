@@ -60,6 +60,7 @@ export type Verdict = z.infer<typeof VerdictSchema>;
 export const MARKER_ORCHESTRATOR = '<!-- pr-agent-orchestrator -->';
 export const MARKER_HANDOFF = '<!-- pr-agent-handoff -->';
 export const MARKER_BUGBOT_VERDICT = '<!-- pr-agent-bugbot-verdict -->';
+export const MARKER_REVIEW = '<!-- pr-agent-review -->';
 
 export type PlanOutput = {
   runBugbot: boolean;

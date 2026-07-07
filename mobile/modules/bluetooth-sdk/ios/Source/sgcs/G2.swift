@@ -1372,45 +1372,6 @@ private final class ImgAckBox {
     }
 }
 
-/// A minimal FIFO async lock that serializes display mutations.
-///
-/// `G2` is `@MainActor`, which only guarantees mutual exclusion *between*
-/// suspension points — not across an `await`. Two display operations can
-/// therefore interleave while one is suspended in `awaitImageAck`, and the
-/// second would overwrite the single-slot [ImgAckBox], stranding the first
-/// continuation (its image-send `Task` then hangs forever). Serializing every
-/// display mutation through this lock keeps exactly one image transfer in
-/// flight at a time, matching the Android client's `displayMutex` invariant.
-///
-/// State is only touched inside `acquire`/`release`, which run synchronously on
-/// the main actor (no `await` between the read and the write), so the state
-/// itself needs no extra locking.
-@MainActor
-private final class DisplayMutex {
-    private var locked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    /// Suspend until the lock is free, then take it.
-    func acquire() async {
-        if !locked {
-            locked = true
-            return
-        }
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            waiters.append(cont)
-        }
-    }
-
-    /// Hand the lock to the next waiter (preserving ownership), or free it.
-    func release() {
-        if waiters.isEmpty {
-            locked = false
-        } else {
-            waiters.removeFirst().resume()
-        }
-    }
-}
-
 // MARK: - G2 Class (SGCManager implementation)
 
 /// Actor for reconnection logic (matches G1 pattern)
@@ -1494,6 +1455,17 @@ class G2: NSObject, SGCManager {
     private var pairingTimeoutTimer: DispatchWorkItem?
     private var useEvenDashboard = true
     private var dashboardShowing = 0
+    // The 08011A00 gesture_ctrl event is ambiguous: the firmware sends it BOTH when the dashboard
+    // opens (it shuts our page down to take the screen) and when it closes (returns to us). When
+    // showDashboard() runs we set this latch; the next 08011A00 is the OPEN confirm — consume it
+    // WITHOUT recovering (else we rebuild our page and snatch the screen back from the dashboard).
+    // The following 08011A00 is the real CLOSE → recover.
+    private var dashboardOpening = false
+    // Recovery throttle: the firmware spams systemExit + dashboard-close ~1×/sec on its own.
+    // Coalesce so recovery can't storm — one rebuild in flight, one per RECOVERY_DEBOUNCE_MS.
+    private var recoveryInFlight = false
+    private var lastRecoveryRebuildMs: Int64 = 0
+    private let RECOVERY_DEBOUNCE_MS: Int64 = 1500
 
     /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
@@ -1548,6 +1520,11 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
+    // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
+    // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
+    // Cleared on every page teardown (the firmware kills the mic with the page) WITHOUT touching
+    // intent, so recovery can re-arm iff intent still says the mic should be on.
+    private var evenHubMicActive: Bool = false
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -1555,24 +1532,24 @@ class G2: NSObject, SGCManager {
     /// Lock-protected, non-isolated holder for the in-flight image ACK so the BLE-queue notify
     /// callback can resolve it without bouncing through the main actor (see [ImgAckBox]).
     private let imgAckBox = ImgAckBox()
-    /// Serializes display mutations so only one image transfer is ever in flight; without it a
-    /// second display op can clobber `imgAckBox` while the first is suspended (see [DisplayMutex]).
-    private let displayMutex = DisplayMutex()
+    /// Background loop that owns ALL display sends (text + images): each pass pushes dirty text
+    /// containers, then dirty image containers one at a time. Because it's the sole sender, exactly
+    /// one `sendImageData` is ever in flight by construction — no serializing lock needed; display
+    /// ops just mark containers dirty and signal `displayDirtySignal`.
+    private var displayReconcileTask: Task<Void, Never>?
+    /// ~100ms ticker that nudges the reconcile loop while idle, so text resends and image retries
+    /// still happen with no new mutations. Just yields into `displayDirtySignal`.
+    private var displayTickTask: Task<Void, Never>?
+    /// Wakes the reconcile loop the instant a container is marked dirty, instead of waiting out the
+    /// idle tick. `signalDisplayDirty()` (and the ticker) yield into this; the loop drains it.
+    private var displayDirtySignal: AsyncStream<Void>.Continuation?
     private let IMG_ACK_TIMEOUT_NS: UInt64 = 2_000_000_000  // 1000ms timeout (matches Dart host)
     private let IMG_MAX_ATTEMPTS = 3
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatCounter: Int = 0
-    private var evenHubQueueTask: Task<Void, Never>?
-    // FIFO of pending text-container updates. A single-slot var here used to let
-    // a later update (e.g. the constantly-refreshing maneuver text) overwrite an
-    // earlier one for a DIFFERENT container (e.g. the bottom-left trip stats),
-    // so the second container's content never reached the glasses. A queue lets
-    // updates to distinct containers each get drained.
-    private var pendingTextMsgs: [Data] = []
-    private var lastEvenHubMsg: Data?
-    private var lastEvenHubResendsRemaining: Int = 0
+    /// How many redundant resends each text update gets (text has no ACK). The reconcile loop sets a
+    /// container's `pendingSends` to `1 + EVEN_HUB_RESEND_COUNT` on change.
     private let EVEN_HUB_RESEND_COUNT: Int = 1
-    private let evenHubQueueLock = NSLock()
     private var authStarted: Bool = false
 
     /// Dashboard menu: appId → packageName mapping for selection reverse lookup
@@ -1598,6 +1575,11 @@ class G2: NSObject, SGCManager {
             "img-\(id)"
         }
         var bmpData: Data
+        /// Set true when `bmpData` changes and the new pixels haven't been pushed to the glasses yet.
+        /// The reconcile loop (see `displayReconcileTask`) is the sole sender; it clears this once the
+        /// exact bytes it sent still match the container. Lets every display op be a pure state
+        /// mutation, so only one `sendImageData` is ever in flight (no DisplayMutex needed).
+        var dirty: Bool = false
 
         func matches(x: Int32, y: Int32, width: Int32, height: Int32) -> Bool {
             self.x == x && self.y == y && self.width == width && self.height == height
@@ -1615,6 +1597,10 @@ class G2: NSObject, SGCManager {
         let borderColor: Int32
         let borderRadius: Int32
         let paddingLength: Int32
+        /// Remaining sends the reconcile loop owes this container. Text has no ACK, so each content
+        /// change schedules `1 + EVEN_HUB_RESEND_COUNT` sends (the update + a redundant resend on a
+        /// later tick) as a delivery hedge; the loop sends once and decrements per tick until 0.
+        var pendingSends: Int = 0
         var name: String {
             "text-\(id)"
         }
@@ -1636,6 +1622,43 @@ class G2: NSObject, SGCManager {
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
+
+    /// One firmware text line (hardware-calibrated 2026-07-03: 28px overflows,
+    /// 40px clean). Text containers are silently grown to at least this.
+    private static let minTextContainerHeight: Int32 = 40
+
+    /// Scene-verb registries (display.render() pipeline): element id → container
+    /// id(s). Containers stay rect-keyed underneath — these pin element↔container
+    /// so content updates go in place and moves recreate at the SAME container
+    /// id. Images map to an ARRAY of containers: firmware refuses image
+    /// transfers into containers beyond ~200x100, so bigger images tile across
+    /// multiple containers (e.g. 400x100 → two side-by-side, 150x150 → two
+    /// stacked). At most one app's ids are live at a time (DeviceManager sweeps
+    /// the previous app's elements on an app switch).
+    private var sceneTextByElement: [String: Int32] = [:]
+    private var sceneImageByElement: [String: [Int32]] = [:]
+
+    /// Max image-container size the firmware accepts pixels for
+    /// (hardware-verified 2026-07-03: 150x150 refused, 100x100 clean; 200x100
+    /// is the firmware default container and the old docs' boundary).
+    private static let maxImageTileW: Int32 = 200
+    private static let maxImageTileH: Int32 = 100
+
+    /// Tile rects (relative to the element box) covering w×h with tiles the
+    /// firmware will accept. Row-major.
+    private static func imageTileRects(w: Int32, h: Int32) -> [(dx: Int32, dy: Int32, w: Int32, h: Int32)] {
+        let cols = Int((w + maxImageTileW - 1) / maxImageTileW)
+        let rows = Int((h + maxImageTileH - 1) / maxImageTileH)
+        var rects: [(Int32, Int32, Int32, Int32)] = []
+        for r in 0 ..< rows {
+            for c in 0 ..< cols {
+                let dx = Int32(c) * maxImageTileW
+                let dy = Int32(r) * maxImageTileH
+                rects.append((dx, dy, min(maxImageTileW, w - dx), min(maxImageTileH, h - dy)))
+            }
+        }
+        return rects
+    }
     private static let defaultImgContainer = (
         x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100)
     )
@@ -1665,40 +1688,83 @@ class G2: NSObject, SGCManager {
 
     // MARK: - BLE Sending
 
-    // Per-side FIFO write queues. We DON'T dump a multi-packet burst into CoreBluetooth in a tight
-    // loop: when its internal buffer is full, `.withoutResponse` writes are silently DROPPED, so the
-    // glasses receive an incomplete fragment, never ACK it, and the send appears to hang. Instead we
-    // enqueue and drain only while `canSendWriteWithoutResponse` is true, resuming from
-    // `peripheralIsReady(toSendWriteWithoutResponse:)`. This also keeps pacing off any timer/looper.
+    // Per-side FIFO write queues, drained by a single paced async writer per side.
+    //
+    // We write `.withoutResponse` directly and pace with a small `Task.sleep` between packets —
+    // exactly like G1 (`G1.swift attemptSend`). We deliberately do NOT gate on
+    // `canSendWriteWithoutResponse` / wait for `peripheralIsReady(toSendWriteWithoutResponse:)`:
+    // iOS suppresses that "ready" callback for a backgrounded bluetooth-central app (G2 has no
+    // active AVAudioSession — glasses-mic audio arrives over BLE), so a gated drain DEADLOCKS in the
+    // background: the queue grows for the whole bg window and floods the glasses on resume — the
+    // captions "freeze in bg, then flood" bug. G1 never gates and never floods; this matches it.
+    // The pace replaces the gate's overflow protection (the original reason for gating). Any packet
+    // CoreBluetooth still drops self-heals: text is re-sent (TextContainer.pendingSends) and image
+    // fragments retry on their ACK (`awaitImageAck`).
     private var leftWriteQueue: [Data] = []
     private var rightWriteQueue: [Data] = []
+    private var leftDraining = false
+    private var rightDraining = false
+    // Pace between consecutive packets (~G1's chunk pacing). Off any external callback, so the drain
+    // keeps making progress in the background instead of waiting for a callback iOS won't deliver.
+    private let writePaceNanos: UInt64 = 6_000_000
+    // Diagnostic: warn if a side's queue ever backs up (it shouldn't now — the drainer is always
+    // making progress). Rate-limited. Prefixed "BGCAP:" so it's easy to grep/strip after validation.
+    private var bgcapDepthLogAt: Double = 0
 
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
-        // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         if right {
             rightWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: true)
+            startDrain(right: true)
         }
         if left {
             leftWriteQueue.append(contentsOf: packets)
-            drainWriteQueue(right: false)
+            startDrain(right: false)
         }
     }
 
-    /// Drain one side's queue while the peripheral can accept write-without-response. Stops as soon
-    /// as the buffer is full; `peripheralIsReady(toSendWriteWithoutResponse:)` resumes the drain.
-    private func drainWriteQueue(right: Bool) {
-        let peripheral = right ? rightPeripheral : leftPeripheral
-        let char = right ? rightWriteChar : leftWriteChar
-        guard let peripheral = peripheral, let char = char else {
-            // No connection for this side; drop its pending packets so they can't replay later.
-            if right { rightWriteQueue.removeAll() } else { leftWriteQueue.removeAll() }
-            return
+    /// Ensure a single paced drainer is running for this side. Idempotent — a second call while one
+    /// is already draining is a no-op (the running loop will pick up the newly-enqueued packets).
+    private func startDrain(right: Bool) {
+        if right {
+            if rightDraining { return }
+            rightDraining = true
+        } else {
+            if leftDraining { return }
+            leftDraining = true
         }
-        while !(right ? rightWriteQueue : leftWriteQueue).isEmpty {
-            guard peripheral.canSendWriteWithoutResponse else { return }
+        Task { @MainActor [weak self] in
+            await self?.drainLoop(right: right)
+        }
+    }
+
+    /// Drain one side's queue: write each packet directly (`.withoutResponse`), paced by a small
+    /// sleep. No `canSend` gate (see note above). Runs until the queue is empty, then clears the
+    /// per-side flag so the next enqueue restarts it.
+    private func drainLoop(right: Bool) async {
+        while true {
+            guard let peripheral = right ? rightPeripheral : leftPeripheral,
+                let char = right ? rightWriteChar : leftWriteChar
+            else {
+                // No connection for this side; drop pending packets so they can't replay later.
+                if right { rightWriteQueue.removeAll(); rightDraining = false }
+                else { leftWriteQueue.removeAll(); leftDraining = false }
+                return
+            }
+            let depth = (right ? rightWriteQueue : leftWriteQueue).count
+            if depth == 0 {
+                if right { rightDraining = false } else { leftDraining = false }
+                return
+            }
+            if depth > 20 {
+                let now = Date().timeIntervalSince1970
+                if now - bgcapDepthLogAt >= 1.0 {
+                    Bridge.log("BGCAP: g2 write queue depth=\(depth) side=\(right ? "R" : "L") (draining, not blocked)")
+                    bgcapDepthLogAt = now
+                }
+            }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
             peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            try? await Task.sleep(nanoseconds: writePaceNanos)
         }
     }
 
@@ -1986,15 +2052,32 @@ class G2: NSObject, SGCManager {
             }
         }
 
-        // EvenHub text command queue: drain the most recent pending updateText every 100ms
-        evenHubQueueTask?.cancel()
-        evenHubQueueTask = Task { [weak self] in
+        // Display reconcile loop: push any dirty text containers (one send each, with a redundant
+        // resend), then any dirty image containers one at a time. Single sender, so a `sendImageData`
+        // never overlaps another and can't clobber imgAckBox — the invariant DisplayMutex used to
+        // enforce. The loop wakes on each stream element: mutations yield one immediately (instant
+        // reaction), and a ~100ms ticker yields one when idle so periodic work (text resends, image
+        // retries) still runs. The 1-deep buffer coalesces bursts into a single wake.
+        displayReconcileTask?.cancel()
+        displayTickTask?.cancel()
+        // Closure-based initializer (not makeStream, which is iOS 16+). 1-deep newest buffer so a
+        // burst of mutations coalesces into a single wake.
+        var signalContinuation: AsyncStream<Void>.Continuation!
+        let signalStream = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            signalContinuation = continuation
+        }
+        displayDirtySignal = signalContinuation
+        displayTickTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    self?.drainEvenHubQueue()
-                }
+                self?.displayDirtySignal?.yield()
+            }
+        }
+        displayReconcileTask = Task { [weak self] in
+            for await _ in signalStream {
+                if Task.isCancelled { break }
+                await self?.reconcileDisplay()
             }
         }
     }
@@ -2002,13 +2085,19 @@ class G2: NSObject, SGCManager {
     private func stopHeartbeats() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
-        evenHubQueueTask?.cancel()
-        evenHubQueueTask = nil
-        evenHubQueueLock.lock()
-        pendingTextMsgs.removeAll()
-        lastEvenHubMsg = nil
-        lastEvenHubResendsRemaining = 0
-        evenHubQueueLock.unlock()
+        displayTickTask?.cancel()
+        displayTickTask = nil
+        displayReconcileTask?.cancel()
+        displayReconcileTask = nil
+        displayDirtySignal?.finish()
+        displayDirtySignal = nil
+    }
+
+    /// Wake the reconcile loop now (a container was just marked dirty / had sends scheduled). Cheap
+    /// and idempotent: coalesced by the stream's 1-deep buffer, so a burst of mutations yields at
+    /// most one extra wake.
+    private func signalDisplayDirty() {
+        displayDirtySignal?.yield()
     }
 
     private func sendEvenHubHeartbeat() {
@@ -2097,48 +2186,64 @@ class G2: NSObject, SGCManager {
         }
 
         let rx = x ?? G2.defaultTextContainer.x
-        let ry = y ?? G2.defaultTextContainer.y
+        // Legacy callers can hand us y beyond the canvas — clamp it first so
+        // the height formula below can't go negative/below one fw line.
+        let ry = min(max(y ?? G2.defaultTextContainer.y, 0), 288 - G2.minTextContainerHeight)
         let rw = width ?? G2.defaultTextContainer.width
-        let rh = height ?? G2.defaultTextContainer.height
+        // Firmware guard (hardware-calibrated): a text container shorter than
+        // one firmware line (~40px; 28px overflowed) makes the fw draw its
+        // overflow-indicator tick. Silently grow to one line, clamped to the
+        // canvas. Content-independent so rect keys stay stable across updates.
+        let rhRequested = height ?? G2.defaultTextContainer.height
+        let rh = min(max(rhRequested, G2.minTextContainerHeight), 288 - ry)
         let borderWidth = borderWidth ?? G2.defaultTextContainer.borderWidth
         let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
         let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
         let paddingLength = paddingLength ?? G2.defaultTextContainer.paddingLength
         let content = text.isEmpty ? " " : text
 
-        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
-        var container: TextContainer
+        // Pure state mutation: update the container's content and schedule its sends; the reconcile
+        // loop (`displayReconcileTask`) does the actual updateText writes. Reuse an existing container
+        // if the rect matches exactly; otherwise add a new one.
         if let i = textContainers.firstIndex(where: {
             $0.matches(
                 x: rx, y: ry, width: rw, height: rh, borderWidth: borderWidth,
                 borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
         }) {
             textContainers[i].content = content
-            container = textContainers[i]
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+            let container = textContainers[i]
+            // Wake the reconcile loop either way. When the page is live it sends the text;
+            // when the page is down the loop coalesces the burst into a single rebuild (see
+            // reconcileDisplay) instead of one shutdown/rebuild per caption. The container's
+            // content is overwritten in place (last-wins), so a backlog that piled up while
+            // iOS had us suspended collapses to one catch-up render — no flood on resume.
+            signalDisplayDirty()
+            if !pageCreated {
+                Bridge.log(
+                    "G2: sendText() - page down, buffering latest content for container \(container.id) (rebuild deferred to reconcile)"
+                )
+                return
+            }
             Bridge.log(
                 "G2: sendText() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
-            if !pageCreated {
-                await rebuildPage()
-                return
-            }
-            let msg = EvenHubProto.updateTextMessage(
-                containerID: container.id,
-                contentOffset: 0,
-                contentLength: Int32(container.content.utf8.count),
-                content: container.content
-            )
-            queueEvenHubCommand(msg)
             return
         }
 
-        container = addTextContainer(
+        let container = addTextContainer(
             x: rx, y: ry, width: rw, height: rh, content: content, borderWidth: borderWidth,
             borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
         Bridge.log(
             "G2: sendText() - added text container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
         )
-        await rebuildPage()
+        // New container changes page structure: rebuild it (the rebuild embeds initial content), then
+        // schedule sends so the loop refreshes it.
+        if let j = textContainers.firstIndex(where: { $0.id == container.id }) {
+            textContainers[j].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+        }
+        signalDisplayDirty()
+        await requestPageRebuild()
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
@@ -2148,31 +2253,373 @@ class G2: NSObject, SGCManager {
         await sendTextWall(combined)
     }
 
+    // MARK: - Scene verbs (display.render() pipeline)
+
+    /// Scene-frame rebuild batching. A frame with several new containers must
+    /// NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
+    /// and 4-5 shutdown/recover cycles back-to-back are a firmware rebuild
+    /// storm — the G2 punishes those by dropping the BLE link (same failure
+    /// family as the mic-session incidents). While a frame is being applied,
+    /// structural changes only mark this flag; applySceneFrame does ONE rebuild
+    /// at the end.
+    private var sceneBatchDepth = 0
+    private var sceneStructuralPending = false
+
+    /// Rebuild now — or, inside an applySceneFrame batch, once at frame end.
+    private func requestPageRebuild() async {
+        if sceneBatchDepth > 0 {
+            sceneStructuralPending = true
+            return
+        }
+        await coalescedPageRebuild()
+    }
+
+    /// Structural change: tear down + rebuild ONLY when the page is actually
+    /// live. When the page is already down (mid-recovery, or a prior frame's
+    /// rebuild in flight), sending another SHUTDOWN_PAGE restarts the firmware
+    /// recovery cycle — frames arriving faster than recovery completes then
+    /// keep the page down FOREVER (nothing renders, image fragments all fail).
+    /// A down page just needs the dirty signal: the reconcile loop resurrects
+    /// it once, with the full current container list, which already includes
+    /// every structural change accumulated while it was down.
+    private func coalescedPageRebuild() async {
+        if pageCreated {
+            await rebuildPage()
+        } else {
+            Bridge.log("G2: structural change while page down — deferring to reconcile rebuild (no extra shutdown)")
+            signalDisplayDirty()
+        }
+    }
+
+    /// G2 override of the default paint-then-sweep: identical walk, but
+    /// structural rebuilds are coalesced to a single shutdown/rebuild per frame.
+    func applySceneFrame(_ frame: SceneFrame) async {
+        if frame.replay {
+            await onSceneReplay(frame.appId)
+        }
+        sceneBatchDepth += 1
+        sceneStructuralPending = false
+        // Type-changed ids (removed AND re-painted this frame) must be removed
+        // BEFORE the paint — post-paint removal would delete the just-painted
+        // replacement (registries key by id).
+        let paintedIds = Set(frame.elements.map { $0.id })
+        for id in frame.removed where paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        for el in frame.elements {
+            if !frame.replay, el.change == "unchanged" { continue }
+            switch el.type {
+            case "text":
+                await drawLayoutText(
+                    el.text ?? "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: el.border, borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "rect":
+                await drawLayoutText(
+                    "", x: el.x, y: el.y, width: el.w, height: el.h,
+                    borderWidth: max(1, el.border), borderRadius: el.radius,
+                    elementId: el.id, layoutId: frame.appId
+                )
+            case "image":
+                if let data = el.data {
+                    _ = await drawLayoutBitmap(
+                        base64ImageData: data, x: el.x, y: el.y, width: el.w, height: el.h,
+                        elementId: el.id, layoutId: frame.appId
+                    )
+                }
+            default:
+                Bridge.log("G2: applySceneFrame: unknown element type \(el.type)")
+            }
+        }
+        for id in frame.removed where !paintedIds.contains(id) {
+            await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+            await coalescedPageRebuild()
+        }
+    }
+
+    func onSceneReplay(_: String) async {
+        // A replay frame repaints from scratch through the create path; forget
+        // the element mapping so creates re-match/re-register cleanly.
+        sceneTextByElement.removeAll()
+        sceneImageByElement.removeAll()
+    }
+
+    func drawLayoutText(
+        _ text: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, elementId: String, layoutId _: String?
+    ) async {
+        // Same firmware min-height guard as sendTextAt, applied before the
+        // registry rect checks so grown rects stay consistent across calls.
+        // y is clamped first so the height term can't go negative.
+        let y = min(max(y, 0), 288 - G2.minTextContainerHeight)
+        let height = min(max(height, G2.minTextContainerHeight), 288 - y)
+        let content = text.isEmpty ? " " : text
+        if let existingId = sceneTextByElement[elementId] {
+            if let i = textContainers.firstIndex(where: { $0.id == existingId }) {
+                let c = textContainers[i]
+                if c.x == x, c.y == y, c.width == width, c.height == height,
+                   c.borderWidth == borderWidth, c.borderRadius == borderRadius
+                {
+                    // Content-only change: update in place — NEVER a page
+                    // rebuild. On G2 this is correctness, not perf: page
+                    // teardown couples to mic state and firmware recovery
+                    // storms (design doc §3.4.1 hard rule).
+                    textContainers[i].content = content
+                    textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                    signalDisplayDirty()
+                    return
+                }
+                // Moved/restyled: recreate at the SAME container id (structural).
+                textContainers[i] = TextContainer(
+                    id: existingId, x: x, y: y, width: width, height: height, content: content,
+                    borderWidth: borderWidth, borderColor: G2.defaultTextContainer.borderColor,
+                    borderRadius: borderRadius, paddingLength: G2.defaultTextContainer.paddingLength,
+                    pendingSends: 1 + EVEN_HUB_RESEND_COUNT
+                )
+                signalDisplayDirty()
+                await requestPageRebuild()
+                return
+            }
+            // Container got evicted underneath us — fall through to create.
+            sceneTextByElement.removeValue(forKey: elementId)
+        }
+
+        await sendTextAt(
+            content, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius
+        )
+        if let i = textContainers.firstIndex(where: {
+            $0.matches(
+                x: x, y: y, width: width, height: height, borderWidth: borderWidth,
+                borderColor: G2.defaultTextContainer.borderColor, borderRadius: borderRadius,
+                paddingLength: G2.defaultTextContainer.paddingLength)
+        }) {
+            let cid = textContainers[i].id
+            // The container id may have been LRU-recycled from another element.
+            sceneTextByElement = sceneTextByElement.filter { $0.value != cid }
+            sceneTextByElement[elementId] = cid
+        }
+    }
+
+    func drawLayoutBitmap(
+        base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
+        elementId: String, layoutId _: String?
+    ) async -> Bool {
+        let tiles = G2.imageTileRects(w: width, h: height)
+        guard tiles.count <= imageContainerIDPool.count else {
+            Bridge.log(
+                "G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) needs \(tiles.count) tiles — exceeds the \(imageContainerIDPool.count)-container pool, dropping"
+            )
+            return false
+        }
+
+        // Element moved or re-tiled: blacken any containers whose rects no
+        // longer belong to this element's tile set, then let the tile upserts
+        // reuse/place the rest.
+        if let existing = sceneImageByElement[elementId] {
+            let wantedRects = tiles.map { t in (x + t.dx, y + t.dy, t.w, t.h) }
+            for cid in existing {
+                if let i = imageContainers.firstIndex(where: { $0.id == cid }) {
+                    let c = imageContainers[i]
+                    let stillWanted = wantedRects.contains { $0 == (c.x, c.y, c.width, c.height) }
+                    if !stillWanted, !c.bmpData.isEmpty {
+                        imageContainers[i].bmpData = Data()
+                        imageContainers[i].dirty = true
+                        signalDisplayDirty()
+                    }
+                }
+            }
+        }
+        sceneImageByElement.removeValue(forKey: elementId)
+
+        var cids: [Int32] = []
+        if tiles.count == 1 {
+            // Single container — the existing path (decode, aspect-fit, encode).
+            let ok = await displayBitmap(
+                base64ImageData: base64ImageData, x: x, y: y, width: width, height: height
+            )
+            guard ok,
+                  let i = imageContainers.firstIndex(where: {
+                      $0.matches(x: x, y: y, width: width, height: height)
+                  })
+            else { return false }
+            cids = [imageContainers[i].id]
+        } else {
+            // Tiled: render the whole image to grayscale ONCE at the element
+            // size, then slice per-tile rows into their own 4-bit BMPs, one
+            // firmware container per tile.
+            guard let rawData = Data(base64Encoded: base64ImageData) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to decode base64")
+                return false
+            }
+            guard let gray = renderG2Grayscale(rawData, targetWidth: Int(width), targetHeight: Int(height)) else {
+                Bridge.log("G2: drawLayoutBitmap - failed to render grayscale")
+                return false
+            }
+            Bridge.log("G2: drawLayoutBitmap '\(elementId)' \(width)x\(height) → \(tiles.count) tiles")
+            for t in tiles {
+                var tilePixels = Data(capacity: Int(t.w * t.h))
+                for row in 0 ..< Int(t.h) {
+                    let start = (Int(t.dy) + row) * Int(width) + Int(t.dx)
+                    tilePixels.append(gray.subdata(in: (gray.startIndex + start)..<(gray.startIndex + start + Int(t.w))))
+                }
+                guard let bmp = build4BitBmp(grayscalePixels: tilePixels, width: Int(t.w), height: Int(t.h)) else {
+                    Bridge.log("G2: drawLayoutBitmap - tile encode failed")
+                    return false
+                }
+                let tx = x + t.dx
+                let ty = y + t.dy
+                if let i = imageContainers.firstIndex(where: { $0.matches(x: tx, y: ty, width: t.w, height: t.h) }) {
+                    imageContainers[i].bmpData = bmp
+                    imageContainers[i].dirty = true
+                    cids.append(imageContainers[i].id)
+                } else {
+                    let container = addImageContainer(x: tx, y: ty, width: t.w, height: t.h, bmpData: bmp)
+                    if let j = imageContainers.firstIndex(where: { $0.id == container.id }) {
+                        imageContainers[j].dirty = true
+                    }
+                    cids.append(container.id)
+                    await requestPageRebuild()
+                }
+            }
+            signalDisplayDirty()
+        }
+
+        // Container ids may have been LRU-recycled from other elements.
+        let taken = Set(cids)
+        for (key, value) in sceneImageByElement where value.contains(where: taken.contains) {
+            sceneImageByElement[key] = value.filter { !taken.contains($0) }
+            if sceneImageByElement[key]?.isEmpty == true {
+                sceneImageByElement.removeValue(forKey: key)
+            }
+        }
+        sceneImageByElement[elementId] = cids
+        return true
+    }
+
+    func removeLayoutElement(_ elementId: String, layoutId _: String?) async {
+        // STRUCTURAL removal: blanked-in-place containers still RENDER (the
+        // firmware draws a cursor-like mark at a whitespace container's content
+        // origin — the long-hunted stray tick; legacy never saw it because its
+        // only container's origin sat above the visible eyebox). So a removed
+        // element leaves the page entirely: blank it for the live page, drop it
+        // from the tracked list (freeing the pool id), and mark the frame
+        // structural — the batched frame-end rebuild recreates the page without
+        // it. Never a per-remove shutdown (mic coupling).
+        if let id = sceneTextByElement.removeValue(forKey: elementId),
+           let i = textContainers.firstIndex(where: { $0.id == id })
+        {
+            textContainers.remove(at: i)
+            await requestPageRebuild()
+        }
+        if let ids = sceneImageByElement.removeValue(forKey: elementId) {
+            for id in ids {
+                if let i = imageContainers.firstIndex(where: { $0.id == id }),
+                   !imageContainers[i].bmpData.isEmpty
+                {
+                    imageContainers[i].bmpData = Data()
+                    imageContainers[i].dirty = true
+                }
+            }
+            signalDisplayDirty()
+            await requestPageRebuild()
+        }
+    }
+
+    /// Sweep a set of scene elements as ONE batched structural change (called
+    /// by DeviceManager on scene→legacy and cross-app transitions, outside any
+    /// applySceneFrame batch — without batching, each remove would rebuild).
+    func clearSceneElements(_ elementIds: [String]) async {
+        sceneBatchDepth += 1
+        for id in elementIds {
+            await removeLayoutElement(id, layoutId: nil)
+        }
+        sceneBatchDepth -= 1
+        if sceneStructuralPending {
+            sceneStructuralPending = false
+            await coalescedPageRebuild()
+        }
+    }
+
+    /// Decode an image and render it to raw 8-bit grayscale at target size
+    /// (aspect-fit, centered on black) — the front half of `convertToG2Bmp`,
+    /// exposed for the tiler which encodes per-tile BMPs from one render.
+    private func renderG2Grayscale(_ data: Data, targetWidth: Int, targetHeight: Int) -> Data? {
+        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
+        let scale = min(
+            Double(targetWidth) / Double(cgImage.width), Double(targetHeight) / Double(cgImage.height)
+        )
+        let scaledW = max(1, Int(Double(cgImage.width) * scale))
+        let scaledH = max(1, Int(Double(cgImage.height) * scale))
+        let offsetX = (targetWidth - scaledW) / 2
+        let offsetY = (targetHeight - scaledH) / 2
+
+        var pixels = Data(count: targetWidth * targetHeight)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buf in
+            guard
+                let ctx = CGContext(
+                    data: buf.baseAddress,
+                    width: targetWidth,
+                    height: targetHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: targetWidth,
+                    space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                )
+            else { return false }
+            ctx.setFillColor(gray: 0, alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+            ctx.interpolationQuality = .high
+            ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
+            return true
+        }
+        return drawn ? pixels : nil
+    }
+
     func clearDisplay() {
         Bridge.log("G2: clearDisplay()")
-        // Don't shutdown the EvenHub page — that kills audio streaming too.
-        // Instead, just clear the text content by sending a space.
-
-        // if !pageCreated {
-        //     Bridge.log("G2: clearDisplay() - page not created")
-        //     createPageWithContainers()
-        // }
-
-        // reset the content of all text containers to empty:
+        // Blank the text in place — do NOT shut down + rebuild the page. A teardown kills audio
+        // and triggers a firmware systemExit→recovery→rebuild; the cloud sends clearDisplay in
+        // bursts, so that turned into a rebuild storm. The reconcile loop pushes the blanked text.
         for i in textContainers.indices {
-            textContainers[i].content = " "
+            textContainers[i].content = "\n"
+            textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
-        for i in imageContainers.indices {
+        for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
+            // The firmware still shows this container's image; emptying bmpData locally never
+            // reaches it (#3232 dropped the teardown that used to drop empty containers on
+            // rebuild). Empty + dirty tells the reconcile loop to push an all-black frame that
+            // overwrites the image on-glass — the page stays up, so no audio/mic churn.
             imageContainers[i].bmpData = Data()
+            imageContainers[i].dirty = true
         }
-        // shutdown the page and then recreate the containers without the content:
-        // Serialize the teardown so it can't tear the page down mid image-send (see DisplayMutex).
-        Task {
-            await displayMutex.acquire()
-            defer { displayMutex.release() }
-            await rebuildPage()
-            // try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
-            // createPageWithContainers()
+        signalDisplayDirty()
+
+        // Purge scene HUD containers structurally: a blanked small box still
+        // renders the firmware's overflow tick (a "\n" husk is two empty lines
+        // in a one-line box) and corrupts whatever app draws next. Full-canvas
+        // containers stay blanked-in-place — the shipped caption-gap behavior,
+        // storm-safe (no rebuild on ordinary clears). Only when positioned HUD
+        // husks exist (app exit) do we drop them + rebuild ONCE.
+        let isFullCanvas: (TextContainer) -> Bool = {
+            $0.x == 0 && $0.y == 0 && $0.width >= G2.defaultTextContainer.width
+                && $0.height >= G2.defaultTextContainer.height
+        }
+        let huskIds = Set(textContainers.filter { !isFullCanvas($0) }.map { $0.id })
+        if !huskIds.isEmpty {
+            textContainers.removeAll { huskIds.contains($0.id) }
+            sceneTextByElement = sceneTextByElement.filter { !huskIds.contains($0.value) }
+            sceneImageByElement.removeAll()
+            Bridge.log("G2: clearDisplay() — purging \(huskIds.count) positioned husk container(s), one rebuild")
+            Task { [weak self] in
+                await self?.coalescedPageRebuild()
+            }
         }
     }
 
@@ -2188,7 +2635,7 @@ class G2: NSObject, SGCManager {
         let fragmentSize = 4096
         let totalSize = Int32(bmpData.count)
         let fragmentCount = (bmpData.count + fragmentSize - 1) / fragmentSize
-        
+
         // skip if the image is empty:
         if bmpData.count == 0 {
             return
@@ -2227,6 +2674,8 @@ class G2: NSObject, SGCManager {
                     mapFragmentPacketSize: Int32(fragment.count),
                     mapRawData: Data(fragment)
                 )
+                // Send the fragment directly: the reconcile loop already serializes whole image
+                // sends, and the per-fragment ACK gate below provides pacing — no transmit queue.
                 sendEvenHubCommand(msg)
                 // Bridge.log("G2: img_sen: session=\(sessionId) fragment=\(fragmentIndex)")
 
@@ -2294,11 +2743,9 @@ class G2: NSObject, SGCManager {
         base64ImageData: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil,
         height: Int32? = nil
     ) async -> Bool {
-        // Serialize against other display mutations so two image sends can't overlap and
-        // clobber the single-slot imgAckBox (see DisplayMutex).
-        await displayMutex.acquire()
-        defer { displayMutex.release() }
-
+        // Pure state mutation: update the target container's bytes and mark it dirty. The reconcile
+        // loop (`displayReconcileTask`) is the sole sender, so two displayBitmap calls can never
+        // overlap a `sendImageData` and clobber the single-slot imgAckBox — no lock needed.
         let rx = x ?? G2.defaultImgContainer.x
         let ry = y ?? G2.defaultImgContainer.y
         let rw = width ?? G2.defaultImgContainer.width
@@ -2324,31 +2771,120 @@ class G2: NSObject, SGCManager {
         }
 
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
-        var container: ImgContainer
         if let i = imageContainers.firstIndex(where: {
             $0.matches(x: rx, y: ry, width: rw, height: rh)
         }) {
             imageContainers[i].bmpData = bmpData
-            container = imageContainers[i]
+            imageContainers[i].dirty = true
+            signalDisplayDirty()
+            let container = imageContainers[i]
             Bridge.log(
                 "G2: displayBitmap() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
+            // A brand-new page needs its structure built before the loop can push pixels; the dirty
+            // flag stays set so the reconcile loop sends the image once the page exists.
             if !pageCreated {
-                await rebuildPage()
-                return true
+                await requestPageRebuild()
             }
-            await sendImageData(
-                containerID: container.id, containerName: container.name, bmpData: container.bmpData
-            )
-            return true
         } else {
-            container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
+            let container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
+            if let j = imageContainers.firstIndex(where: { $0.id == container.id }) {
+                imageContainers[j].dirty = true
+            }
+            signalDisplayDirty()
             Bridge.log(
                 "G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
             )
-            await rebuildPage()
+            // New container changes page structure: rebuild it, then the loop sends the pixels.
+            await requestPageRebuild()
         }
         return true
+    }
+
+    /// Push pending display state to the glasses: dirty text containers first (one updateText each,
+    /// with a redundant resend per `pendingSends`), then dirty image containers one at a time. The
+    /// loop awaits this, and this awaits each `sendImageData` in turn, so image sends never overlap
+    /// and `imgAckBox` is never clobbered. A failed image send leaves the container dirty for the
+    /// next cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
+    private func reconcileDisplay() async {
+        // Page is dead but content is waiting (e.g. captions kept arriving while iOS had us
+        // suspended and the firmware tore the session down). Rebuild the page ONCE here — the
+        // reconcile loop is coalesced (1-deep signal buffer), so a burst of buffered sendText
+        // calls collapses into a single rebuild instead of one shutdown/rebuild per caption.
+        // rebuildState() recreates the page, re-pushes the current text/image, and re-arms the
+        // mic iff intent says so. Skip while the native dashboard owns the screen.
+        if !pageCreated {
+            let useNativeDashboard =
+                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+            // Only resurrect a dead page for non-blank content — don't rebuild just to render a
+            // clearDisplay's blank, or a clear burst churns the page back up pointlessly.
+            let hasPendingText = textContainers.contains {
+                $0.pendingSends > 0 && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+            let hasPendingImage = imageContainers.contains { $0.dirty && !$0.bmpData.isEmpty }
+            if (hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0) {
+                Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
+                await rebuildState()
+            }
+            return
+        }
+
+        // Text: synchronous, no ACK. Send one update per container with pending sends and decrement.
+        for i in textContainers.indices where textContainers[i].pendingSends > 0 {
+            let container = textContainers[i]
+            // Byte-exact content log (debugDescription escapes \n and non-ASCII)
+            // — artifact forensics: match on-glass rendering to what was sent.
+            Bridge.log(
+                "G2: updateText id=\(container.id) rect=\(container.x),\(container.y) \(container.width)x\(container.height) bytes=\(container.content.utf8.count) content=\(container.content.debugDescription)"
+            )
+            let msg = EvenHubProto.updateTextMessage(
+                containerID: container.id,
+                contentOffset: 0,
+                contentLength: Int32(container.content.utf8.count),
+                content: container.content
+            )
+            sendEvenHubCommand(msg)
+            textContainers[i].pendingSends -= 1
+        }
+
+        // Images: ACK-gated, exactly one in flight. Cap iterations defensively so a container that
+        // keeps being re-dirtied mid-send can't spin this pass forever (next tick picks it up).
+        var guardCount = 0
+        while pageCreated, guardCount < imageContainerIDPool.count,
+            let i = imageContainers.firstIndex(where: { $0.dirty })
+        {
+            guardCount += 1
+            let container = imageContainers[i]
+            let sentBytes = container.bmpData
+            // Empty + dirty means "just cleared": the firmware still shows the old image, so push an
+            // all-black frame sized to the container to overwrite it on-glass (the page stays up — no
+            // teardown, no mic churn). A container only reaches here when dirty, and clearDisplay is
+            // the sole source of an empty-but-dirty container, so this fires exactly on a clear.
+            if sentBytes.isEmpty {
+                if let blank = blankBmp(width: Int(container.width), height: Int(container.height)) {
+                    await sendImageData(
+                        containerID: container.id, containerName: container.name, bmpData: blank
+                    )
+                }
+                // Only settle the flag if it's still empty — a displayBitmap during the await would
+                // have set new bytes, so leave it dirty for the next pass to send the real image.
+                if let j = imageContainers.firstIndex(where: { $0.id == container.id }),
+                    imageContainers[j].bmpData.isEmpty
+                {
+                    imageContainers[j].dirty = false
+                }
+                continue
+            }
+            await sendImageData(
+                containerID: container.id, containerName: container.name, bmpData: sentBytes
+            )
+            // Re-find by id: the array may have shifted (eviction) during the await.
+            if let j = imageContainers.firstIndex(where: { $0.id == container.id }),
+                imageContainers[j].bmpData == sentBytes
+            {
+                imageContainers[j].dirty = false
+            }
+        }
     }
 
     /// Add a new image container for `rect`, evicting the oldest when the list is full (max 4).
@@ -2395,48 +2931,67 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        try? await Task.sleep(nanoseconds: 300_000_000)// 300ms to settle
         // we will automatically rebuild state when we detect the glasses shutdown:
         // await rebuildState()
     }
 
-    // re-creates the containers and sends all images and text again to the glasses:
+    // re-creates the containers and re-sends all images to the glasses:
     private func rebuildState() async {
-        // Hold the display lock for the whole rebuild so its per-container sendImageData calls
-        // can't interleave with a concurrent displayBitmap (see DisplayMutex).
-        await displayMutex.acquire()
-        defer { displayMutex.release() }
-
         Bridge.log("G2: rebuildState()")
-        // recreate the containers:
+        // recreate the containers (sets pageCreated = true; embeds text content directly):
         createPageWithContainers()
 
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
-        // send any image containers we have
-        // go through each container and send the data:
-        for container in imageContainers {
+        // Mark every image container dirty and let the reconcile loop re-send them, one at a time.
+        // Doing the sends here directly is what used to race a concurrent displayBitmap and clobber
+        // imgAckBox; routing through the dirty flag keeps a single sender (see displayReconcileTask).
+        // Text needs no resend here: createPageWithContainers already embeds each container's content.
+        for i in imageContainers.indices where !imageContainers[i].bmpData.isEmpty {
             Bridge.log(
-                "G2: rebuildState() - sending image data to container \(container.id), \(container.bmpData.count) bytes"
+                "G2: rebuildState() - marking container \(imageContainers[i].id) dirty (\(imageContainers[i].bmpData.count) bytes)"
             )
-            await sendImageData(
-                containerID: container.id, containerName: container.name, bmpData: container.bmpData
-            )
-            try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms between containers
+            imageContainers[i].dirty = true
         }
+        signalDisplayDirty()
 
-        // go through each text container and send the data:
-        // disabled because text containers are initialized with their content:
-        // for container in textContainers {
-        //     let msg = EvenHubProto.updateTextMessage(
-        //         containerID: container.id,
-        //         contentOffset: 0,
-        //         contentLength: Int32(container.content.utf8.count),
-        //         content: container.content
-        //     )
-        //     sendEvenHubCommand(msg)
-        // }
-        
         try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
         restartMicIfAlreadyEnabled()
+    }
+
+    /// Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never
+    /// stack rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this
+    /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
+    /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
+    private func recoverPageAndMic(reason: String) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        // If the page is already alive and the mic matches intent, there's nothing to recover —
+        // this is a spurious/phantom firmware event (it spams close/exit even when our page is
+        // healthy). Rebuilding here is what created the churn, so skip it.
+        let micIntent = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        if pageCreated && evenHubMicActive == micIntent {
+            // Bridge.log("G2: recover(\(reason)) skipped — page alive, mic matches intent")
+            return
+        }
+        if recoveryInFlight {
+            // Bridge.log("G2: recover(\(reason)) skipped — already in flight")
+            return
+        }
+        if now - lastRecoveryRebuildMs < RECOVERY_DEBOUNCE_MS {
+            // Bridge.log("G2: recover(\(reason)) skipped — debounced")
+            return
+        }
+        recoveryInFlight = true
+        lastRecoveryRebuildMs = now
+        Bridge.log("G2: recover(\(reason)) — rebuilding EvenHub page")
+        Task { [weak self] in
+            guard let self = self else { return }
+            await self.rebuildState()
+            // Reconcile against DeviceManager's authoritative current view so the glasses
+            // match the phone, not just the last-cached G2 containers.
+            DeviceManager.shared.sendCurrentState()
+            self.recoveryInFlight = false
+        }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2588,6 +3143,15 @@ class G2: NSObject, SGCManager {
         return bmp
     }
 
+    /// Build an all-black BMP sized to a container. Sent to overwrite (and thus visually clear) an
+    /// image container without tearing the page down — on the green monochrome display, pixel 0 is
+    /// unlit, so an all-zero frame reads as blank. Used by the reconcile loop to clear a bitmap.
+    private func blankBmp(width: Int, height: Int) -> Data? {
+        guard width > 0, height > 0 else { return nil }
+        let zeros = Data(count: width * height)  // all-zero 8-bit grayscale = black
+        return build4BitBmp(grayscalePixels: zeros, width: width, height: height)
+    }
+
     /// Build a 4-bit indexed BMP file from 8-bit grayscale pixel data.
     /// BMP rows are stored bottom-up. Each row is padded to a 4-byte boundary.
     private func build4BitBmp(grayscalePixels: Data, width: Int, height: Int) -> Data? {
@@ -2667,10 +3231,14 @@ class G2: NSObject, SGCManager {
     /// The glasses fall back to the dashboard automatically when no page is up.
     func showDashboard() {
         Bridge.log("G2: showDashboard()")
-        dashboardShowing += 2
+        // Dashboard is open: a 0/1 flag (the old +=2/-=1 depth dance drifted >0 and wedged the
+        // mic). dashboardOpening latches so the open-confirm 08011A00 doesn't trigger recovery.
+        dashboardShowing = 1
+        dashboardOpening = true
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        evenHubMicActive = false  // dashboard takes EvenHub focus; firmware kills the mic
         currentBitmapBase64 = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
@@ -2827,19 +3395,45 @@ class G2: NSObject, SGCManager {
     // MARK: - Private Display Helpers
 
     private func createPageWithContainers() {
-        // build the page's text containers from the live tracked list.
-        // iterate by index not using map:
-        var textContainerProps: [Data] = []
-        for (index, c) in textContainers.enumerated() {
+        // Dedicated event-capture container: id 0, 1x1, borderless, empty — the
+        // designated event-capture slot per the RE demos ("container 0 is
+        // event-capture"). Touch events keep flowing through it, and no REAL
+        // container carries the flag: marking whichever container happened to
+        // be first (the old behavior) painted a visible artifact once pages
+        // stopped being one full-screen box — the stray line Alex saw
+        // persisting across miniapps.
+        var textContainerProps: [Data] = [
+            EvenHubProto.textContainerProperty(
+                x: 0, y: 0, width: 1, height: 1,
+                borderWidth: 0, borderColor: 0, borderRadius: 0,
+                paddingLength: 0, containerID: 0,
+                containerName: "evt-0", isEventCapture: true,
+                content: ""
+            ),
+        ]
+        for c in textContainers {
             textContainerProps.append(
                 EvenHubProto.textContainerProperty(
                     x: c.x, y: c.y, width: c.width, height: c.height,
                     borderWidth: c.borderWidth, borderColor: c.borderColor,
                     borderRadius: c.borderRadius,
                     paddingLength: c.paddingLength, containerID: c.id,
-                    containerName: c.name, isEventCapture: index == 0,  // the first container is the event capture container
+                    containerName: c.name, isEventCapture: false,
                     content: c.content
                 ))
+        }
+
+        // Page-composition dump: one line per container on every page create,
+        // so an on-glass artifact can be matched to exactly what we sent.
+        for c in textContainers {
+            Bridge.log(
+                "G2: page-comp text id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) border=\(c.borderWidth)/\(c.borderRadius) pad=\(c.paddingLength) contentLen=\(c.content.count)"
+            )
+        }
+        for c in imageContainers {
+            Bridge.log(
+                "G2: page-comp image id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) bytes=\(c.bmpData.count)"
+            )
         }
 
         // iterate all image containers, remove any entrys with duplicate id's, and ensure the ids in the imageContainerIDPool is up-to-date:
@@ -2887,38 +3481,6 @@ class G2: NSObject, SGCManager {
         pageCreated = true
     }
 
-    private func queueEvenHubCommand(_ payload: Data) {
-        evenHubQueueLock.lock()
-        // Append rather than overwrite so updates to different text containers
-        // (maneuver text + bottom-left trip stats) all survive. Cap the backlog
-        // so a stall can't grow it unbounded; dropping the oldest is fine since
-        // text updates are idempotent (the next frame re-pushes current content).
-        pendingTextMsgs.append(payload)
-        if pendingTextMsgs.count > 8 {
-            pendingTextMsgs.removeFirst(pendingTextMsgs.count - 8)
-        }
-        evenHubQueueLock.unlock()
-    }
-
-    private func drainEvenHubQueue() {
-        evenHubQueueLock.lock()
-        let toSend: Data?
-        if !pendingTextMsgs.isEmpty {
-            let msg = pendingTextMsgs.removeFirst()
-            lastEvenHubMsg = msg
-            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
-            toSend = msg
-        } else if lastEvenHubResendsRemaining > 0, let last = lastEvenHubMsg {
-            lastEvenHubResendsRemaining -= 1
-            toSend = last
-        } else {
-            toSend = nil
-        }
-        evenHubQueueLock.unlock()
-        guard let toSend = toSend else { return }
-        sendEvenHubCommand(toSend)
-    }
-
     private func restartMicIfAlreadyEnabled() {
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
         if currentEnabled {
@@ -2927,8 +3489,10 @@ class G2: NSObject, SGCManager {
     }
 
     func restartMic() {
-        // if already enabled, set to disabled, then send enabled after 500ms:
+        // Intent is "mic on". The mic only exists inside a live EvenHub page, so we
+        // toggle it off then back on (the firmware needs the off→on edge to re-arm).
         DeviceStore.shared.apply("glasses", "micEnabled", true)
+        evenHubMicActive = false
         let msg = EvenHubProto.audioControlMessage(enable: false)
         sendEvenHubCommand(msg)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -2936,14 +3500,24 @@ class G2: NSObject, SGCManager {
             let useNativeDashboard =
                 DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
             // Bridge.log("G2: setMicEnabled - useNativeDashboard=\(useNativeDashboard), dashboardShowing=\(dashboardShowing)")
+            // Dashboard owns the screen + session right now — don't arm the mic into a
+            // page the dashboard has taken over; recovery re-arms on dashboard close.
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if !pageCreated {
-                DeviceManager.shared.sendCurrentState()  // should re-create the page if needed
+            // Never send audioControl(enable:true) without a live page — no page means no
+            // mic. Rebuild first, which itself re-arms the mic at the end (intent is on),
+            // so we're done.
+            if !self.pageCreated {
+                Task { [weak self] in
+                    await self?.rebuildState()
+                    DeviceManager.shared.sendCurrentState()
+                }
+                return
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
+            self.evenHubMicActive = true
         }
     }
 
@@ -2951,8 +3525,12 @@ class G2: NSObject, SGCManager {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G2: setMicEnabled(\(enabled))")
+        if enabled && !pageCreated {
+            restartMic()
+            return
+        }
         let currentEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-        if currentEnabled && enabled {
+        if enabled && currentEnabled {
             restartMic()
             return
         }
@@ -2960,6 +3538,7 @@ class G2: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "micEnabled", enabled)
         let msg = EvenHubProto.audioControlMessage(enable: enabled)
         sendEvenHubCommand(msg)
+        evenHubMicActive = enabled
     }
 
     func sortMicRanking(list: [String]) -> [String] {
@@ -3031,6 +3610,7 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         dashboardShowing = 0
+        dashboardOpening = false
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
@@ -3196,6 +3776,7 @@ class G2: NSObject, SGCManager {
         // } else {
         //     stopCompass()
         // }
+        Task { await runAuthSequence() }
     }
 
     /// Start a navigation session so the glasses stream compass heading via
@@ -3605,10 +4186,92 @@ class G2: NSObject, SGCManager {
             handleEvenAIResponse(result.payload)
         case ServiceID.evenHubCtrl.rawValue:
             handleEvenHubCtrlResponse(result.payload)
+        case ServiceID.notification.rawValue:
+            handleNotificationResponse(result.payload)
         default:
             Bridge.log(
                 "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.map { String(format: "%02X", $0) }.joined())"
             )
+        }
+    }
+
+    /// Notification service (0x04 — UI_FOREGROUND_NOTIFICATION_ID).
+    ///
+    /// On iOS the G2 reads notifications straight from the phone via ANCS (the
+    /// system BLE notification service — no app code involved), and reports
+    /// notification activity to us on this channel as a NotificationDataPackage
+    /// (notification.proto from the RE work):
+    ///   field 1: commandId (1=CTRL, 2=NOTIFICATION_IOS, 3=WHITELIST_CTRL, 161=COMM_RSP)
+    ///   field 3: NotificationControl {notifEnable, autoDispEnable, dispTime, avoidDisturbEnable}
+    ///   field 4: NotificationIOS {appID, displayName} — the source app of a notification
+    ///   field 6: NotificationWhitelistCtrl {whitelistDisable}
+    ///
+    /// Log-only for now: this is the observability hook for the notification
+    /// relay work (the CTRL/WHITELIST commands are also how the app would
+    /// control notification behavior on-glass).
+    private func handleNotificationResponse(_ payload: Data) {
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        let cmd = fields[1] as? Int32 ?? 0
+
+        var detail = ""
+        if let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? "?"
+            detail = " ios={app: \(appID), name: \(name)}"
+        }
+        if let ctrlData = fields[3] as? Data {
+            var ctrl = ProtobufReader(ctrlData)
+            let ctrlFields = ctrl.parseFields()
+            detail += " ctrl={enable: \(ctrlFields[1] as? Int32 ?? -1), autoDisp: \(ctrlFields[2] as? Int32 ?? -1), dispTime: \(ctrlFields[3] as? Int32 ?? -1), dnd: \(ctrlFields[5] as? Int32 ?? -1)}"
+        }
+        if let wlData = fields[6] as? Data {
+            var wl = ProtobufReader(wlData)
+            let wlFields = wl.parseFields()
+            detail += " whitelist={disable: \(wlFields[1] as? Int32 ?? -1)}"
+        }
+
+        let cmdName: String
+        switch cmd {
+        case 1: cmdName = "CTRL"
+        case 2: cmdName = "NOTIFICATION_IOS"
+        case 3: cmdName = "WHITELIST_CTRL"
+        case 161: cmdName = "COMM_RSP"
+        default: cmdName = "cmd_\(cmd)"
+        }
+        Bridge.log("G2: NOTIFICATION service — \(cmdName)\(detail)")
+
+        // Pipe NOTIFICATION_IOS up as a phone_notification event — the same
+        // path Android's NotificationListenerService feeds. iOS can't read
+        // other apps' notifications, but the glasses CAN (ANCS) and report the
+        // source app here; title/content are empty because this packet only
+        // carries app identity.
+        if cmd == 2, let iosData = fields[4] as? Data {
+            var ios = ProtobufReader(iosData)
+            let iosFields = ios.parseFields()
+            let appID = (iosFields[1] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            let name = (iosFields[2] as? Data).flatMap { String(data: $0, encoding: .utf8) }?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+            if !appID.isEmpty {
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                Bridge.sendTypedMessage(
+                    "phone_notification",
+                    body: [
+                        "notificationId": "ancs-\(appID)-\(now)",
+                        "app": name.isEmpty ? appID : name,
+                        "title": "",
+                        "content": "",
+                        "priority": "0",
+                        "timestamp": now,
+                        "packageName": appID,
+                    ]
+                )
+            }
         }
     }
 
@@ -3675,7 +4338,7 @@ class G2: NSObject, SGCManager {
         // Parse evenhub_main_msg_ctx: field 1 = Cmd (varint), field 13 = DevEvent (submessage)
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
-        
+
 
         let payloadStr = "\(payload.map { String(format: "%02X", $0) }.joined())"
         if payloadStr.contains("080C7A02100C") {
@@ -3684,7 +4347,7 @@ class G2: NSObject, SGCManager {
         }
 
         // Bridge.log("G2: hub_res: payload=\(payload.map { String(format: "%02X", $0) }.joined())")
-        
+
         guard let cmdValue = fields[1] as? Int32 else {
             Bridge.log(
                 "G2: EvenHub response - no cmd field, \(payload.count) bytes: \(payload.map { String(format: "%02X", $0) }.joined())"
@@ -3766,6 +4429,7 @@ class G2: NSObject, SGCManager {
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
                             pageCreated = false
+                            evenHubMicActive = false  // mic dies with the page
                         }
                     }
                     // if let errorCode = resFields[8] as? Int32 {
@@ -3783,6 +4447,7 @@ class G2: NSObject, SGCManager {
             if cmdValue == 9 || cmdValue == 10 {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 pageCreated = false
+                evenHubMicActive = false  // mic dies with the page
             }
         }
     }
@@ -3942,23 +4607,15 @@ class G2: NSObject, SGCManager {
             //     Bridge.log("G2: Click detected")
             // }
 
-            // System exit: glasses killed our EvenHub page (user opened menu or another app)
-            // Reset page state and re-create the page to reclaim EvenHub focus
+            // System exit: the firmware killed our page (and the mic). ONLY mark state dead;
+            // do NOT rebuild here. systemExit is fired alongside the dashboard-close (08011A00)
+            // event for the same transition — if both rebuilt, the fresh page gets torn down
+            // again → rebuild→exit→rebuild loop. Recovery is owned by one place: the
+            // dashboard-close handler (and the reconcile page-down path). Don't touch
+            // micEnabled (user intent) — recovery reads it to re-arm; clobbering it strands the mic.
             if eventType == .systemExit || eventType == .abnormalExit {
-                // Bridge.log("G2: System exit detected")
                 pageCreated = false
-                // Firmware kills the mic on system exit; re-arm it if it should be on
-                DeviceStore.shared.apply("glasses", "micEnabled", false)
-                DeviceManager.shared.updateMicState()
-                // Force re-create the page to reclaim EvenHub focus
-                // Task {
-                //     try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1000ms for glasses to finish transition
-                //     if !savedBitmap.isEmpty {
-                //         await self.displayBitmap(base64ImageData: savedBitmap)
-                //     } else {
-                //         self.sendTextWall(savedText.isEmpty ? " " : savedText)
-                //     }
-                // }
+                evenHubMicActive = false  // firmware killed the mic with the page
             }
             return
         }
@@ -4270,46 +4927,21 @@ class G2: NSObject, SGCManager {
         }
         lastGestureCtrlTimestamp = timestamp
 
-        // if we got 08011A00 that means we closed the dashboard, which means the mic is probably dead,
-        // so we need to revive it:
+        // 08011A00 is the dashboard open/close toggle. It fires on BOTH transitions, so we use
+        // the dashboardOpening latch (set by showDashboard) to tell them apart:
+        //   • First event after showDashboard → the OPEN confirm. Consume it, keep the dashboard
+        //     up, and do NOT recover (recovering would rebuild our page and snatch the screen back
+        //     — that's the "double-tap makes captions flicker but never opens the dashboard" bug).
+        //   • Next event → the real CLOSE. Reset state and recover our page + mic.
         if data == Data([0x08, 0x01, 0x1A, 0x00]) {
-            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=\(dashboardShowing)")
-            let useNativeDashboard =
-                DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
-            if !useNativeDashboard {
-                dashboardShowing = 0
-                // rebuild state:
-                Task {
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                }
+            Bridge.log("G2: dashboard toggle - dashboardShowing=\(dashboardShowing) opening=\(dashboardOpening)")
+            if dashboardOpening {
+                dashboardOpening = false  // open confirmed; dashboard now owns the screen
                 return
-            } else {
-                // if we aren't trying to show the dashboard
-                // then we need to turn the mic back on and display the mentra main page:
-                if dashboardShowing <= 1 {
-                    dashboardShowing = 0
-                    // rebuild state:
-                    await rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled =
-                        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
-                    }
-                    return
-                }
-                // do nothing this time since we just closed the dashboard
-                dashboardShowing -= 1
-                if dashboardShowing < 0 {
-                    dashboardShowing = 0
-                }
             }
+            dashboardShowing = 0
+            recoverPageAndMic(reason: "dashboard-close")
+            return
         }
 
         // if we got 08011097012200 that means we selected a menu item:
@@ -4519,6 +5151,7 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.dashboardShowing = 0
+            self.dashboardOpening = false
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
 
@@ -4713,15 +5346,16 @@ extension G2: CBPeripheralDelegate {
         }
     }
 
-    /// CoreBluetooth's write-without-response buffer freed up — resume draining that side's queue.
-    /// Called on the BLE queue; hop to the main actor to touch the queue state.
+    /// CoreBluetooth's write-without-response buffer freed up. The paced drainer doesn't depend on
+    /// this (it's suppressed in the background), but in the foreground it's a cheap nudge to make
+    /// sure a drainer is running for that side.
     nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             if peripheral === self.rightPeripheral {
-                self.drainWriteQueue(right: true)
+                self.startDrain(right: true)
             } else if peripheral === self.leftPeripheral {
-                self.drainWriteQueue(right: false)
+                self.startDrain(right: false)
             }
         }
     }

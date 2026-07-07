@@ -1,18 +1,13 @@
 /**
- * Island apps store — runtime state of installed and remote applets.
+ * Island apps store — runtime state of installed and local applets.
  *
  * The OEM-facing API: subscribe to the running set, install/uninstall
  * miniapps, start/stop them. The store delegates install plumbing to
  * AppRegistry, and exposes hooks (`useApps`, `useStart`, `useStop`,
  * `useRefresh`, `useStopAll`) that the host UI can read.
  *
- * Side-effects the host needs (cloud REST calls, navigation, alerts) are
- * injected via `configureIsland`. The store invokes those hooks at the
- * right moments — but never imports them directly.
- *
  * Source of `apps`:
  *   - Local: appRegistry.getInstalledMiniapps()    (always)
- *   - Extra: hostHooks.loadExtraApps?.()           (e.g. cloud applets)
  */
 
 import {useMemo} from "react"
@@ -20,14 +15,15 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 import {create} from "zustand"
 
 import type {ClientApp} from "../types/applet"
-import type {Capabilities} from "../types/hardware"
 import {DeviceTypes} from "../types/enums"
 import {getModelCapabilities} from "../types/hardware"
-import {HardwareCompatibility} from "../utils/hardware/hardware"
+import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import {islandNotifications} from "../services/NotificationsEmitter"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // ---------------------------------------------------------------------------
@@ -38,24 +34,14 @@ export interface StartOptions {
   skipNavigation?: boolean
 }
 
-export interface IslandHostHooks {
-  /** Return host-provided extra apps (e.g. cloud applets). Called on every refresh. */
-  loadExtraApps?: () => Promise<ClientApp[]>
-  /** Return the connected device's capabilities for compatibility checks. */
-  getCapabilities?: () => Capabilities | null
+export interface AppStoreHooks {
   /** Called by start() before applet.onStart. Return false to abort the start. */
   beforeStart?: (app: ClientApp, opts?: StartOptions) => Promise<boolean> | boolean
-  /** Called by stop() before applet.onStop. */
-  beforeStop?: (app: ClientApp) => Promise<void> | void
-  /** Called by uninstall() before appRegistry.uninstall — e.g. for cloud-side cleanup. */
-  onUninstall?: (app: ClientApp) => Promise<void> | void
-  /** Called after the apps array is rebuilt — host can mutate / re-sort. */
-  postProcessApps?: (apps: ClientApp[]) => ClientApp[] | Promise<ClientApp[]>
 }
 
-let hostHooks: IslandHostHooks = {}
+let hostHooks: AppStoreHooks = {}
 
-export function configureIsland(hooks: IslandHostHooks): void {
+export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
 }
 
@@ -172,15 +158,13 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
 }
 
 /**
- * Build the final `apps` array for the store from the two source lists
- * (local + cloud). Pure — same inputs → same outputs. Used by `refresh`
- * to emit twice (local-only, then merged) without duplicating the
- * dedupe/carry-over/compat/hidden/postProcess pipeline.
+ * Build the final `apps` array for the store from the installed/offline app
+ * source. Pure — same inputs -> same outputs.
  */
-function projectApps(previousState: AppStatusState, localApps: ClientApp[], extraApps: ClientApp[]): ClientApp[] {
-  // Dedupe by packageName, keep first occurrence (extra/cloud wins).
+function projectApps(previousState: AppStatusState, localApps: ClientApp[]): ClientApp[] {
+  // Dedupe by packageName, keep first occurrence.
   const byPackage = new Map<string, ClientApp>()
-  for (const app of [...extraApps, ...localApps]) {
+  for (const app of localApps) {
     if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
   }
 
@@ -190,7 +174,10 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[], extr
     previousByPackage.set(oldApp.packageName, oldApp)
   }
 
-  const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
+  const defaultWearable =
+    (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as DeviceTypes | undefined) ||
+    DeviceTypes.NONE
+  const capabilities = getModelCapabilities(defaultWearable)
 
   // Single pass: dedupe → screenshot carry-over → compat → hidden, all into
   // fresh objects. The previous in-place mutation re-used object references
@@ -200,20 +187,67 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[], extr
   // key of an object already passed to a worklet" warning whenever the home
   // screen's animated app cards held a reference to a previous snapshot's
   // app object that we then mutated.
-  return Array.from(byPackage.values()).map((app) => ({
-    ...app,
-    screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
-    compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
-    hidden: previousState.getHiddenStatus(app.packageName),
-    // Derive the foreground flag from the store's single source of truth
-    // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
-    // per-app meant a refresh that momentarily omitted an app (e.g. the
-    // two-pass local-only → merged emit) would reset its flag to false — which
-    // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
-    // through to the root router (restart). Deriving here keeps the flag stable
-    // across both passes.
-    foregrounded: app.packageName === previousState.foregroundedPackage,
-  }))
+  //
+  // Identity stability: refresh() is event-driven and fires repeatedly (and
+  // twice per cycle via the local-only → merged two-pass emit). If we always
+  // returned fresh objects, every poll changed the identity of EVERY app —
+  // which re-rendered the Compositor (via useForegroundApp) mid-slide and made
+  // the open/close animation hitch, and churned the home grid / switcher pill.
+  // So we build the candidate object, then REUSE the previous reference when
+  // nothing meaningful changed. Same pattern as the miniappRunningRegistry
+  // projection below. A stable foreground-app reference lets the Compositor's
+  // slide run uninterrupted on the UI thread.
+  return Array.from(byPackage.values()).map((app) => {
+    const next: ClientApp = {
+      ...app,
+      screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
+      compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
+      hidden: previousState.getHiddenStatus(app.packageName),
+      // Derive the foreground flag from the store's single source of truth
+      // (`foregroundedPackage`), NOT from the previous snapshot. Carrying it over
+      // per-app meant a refresh that momentarily omitted an app (e.g. the
+      // two-pass local-only → merged emit) would reset its flag to false — which
+      // raced OfflineAppHost's interceptor guard and made the hosted miniapp fall
+      // through to the root router (restart). Deriving here keeps the flag stable
+      // across both passes.
+      foregrounded: app.packageName === previousState.foregroundedPackage,
+    }
+    const prev = previousByPackage.get(app.packageName)
+    return prev && shallowEqualApp(prev, next) ? prev : next
+  })
+}
+
+// Cheap equality check used by projectApps to preserve object identity across
+// refreshes when nothing meaningful changed. Most keys are compared by
+// reference (the source app's nested fields — permissions, hardwareRequirements,
+// parameters — are reference-stable within a refresh). The ONE exception is
+// `compatibility`, which projectApps recomputes into a fresh object every call;
+// comparing it by reference would always differ and defeat the whole point. We
+// compare it structurally instead so identity is only broken when the device's
+// actual compatibility verdict changes (e.g. glasses connect/disconnect).
+function shallowEqualApp(a: ClientApp, b: ClientApp): boolean {
+  const aKeys = Object.keys(a) as (keyof ClientApp)[]
+  const bKeys = Object.keys(b) as (keyof ClientApp)[]
+  if (aKeys.length !== bKeys.length) return false
+  for (const k of aKeys) {
+    if (k === "compatibility") {
+      if (!compatibilityEqual(a.compatibility, b.compatibility)) return false
+      continue
+    }
+    if (a[k] !== b[k]) return false
+  }
+  return true
+}
+
+function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.isCompatible === b.isCompatible &&
+    a.missingRequired.length === b.missingRequired.length &&
+    a.missingOptional.length === b.missingOptional.length &&
+    a.warnings.length === b.warnings.length
+  )
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
@@ -221,52 +255,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   foregroundedPackage: null,
 
   refresh: async () => {
-    // Two-pass: local apps first (fast, no network), then merge cloud
-    // applets when they arrive. Without this the home tray waits for
-    // `loadExtraApps` to return — and when cloud is slow/503 (e.g. on
-    // a fresh boot), the just-installed dev miniapp takes 10+ seconds
-    // to show up because the local entry is held back behind the cloud
-    // fetch.
-    //
-    // Pass 1 carries over the PREVIOUS snapshot's cloud apps so the
-    // tray doesn't flicker — empty cloud list on first render would
-    // blank out tiles for a frame before pass 2 re-merges them. On
-    // first-ever refresh (state.apps is empty) we skip pass 1 entirely
-    // and let pass 2 own the only emit; there are no rendered tiles to
-    // flicker yet.
     const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    const hasPriorSnapshot = previousState.apps.length > 0
-    if (hasPriorSnapshot) {
-      const previousCloudApps = previousState.apps.filter((a) => !a.local)
-      let pass1 = projectApps(previousState, localApps, previousCloudApps)
-      if (hostHooks.postProcessApps) {
-        try {
-          pass1 = await hostHooks.postProcessApps(pass1)
-        } catch (e) {
-          console.warn("ISLAND: postProcessApps threw on local-only pass:", e)
-        }
-      }
-      set({apps: pass1})
-    }
-
-    // Pass 2: fetch cloud applets, merge, re-emit.
-    let extraApps: ClientApp[] = []
-    try {
-      extraApps = (await hostHooks.loadExtraApps?.()) ?? []
-    } catch {
-      // Cloud failures shouldn't blow away the local list we just published.
-      extraApps = []
-    }
-    let pass2 = projectApps(get(), localApps, extraApps)
-    if (hostHooks.postProcessApps) {
-      try {
-        pass2 = await hostHooks.postProcessApps(pass2)
-      } catch (e) {
-        console.warn("ISLAND: postProcessApps threw on merged pass:", e)
-      }
-    }
-    set({apps: pass2})
+    set({apps: projectApps(previousState, localApps)})
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
@@ -278,16 +269,52 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
-    // Skip if any app is currently loading.
-    if (state.apps.some((a) => a.loading)) {
+    // Skip spawning a NEW app while another is mid-launch — concurrent spawns
+    // race the foreground-only-one teardown. This is checked BEFORE beforeStart
+    // (which navigates/foregrounds) so a gated launch doesn't paint a splash it
+    // can't back. Re-opening an already-running app is exempt: it has nothing to
+    // spawn, so it skips this gate and is allowed to re-navigate/animate below.
+    // That exemption is the fix for the "second tap during another app's launch
+    // window silently does nothing" bug.
+    if (!app.running && state.apps.some((a) => a.loading)) {
       console.log(`ISLAND: skipping start ${packageName} — another app is loading`)
       return false
     }
 
-    // Host gate (incompatible alerts, offline-mode rejection, etc.).
+    // Host gate (incompatible alerts, offline-mode rejection, etc.). This is
+    // ALSO where the host navigates / foregrounds for the open animation
+    // (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground for the
+    // slide). It must run on EVERY open — including
+    // re-opening an already-running app — so the animation always plays.
+    if (!app.offline && !app.local) {
+      console.warn(`ISLAND: cloud-v1 app entries are no longer supported: ${packageName}`)
+      return false
+    }
+
     if (hostHooks.beforeStart) {
       const proceed = await hostHooks.beforeStart(app, opts)
       if (!proceed) return false
+    }
+
+    // Island-native incompatibility gate. Block the launch and raise a structured
+    // notification the host can render off toolkit.notifications.
+    if (app.compatibility?.isCompatible === false) {
+      islandNotifications.emit({
+        kind: "version_incompatible",
+        packageName,
+        reason: `${app.name ?? packageName} is not compatible with the connected glasses`,
+        metadata: {missingRequired: app.compatibility.missingRequired ?? []},
+        timestamp: Date.now(),
+      })
+      return false
+    }
+
+    // If the tapped app is already running, this is a re-open: the nav/foreground
+    // above already drove the animation, and there's nothing to spawn. Short-
+    // circuit before the spawn pipeline.
+    if (app.running) {
+      saveLastOpenTime(packageName)
+      return true
     }
 
     // Foreground-only-one rule: stop other running standard apps.
@@ -300,9 +327,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       }
     }
 
-    const shouldLoad = !app.offline && !app.local
     set((s) => ({
-      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
+      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: false} : a)),
     }))
 
     saveLastOpenTime(packageName)
@@ -344,14 +370,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return
     }
 
-    if (hostHooks.beforeStop) {
-      await hostHooks.beforeStop(app)
-    }
-
-    const shouldLoad = !app.offline && !app.local
     set((s) => ({
       apps: s.apps.map((a) =>
-        a.packageName === packageName ? {...a, running: false, screenshot: undefined, loading: shouldLoad} : a,
+        a.packageName === packageName ? {...a, running: false, screenshot: undefined, loading: false} : a,
       ),
     }))
 
@@ -363,10 +384,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
     await startStopApp(app, false)
 
-    // Tear down the background JS context for local miniapps. Previously the
-    // host's beforeStop hook (MiniappCatalog) called router.unregister; that
-    // now flows through the launcher so lifecycle lives in one place. No-op for
-    // native offline built-ins / cloud apps (no JS context).
+    // Tear down the background JS context for local miniapps. No-op for native
+    // offline built-ins.
     if (app.local) {
       try {
         await miniappLauncher.stop(packageName)
@@ -426,12 +445,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   uninstall: (packageName, version) => {
     return Res.try_async(async () => {
-      if (hostHooks.onUninstall) {
-        const app = get().apps.find((a) => a.packageName === packageName)
-        if (app) {
-          await hostHooks.onUninstall(app)
-        }
-      }
       const res = await appRegistry.uninstall(packageName, version)
       if (res.is_error()) throw res.error
       set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
@@ -495,6 +508,14 @@ miniappRunningRegistry.subscribe(() => {
 appRegistry.subscribe(() => {
   void useAppStatusStore.getState().refresh()
 })
+
+// Re-evaluate hardware compatibility when the paired/default wearable changes.
+useSettingsStore.subscribe(
+  (state) => state.getSetting(SETTINGS.default_wearable.key),
+  () => {
+    void useAppStatusStore.getState().refresh()
+  },
+)
 
 // ---------------------------------------------------------------------------
 // Public hooks

@@ -4,6 +4,8 @@ import type {CloudClientStatus, DisplayPreview, LiveTranscript, Transcript} from
 
 export type {CloudClientStatus, Transcript, DisplayPreview} from "../../shared/types"
 
+const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
+
 /**
  * useTranscripts — thin hook over the background channel bus.
  *
@@ -75,6 +77,11 @@ export function useTranscripts() {
       on("captions:live-transcript", (payload) => {
         if (!mountedRef.current) return
         const data = payload as LiveTranscript
+        if (TRANSCRIPT_TIMING_TELEMETRY) {
+          console.log(
+            `LocalCaptionsUI: transcript recv t=${Date.now()} type=${data.type} text="${data.text.slice(0, 48)}"`,
+          )
+        }
         setConnected(true)
         applyLiveTranscript(setTranscripts, data)
       }),

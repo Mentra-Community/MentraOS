@@ -1,12 +1,13 @@
 import * as Clipboard from "expo-clipboard"
-import {useEffect, useRef, useState} from "react"
+import {useRef} from "react"
 import {Linking, TextStyle, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
-import udp from "@/services/UdpManager"
+import {toolkit} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -16,27 +17,10 @@ export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [storeUrl] = useSetting(SETTINGS.store_url.key)
   const [backendUrl] = useSetting(SETTINGS.backend_url.key)
-  const [audioTransport, setAudioTransport] = useState<string>("websocket")
-
-  // Update audio transport info periodically (since it can change)
-  useEffect(() => {
-    if (!debugMode) return
-
-    const updateAudioTransport = () => {
-      if (udp.enabledAndReady()) {
-        const endpoint = udp.getEndpoint()
-        setAudioTransport(endpoint ? `udp @ ${endpoint}` : "udp")
-      } else {
-        setAudioTransport("websocket")
-      }
-    }
-
-    updateAudioTransport()
-    const interval = setInterval(updateAudioTransport, 2000)
-    return () => clearInterval(interval)
-  }, [debugMode])
+  const audioTransport = useToolkitSnapshot(toolkit.session.status, (onChange) =>
+    toolkit.session.onStatus(onChange),
+  ).audioTransport
 
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)
@@ -91,7 +75,6 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `store_url: ${storeUrl}`,
       `backend_url: ${backendUrl}`,
       `audio: ${audioTransport}`,
     ]
@@ -150,9 +133,6 @@ export const VersionInfo = () => {
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_TIME}`} />
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
-          </View>
-          <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={storeUrl} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${backendUrl}`} />

@@ -1,194 +1,107 @@
 ---
 title: "Permissions"
-description: "Control what device data your app can access"
+description: "Query the permissions your miniapp declared, and react to changes."
 icon: "lock"
 ---
 
-In v3, you can query and observe your app's permissions at runtime using `session.permissions`.
+`session.permissions` tells you which permissions your miniapp declared in its
+[`miniapp.json`](/app-devs/core-concepts/miniapp-manifest). `has(type)` is a
+synchronous boolean, `getAll()` returns the full record, and `onUpdate` /
+`onPermissionError` let you react to changes and to typed permission errors.
 
-## Checking Permissions at Runtime
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
 
-```typescript
-// Check a single permission
-const canUseMicrophone = session.permissions.has("microphone");
-
-// Get all permissions
-const all = session.permissions.getAll();
-```
-
-Subscribe to permission changes (e.g. if the user revokes a permission while your app is running):
-
-```typescript
-session.permissions.onUpdate((permissions) => {
-  if (!permissions.includes("microphone")) {
-    session.display.showTextWall("Microphone permission removed");
+registerMiniapp((session) => {
+  if (session.permissions.has("microphone")) {
+    session.transcription.on((data) => {
+      session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
+    });
   }
 });
 ```
 
-## Available Permissions
+<Warning>
+`has()` and `getAll()` report what you **declared** in the manifest, not whether
+the user granted the OS prompt. `has("microphone") === true` only means your
+manifest lists `MICROPHONE`. If the user denied the OS permission, that
+subscription stays silent and receives nothing. The way to know a permission was
+actually granted is whether events arrive (and `onPermissionError` for the typed
+declaration error). See [the manifest](/app-devs/core-concepts/miniapp-manifest)
+for how to declare permissions.
+</Warning>
 
-| Permission | Unlocks | Required For |
-|------------|---------|--------------|
-| **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
-| **LOCATION** | GPS coordinates | Location tracking |
-| **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
-| **CALENDAR** | Calendar events | Event notifications |
-| **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
-| **POST_NOTIFICATIONS** | Send notifications | Push notifications |
+## Methods
 
-## How Permissions Work
+| Method | Returns | Notes |
+|---|---|---|
+| `has(type)` | `boolean` | Whether `type` is declared in the manifest. |
+| `getAll()` | `PermissionRecord` | Fresh copy of the full declared record. |
+| `onUpdate(handler)` | `UnsubscribeFn` | Fires when the declared record changes. |
+| `onPermissionError(handler)` | `UnsubscribeFn` | Fires on a typed `PERMISSION_NOT_DECLARED` error. |
 
-1. **Declare in Developer Console** - Set required permissions for your app
-2. **User approval** - Users see and approve permissions when installing
-3. **Automatic enforcement** - Cloud blocks access to features without permission
-4. **Runtime query (v3)** - Use `session.permissions.has()` to check at runtime
-
-## Setting Permissions
-
-**In the [Developer Console](https://console.mentra.glass/apps):**
-
-1. Open your app
-2. Go to "Permissions" section
-3. Click "Add Permission"
-4. Select permission type
-5. Add description (shown to users)
-6. Save
-
-**Example:**
-
-```json
-{
-  "type": "MICROPHONE",
-  "description": "To listen to your voice commands"
-}
-```
-
-## Permission Descriptions
-
-**Write clear descriptions explaining why you need each permission:**
-
-```
-✅ Good:
-"To transcribe your voice commands and control the app hands-free"
-
-❌ Avoid:
-"Microphone access"
-```
-
-## What Each Permission Unlocks
-
-### MICROPHONE
+`onUpdate` does not fire with the current value when you subscribe. Call
+`getAll()` yourself if you want the starting state. The record changes on the
+connect handshake (`CONNECT_ACK`), or when the phone pushes an update (for
+example a dev miniapp re-scanned with an updated manifest). The handler receives
+the full record, not a list.
 
 ```typescript
-// These require MICROPHONE permission:
-session.transcription.on((data) => {});
-session.mic.onChunk((data) => {});
-session.mic.onVoiceActivity((data) => {});
+const stop = session.permissions.onUpdate((perms) => {
+  // perms: { microphone: true, location: false, camera: false, ... }
+  if (!perms.microphone) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Microphone not declared"}]);
+  }
+});
 ```
 
-### LOCATION
+## Permission types
+
+`has()` and the keys of `PermissionRecord` use these canonical names. Each maps
+from the UPPER_CASE manifest `type` values.
+
+| `PermissionType` | Declared by manifest `type` |
+|---|---|
+| `microphone` | `MICROPHONE` |
+| `camera` | `CAMERA` |
+| `location` | `LOCATION`, `BACKGROUND_LOCATION` |
+| `notifications` | `READ_NOTIFICATIONS`, `POST_NOTIFICATIONS` |
+| `calendar` | `CALENDAR` |
+
+`location` is true if you declared either `LOCATION` or `BACKGROUND_LOCATION`, and
+`notifications` is true if you declared either notification permission.
+`PermissionRecord` is `Record<PermissionType, boolean>`, so `getAll()` always
+returns all five keys with a boolean each.
+
+## Permission errors
+
+If you call a capability whose permission you never declared, the phone runtime
+rejects with `PERMISSION_NOT_DECLARED`. `onPermissionError` is a filtered view of
+the session `error` event that surfaces only those.
 
 ```typescript
-// These require LOCATION permission:
-session.location.onUpdate((data) => { session.logger.info(data.lat, data.lng); });
-session.location.requestUpdate();
+session.permissions.onPermissionError((err) => {
+  // err.permission   – the manifest permission name (UPPER_CASE) that was missing
+  // err.subscription – the subscription that triggered the rejection
+  // err.operation    – the operation that triggered the rejection
+});
 ```
 
-<Info>
-For camera, photo, and streaming features, use the first-party [Mentra Live docs](/mentra-live/overview) instead of the cloud Mini App permission model.
-</Info>
+| Field | Type | Notes |
+|---|---|---|
+| `code` | `string` | `PERMISSION_NOT_DECLARED` today; reserved for future codes. |
+| `message` | `string` | Human-readable error message. |
+| `permission` | `string \| undefined` | The missing manifest permission (UPPER_CASE). |
+| `subscription` | `string \| undefined` | The subscription that triggered it. |
+| `operation` | `string \| undefined` | The operation that triggered it. |
 
-### READ_NOTIFICATIONS
+This error means the permission is missing from your manifest, which is a fix you
+make in `miniapp.json`. It is separate from the user denying the OS prompt, which
+produces no error and instead leaves the relevant stream silent.
 
-```typescript
-// These require READ_NOTIFICATIONS permission:
-session.phone.notifications.on((data) => {});
-session.phone.notifications.onDismissed((data) => {});
-```
-
-### CALENDAR
-
-```typescript
-// Requires CALENDAR permission:
-session.phone.calendar.on((data) => {});
-```
-
-## Runtime Behavior
-
-**Permission granted:**
-- Events work normally
-- Data streams to your app
-- No errors
-
-**Permission not declared:**
-- SDK shows warning in console
-- Events don't fire
-- No data received
-
-**Permission denied by user:**
-- Same as not declared
-- User must approve in settings to enable
-
-## Best Practices
-
-**Only request what you need:**
-
-```typescript
-// ✅ Good - minimal permissions
-{
-  "permissions": [
-    { "type": "MICROPHONE", "description": "For voice commands" }
-  ]
-}
-
-// ❌ Avoid - requesting everything
-{
-  "permissions": [
-    { "type": "MICROPHONE", ... },
-    { "type": "LOCATION", ... }
-    // User less likely to install
-  ]
-}
-```
-
-**Be transparent:**
-- Explain why you need each permission
-- Use permissions for stated purpose only
-- Don't request permissions you don't use
-
-**No code needed:**
-- Don't check permissions in code
-- Declare in Developer Console
-- Cloud handles enforcement automatically
-
-## Troubleshooting
-
-**Events not firing:**
-1. Check permission is declared in Developer Console
-2. Verify user approved permission
-3. Look for SDK warnings in console logs
-
-**SDK warnings:**
-```
-⚠️ MICROPHONE permission not declared for com.example.myapp
-```
-
-Solution: Add permission in Developer Console
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Hardware & Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
-    Check what hardware is available
-  </Card>
-  <Card title="Events & Data" icon="bolt" href="/app-devs/core-concepts/app-session/events-and-data">
-    Subscribe to event streams
-  </Card>
-  <Card title="Developer Console" icon="browser" href="https://console.mentra.glass/apps">
-    Manage your app permissions
-  </Card>
-  <Card title="Event Types" icon="book" href="/app-devs/reference/interfaces/event-types">
-    See all event types
-  </Card>
-</CardGroup>
+<Note>
+Checking OS-grant state directly (`isGranted`) and prompting for a permission
+(`request`) are not implemented yet. They are planned to land on this same module
+alongside `has` / `getAll`, without renaming today's methods. For now, treat the
+arrival of events as the signal that a permission was granted.
+</Note>

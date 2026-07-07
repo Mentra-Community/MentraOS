@@ -1,6 +1,7 @@
-import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
+import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
+import {toolkit} from "@mentra/island"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -11,14 +12,12 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 
 export default function SelectGlassesBluetoothScreen() {
@@ -27,10 +26,20 @@ export default function SelectGlassesBluetoothScreen() {
   const {goBack, replace, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const bluetoothClassicConnected = useGlassesStore((state) => state.bluetoothClassicConnected)
-  const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
-  const searchResults = useCoreStore((state) => state.searchResults)
+  const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
+    toolkit.pairing.onReadiness(onChange),
+  ).bluetoothClassicConnected
+  const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
+    toolkit.pairing.onFound(onChange),
+  )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
+
+  useEffect(() => {
+    // Two-phase identity: reaching the scan screen marks the chosen model as the
+    // PENDING selection. Promotion to `paired` only happens natively when pairing
+    // succeeds; until then the home card renders a finish-pairing affordance.
+    toolkit.pairing.markPendingSelection(deviceModel)
+  }, [deviceModel])
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -38,16 +47,44 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setRememberedSearchResults]),
   // )
 
+  // One back-out per mount, whichever surface triggers it — the header chevron
+  // and Cancel button (handleBackOut), Android hardware back (the preventBack
+  // handler), or the iOS pop gesture (the beforeRemove listener). The ref
+  // dedupes the overlap: an explicit back-out's goBack() also fires
+  // beforeRemove on iOS, which must not run the cleanup (or pop) again.
+  const backOutRanRef = useRef(false)
+  const runBackOutCleanup = () => {
+    if (backOutRanRef.current) return false
+    backOutRanRef.current = true
+    // Non-destructive back-out: abandonAttempt decides from the LIVE hydrated
+    // default-device read — a re-pair's existing pairing survives, and so does
+    // a pairing that PROMOTED while this flow was open (glasses can finish
+    // pairing even when the user backs out of the UI). Only a genuinely
+    // unpaired attempt forgets. The pending marker survives either way.
+    void toolkit.pairing.abandonAttempt().catch((error) => {
+      console.warn("Pairing scan back-out cleanup failed:", error)
+    })
+    return true
+  }
+
   focusEffectPreventBack((event) => {
     // Skip cleanup when navigating forward (e.g. replace() to btclassic) —
     // only run on actual back navigation.
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    BluetoothSdk.disconnect()
-    BluetoothSdk.forget()
-    goBack()
+    if (runBackOutCleanup()) {
+      goBack()
+    }
   }, true)
+
+  const handleBackOut = () => {
+    // Guard the pop like the preventBack handler does: a rapid double-tap on
+    // Cancel/the chevron must not pop a second route while cleanup ran once.
+    if (runBackOutCleanup()) {
+      goBack()
+    }
+  }
 
   useEffect(() => {
     const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
@@ -60,14 +97,14 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await BluetoothSdk.startScan(deviceModel)
+        await toolkit.pairing.scan(deviceModel)
       } catch (error) {
         console.error("Failed to start glasses scan:", error)
       }
     }
 
     void initializeAndSearchForDevices()
-  }, [])
+  }, [deviceModel])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {
@@ -99,9 +136,13 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || bluetoothClassicConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
+    if (
+      Platform.OS === "android" ||
+      bluetoothClassicConnected ||
+      !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
+    ) {
       setTimeout(() => {
-        BluetoothSdk.connect(device).catch((error) => {
+        toolkit.pairing.pair(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
         })
       }, 2000)
@@ -110,10 +151,9 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    await BluetoothSdk.setDefaultDevice(device)
-    setDeviceName(device.name)
-    // pair bt classic first:
-    replace("/pairing/btclassic")
+    // pair bt classic first — thread the device through the route; the connect
+    // (and the on-success default promotion) happens after BT Classic links.
+    replace("/pairing/btclassic", {device: JSON.stringify(device)})
     pushUnder("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }
 
@@ -143,13 +183,11 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
-  const visibleResults = rememberedSearchResults.filter(
-    (r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel,
-  )
+  const visibleResults = rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel)
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
-      <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
+      <Header leftIcon="chevron-left" onLeftPress={handleBackOut} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
         <GlassView className="gap-6 rounded-3xl p-6 bg-primary-foreground" transparent={false}>
           <Image
@@ -173,10 +211,10 @@ export default function SelectGlassesBluetoothScreen() {
                   let deviceName = filterDeviceName(res.name)
 
                   return (
-                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity
-                        className="flex-1"
-                        onPress={() => triggerGlassesPairingGuide(res)}>
+                    <View
+                      key={res.id}
+                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
+                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
@@ -191,7 +229,7 @@ export default function SelectGlassesBluetoothScreen() {
           )}
           <Divider />
           <View className="flex-row justify-end">
-            <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+            <Button preset="primary" compact tx="common:cancel" onPress={handleBackOut} className="min-w-[100px]" />
           </View>
         </GlassView>
       </View>

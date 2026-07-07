@@ -1,16 +1,31 @@
 package com.mentra.bluetoothsdk.camera
 
-import kotlin.test.Test
-import kotlin.test.assertNull
+import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.PhotoSize
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.Test
 
 class PhotoRequestTest {
+    @Test
+    fun `constructor generates requestId when omitted`() {
+        val request =
+            PhotoRequest(
+                size = PhotoSize.MEDIUM,
+                webhookUrl = "https://example.com/upload",
+                compress = PhotoCompression.NONE,
+                sound = true,
+            )
+
+        assertThat(request.requestId).startsWith("photo-")
+    }
+
     @Test
     fun `fromMap defaults exposureTimeNs null`() {
         val request =
             PhotoRequest.fromMap(
                 mapOf(
                     "requestId" to "photo-1",
-                    "appId" to "com.test.app",
                     "size" to "medium",
                     "webhookUrl" to "https://example.com/upload",
                     "compress" to "none",
@@ -18,6 +33,48 @@ class PhotoRequestTest {
                 )
             )
 
-        assertNull(request.exposureTimeNs)
+        assertThat(request.exposureTimeNs).isNull()
+    }
+
+    @Test
+    fun `fromMap generates requestId when omitted or blank`() {
+        val withoutRequestId =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "webhookUrl" to "https://example.com/upload",
+                    "compress" to "none",
+                    "sound" to true,
+                )
+            )
+        val blankRequestId =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "requestId" to "  ",
+                    "size" to "medium",
+                    "webhookUrl" to "https://example.com/upload",
+                    "compress" to "none",
+                    "sound" to true,
+                )
+            )
+
+        assertThat(withoutRequestId.requestId).startsWith("photo-")
+        assertThat(blankRequestId.requestId).startsWith("photo-")
+    }
+
+    @Test
+    fun `fromMap preserves explicit requestId`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "requestId" to "photo-1",
+                    "size" to "medium",
+                    "webhookUrl" to "https://example.com/upload",
+                    "compress" to "none",
+                    "sound" to true,
+                )
+            )
+
+        assertThat(request.requestId).isEqualTo("photo-1")
     }
 }

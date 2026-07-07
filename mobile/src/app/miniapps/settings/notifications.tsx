@@ -24,6 +24,15 @@ export default function NotificationSettingsScreen() {
   const {theme} = useAppTheme()
   const viewShotRef = useRef<View>(null)
 
+  // Render the global capsule (minimize / close) button over this screen, like
+  // the other miniapp screens. The import + viewShotRef were already here but the
+  // hook was never called, so the Notify miniapp had no capsule menu.
+  useRegisterCapsule({
+    packageName: notifyPackageName,
+    viewShotRef,
+    visibleOnRoutes: ["/miniapps/settings/notifications"],
+  })
+
   const [apps, setApps] = useState<InstalledApp[]>([])
   const [blocklist, setBlocklist] = useSetting(SETTINGS.notifications_blocklist.key)
   const [searchQuery, setSearchQuery] = useState("")

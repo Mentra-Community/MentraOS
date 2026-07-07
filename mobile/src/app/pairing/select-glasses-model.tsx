@@ -1,12 +1,10 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {useFocusEffect} from "expo-router"
-import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
@@ -24,13 +22,11 @@ export default function SelectGlassesModelScreen() {
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  // when this screen is focused, forget any glasses that may be paired:
-  useFocusEffect(
-    useCallback(() => {
-      BluetoothSdk.forget()
-      return () => {}
-    }, []),
-  )
+  // (This screen used to forget any paired glasses on focus. With two-phase
+  // identity there is no eager default to clean up before a fresh pairing, and
+  // the forget wiped REAL pairings whenever the screen was entered — or backed
+  // into — while glasses were paired. Attempt cleanup now lives on the specific
+  // abandon paths: scan back-out, pairing failure, and unpair-even retry.)
 
   // Get logo component for manufacturer
   const getManufacturerLogo = (deviceModel: string) => {
@@ -44,13 +40,15 @@ export default function SelectGlassesModelScreen() {
         return <MentraLogo color={theme.colors.text} />
       case DeviceTypes.Z100:
         return <VuzixLogo color={theme.colors.text} />
+      case DeviceTypes.NIMO:
+        return <NimoLogo />
       default:
         return null
     }
   }
 
   // Glasses models that should only be visible in super mode.
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
 
   // Platform-specific glasses options
   const glassesOptions =
@@ -63,6 +61,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           //{deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
@@ -74,6 +73,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           // {deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
 

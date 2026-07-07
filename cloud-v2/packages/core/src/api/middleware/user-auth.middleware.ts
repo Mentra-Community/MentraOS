@@ -39,7 +39,7 @@ export const userAuth = createMiddleware<AppEnv>(async (c, next) => {
 
   c.set("user", {
     mentraUserId: verified.mentraUserId,
-    oemId: verified.oemId,
+    tenantId: verified.tenantId,
     sessionId: verified.sessionId,
   });
 

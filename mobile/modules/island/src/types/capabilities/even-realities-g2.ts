@@ -28,6 +28,20 @@ export const evenRealitiesG2: Capabilities = {
     fieldOfView: { horizontal: 25 },
     maxTextLines: 8,
     adjustBrightness: true,
+
+    // Scene display API — EvenHub retained containers.
+    width: 576,
+    height: 288,
+    canPosition: true,
+    maxTextElements: 6, // firmware text-container pool (rects share it)
+    maxImageElements: 4, // firmware image-container pool
+    // No maxImagePx: the SGC tiles larger images across multiple firmware
+    // containers (each ≤200x100 — the hardware-verified per-container transfer
+    // envelope). Pathological sizes needing more than the 4-container pool are
+    // dropped SGC-side with a log.
+    shapes: ["rect"], // bordered empty container ≈ rect
+    intensityLevels: 2,
+    partialUpdate: true,
   },
 
   // Microphone capabilities - G2 has one microphone (right side), LC3 codec
@@ -67,4 +81,8 @@ export const evenRealitiesG2: Capabilities = {
 
   // WiFi capabilities - G2 does not support WiFi
   hasWifi: false,
+
+  // Dashboard - G2 renders Even Realities' native dashboard in firmware, so
+  // MentraOS does not manage the dashboard or expose dashboard settings for it
+  hasNativeDashboard: true,
 };

@@ -9,9 +9,9 @@ import org.json.JSONObject
 internal object OtaManifestDefaults {
     private const val SDK_OTA_RELEASE_BASE_URL =
         "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
-    // Keep prod as the legacy-device fallback: pre-override ASG builds ignore
-    // ota_start.ota_version_url and use their compiled MentraOS default.
-    const val PROD_OTA_VERSION_URL = "https://ota.mentraglass.com/prod_live_version.json"
+    // ASG builds before 39 ignore ota_start.ota_version_url, so SDK checks must
+    // use the same legacy production manifest those glasses will install from.
+    const val LEGACY_PROD_OTA_VERSION_URL = "https://ota.mentraglass.com/prod_live_version.json"
 
     fun defaultOtaVersionUrl(): String {
         val sdkVersion = BuildConfig.SDK_VERSION.trim()
@@ -57,7 +57,7 @@ internal object OtaManifestChecker {
         return try {
             val status = connection.responseCode
             if (status !in 200..299) {
-                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status.")
+                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status for $otaVersionUrl.")
             }
             JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {

@@ -7,8 +7,10 @@ public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
     // URLs
-    // Production OTA version JSON URL
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
+    // Production OTA version JSON URL for ASG client 39+.
+    // The previous production manifest intentionally remains the legacy rescue
+    // manifest for older clients that may be stuck on a corrupted artifact cache.
+    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
 
     // Test URLs (uncomment to use for testing)
     // public static final String VERSION_JSON_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/live_version_test_non_production.json";
@@ -27,6 +29,10 @@ public class OtaConstants {
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
     public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
     public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
+    // Copy of the currently installed ASG APK, staged here so the OEM SystemUI installer can
+    // read it during a factory reset (it cannot reliably read /data/app/... paths).
+    public static final String FACTORY_RESET_APK_FILENAME = "asg_client_factory_reset.apk";
+    public static final String FACTORY_RESET_APK_PATH = BASE_DIR + "/" + FACTORY_RESET_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";
@@ -58,6 +64,11 @@ public class OtaConstants {
     // Download socket timeouts (prevents downloads from hanging indefinitely)
     public static final int CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to establish connection
     public static final int READ_TIMEOUT_MS = 20000;     // 20 seconds to receive data (stall / dead WiFi fail faster)
+
+    // Recovery worker sidecar update (network-fetched, bypasses ASG bundled-asset path)
+    public static final String RECOVERY_WORKER_UPDATE_APK_FILENAME = "recovery_worker_update.apk";
+    public static final String RECOVERY_WORKER_UPDATE_APK_PATH =
+            BASE_DIR + "/" + RECOVERY_WORKER_UPDATE_APK_FILENAME;
 
     // Recovery worker cross-app signals
     public static final String ASG_PACKAGE = "com.mentra.asg_client";

@@ -1,5 +1,5 @@
 import {PhotoInfo} from "@/types/asg"
-import {useGallerySyncStore} from "@/stores/gallerySync"
+import {useGallerySyncStore} from "../../modules/island/src/stores/gallerySync"
 
 const createPhoto = (name: string): PhotoInfo => ({
   name,

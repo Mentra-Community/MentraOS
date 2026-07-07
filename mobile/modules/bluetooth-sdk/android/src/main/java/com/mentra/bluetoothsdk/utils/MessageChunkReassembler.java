@@ -15,6 +15,48 @@ public class MessageChunkReassembler {
 
     private final Map<String, ChunkSession> activeSessions = new ConcurrentHashMap<>();
 
+    private final Map<Integer, BinarySession> activeBinarySessions = new ConcurrentHashMap<>();
+
+    public byte[] addBinaryFragment(int msgId, int fragIdx, int fragCount, byte[] data) {
+        cleanupTimedOutSessions();
+
+        if (msgId < 0 || fragCount <= 0 || fragIdx < 0 || fragIdx >= fragCount || data == null) {
+            Log.w(TAG, "Dropping invalid binary fragment: msgId=" + msgId + ", index=" + fragIdx
+                    + ", total=" + fragCount);
+            return null;
+        }
+
+        if (activeBinarySessions.size() >= MAX_CONCURRENT_SESSIONS
+                && !activeBinarySessions.containsKey(msgId)) {
+            removeOldestBinarySession();
+        }
+
+        BinarySession session = activeBinarySessions.compute(msgId, (ignored, existingSession) -> {
+            if (existingSession == null) {
+                return new BinarySession(msgId, fragCount);
+            }
+            if (existingSession.fragCount != fragCount) {
+                Log.w(TAG, "fragCount mismatch for msgId " + msgId + ", resetting session");
+                return new BinarySession(msgId, fragCount);
+            }
+            return existingSession;
+        });
+
+        if (!session.addFragment(fragIdx, data)) {
+            return null;
+        }
+
+        if (!session.isComplete()) {
+            return null;
+        }
+
+        byte[] reassembled = session.reassemble();
+        activeBinarySessions.remove(msgId);
+        Log.d(TAG, "Reassembled binary message of " + reassembled.length + " bytes from "
+                + fragCount + " fragments");
+        return reassembled;
+    }
+
     public String addChunk(String chunkId, int chunkIndex, int totalChunks, String data) {
         cleanupTimedOutSessions();
 
@@ -61,11 +103,28 @@ public class MessageChunkReassembler {
 
     public void clear() {
         activeSessions.clear();
+        activeBinarySessions.clear();
     }
 
     private void cleanupTimedOutSessions() {
         long now = System.currentTimeMillis();
         activeSessions.entrySet().removeIf(entry -> now - entry.getValue().createdAt > CHUNK_TIMEOUT_MS);
+        activeBinarySessions.entrySet()
+                .removeIf(entry -> now - entry.getValue().createdAt > CHUNK_TIMEOUT_MS);
+    }
+
+    private void removeOldestBinarySession() {
+        Integer oldestId = null;
+        long oldestTime = Long.MAX_VALUE;
+        for (Map.Entry<Integer, BinarySession> entry : activeBinarySessions.entrySet()) {
+            if (entry.getValue().createdAt < oldestTime) {
+                oldestTime = entry.getValue().createdAt;
+                oldestId = entry.getKey();
+            }
+        }
+        if (oldestId != null) {
+            activeBinarySessions.remove(oldestId);
+        }
     }
 
     private void removeOldestSession() {
@@ -117,6 +176,53 @@ public class MessageChunkReassembler {
                 reassembled.append(chunk);
             }
             return reassembled.toString();
+        }
+    }
+
+    private static class BinarySession {
+        final int msgId;
+        final int fragCount;
+        final long createdAt;
+        final Map<Integer, byte[]> fragments;
+
+        BinarySession(int msgId, int fragCount) {
+            this.msgId = msgId;
+            this.fragCount = fragCount;
+            this.createdAt = System.currentTimeMillis();
+            this.fragments = new ConcurrentHashMap<>();
+        }
+
+        boolean addFragment(int index, byte[] data) {
+            if (index < 0 || index >= fragCount) {
+                return false;
+            }
+            fragments.put(index, data);
+            return true;
+        }
+
+        boolean isComplete() {
+            return fragments.size() == fragCount;
+        }
+
+        byte[] reassemble() {
+            int totalLen = 0;
+            for (int i = 0; i < fragCount; i++) {
+                byte[] fragment = fragments.get(i);
+                if (fragment == null) {
+                    throw new IllegalStateException("Missing binary fragment " + i + " for msgId "
+                            + msgId);
+                }
+                totalLen += fragment.length;
+            }
+
+            byte[] result = new byte[totalLen];
+            int offset = 0;
+            for (int i = 0; i < fragCount; i++) {
+                byte[] fragment = fragments.get(i);
+                System.arraycopy(fragment, 0, result, offset, fragment.length);
+                offset += fragment.length;
+            }
+            return result;
         }
     }
 }

@@ -31,6 +31,7 @@ import { Connection } from "./modules/runtime/connection";
 import { RuntimeEmitter } from "./modules/runtime/emitter";
 import { Subscriptions } from "./modules/runtime/subscriptions";
 import { Camera } from "./modules/runtime/camera";
+import { Maps } from "./modules/runtime/maps";
 import { Tts } from "./modules/runtime/tts";
 import { UdpAudio } from "./modules/runtime/audio-udp";
 import { Core } from "./modules/core/core";
@@ -236,6 +237,7 @@ export class CloudClient {
     });
     const camera = new Camera({ http: runtimeHttp });
     const tts = new Tts({ http: runtimeHttp });
+    const maps = new Maps({ http: runtimeHttp });
     const audio = new UdpAudio({ udp: config.transports.udp });
 
     const runtime = new Runtime({
@@ -244,6 +246,7 @@ export class CloudClient {
       subscriptions,
       camera,
       tts,
+      maps,
       audio,
       logger,
       // On a fatal AUTH_EXPIRED at handshake, runtime forces auth to drop its

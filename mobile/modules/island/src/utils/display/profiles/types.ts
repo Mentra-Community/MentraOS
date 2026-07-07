@@ -18,6 +18,15 @@ export interface DisplayProfile {
   /** Maximum number of lines that can be displayed */
   maxLines: number
 
+  /**
+   * CALIBRATED line height in px for box-height→line-count math (scene
+   * pipeline). When absent, host-side height clipping is skipped entirely and
+   * text wraps to the box width with the firmware clipping vertically in-box
+   * (legacy behavior) — it is deliberately NOT derived from canvas math, which
+   * proved wrong on hardware (see profileLineHeightPx in scene/process.ts).
+   */
+  lineHeightPx?: number
+
   /** Maximum safe payload size in bytes (for BLE transmission) */
   maxPayloadBytes: number
 

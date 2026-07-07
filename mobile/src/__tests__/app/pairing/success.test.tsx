@@ -4,10 +4,10 @@ import {Platform} from "react-native"
 
 import {useRoute} from "@react-navigation/native"
 
+import {toolkit} from "@mentra/island"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
@@ -38,10 +38,6 @@ jest.mock("@/contexts/NavigationHistoryContext", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
-}))
-
-jest.mock("@/stores/glasses", () => ({
-  waitForGlassesState: jest.fn(),
 }))
 
 jest.mock("@/utils/getGlassesImage", () => ({
@@ -108,7 +104,7 @@ describe("pairing success screen", () => {
   })
 
   it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(false)
+    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -119,11 +115,11 @@ describe("pairing success screen", () => {
     expect(push).toHaveBeenCalledWith("/pairing/btclassic")
     expect(pushUnder).toHaveBeenCalledTimes(1)
     expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
+    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(true)
+    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -133,7 +129,7 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
     expect(pushUnder).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
+    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {

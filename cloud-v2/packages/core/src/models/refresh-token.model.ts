@@ -45,7 +45,7 @@ const RefreshTokenSchema = new Schema(
     mentraUserId: { type: String, required: true },
 
     /** Attesting OEM at the time this session was issued. */
-    oemId: { type: String, required: true },
+    tenantId: { type: String, required: true },
 
     issuedAt: { type: Date, required: true, default: () => new Date() },
 
@@ -60,8 +60,8 @@ const RefreshTokenSchema = new Schema(
 RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Revocation queries: "kill every session belonging to this user / OEM."
-RefreshTokenSchema.index({ mentraUserId: 1, oemId: 1 });
-RefreshTokenSchema.index({ oemId: 1 });
+RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
+RefreshTokenSchema.index({ tenantId: 1 });
 
 export type RefreshToken = InferSchemaType<typeof RefreshTokenSchema>;
 export const RefreshTokenModel = model("RefreshToken", RefreshTokenSchema);
