@@ -10,8 +10,10 @@ name: OEM Example App APK
 # build signed with the debug keystore (the expo-generated default when no
 # upload key is configured): installable anywhere, JS bundled, no secrets.
 #
-# The pull_request trigger fires only on changes to THIS file, so workflow
-# edits prove the full build before they land on dev.
+# The pull_request path filter names only THIS file, but pull_request path
+# filters match the whole PR diff — so while a PR touches this file, every
+# push to that PR re-runs the full build (which is how workflow changes get
+# proven in CI before landing on dev).
 
 on:
   push:
@@ -126,13 +128,18 @@ jobs:
           # Authenticates Mapbox's private Downloads registry so gradle can
           # resolve com.mapbox.navigationcore:* (pulled in by @mentra/crust);
           # the repo block is injected at prebuild by the app's
-          # withMapboxDownloadsRepo config plugin. Build-time only.
+          # withMentraStackGradle config plugin. Build-time only.
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Stamp APK with commit
         id: apk
+        env:
+          # On pull_request runs GITHUB_SHA is the synthetic merge commit —
+          # stamp the head commit humans can check out. github.sha is correct
+          # for dev pushes and dispatches.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          sha="${GITHUB_SHA::7}"
+          sha="${HEAD_SHA::7}"
           src=sdk/example-oem-app/android/app/build/outputs/apk/release/app-release.apk
           [ -f "$src" ] || { echo "::error::APK not produced at $src"; exit 1; }
           out="example-oem-app-${sha}.apk"

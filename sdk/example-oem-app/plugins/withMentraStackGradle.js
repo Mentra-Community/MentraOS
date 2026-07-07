@@ -9,7 +9,7 @@ const {withAppBuildGradle, withProjectBuildGradle} = require("expo/config-plugin
 // gradle-property fallback for manual setups; prebuild only writes the block.
 const MAPBOX_REPO = [
   "    maven {",
-  "      // mapbox: navigation sdk downloads repo (injected by withMapboxDownloadsRepo)",
+  "      // mapbox: navigation sdk downloads repo (injected by withMentraStackGradle)",
   "      url 'https://api.mapbox.com/downloads/v2/releases/maven'",
   "      authentication { basic(BasicAuthentication) }",
   "      credentials {",
@@ -23,23 +23,25 @@ function withMentraProjectGradle(config) {
   return withProjectBuildGradle(config, (cfg) => {
     let gradle = cfg.modResults.contents
 
-    // Global protobuf-javalite exclusion, mirrored from the Mentra app's
-    // plugin: the bluetooth-sdk/crust native stack needs protobuf-java, and
-    // Mapbox transitively drags protobuf-javalite — shipping both fails the
-    // release build with duplicate classes. Runs BEFORE the repo injection so
-    // the repositories block is still brace-free for the regex below.
+    // Global protobuf-javalite exclusion: the bluetooth-sdk/crust native stack
+    // needs protobuf-java, and Mapbox transitively drags protobuf-javalite —
+    // shipping both fails the release build with duplicate classes. Appended
+    // as its own allprojects block at the end of the file so placement never
+    // depends on the shape of existing gradle content (other plugins add
+    // maven{} entries that break brace-counting regexes).
     if (!gradle.includes("exclude group: 'com.google.protobuf', module: 'protobuf-javalite'")) {
-      gradle = gradle.replace(
-        /(allprojects\s*\{[^}]*repositories\s*\{[^}]*\})/s,
-        `$1
-  // Exclude protobuf-javalite globally to avoid conflicts with protobuf-java
+      gradle += `
+// Exclude protobuf-javalite in every project to avoid duplicate classes with
+// protobuf-java (injected by withMentraStackGradle).
+allprojects {
   configurations.all {
     exclude group: 'com.google.protobuf', module: 'protobuf-javalite'
-  }`,
-      )
+  }
+}
+`
     }
 
-    if (!gradle.includes("api.mapbox.com/downloads")) {
+    if (!gradle.includes("mapbox: navigation sdk downloads repo (injected by withMentraStackGradle)")) {
       const reposMatch = gradle.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
       if (reposMatch) {
         const idx = (reposMatch.index ?? 0) + reposMatch[0].length
