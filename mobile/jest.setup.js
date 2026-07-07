@@ -562,7 +562,14 @@ const mockIslandEntries = () => {
         // Real store-backed (host services converted to toolkit.settings assert
         // settings-driven behavior, not just delegation) — jest.fn-wrapped so
         // call assertions still work.
-        get: jest.fn((key) => realSettings.useSettingsStore.getState().getSetting(key)),
+        get: jest.fn((key) => {
+          // Mirror the facade's shallow-copy contract so tests can't mutate
+          // shared store state through returned values.
+          const value = realSettings.useSettingsStore.getState().getSetting(key)
+          if (Array.isArray(value)) return [...value]
+          if (value && typeof value === "object") return {...value}
+          return value
+        }),
         set: jest.fn((key, value, syncToServer = true) =>
           realSettings.useSettingsStore.getState().setSetting(key, value, syncToServer),
         ),
