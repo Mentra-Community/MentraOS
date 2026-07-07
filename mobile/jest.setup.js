@@ -1,5 +1,14 @@
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
+// Requires its native module at import time (island gallery sync uses it for the
+// bluetooth-adapter pre-flight check).
+jest.mock("react-native-ble-manager", () => ({
+  __esModule: true,
+  default: {
+    start: jest.fn().mockResolvedValue(undefined),
+    checkState: jest.fn().mockResolvedValue("on"),
+  },
+}))
 
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
@@ -591,6 +600,7 @@ const mockIslandEntries = () => {
           detach: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.detach()),
           retry: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.retry()),
           finish: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.finish()),
+          discard: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.discard()),
           snapshot: jest.fn(() => realOtaInstallCoordinator.otaInstallCoordinator.snapshot()),
           onSnapshot: jest.fn((cb) => realOtaInstallCoordinator.otaInstallCoordinator.onSnapshot(cb)),
         },

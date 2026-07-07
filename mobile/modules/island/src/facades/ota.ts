@@ -123,6 +123,8 @@ export const ota = {
     retry: () => otaInstallCoordinator.retry(),
     /** Terminal cleanup for Continue/Done (navigation stays in the screen). */
     finish: () => otaInstallCoordinator.finish(),
+    /** Abandon an interrupted session (super-mode skip): finish() + drop the session's status/progress. */
+    discard: () => otaInstallCoordinator.discard(),
     /** Current install read model (displayState/errorMsg/lockout + glasses OTA data). */
     snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),
     /** Subscribe to install snapshot changes (deduped on projected JSON). Returns an unsubscribe. */

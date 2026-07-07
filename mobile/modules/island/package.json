@@ -85,6 +85,7 @@
     "expo-notifications": "*",
     "react-native-share": "*",
     "react-native-localize": "*",
+    "react-native-ble-manager": "*",
     "react-native-permissions": "*",
     "react-native-wifi-reborn": "*",
     "@react-native-community/netinfo": "*",

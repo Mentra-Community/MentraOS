@@ -52,7 +52,6 @@ import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
   ISLAND_SETTINGS_KEYS,
-  getRuntimeHooks,
   type CameraFovPreset,
   type CameraFovRequest,
   type CameraRoiPosition,
@@ -61,7 +60,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics} from "../runtime/bootstrap"
+import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import type {
   AudioSubscription,
@@ -2696,16 +2695,16 @@ class LocalMiniappRuntime {
 
   /**
    * session.glasses.requestWifiSetup — open the phone's glasses Wi-Fi setup
-   * flow. The host owns the actual UI via the `wifiSetup` runtime hook; this
-   * just forwards the request and reports success/failure.
+   * flow. The host owns the actual UI via the `toolkit.configure({ui})` seam;
+   * this just forwards the request and reports success/failure.
    */
   private async handleRequestWifiSetup(
     packageName: string,
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
-    const wifiSetup = getRuntimeHooks().wifiSetup
-    if (!wifiSetup) {
+    const requestWifiSetup = getUiSeams().requestWifiSetup
+    if (!requestWifiSetup) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.NOT_IMPLEMENTED,
         message: "Wi-Fi setup is not configured on this host",
@@ -2713,7 +2712,7 @@ class LocalMiniappRuntime {
       return
     }
     try {
-      await wifiSetup.requestSetup(payload.reason as string | undefined)
+      await requestWifiSetup(payload.reason as string | undefined)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {

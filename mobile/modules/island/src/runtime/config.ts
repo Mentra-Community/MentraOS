@@ -146,20 +146,3 @@ export interface InteropAuditEvent {
   errorCode?: string
 }
 
-export interface WifiSetupAdapter {
-  requestSetup: (reason?: string) => Promise<void> | void
-}
-
-export interface RuntimeHooks {
-  wifiSetup?: WifiSetupAdapter
-}
-
-let hooks: RuntimeHooks = {}
-
-export function configureRuntime(next: RuntimeHooks): void {
-  hooks = {...hooks, ...next}
-}
-
-export function getRuntimeHooks(): RuntimeHooks {
-  return hooks
-}

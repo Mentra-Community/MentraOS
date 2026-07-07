@@ -296,6 +296,19 @@ class OtaInstallCoordinator {
     }
   }
 
+  /**
+   * Abandon an interrupted session (the super-mode skip): terminal cleanup
+   * plus dropping the session's status/progress read-state, so
+   * deriveDisplayState doesn't resurrect the stale install when the host
+   * navigates away and back through /ota routes.
+   */
+  discard(): void {
+    this.finish()
+    const store = useGlassesStore.getState()
+    store.setOtaStatus(null)
+    store.setOtaProgress(null)
+  }
+
   snapshot(): OtaInstallSnapshot {
     const state = useGlassesStore.getState()
     const connected = isGlassesConnected(state.connection)

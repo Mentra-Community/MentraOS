@@ -217,9 +217,9 @@ describe("GallerySyncService", () => {
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
-    // The first suspendable pre-flight await is the notification-permission request;
-    // suspend it, disconnect mid-flight, then resolve — shouldAbortPreFlight() (which
-    // re-checks glasses connection after the await) must abort quietly.
+    // Suspend the notification-permission pre-flight await, disconnect mid-flight,
+    // then resolve — shouldAbortPreFlight() (which re-checks glasses connection
+    // after the await) must abort quietly.
     let resolvePreflightGate: () => void = () => {
       throw new Error("Pre-flight gate resolver was not initialized")
     }
@@ -236,6 +236,12 @@ describe("GallerySyncService", () => {
     expect(gallerySyncService.isSyncStarting()).toBe(true)
     expect(gallerySyncService.isSyncing()).toBe(false)
 
+    // The island pre-flight now awaits the bluetooth-adapter check before the
+    // permission step — flush microtasks until the permission gate arms.
+    for (let i = 0; i < 20 && (gallerySyncNotifications.requestPermissions as jest.Mock).mock.calls.length === 0; i++) {
+      await Promise.resolve()
+    }
+
     // Disconnect while the permission request is in flight — shouldAbortPreFlight catches it after the await
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 
@@ -250,7 +256,7 @@ describe("GallerySyncService", () => {
   })
 
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
-    // Suspend the first pre-flight await (notification permission). Two concurrent
+    // Suspend the notification-permission pre-flight await. Two concurrent
     // startSync() calls must coalesce into a single pre-flight attempt.
     let resolvePreflightGate: () => void = () => {
       throw new Error("Pre-flight gate resolver was not initialized")
@@ -268,6 +274,12 @@ describe("GallerySyncService", () => {
     const second = gallerySyncService.startSync()
 
     expect(gallerySyncService.isSyncStarting()).toBe(true)
+
+    // The island pre-flight now awaits the bluetooth-adapter check before the
+    // permission step — flush microtasks until the permission gate arms.
+    for (let i = 0; i < 20 && (gallerySyncNotifications.requestPermissions as jest.Mock).mock.calls.length === 0; i++) {
+      await Promise.resolve()
+    }
     expect(gallerySyncNotifications.requestPermissions).toHaveBeenCalledTimes(1)
 
     resolvePreflightGate()

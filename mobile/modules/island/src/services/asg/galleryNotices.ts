@@ -7,6 +7,7 @@
  */
 export type GalleryNoticeCode =
   | "glasses_disconnected"
+  | "bluetooth_off"
   | "insufficient_storage"
   | "wifi_initializing"
   | "wifi_off"

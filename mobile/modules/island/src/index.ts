@@ -31,18 +31,17 @@ export type {
   IslandAuth,
   IslandConfigValues,
   IslandAnalytics,
+  IslandUiSeams,
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
-// Runtime-shared constants and contract DTOs (configureRuntime itself is internal).
+// Runtime-shared constants and contract DTOs.
 export {ISLAND_SETTINGS_KEYS} from "./runtime/config"
 export type {
   CloudClientStatusSnapshot,
   MiniappAuthToken,
   InteropAuditEvent,
-  RuntimeHooks,
   TtsSynthesisResult,
-  WifiSetupAdapter,
 } from "./runtime/config"
 
 // Pure readiness predicates over glasses connection state.
