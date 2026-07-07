@@ -122,6 +122,12 @@ jobs:
       - name: Build release APK (debug-signed)
         working-directory: sdk/example-oem-app/android
         run: ./gradlew assembleRelease --build-cache --parallel
+        env:
+          # Authenticates Mapbox's private Downloads registry so gradle can
+          # resolve com.mapbox.navigationcore:* (pulled in by @mentra/crust);
+          # the repo block is injected at prebuild by the app's
+          # withMapboxDownloadsRepo config plugin. Build-time only.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Stamp APK with commit
         id: apk

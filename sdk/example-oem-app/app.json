@@ -43,6 +43,7 @@
       ]
     },
     "plugins": [
+      "./plugins/withMapboxDownloadsRepo",
       [
         "@mentra/bluetooth-sdk",
         {
