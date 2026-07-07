@@ -38,9 +38,8 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {showBluetoothAlert} from "@/utils/AlertUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
@@ -180,6 +179,13 @@ export function GalleryScreen() {
               {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
             ],
             {cancelable: false},
+          )
+          break
+        case "bluetooth_off":
+          // Same copy the host's old pre-sync connectivity gate showed.
+          showBluetoothAlert(
+            translate("pairing:connectionIssueTitle"),
+            "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
           )
           break
         case "connect_to_glasses": {
@@ -588,11 +594,9 @@ export function GalleryScreen() {
       return
     }
 
-    // Connectivity gate (BT + Android location) — host-side UI; the island sync no
-    // longer runs it. Shows the right alert + aborts if requirements aren't met.
-    const connectivityOk = await checkConnectivityRequirementsUI()
-    if (!connectivityOk) return
-
+    // Connectivity preconditions (BT adapter, Android location) live in the island
+    // sync pre-flight now — it emits structured notices that the onNotice handler
+    // above renders as alerts.
     void toolkit.gallery.sync()
   }
 
