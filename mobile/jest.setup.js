@@ -440,11 +440,13 @@ const mockIslandEntries = () => {
         },
       },
       display: {
+        // Real store-backed (mirrors the facade), same rationale as settings:
+        // converted host services assert store-level behavior through toolkit.
         mirror: {
-          current: jest.fn(() => null),
-          onMirror: jest.fn(() => () => {}),
-          view: jest.fn(() => "main"),
-          setView: jest.fn(),
+          current: jest.fn(() => ({...realDisplay.useDisplayStore.getState().currentEvent})),
+          onMirror: jest.fn((cb) => realDisplay.useDisplayStore.subscribe((st) => st.currentEvent, cb)),
+          view: jest.fn(() => realDisplay.useDisplayStore.getState().view),
+          setView: jest.fn((view) => realDisplay.useDisplayStore.getState().setView(view)),
         },
         text: jest.fn(() => Promise.resolve()),
         clear: jest.fn(() => Promise.resolve()),
@@ -592,6 +594,10 @@ const mockIslandEntries = () => {
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
         getMemoryMB: jest.fn(() => 0),
+        bluetoothStatus: jest.fn(() => {
+          const {setCoreInfo: _s, reset: _r, ...state} = realCore.useCoreStore.getState()
+          return {...state}
+        }),
       },
       reports: {
         submit: jest.fn(() => Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready"})),

@@ -123,6 +123,14 @@ export const dev = {
 
   /** Current native (BLE-process) memory usage in MB — a dev/diagnostics gauge. */
   getMemoryMB: (): number => BluetoothSdk.getMemoryMB(),
+  /**
+   * Phone-side bluetooth runtime snapshot (the core store read-model: scan/mic/
+   * search state) — the diagnostics/data-export surface. Shallow copy.
+   */
+  bluetoothStatus: (): Record<string, unknown> => {
+    const {setCoreInfo: _setCoreInfo, reset: _reset, ...state} = useCoreStore.getState()
+    return {...state}
+  },
 
   /** Current island runtime status for toolkit-owned debug surfaces. */
   runtimeStatus: (): DevRuntimeStatusSnapshot => projectRuntimeStatus(),

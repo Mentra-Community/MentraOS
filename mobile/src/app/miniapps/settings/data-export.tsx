@@ -23,7 +23,6 @@ import {useApps} from "@mentra/island"
 import {toolkit} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useCoreStore} from "@/stores/core"
 
 export interface UserDataExport {
   metadata: {
@@ -204,7 +203,6 @@ export default function DataExportPage() {
   const appStatus = useApps()
   const {goBack} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
-  const bluetoothStatus = useCoreStore()
 
   useEffect(() => {
     collectData()
@@ -215,7 +213,7 @@ export default function DataExportPage() {
     setLoading(true)
 
     try {
-      const data = await DataExportService.collectUserData(user, session, bluetoothStatus, appStatus)
+      const data = await DataExportService.collectUserData(user, session, toolkit.dev.bluetoothStatus(), appStatus)
       const formatted = DataExportService.formatAsJson(data)
 
       setExportData(data)

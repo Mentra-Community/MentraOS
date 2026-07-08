@@ -2,7 +2,7 @@ import {render} from "@testing-library/react-native"
 
 import {toolkit} from "@mentra/island"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
-import {useDisplayStore} from "@/stores/display"
+import {useDisplayStore} from "@mentra/island/internal"
 
 jest.mock("react-native-canvas", () => {
   const {createElement, forwardRef} = require("react")
