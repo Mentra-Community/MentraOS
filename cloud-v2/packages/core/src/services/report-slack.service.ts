@@ -4,12 +4,14 @@
  * Cloud V2 replacement for the Cloud V1 feedback Slack path
  * (cloud/packages/cloud/src/services/notifications/slack.service.ts): bug
  * reports and feedback submitted through /api/client/reports post a summary
- * to the team channel via a Slack Incoming Webhook.
+ * to the team channel via a Slack Incoming Webhook. Automatic reports can be
+ * routed to their own channel via CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
+ * falling back to the main webhook when unset — the same routing V1 used for
+ * SLACK_WEBHOOK_AUTOMATIC_INCIDENTS.
  *
- * Best-effort by design: an unset CLOUD_REPORTS_SLACK_WEBHOOK_URL (local dev,
- * tests) is a silent skip, and send failures are logged, never thrown, so a
- * notification can never delay or fail the report API response. Callers
- * fire-and-forget.
+ * Best-effort by design: an unset webhook (local dev, tests) is a silent
+ * skip, and send failures are logged, never thrown, so a notification can
+ * never delay or fail the report API response. Callers fire-and-forget.
  */
 
 import { createLogger } from "@mentra/cloud-shared";
@@ -73,11 +75,11 @@ interface SlackBlock {
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
 ): Promise<ReportSlackResult> {
-  const webhookUrl = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  const webhookUrl = webhookUrlFor(notification.kind);
   if (!webhookUrl) {
     logger.debug(
-      { reportId: notification.reportId },
-      "CLOUD_REPORTS_SLACK_WEBHOOK_URL not set; skipping report Slack notification",
+      { reportId: notification.reportId, kind: notification.kind },
+      "no Slack webhook configured for this report kind; skipping notification",
     );
     return { ok: false, skipped: true };
   }
@@ -109,6 +111,20 @@ export async function notifyReportSlack(
     );
     return { ok: false };
   }
+}
+
+/**
+ * Automatic reports post to their own channel when
+ * CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL is set, falling back to the main
+ * webhook otherwise, so the feedback channel stays free of watchdog noise
+ * without making the split mandatory.
+ */
+function webhookUrlFor(kind: ReportSlackNotification["kind"]): string | undefined {
+  const main = process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  if (kind === "automatic") {
+    return process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL || main;
+  }
+  return main;
 }
 
 function buildSlackMessage(notification: ReportSlackNotification): {
