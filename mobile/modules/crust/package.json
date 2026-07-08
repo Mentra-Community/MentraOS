@@ -4,16 +4,18 @@
   "description": "Mentra Native Module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
+  "app.plugin": "app.plugin.js",
   "scripts": {
-    "build": "expo-module build",
+    "build": "expo-module build && expo-module build plugin",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test",
-    "prepare": "expo-module prepare",
+    "prepare": "expo-module prepare && expo-module build plugin",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",
     "open:ios": "xed example/ios",
-    "open:android": "open -a \"Android Studio\" example/android"
+    "open:android": "open -a \"Android Studio\" example/android",
+    "build:plugin": "expo-module build plugin"
   },
   "keywords": [
     "react-native",
@@ -32,6 +34,7 @@
     "@mentra/jspolyfill": "workspace:*"
   },
   "devDependencies": {
+    "@expo/config-plugins": ">=8.0.0",
     "expo-module-scripts": "^55.0.2",
     "typescript": "~5.9.2"
   },
