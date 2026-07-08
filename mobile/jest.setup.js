@@ -594,6 +594,10 @@ const mockIslandEntries = () => {
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
         getMemoryMB: jest.fn(() => 0),
+        bluetoothStatus: jest.fn(() => {
+          const {setCoreInfo: _s, reset: _r, ...state} = realCore.useCoreStore.getState()
+          return {...state}
+        }),
       },
       reports: {
         submit: jest.fn(() => Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready"})),

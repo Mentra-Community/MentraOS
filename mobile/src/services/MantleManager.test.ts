@@ -2,7 +2,7 @@ import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
-import {useCoreStore} from "@/stores/core"
+import {useCoreStore} from "@mentra/island/internal"
 import {useDisplayStore} from "@mentra/island/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
 import {SETTINGS} from "@mentra/island"

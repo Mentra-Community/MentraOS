@@ -37,7 +37,7 @@ describe("WebSocketManager", () => {
     }) as unknown as typeof WebSocket
     globalThis.WebSocket = global.WebSocket
 
-    useConnectionStore = require("@/stores/connection").useConnectionStore
+    useConnectionStore = require("@mentra/island/internal").useConnectionStore
     useGlassesStore = require("../../modules/island/src/stores/glasses").useGlassesStore
     useConnectionStore.getState().reset()
     useGlassesStore.getState().reset()
