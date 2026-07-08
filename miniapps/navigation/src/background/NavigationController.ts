@@ -1585,6 +1585,11 @@ export class NavigationController {
     const showStats = running && !(this.offRouteAdvisory && status !== "rerouting" && status !== "arrived")
     const stats = showStats ? this.buildTripStats() : null
 
+    // Wall-clock time-of-day for the top-LEFT slot (the phone's current time).
+    // Recomputed every refresh; the ~1s HUD tick keeps it fresh, and it's folded
+    // into the coalescing keys below so a minute rollover forces a re-push.
+    const clock = this.buildClock()
+
     // ── New 4-slot HUD ──────────────────────────────────────────────────
     // On the normal next-turn frame, send the arrow bitmap (left) + maneuver
     // text box (bottom) + trip-stats box (top) as separate canvas components.
@@ -1592,7 +1597,7 @@ export class NavigationController {
     // (welcome/rerouting/arrived/off-route) have no arrow/stats split and fall
     // through to the single-container text frame below.
     if (maneuverBody != null && running) {
-      const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}`
+      const key = `hud|${maneuverArrow}|${maneuverBody}|${stats ?? ""}|${clock}`
       const nowHud = Date.now()
       const unchanged = key === this.lastHudKey
       if (unchanged && nowHud - this.lastHudAt <= 3000) return
@@ -1609,6 +1614,7 @@ export class NavigationController {
         arrowBmp: arrowChanged ? renderManeuverArrowBmp(maneuverArrow) : undefined,
         maneuver: maneuverBody,
         stats: stats ?? "",
+        clock,
       })
       return
     }
@@ -1623,7 +1629,7 @@ export class NavigationController {
 
     // Coalesce on the combined frame so we don't re-push identical content.
     // Prefixed "msg|" so a message frame never collides with a "hud|" key.
-    const key = `msg|${combined}${durationMs ?? 0}`
+    const key = `msg|${combined}${durationMs ?? 0}|${clock}`
     // Re-push every ~3s even when unchanged: the G2 frequently tears down our
     // EvenHub page (system_exit / dashboard), swallowing a one-time send.
     const nowHud = Date.now()
@@ -1634,7 +1640,7 @@ export class NavigationController {
     // Render as the "message" frame (positioned at the arrow's left x). The
     // frame replaces turn-by-turn entirely; returning to turn-by-turn replaces
     // it back. Nothing lingers — render() is the whole screen.
-    this.display.showNavMessage(combined)
+    this.display.showNavMessage(combined, clock)
   }
 
   /**
@@ -1656,6 +1662,20 @@ export class NavigationController {
    * Build the trip-stats line: distance remaining + ETA, e.g.
    * "273 m · ⊙ 4 min". Returns null when there's no usable distance.
    */
+  /**
+   * The phone's current wall-clock time for the top-left HUD slot, e.g.
+   * "09:41" — 24-hour, zero-padded, no seconds. Formatted manually rather
+   * than via toLocaleTimeString, whose Intl options are ignored by Hermes
+   * (it returns a full "hh:mm:ss AM/PM" string regardless).
+   */
+  private buildClock(): string {
+    const now = new Date()
+    const hh = String(now.getHours()).padStart(2, "0")
+    const mm = String(now.getMinutes()).padStart(2, "0")
+    return `${hh}:${mm}`
+  }
+
+
   private buildTripStats(): string | null {
     const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
     const distM =

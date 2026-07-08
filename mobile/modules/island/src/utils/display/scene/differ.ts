@@ -41,6 +41,23 @@ function classify(prev: FrameElement, next: DiffableElement): SceneChange {
 }
 
 /**
+ * Assemble the annotated FrameElement, OMITTING optional fields that are
+ * undefined. A present key with an `undefined` value cannot cross the Expo
+ * Android bridge — its `Map<String, Any>` converter rejects it ("Value is
+ * undefined, expected an Object"), which surfaces as ERR_UNEXPECTED from
+ * displayEvent. (iOS's `[String: Any]` bridge silently drops nils, so the
+ * defect was invisible there.) Keeping the keys absent — not undefined —
+ * matches the optional-field contract in types.ts.
+ */
+function buildFrameElement(el: DiffableElement, id: string, change: SceneChange): FrameElement {
+  const out: FrameElement = {id, type: el.type, box: el.box, contentHash: el.contentHash, change}
+  if (el.text !== undefined) out.text = el.text
+  if (el.data !== undefined) out.data = el.data
+  if (el.style !== undefined) out.style = el.style
+  return out
+}
+
+/**
  * Diff `next` against `prev` (the last frame sent for this app/view/device;
  * empty array for a fresh scene). `nextSyntheticId` mints ids for elements the
  * app didn't name — must be stable per (app, view) across calls (SceneStore).
@@ -101,27 +118,9 @@ export function diffScene(
     const j = matches[i]
     if (j !== undefined) {
       const p = prev[j]
-      return {
-        id: el.id ?? p.id,
-        type: el.type,
-        box: el.box,
-        text: el.text,
-        data: el.data,
-        style: el.style,
-        contentHash: el.contentHash,
-        change: classify(p, el),
-      }
+      return buildFrameElement(el, el.id ?? p.id, classify(p, el))
     }
-    return {
-      id: el.id ?? nextSyntheticId(),
-      type: el.type,
-      box: el.box,
-      text: el.text,
-      data: el.data,
-      style: el.style,
-      contentHash: el.contentHash,
-      change: "created",
-    }
+    return buildFrameElement(el, el.id ?? nextSyntheticId(), "created")
   })
 
   const removed = [...prevUnmatched].map((j) => prev[j].id)
