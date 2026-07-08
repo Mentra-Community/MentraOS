@@ -43,6 +43,7 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
   // Only the Slack notification tests opt in to a (mocked) webhook; everything
   // else must run with the notifier disabled, whatever the shell env says.
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
 }
 
 // eslint-disable-next-line import/first

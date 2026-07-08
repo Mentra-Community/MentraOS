@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { notifyReportSlack, type ReportSlackNotification } from "./report-slack.service";
 
 const WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/reports";
+const AUTOMATIC_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/automatic";
 
 const savedEnv = {
   CLOUD_REPORTS_SLACK_WEBHOOK_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL,
+  CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
   CLOUD_CORE_ENVIRONMENT: process.env.CLOUD_CORE_ENVIRONMENT,
 };
 const realFetch = globalThis.fetch;
@@ -16,6 +18,7 @@ let fetchMock: ReturnType<typeof mock<FetchCall>>;
 
 beforeEach(() => {
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
   process.env.CLOUD_CORE_ENVIRONMENT = "test-env";
   fetchMock = mock<FetchCall>(async () => new Response("ok", { status: 200 }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -24,12 +27,56 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = realFetch;
   restoreEnv("CLOUD_REPORTS_SLACK_WEBHOOK_URL", savedEnv.CLOUD_REPORTS_SLACK_WEBHOOK_URL);
+  restoreEnv(
+    "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
+    savedEnv.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
+  );
   restoreEnv("CLOUD_CORE_ENVIRONMENT", savedEnv.CLOUD_CORE_ENVIRONMENT);
 });
 
 describe("notifyReportSlack", () => {
   test("is a silent no-op when the webhook env var is unset", async () => {
     const result = await notifyReportSlack(bugNotification());
+
+    expect(result).toEqual({ ok: false, skipped: true });
+    expect(fetchMock.mock.calls).toHaveLength(0);
+  });
+
+  test("routes automatic reports to the automatic webhook when configured", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL = AUTOMATIC_WEBHOOK_URL;
+
+    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(AUTOMATIC_WEBHOOK_URL);
+  });
+
+  test("falls back to the main webhook for automatic reports when the split is unset", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK_URL);
+  });
+
+  test("keeps bug and feedback reports on the main webhook when both are configured", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL = AUTOMATIC_WEBHOOK_URL;
+
+    await notifyReportSlack(bugNotification());
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { message: "hi" } }));
+
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK_URL);
+    expect(fetchMock.mock.calls[1][0]).toBe(WEBHOOK_URL);
+  });
+
+  test("skips automatic reports silently when neither webhook is set", async () => {
+    const result = await notifyReportSlack(bugNotification({ kind: "automatic" }));
 
     expect(result).toEqual({ ok: false, skipped: true });
     expect(fetchMock.mock.calls).toHaveLength(0);
