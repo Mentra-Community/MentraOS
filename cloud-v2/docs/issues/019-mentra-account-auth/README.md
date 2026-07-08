@@ -1,7 +1,19 @@
 # 019 - Mentra account auth: mobile login on Cloud V2
 
-**Status:** Planning. This issue frames the work; the deliverables are three docs
-in this folder (spike.md, spec.md, design.md), each gated on the previous one.
+**Status:** Spike in progress. This issue frames the work; the deliverables are
+three docs in this folder (spike.md, spec.md, design.md), each gated on the
+previous one.
+
+## Goal (the actual headline)
+
+**Make it possible to build a version of the MentraOS mobile app with zero
+dependency on legacy Cloud V1.** Replacing the login system is the first and
+enabling cut: identity is the thing every other legacy connection's auth flows
+through, so nothing else can move off V1 while V1 still owns login. But the
+end state is a V1-free build, and the spike inventories the FULL V1 surface
+(not just auth) so the remaining cuts can be sequenced. Today no build flag or
+code path exists that could even express "V2 only"; creating that is part of
+the work.
 
 ## Problem
 
