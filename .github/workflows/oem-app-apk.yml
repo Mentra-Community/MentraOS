@@ -37,6 +37,10 @@ concurrency:
   group: oem-app-apk-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  # Upload/replace assets on the rolling `oem-app-builds` release.
+  contents: write
+
 jobs:
   build:
     # Same runner class as the MentraOS Android build: an ubuntu compile job
@@ -154,3 +158,61 @@ jobs:
           path: ${{ steps.apk.outputs.name }}
           # The whole cleanup policy: GitHub deletes expired artifacts itself.
           retention-days: 14
+
+      - name: Publish APK to the oem-app-builds rolling release
+        # Dev builds only — PR runs stay as run-scoped artifacts. The rolling
+        # release is the browsable index (mirrors the pr-builds release the
+        # MentraOS Android build maintains for PR APKs):
+        # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
+        if: github.event_name != 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const {owner, repo} = context.repo;
+            const tag = 'oem-app-builds';
+            const apkName = '${{ steps.apk.outputs.name }}';
+
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({owner, repo, tag})).data;
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              release = (await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag, name: 'Example OEM app builds (rolling)',
+                body: 'Rolling dev builds of sdk/example-oem-app — the reference second host built against the public @mentra/island entry. Debug-keystore-signed release APKs, one per dev commit that touches the OEM stack. Assets older than 14 days are swept automatically.',
+                prerelease: true,
+              })).data;
+            }
+
+            for (const asset of release.assets) {
+              if (asset.name === apkName) {
+                await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
+              }
+            }
+
+            const data = fs.readFileSync(apkName);
+            console.log(`Uploading ${apkName} (${data.length} bytes)...`);
+            await github.rest.repos.uploadReleaseAsset({
+              owner, repo, release_id: release.id, name: apkName, data,
+            });
+
+      - name: Sweep old release assets
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+            try {
+              const release = (await github.rest.repos.getReleaseByTag({owner, repo, tag: 'oem-app-builds'})).data;
+              for (const asset of release.assets) {
+                if (new Date(asset.created_at) < cutoff) {
+                  console.log(`Deleting expired asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
+                }
+              }
+            } catch (e) {
+              console.log('Sweep skipped:', e.message);
+            }
