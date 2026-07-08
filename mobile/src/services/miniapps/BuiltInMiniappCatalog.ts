@@ -22,7 +22,6 @@ import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
-  captionsPackageName,
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
@@ -57,14 +56,11 @@ class BuiltInMiniappCatalog {
     this.initialized = true
 
     for (const app of this.buildOfflineApps()) {
-      // Captions cannot start without the on-device STT model; island gates
-      // start() on this flag and calls onMissingSpeechModel when it blocks.
-      appRegistry.installOfflineApp(app, {requiresLocalSttModel: app.packageName === captionsPackageName})
+      appRegistry.installOfflineApp(app)
     }
 
     installAppStoreHooks({
       onIncompatibleBlocked: (app) => this.showIncompatibleAlert(app),
-      onMissingSpeechModel: (app) => void this.showMissingSpeechModelAlert(app),
       onOpenRequested: (app, opts) => {
         const nav = useNavigationStore.getState()
         if (!opts?.skipNavigation && nav.getCurrentRoute() === "/home") {
@@ -102,21 +98,6 @@ class BuiltInMiniappCatalog {
       buttons: [{text: translate("common:ok")}],
       message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
     })
-  }
-
-  /** Missing on-device STT model alert + optional settings navigation (island already blocked). */
-  private async showMissingSpeechModelAlert(_app: ClientApp): Promise<void> {
-    const result = await showAlert({
-      title: translate("transcription:noModelInstalled"),
-      message: translate("transcription:noModelInstalledMessage"),
-      buttons: [
-        {text: translate("common:cancel"), style: "cancel"},
-        {text: translate("transcription:goToSettings"), style: "default"},
-      ],
-    })
-    if (result === 1) {
-      useNavigationStore.getState().push("/miniapps/settings/speech")
-    }
   }
 
   private navigateForApp(app: ClientApp): void {
@@ -217,32 +198,6 @@ class BuiltInMiniappCatalog {
         ],
       },
       {
-        packageName: captionsPackageName,
-        name: translate("miniApps:offlineCaptions"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/captions.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        onStart: () => {
-          void toolkit.speech.restartTranscriber()
-          toolkit.settings.set(SETTINGS.offline_captions_running.key, true)
-        },
-        onStop: () => {
-          toolkit.settings.set(SETTINGS.offline_captions_running.key, false)
-        },
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
-      {
         packageName: settingsPackageName,
         name: translate("miniApps:settings"),
         type: "background",
@@ -318,14 +273,14 @@ class BuiltInMiniappCatalog {
     }
 
     if (
-      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key) && false
+      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key)
     ) {
       apps.push({
         packageName: "com.mentra.miniappdev",
         name: translate("miniApps:lmaLoader"),
         type: "standard",
         offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
+        offlineRoute: "/miniapps/settings/miniapp-dev",
         local: false,
         webviewUrl: "",
         permissions: [],

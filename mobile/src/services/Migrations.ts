@@ -34,12 +34,20 @@ const migrations: Migration[] = [
       }
     },
   },
-  // {
-  //   version: 3,
-  //   run: async () => {
-  //     // migrates from 2 → 3
-  //   },
-  // },
+  {
+    version: 3,
+    run: async () => {
+      // migrates from 2 → 3: the hardcoded Offline Captions built-in
+      // (com.mentra.offline_captions) was removed — the SDK Captions miniapp
+      // auto-switches between online and offline transcription now. Clear its
+      // persisted state: the offline_captions_running setting (BLE-synced into
+      // the native mic gate on older builds) and the app-tray running flag
+      // that would otherwise resurrect a now-nonexistent app on boot.
+      storage.remove("offline_captions_running")
+      storage.remove("com.mentra.offline_captions_running")
+      storage.remove("com.mentra.offline_captions_screenshot")
+    },
+  },
 ]
 
 const migration_version_key = "migration_version"

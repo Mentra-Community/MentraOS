@@ -584,13 +584,6 @@ export const SETTINGS: Record<string, Setting> = {
   },
   // offline applets
   offline_mode: {key: "offline_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  offline_captions_running: {
-    key: "offline_captions_running",
-    defaultValue: () => false,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
   // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
@@ -736,7 +729,6 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.controller_address.key,
   // offline applets:
   SETTINGS.offline_mode.key,
-  SETTINGS.offline_captions_running.key,
   // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
   // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
   // mic on while local STT is the active engine.

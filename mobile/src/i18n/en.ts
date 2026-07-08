@@ -648,9 +648,6 @@ const en = {
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",
-    noModelInstalled: "No Speech Model Installed",
-    noModelInstalledMessage: "To use offline Live Captions, you need to download a speech recognition model first.",
-    goToSettings: "Go to Settings",
   },
   profileSettings: {
     title: "Profile Settings",
@@ -1026,13 +1023,12 @@ const en = {
     camera: "Camera",
     settings: "Settings",
     liveCaptions: "Live Captions",
-    offlineCaptions: "Offline Captions",
     mirror: "Glasses Mirror",
     simulated: "Simulated Glasses",
     store: "MiniApp Store",
     notify: "Notifications",
     feedback: "Give Feedback",
-    lmaLoader: "Side Loader",
+    lmaLoader: "Miniapp Developer",
   },
   appInfo: {
     notInstalled: "App not installed",

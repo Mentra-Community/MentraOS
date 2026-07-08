@@ -273,11 +273,6 @@ class DeviceStore {
                 DeviceManager.shared.setMicState()
             }
 
-        case ("bluetooth", "offline_captions_running"):
-            if let running = value as? Bool {
-                DeviceManager.shared.setMicState()
-            }
-
         case ("bluetooth", "local_stt_fallback_active"):
             if let active = value as? Bool {
                 DeviceManager.shared.setMicState()

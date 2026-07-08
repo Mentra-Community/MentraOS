@@ -206,8 +206,8 @@ describe("MantleManager", () => {
     // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
     // Local transcripts no longer roundtrip through the cloud (SocketComms has
-    // no transcription send anymore). With no local-miniapp subscription and
-    // the offline-captions flag off, the transcript is simply dropped.
+    // no transcription send anymore). With no local-miniapp subscription,
+    // the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
