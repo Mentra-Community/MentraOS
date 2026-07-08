@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -31,6 +32,16 @@ public class WakeLockManager {
     // Static wake lock instances for sharing across the app
     private static PowerManager.WakeLock sCpuWakeLock;
     private static PowerManager.WakeLock sScreenWakeLock;
+
+    // Guards acquire/release so the extend-only deadline checks below are race-free when called
+    // from multiple threads (OTA worker, main looper, camera/streaming threads).
+    private static final Object LOCK = new Object();
+
+    // Absolute deadlines (SystemClock.elapsedRealtime() based) for the currently-held locks.
+    // Used to implement extend-only acquisition: a shorter acquire never shortens a longer-lived
+    // lock that is already held. 0 means "no deadline tracked / not held".
+    private static long sCpuWakeLockDeadlineMs = 0;
+    private static long sScreenWakeLockDeadlineMs = 0;
 
     /**
      * Acquire a CPU wake lock to keep the processor running.
@@ -64,27 +75,47 @@ public class WakeLockManager {
      * @return true if the wake lock was successfully acquired
      */
     public static boolean acquireCpuWakeLock(@NonNull Context context, long timeoutMs, String tag) {
-        try {
-            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powerManager == null) {
-                Log.e(TAG, "PowerManager is null");
+        synchronized (LOCK) {
+            try {
+                PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (powerManager == null) {
+                    Log.e(TAG, "PowerManager is null");
+                    return false;
+                }
+
+                long now = SystemClock.elapsedRealtime();
+                long requestedDeadlineMs = now + timeoutMs;
+
+                // Extend-only: if a CPU wake lock is already held and its deadline is at or beyond
+                // the one being requested, keep the existing (longer-lived) lock and ignore this
+                // shorter acquire. Without this, a short acquire (e.g. a 60s camera/util lock)
+                // stomps a long in-flight operation (e.g. a 10-min OTA) and lets the CPU — and the
+                // MTK SoC — sleep mid-update, which is exactly what stalls OTA. We never shorten;
+                // we only ever push the deadline further out.
+                if (sCpuWakeLock != null && sCpuWakeLock.isHeld()
+                        && requestedDeadlineMs <= sCpuWakeLockDeadlineMs) {
+                    Log.d(TAG, "Keeping existing CPU wake lock (remaining "
+                            + (sCpuWakeLockDeadlineMs - now) + "ms) >= requested " + timeoutMs
+                            + "ms; ignoring shorter acquire");
+                    return true;
+                }
+
+                // Extending to a later deadline: release the shorter-lived lock first.
+                if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
+                    sCpuWakeLock.release();
+                    Log.d(TAG, "Released existing CPU wake lock to extend deadline");
+                }
+
+                // Create and acquire a new wake lock
+                sCpuWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, tag);
+                sCpuWakeLock.acquire(timeoutMs);
+                sCpuWakeLockDeadlineMs = requestedDeadlineMs;
+                Log.d(TAG, "CPU wake lock acquired with timeout: " + timeoutMs + "ms");
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error acquiring CPU wake lock", e);
                 return false;
             }
-
-            // Release existing wake lock if it's held
-            if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
-                sCpuWakeLock.release();
-                Log.d(TAG, "Released existing CPU wake lock");
-            }
-
-            // Create and acquire a new wake lock
-            sCpuWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, tag);
-            sCpuWakeLock.acquire(timeoutMs);
-            Log.d(TAG, "CPU wake lock acquired with timeout: " + timeoutMs + "ms");
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error acquiring CPU wake lock", e);
-            return false;
         }
     }
 
@@ -120,31 +151,48 @@ public class WakeLockManager {
      * @return true if the wake lock was successfully acquired
      */
     public static boolean acquireScreenWakeLock(@NonNull Context context, long timeoutMs, String tag) {
-        try {
-            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powerManager == null) {
-                Log.e(TAG, "PowerManager is null");
+        synchronized (LOCK) {
+            try {
+                PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (powerManager == null) {
+                    Log.e(TAG, "PowerManager is null");
+                    return false;
+                }
+
+                long now = SystemClock.elapsedRealtime();
+                long requestedDeadlineMs = now + timeoutMs;
+
+                // Extend-only: keep the existing screen lock if it already outlives this request
+                // (see acquireCpuWakeLock for the rationale — a shorter acquire must not cut a
+                // longer-lived one short).
+                if (sScreenWakeLock != null && sScreenWakeLock.isHeld()
+                        && requestedDeadlineMs <= sScreenWakeLockDeadlineMs) {
+                    Log.d(TAG, "Keeping existing screen wake lock (remaining "
+                            + (sScreenWakeLockDeadlineMs - now) + "ms) >= requested " + timeoutMs
+                            + "ms; ignoring shorter acquire");
+                    return true;
+                }
+
+                // Extending to a later deadline: release the shorter-lived lock first.
+                if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
+                    sScreenWakeLock.release();
+                    Log.d(TAG, "Released existing screen wake lock to extend deadline");
+                }
+
+                // Create and acquire a new wake lock with flags to turn screen on
+                sScreenWakeLock = powerManager.newWakeLock(
+                        PowerManager.FULL_WAKE_LOCK |
+                        PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                        PowerManager.ON_AFTER_RELEASE,
+                        tag);
+                sScreenWakeLock.acquire(timeoutMs);
+                sScreenWakeLockDeadlineMs = requestedDeadlineMs;
+                Log.d(TAG, "Screen wake lock acquired with timeout: " + timeoutMs + "ms");
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error acquiring screen wake lock", e);
                 return false;
             }
-
-            // Release existing wake lock if it's held
-            if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
-                sScreenWakeLock.release();
-                Log.d(TAG, "Released existing screen wake lock");
-            }
-
-            // Create and acquire a new wake lock with flags to turn screen on
-            sScreenWakeLock = powerManager.newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK |
-                    PowerManager.ACQUIRE_CAUSES_WAKEUP |
-                    PowerManager.ON_AFTER_RELEASE,
-                    tag);
-            sScreenWakeLock.acquire(timeoutMs);
-            Log.d(TAG, "Screen wake lock acquired with timeout: " + timeoutMs + "ms");
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error acquiring screen wake lock", e);
-            return false;
         }
     }
 
@@ -180,16 +228,19 @@ public class WakeLockManager {
      * @return true if the wake lock was released or wasn't held
      */
     public static boolean releaseCpuWakeLock() {
-        try {
-            if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
-                sCpuWakeLock.release();
+        synchronized (LOCK) {
+            try {
+                if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
+                    sCpuWakeLock.release();
+                    Log.d(TAG, "CPU wake lock released");
+                }
                 sCpuWakeLock = null;
-                Log.d(TAG, "CPU wake lock released");
+                sCpuWakeLockDeadlineMs = 0;
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing CPU wake lock", e);
+                return false;
             }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error releasing CPU wake lock", e);
-            return false;
         }
     }
 
@@ -199,16 +250,19 @@ public class WakeLockManager {
      * @return true if the wake lock was released or wasn't held
      */
     public static boolean releaseScreenWakeLock() {
-        try {
-            if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
-                sScreenWakeLock.release();
+        synchronized (LOCK) {
+            try {
+                if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
+                    sScreenWakeLock.release();
+                    Log.d(TAG, "Screen wake lock released");
+                }
                 sScreenWakeLock = null;
-                Log.d(TAG, "Screen wake lock released");
+                sScreenWakeLockDeadlineMs = 0;
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing screen wake lock", e);
+                return false;
             }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error releasing screen wake lock", e);
-            return false;
         }
     }
 
