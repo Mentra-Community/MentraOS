@@ -192,7 +192,7 @@ export function DeviceSettingsSection() {
       )}
 
       {/* OTA Progress — OTA-capable glasses in super mode */}
-      {superMode && glassesConnected && features?.hasOta && <OtaProgressSection otaProgress={otaProgress} />}
+      {superMode && glassesConnected && features?.hasOta && otaProgress?.progress && otaProgress?.progress < 100 && <OtaProgressSection otaProgress={otaProgress} />}
 
       {/* Nex Developer Settings — Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (
