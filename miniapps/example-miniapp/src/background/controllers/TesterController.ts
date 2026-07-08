@@ -86,6 +86,45 @@ export class TesterController {
         return await Promise.resolve(fn.apply(module, args ?? []))
       }),
     )
+
+    // speaker.createStream E2E: generate a sine tone background-side and pump
+    // it through the live PCM stream. Runs here (not tester:invoke) because
+    // the SpeakerStreamWriter can't cross the bridge — only a summary returns.
+    // Writes are awaited, so the host's backpressure ceiling paces the loop.
+    this.unsubs.push(
+      ui.handle("tester:speaker-stream-tone", async (payload) => {
+        const {
+          seconds = 5,
+          freqHz = 440,
+          sampleRate = 16000,
+        } = (payload ?? {}) as {seconds?: number; freqHz?: number; sampleRate?: 16000 | 24000 | 48000}
+
+        const writer = await this.session.speaker.createStream({sampleRate})
+        try {
+          // 100ms chunks of 16-bit LE mono sine.
+          const chunkFrames = Math.floor(sampleRate / 10)
+          const totalChunks = Math.max(1, Math.round(seconds * 10))
+          let phase = 0
+          const phaseStep = (2 * Math.PI * freqHz) / sampleRate
+          let last = {bufferedMs: 0}
+          for (let i = 0; i < totalChunks; i++) {
+            const buf = new Uint8Array(chunkFrames * 2)
+            const view = new DataView(buf.buffer)
+            for (let f = 0; f < chunkFrames; f++) {
+              // 0.25 amplitude so it isn't ear-splitting through the glasses.
+              view.setInt16(f * 2, Math.round(Math.sin(phase) * 0x2000), true)
+              phase += phaseStep
+            }
+            last = await writer.write(buf)
+          }
+          const {durationMs} = await writer.close()
+          return {streamId: writer.streamId, durationMs, chunks: totalChunks, lastBufferedMs: last.bufferedMs}
+        } catch (err) {
+          await writer.abort().catch(() => {})
+          throw err
+        }
+      }),
+    )
   }
 
   stop(): void {
