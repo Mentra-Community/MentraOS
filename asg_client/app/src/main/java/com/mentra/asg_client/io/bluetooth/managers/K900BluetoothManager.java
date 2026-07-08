@@ -38,6 +38,53 @@ import java.util.concurrent.atomic.AtomicLong;
 public class K900BluetoothManager extends BaseBluetoothManager implements SerialListener {
     private static final String TAG = "K900BluetoothManager";
 
+    // #region agent log
+    // OS-1409 debug session 966030: ships structured events to the host debug ingest
+    // server via `adb reverse tcp:7905 tcp:7905`. Fire-and-forget, never blocks the
+    // file-pump thread. Remove once the stalled-retransmit root cause is confirmed.
+    private static final String DEBUG_LOG_URL =
+            "http://127.0.0.1:7905/ingest/5a9713c9-45ff-4d09-9435-2adc5db5e91d";
+    private static final String DEBUG_SESSION_ID = "966030";
+
+    private static void debugLog(
+            String location, String message, String hypothesisId, JSONObject data) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("sessionId", DEBUG_SESSION_ID);
+            payload.put("location", location);
+            payload.put("message", message);
+            payload.put("hypothesisId", hypothesisId);
+            payload.put("data", data == null ? new JSONObject() : data);
+            payload.put("timestamp", System.currentTimeMillis());
+            final String body = payload.toString();
+            new Thread(
+                            () -> {
+                                try {
+                                    java.net.HttpURLConnection conn =
+                                            (java.net.HttpURLConnection)
+                                                    new java.net.URL(DEBUG_LOG_URL)
+                                                            .openConnection();
+                                    conn.setRequestMethod("POST");
+                                    conn.setDoOutput(true);
+                                    conn.setConnectTimeout(1000);
+                                    conn.setReadTimeout(1000);
+                                    conn.setRequestProperty("Content-Type", "application/json");
+                                    conn.setRequestProperty(
+                                            "X-Debug-Session-Id", DEBUG_SESSION_ID);
+                                    conn.getOutputStream()
+                                            .write(body.getBytes(StandardCharsets.UTF_8));
+                                    conn.getInputStream().close();
+                                    conn.disconnect();
+                                } catch (Exception ignored) {
+                                    // Best-effort: never let debug shipping affect the transfer.
+                                }
+                            })
+                    .start();
+        } catch (Exception ignored) {
+        }
+    }
+    // #endregion agent log
+
     private final SerialPortBridge comManager;
     private boolean isSerialOpen = false;
     private final DebugNotificationManager notificationManager;
@@ -82,9 +129,33 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
     // 17.26.7.7 firmware: 3.4KB UART RX ring (the HAL rejects single-descriptor
-    // DMA arms over 4095B and 7.7 armed the whole ring at once), acks every 4th
-    // pack - window 8 fits the ring and stays above the batch interval.
-    private static final int FILE_PUSH_WINDOW_BATCHED = 8;
+    // DMA arms over 4095B and 7.7 armed the whole ring at once).
+    //
+    // OS-1409 Arm B audit (fw 17.26.7.11, DMA arm = 2048B): a window-8 blast is
+    // 8 x 432B = 3456B of continuous UART traffic, which crosses the 2048B DMA
+    // re-arm boundary mid-burst; the bytes in the re-arm gap vanish before the
+    // ISR (isr==deliv, dropped=0, no OE flag) and the second half of every blast
+    // is lost. Window 4 keeps each contiguous blast at 1728B - inside one fresh
+    // arm - and was verified byte-conservation-clean end to end (see
+    // notes/os-1409-bes-burst-loss-audit.md, arm B-2).
+    //
+    // A same-session attempt to instead widen the window to 12 (to satisfy the
+    // BES's old BLE_FILE_ACK_BATCH=8 ack-trigger interval) was the wrong fix in
+    // the other direction: it avoided the ack-interval deadlock but produced an
+    // even bigger 12 x 432B = 5184B burst, well past the margin that already
+    // failed at 3456B, and reproduced total transfer silence (BES never even
+    // got a complete frame for the pack that would trigger its first ack).
+    //
+    // The correct fix moves the OTHER side of the equation: BLE_FILE_ACK_BATCH
+    // in the BES firmware's m8_ble_file.h was dropped from 8 to 4 to match this
+    // already-validated window, instead of growing the window to match the old
+    // batch interval. window(4) == batch(4) is the exact boundary (not a
+    // strict inequality) but is sufficient: the phone sends indices 0-3, and
+    // receiving index 3 is exactly what makes the BES's cumulative count hit 4
+    // and fire the first ack - see BLE_FILE_ACK_BATCH's comment for the full
+    // reasoning. Do not raise this window without also re-validating the DMA
+    // re-arm margin (UART_BUF_SIZE_MARGIN_IN_BYTES) at the new burst size.
+    private static final int FILE_PUSH_WINDOW_BATCHED = 4;
     private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
     // 17.26.7.8 firmware: 12KB UART RX ring (arms are margin-sized so the ring is
     // free to grow), accepts 800B UART packs (split to 400B BLE frames on the BES),
@@ -112,6 +183,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * pack 0 of an 800B transfer in its UART frame reassembly (packs 1+ arrive intact; BES
      * trace shows 'unexpected pack index: expect=0, got=1/2/3'), which needs DUMP8-level
      * instrumentation on the BES to localize. Batched acks + window 12 still apply at 400B.
+     *
+     * OS-1409 audit Arm C: set to true in a bench build (requires fw >= 17.26.7.8).
      */
     private static final boolean BIG_PACKS_ENABLED = false;
 
@@ -121,8 +194,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * pack 0 at 800B) and the reject/rewind interplay collapses throughput (~11KB/s,
      * frequent packet_timeout aborts). Per-pack acks at window 3 are the
      * hardware-validated 45-50KB/s configuration.
+     *
+     * OS-1409 audit Arms B/C: set to true in a bench build (requires fw >= 17.26.7.7).
+     * ARM B ACTIVE: enabled against fw 17.26.7.11 (UART DMA margin 512 -> 2048) to
+     * verify the burst-loss fix under the window-12 blast.
      */
-    private static final boolean BATCHED_ACKS_ENABLED = false;
+    private static final boolean BATCHED_ACKS_ENABLED = true;
 
     private int effectiveUartPackSize() {
         if (BIG_PACKS_ENABLED
@@ -203,6 +280,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         long startTime;
         boolean waitingForPhoneConfirmation;
         int retryCount;
+        /** OS-1409 audit: cumulative framed bytes written to UART for this transfer (S0). */
+        long auditTxBytes;
 
         // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack:
         //   totalPack = (fileSize + 400 - 1) / 400
@@ -233,6 +312,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             this.startTime = System.currentTimeMillis();
             this.waitingForPhoneConfirmation = false;
             this.retryCount = 0;
+            this.auditTxBytes = 0;
 
             Log.i(
                     TAG,
@@ -1806,7 +1886,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + fileData.length
                         + " bytes, "
                         + currentFileTransfer.totalPackets
-                        + " packets)");
+                        + " packets, packSize="
+                        + currentFileTransfer.packSize
+                        + ", pushWindow="
+                        + effectivePushWindow()
+                        + ", batchedAcks="
+                        + besSupportsBatchedAcks
+                        + ", bigPacks="
+                        + besSupportsBigPacks
+                        + ")");
 
         notificationManager.showDebugNotification(
                 "File Transfer",
@@ -1826,11 +1914,25 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
+     * Serializes the packet pump. The ack path (serial read thread) and the retry/backoff
+     * path (fileTransferExecutor) both pump; unsynchronized they interleave duplicate
+     * packets (observed: both threads sending packs 780-783 within the same millisecond),
+     * which the BES rejects as unexpected indices and answers with state=0 churn.
+     */
+    private final Object filePumpLock = new Object();
+
+    /**
      * Pump file packets in push mode: stream up to FILE_PUSH_WINDOW packets ahead of the
      * highest BES ack instead of waiting one ack round trip per packet. Completion fires
      * once the acks (not the sends) have covered every packet.
      */
     private void sendNextFilePacket() {
+        synchronized (filePumpLock) {
+            sendNextFilePacketLocked();
+        }
+    }
+
+    private void sendNextFilePacketLocked() {
         if (currentFileTransfer == null || !currentFileTransfer.isActive) {
             return;
         }
@@ -1851,6 +1953,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     "📊 Transfer rate: "
                             + (currentFileTransfer.fileSize * 1000 / transferDuration)
                             + " bytes/sec");
+            Log.i(
+                    TAG,
+                    "AUDIT summary tx_bytes="
+                            + currentFileTransfer.auditTxBytes
+                            + " file_bytes="
+                            + currentFileTransfer.fileSize
+                            + " packs="
+                            + currentFileTransfer.totalPackets
+                            + " duration_ms="
+                            + transferDuration);
             Log.d(TAG, "⏳ Waiting for phone confirmation before cleanup...");
 
             notificationManager.showDebugNotification(
@@ -1867,6 +1979,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // DO NOT clear state yet!
             // Keep everything in memory for potential retry
             return;
+        }
+
+        // A state=0 rewind can leave currentPacketIndex below the ack high-water mark
+        // when a higher state=1 ack lands afterwards. Never resend acked packets: it
+        // wastes UART time and inflates the contiguous burst past the push window
+        // (observed 8x432B = 3456B blasts, which cross the BES 2048B DMA re-arm
+        // boundary and re-trigger the very burst loss the rewind was recovering from).
+        if (currentFileTransfer.currentPacketIndex <= currentFileTransfer.highestAckedIndex) {
+            currentFileTransfer.currentPacketIndex = currentFileTransfer.highestAckedIndex + 1;
         }
 
         // Push-mode pump: send until the window ahead of the acks is full. The UART
@@ -1939,6 +2060,40 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
+        currentFileTransfer.auditTxBytes += packet.length;
+        long elapsedMs = sendStartTime - currentFileTransfer.startTime;
+        Log.i(
+                TAG,
+                "AUDIT tx pack="
+                        + packetIndex
+                        + " bytes="
+                        + packet.length
+                        + " cum="
+                        + currentFileTransfer.auditTxBytes
+                        + " t=+"
+                        + elapsedMs
+                        + "ms");
+
+        // #region agent log
+        // H5: content-corruption check. Checksum matches the BES verify-byte algorithm
+        // (sum of payload bytes mod 256) so a BES "cmd verify error" for this packIndex
+        // can be cross-referenced against what the MTK actually sent.
+        int payloadChecksum = 0;
+        for (byte b : packetData) {
+            payloadChecksum = (payloadChecksum + (b & 0xFF)) & 0xFF;
+        }
+        try {
+            JSONObject d = new JSONObject();
+            d.put("packetIndex", packetIndex);
+            d.put("packSize", packSize);
+            d.put("checksum", payloadChecksum);
+            d.put("thread", Thread.currentThread().getName());
+            d.put("retrySend", pendingPackets.containsKey(packetIndex));
+            debugLog("K900BluetoothManager.sendFilePacketAt", "packet sent", "H5", d);
+        } catch (Exception ignored) {
+        }
+        // #endregion agent log
+
         // Track packet state for acknowledgment (preserve retry count if resending)
         FilePacketState existingState = pendingPackets.get(packetIndex);
         if (existingState == null) {
@@ -1974,6 +2129,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Check if file packet acknowledgment was received */
     private void checkFilePacketAck(int packetIndex) {
         if (currentFileTransfer == null || !currentFileTransfer.isActive) {
+            return;
+        }
+
+        // A packet resent during a rewind gets re-added to pendingPackets even if the
+        // ack high-water mark already passed it; the prune loop only clears indices
+        // above the previous high-water mark, so the stale entry lingers. Without this
+        // guard the stale packet times out FILE_TRANSFER_MAX_RETRIES times and aborts
+        // an otherwise healthy transfer (observed: pack 140 killed a transfer with
+        // packet_timeout while the BES was waiting at pack 156).
+        if (packetIndex <= currentFileTransfer.highestAckedIndex) {
+            pendingPackets.remove(packetIndex);
             return;
         }
 
@@ -2021,7 +2187,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + ")");
 
                 // Resend just this packet; the push window keeps streaming around it
-                sendFilePacketAt(packetIndex);
+                synchronized (filePumpLock) {
+                    sendFilePacketAt(packetIndex);
+                }
             }
         }
     }
@@ -2099,16 +2267,54 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + ", currentPacketIndex="
                         + currentFileTransfer.currentPacketIndex);
 
+        // #region agent log
+        // H4: BES-side ack/dedup bug check + timeline reconstruction. If the same
+        // (state, index) pair repeats forever without highestAckedIndex ever advancing
+        // past it despite identical resends, that points at BES rather than MTK.
+        try {
+            JSONObject d = new JSONObject();
+            d.put("state", state);
+            d.put("index", index);
+            d.put("trackedPacketIndex", trackedPacketIndex);
+            d.put("highestAckedIndex", currentFileTransfer.highestAckedIndex);
+            d.put("currentPacketIndex", currentFileTransfer.currentPacketIndex);
+            d.put("ackDelayMs", ackDelay);
+            d.put("thread", Thread.currentThread().getName());
+            debugLog("K900BluetoothManager.handleFileTransferAck", "ack received", "H4", d);
+        } catch (Exception ignored) {
+        }
+        // #endregion agent log
+
         if (state == 1) { // Success (K900 uses state=1 for success)
             // Ignore true duplicates (acks at or below the high-water mark)
             if (ackedPacketIndex <= currentFileTransfer.highestAckedIndex) {
-                Log.w(
-                        TAG,
-                        "⚠️ Ignoring duplicate ACK for already-acked packet "
-                                + ackedPacketIndex
-                                + " (highestAcked="
-                                + currentFileTransfer.highestAckedIndex
-                                + ")");
+                if (ackedPacketIndex == currentFileTransfer.highestAckedIndex) {
+                    // An exact repeat of the current high-water mark is the BES's
+                    // 1-second request-retry timer firing: it is still waiting for
+                    // the packs after this index (they were lost in a burst). Rewind
+                    // to highestAcked+1 and re-pump the window instead of dropping
+                    // the request on the floor - otherwise nothing deliberately
+                    // resends the missing packs and the transfer stalls out.
+                    Log.w(
+                            TAG,
+                            "⚠️ BES re-requested index "
+                                    + index
+                                    + " (highestAcked="
+                                    + currentFileTransfer.highestAckedIndex
+                                    + ") - re-pumping window from "
+                                    + (currentFileTransfer.highestAckedIndex + 1));
+                    currentFileTransfer.currentPacketIndex =
+                            currentFileTransfer.highestAckedIndex + 1;
+                    sendNextFilePacket();
+                } else {
+                    Log.w(
+                            TAG,
+                            "⚠️ Ignoring duplicate ACK for already-acked packet "
+                                    + ackedPacketIndex
+                                    + " (highestAcked="
+                                    + currentFileTransfer.highestAckedIndex
+                                    + ")");
+                }
                 return;
             }
 

@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
 
 /** Manager for serial communication with the BES2700 Bluetooth module in K900 devices. */
 public class SerialPortBridge {
@@ -221,6 +223,63 @@ public class SerialPortBridge {
     }
 
     /**
+     * Serializes all writers into the tty. The EAGAIN drain loop below yields (2ms sleeps)
+     * mid-frame whenever the ~4KB tty buffer fills, so two threads writing concurrently
+     * (ack-pump thread + fileTransferExecutor retry thread, observed interleaved within the
+     * same millisecond in OS-1409 logs) splice their frames together on the wire. The BES
+     * parser then rejects the mangled frames, and the concurrent-write churn precedes every
+     * observed one-way MTK->BES TX wedge (bytes written "successfully" never reach the BES
+     * UART ISR). One writer at a time, whole frames only.
+     */
+    private final Object mWriteLock = new Object();
+
+    // #region agent log
+    // OS-1409 debug session 966030: ships structured events to the host debug ingest
+    // server via `adb reverse tcp:7905 tcp:7905`. Fire-and-forget. Remove once the
+    // stalled-retransmit root cause is confirmed.
+    private static final String DEBUG_LOG_URL =
+            "http://127.0.0.1:7905/ingest/5a9713c9-45ff-4d09-9435-2adc5db5e91d";
+    private static final String DEBUG_SESSION_ID = "966030";
+
+    private static void debugLog(
+            String location, String message, String hypothesisId, JSONObject data) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("sessionId", DEBUG_SESSION_ID);
+            payload.put("location", location);
+            payload.put("message", message);
+            payload.put("hypothesisId", hypothesisId);
+            payload.put("data", data == null ? new JSONObject() : data);
+            payload.put("timestamp", System.currentTimeMillis());
+            final String body = payload.toString();
+            new Thread(
+                            () -> {
+                                try {
+                                    java.net.HttpURLConnection conn =
+                                            (java.net.HttpURLConnection)
+                                                    new java.net.URL(DEBUG_LOG_URL)
+                                                            .openConnection();
+                                    conn.setRequestMethod("POST");
+                                    conn.setDoOutput(true);
+                                    conn.setConnectTimeout(1000);
+                                    conn.setReadTimeout(1000);
+                                    conn.setRequestProperty("Content-Type", "application/json");
+                                    conn.setRequestProperty(
+                                            "X-Debug-Session-Id", DEBUG_SESSION_ID);
+                                    conn.getOutputStream()
+                                            .write(body.getBytes(StandardCharsets.UTF_8));
+                                    conn.getInputStream().close();
+                                    conn.disconnect();
+                                } catch (Exception ignored) {
+                                }
+                            })
+                    .start();
+        } catch (Exception ignored) {
+        }
+    }
+    // #endregion agent log
+
+    /**
      * Write all bytes to the serial port, draining EAGAIN. liblhsserial opens /dev/ttyS1
      * O_NONBLOCK (verified by disassembly: open flags 0x902), so large bursts overrun the
      * kernel's ~4KB tty TX buffer and FileOutputStream.write throws EAGAIN after an UNKNOWN
@@ -232,6 +291,12 @@ public class SerialPortBridge {
      * @return true if every byte was written
      */
     private boolean writeAllToSerial(OutputStream os, byte[] data, String what) {
+        synchronized (mWriteLock) {
+            return writeAllToSerialLocked(os, data, what);
+        }
+    }
+
+    private boolean writeAllToSerialLocked(OutputStream os, byte[] data, String what) {
         java.io.FileDescriptor fd;
         try {
             fd = ((java.io.FileOutputStream) os).getFD();
@@ -249,6 +314,8 @@ public class SerialPortBridge {
 
         int off = 0;
         int eagainWaits = 0;
+        int totalEagainWaits = 0;
+        long writeStart = System.currentTimeMillis();
         // 500 x 2ms = 1s of cumulative drain budget; the line moves ~230B/2ms at 1.152M.
         final int maxEagainWaits = 500;
         while (off < data.length) {
@@ -261,6 +328,7 @@ public class SerialPortBridge {
             } catch (android.system.ErrnoException e) {
                 if (e.errno == android.system.OsConstants.EAGAIN
                         || e.errno == android.system.OsConstants.EINTR) {
+                    totalEagainWaits++;
                     if (++eagainWaits > maxEagainWaits) {
                         Log.e(
                                 TAG,
@@ -271,6 +339,26 @@ public class SerialPortBridge {
                                         + "/"
                                         + data.length
                                         + " bytes)");
+                        // #region agent log
+                        // H2: TX wedge check - did the write actually stall (bytes short
+                        // of data.length) rather than the previous silent-success theory.
+                        if ("file".equals(what)) {
+                            try {
+                                JSONObject d = new JSONObject();
+                                d.put("what", what);
+                                d.put("bytesWritten", off);
+                                d.put("bytesTotal", data.length);
+                                d.put("eagainWaits", totalEagainWaits);
+                                d.put("thread", Thread.currentThread().getName());
+                                debugLog(
+                                        "SerialPortBridge.writeAllToSerialLocked",
+                                        "write stalled",
+                                        "H2",
+                                        d);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        // #endregion agent log
                         return false;
                     }
                     try {
@@ -288,6 +376,24 @@ public class SerialPortBridge {
                 return false;
             }
         }
+        // #region agent log
+        // H2: confirm every "file" write completes off==data.length exactly (Os.write
+        // exact-byte accounting) and record any EAGAIN drain time, so a "packet sent"
+        // in K900BluetoothManager can be cross-checked against the actual UART write.
+        if ("file".equals(what) && totalEagainWaits > 0) {
+            try {
+                JSONObject d = new JSONObject();
+                d.put("what", what);
+                d.put("bytesWritten", off);
+                d.put("bytesTotal", data.length);
+                d.put("eagainWaits", totalEagainWaits);
+                d.put("durationMs", System.currentTimeMillis() - writeStart);
+                d.put("thread", Thread.currentThread().getName());
+                debugLog("SerialPortBridge.writeAllToSerialLocked", "write completed", "H2", d);
+            } catch (Exception ignored) {
+            }
+        }
+        // #endregion agent log
         return true;
     }
 
