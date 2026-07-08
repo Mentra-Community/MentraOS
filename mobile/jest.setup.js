@@ -311,6 +311,10 @@ const mockIslandEntries = () => {
     start: jest.fn(),
     stop: jest.fn(),
     stopAll: jest.fn(),
+    setForeground: jest.fn(),
+    clearForeground: jest.fn(),
+    saveScreenshot: jest.fn(),
+    setHiddenStatus: jest.fn(),
   }
   const useAppStatusStore = jest.fn((selector) =>
     typeof selector === "function" ? selector(appStatusState) : appStatusState,
@@ -540,16 +544,21 @@ const mockIslandEntries = () => {
         }),
       },
       miniapps: {
-        list: jest.fn(() => []),
+        // Delegates to the shared appStatusState fake (same as the useApps/
+        // useStart hook mocks) so converted host code and tests assert against
+        // one store double.
+        list: jest.fn(() => [...appStatusState.apps]),
         onChanged: jest.fn(() => () => {}),
-        refresh: jest.fn(() => Promise.resolve()),
-        start: jest.fn(() => Promise.resolve(true)),
-        stop: jest.fn(() => Promise.resolve()),
-        setForeground: jest.fn(() => Promise.resolve()),
-        clearForeground: jest.fn(),
-        stopAll: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        refresh: jest.fn((...a) => appStatusState.refresh(...a) ?? Promise.resolve()),
+        start: jest.fn((...a) => appStatusState.start(...a) ?? Promise.resolve(true)),
+        stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),
+        setForeground: jest.fn((...a) => appStatusState.setForeground(...a) ?? Promise.resolve()),
+        clearForeground: jest.fn(() => appStatusState.clearForeground()),
+        stopAll: jest.fn((...a) => appStatusState.stopAll(...a) ?? Promise.resolve({is_ok: () => true})),
         install: jest.fn(() => Promise.resolve({is_ok: () => true})),
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        saveScreenshot: jest.fn((...a) => appStatusState.saveScreenshot(...a) ?? Promise.resolve()),
+        setHiddenStatus: jest.fn((...a) => appStatusState.setHiddenStatus(...a)),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),

@@ -8,8 +8,7 @@ import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
+import {ClientApp, toolkit} from "@mentra/island"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
@@ -194,7 +193,7 @@ export async function captureScreenshot(
           format: ImageManipulator.SaveFormat.JPEG,
           compress: 0.1,
         })
-        await useAppStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+        await toolkit.miniapps.saveScreenshot(packageName, cropped.uri)
       })
       .catch((e) => {
         console.warn("screenshot failed:", e)
@@ -208,7 +207,7 @@ export async function captureScreenshot(
     })
       .then(async (uri) => {
         // android is weird and the crop doesn't work properly:
-        useAppStatusStore.getState().saveScreenshot(packageName, uri)
+        toolkit.miniapps.saveScreenshot(packageName, uri)
       })
       .catch((e) => {
         console.warn("screenshot failed:", e)
@@ -233,7 +232,7 @@ export async function captureScreenshot(
 //     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
 //     useEffect(() => {
-//       const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+//       const storeApp = toolkit.miniapps.list().find((a) => a.packageName === packageName)
 //       if (storeApp) {
 //         setApp(storeApp)
 //       } else if (appNameOverride || iconUrlOverride) {
@@ -263,7 +262,7 @@ export async function captureScreenshot(
 //     )
 
 //     const handleAddRemoveFromHome = useCallback(() => {
-//       useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
+//       toolkit.miniapps.setHiddenStatus(packageName, !app?.hidden)
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])

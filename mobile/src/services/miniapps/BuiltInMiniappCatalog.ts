@@ -9,7 +9,7 @@ import {
   type ClientApp,
   type StartOptions,
 } from "@mentra/island"
-import {appRegistry, installAppStoreHooks, useAppStatusStore} from "@mentra/island/internal"
+import {appRegistry, installAppStoreHooks} from "@mentra/island/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
@@ -73,7 +73,7 @@ class BuiltInMiniappCatalog {
       },
     })
 
-    useAppStatusStore.subscribe(() => {
+    toolkit.miniapps.onChanged(() => {
       void this.syncGlassesMenuApps()
     })
 
@@ -125,7 +125,7 @@ class BuiltInMiniappCatalog {
 
     if (app.offlineRoute) {
       if (isOfflineHosted(app.packageName)) {
-        useAppStatusStore.getState().setForeground(app.packageName)
+        toolkit.miniapps.setForeground(app.packageName)
         return
       }
       nav.push(app.offlineRoute, {transition: appOpenTransition})
@@ -139,7 +139,7 @@ class BuiltInMiniappCatalog {
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
           markMiniappDevMode()
-          useAppStatusStore.getState().setForeground(packageName)
+          toolkit.miniapps.setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
         }
@@ -148,7 +148,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (app.local) {
-      useAppStatusStore.getState().setForeground(app.packageName)
+      toolkit.miniapps.setForeground(app.packageName)
     }
   }
 
@@ -159,7 +159,7 @@ class BuiltInMiniappCatalog {
     }
     this.syncInFlight = true
     try {
-      const apps = useAppStatusStore.getState().apps
+      const apps = toolkit.miniapps.list()
       let menuItems = toolkit.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
       if (!menuItems) {
         menuItems = await getDefaultMenuApps(apps)
