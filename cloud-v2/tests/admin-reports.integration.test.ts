@@ -192,6 +192,54 @@ describe("admin reports read surface", () => {
     const missing = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/art_nope`);
     expect(missing.status).toBe(404);
   });
+
+  test("serves genuine images inline with hardening headers", async () => {
+    const reportId = await seedReport("inline headers");
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; type: string }> };
+    };
+    const shot = report.artifacts.find(a => a.type === "screenshot")!;
+
+    const res = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${shot.artifactId}`);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-disposition")).toStartWith("inline;");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+  });
+
+  test("never renders a spoofed screenshot content type inline", async () => {
+    const reportId = await seedReport("hostile upload");
+
+    // A reporter attaches HTML bytes claiming to be a screenshot. The upload
+    // path must not store the scriptable type, and the admin artifact route
+    // must serve it as an opaque download rather than same-origin HTML.
+    const form = new FormData();
+    form.append(
+      "files",
+      new File(["<script>document.title='pwned'</script>"], "evil.html", { type: "text/html" }),
+    );
+    const upload = await coreApp.fetch(
+      new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${userAccessToken}` },
+        body: form,
+      }),
+    );
+    expect(upload.status).toBe(200);
+
+    const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
+    const { report } = (await detail.json()) as {
+      report: { artifacts: Array<{ artifactId: string; filename: string | null }> };
+    };
+    const hostile = report.artifacts.find(a => a.filename === "evil.html")!;
+
+    const res = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${hostile.artifactId}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toStartWith("attachment;");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 });
 
 // === Helpers ===

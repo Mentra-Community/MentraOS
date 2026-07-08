@@ -69,15 +69,31 @@ async function getReportArtifact(c: AppContext) {
   }
   if (!payload) return c.json({ error: "not_found", error_description: "artifact not found" }, 404);
 
+  // Artifact bytes are user-submitted. Only content types a browser cannot
+  // script are served inline (SVG stays out — it can run script); everything
+  // else downloads as an opaque attachment. nosniff plus a deny-all sandbox
+  // CSP keeps even a mislabeled body inert when opened as a document.
+  const contentType = (payload.contentType || "").split(";")[0].trim().toLowerCase();
+  const inline = INLINE_CONTENT_TYPES.has(contentType);
   return new Response(payload.bytes, {
     status: 200,
     headers: {
-      "content-type": payload.contentType || "application/octet-stream",
-      "content-disposition": `inline; filename="${safeFilename(payload.fileName, artifactId)}"`,
+      "content-type": inline ? contentType : "application/octet-stream",
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
       "cache-control": "private, max-age=300",
     },
   });
 }
+
+const INLINE_CONTENT_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "application/json",
+]);
 
 function requiredParam(c: AppContext, name: string): string {
   const value = (c.req.param(name) ?? "").trim();

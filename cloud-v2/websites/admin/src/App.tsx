@@ -1029,7 +1029,7 @@ function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact
     </div>
   );
 
-  if (artifact.type === "screenshot") {
+  if (artifact.type === "screenshot" && artifact.contentType?.startsWith("image/")) {
     return (
       <div className="rounded-[14px] bg-[#f5f7f4] p-3">
         {header}
