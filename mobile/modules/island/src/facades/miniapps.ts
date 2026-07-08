@@ -46,4 +46,10 @@ export const miniapps = {
   install: (...args: Parameters<AppsState["install"]>) => useAppStatusStore.getState().install(...args),
   /** Uninstall a miniapp. */
   uninstall: (...args: Parameters<AppsState["uninstall"]>) => useAppStatusStore.getState().uninstall(...args),
+  /** Persist a miniapp's captured screenshot (the switcher/card preview). */
+  saveScreenshot: (...args: Parameters<AppsState["saveScreenshot"]>) =>
+    useAppStatusStore.getState().saveScreenshot(...args),
+  /** Hide/show a miniapp on the home surfaces. */
+  setHiddenStatus: (...args: Parameters<AppsState["setHiddenStatus"]>) =>
+    useAppStatusStore.getState().setHiddenStatus(...args),
 }

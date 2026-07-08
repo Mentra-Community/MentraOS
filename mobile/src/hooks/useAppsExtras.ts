@@ -1,8 +1,5 @@
 import {useMemo} from "react"
-import {useShallow} from "zustand/react/shallow"
-
-import {useApps} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
+import {useActiveApps, useApps} from "@mentra/island"
 
 import {SETTINGS, useSetting} from "@mentra/island"
 
@@ -51,5 +48,7 @@ export const useIncompatibleApps = () => {
 }
 
 /** Stable list of running app package names (shallow-equal to avoid re-renders). */
-export const useActiveAppPackageNames = () =>
-  useAppStatusStore(useShallow((state) => state.apps.filter((app) => app.running).map((a) => a.packageName)))
+export const useActiveAppPackageNames = () => {
+  const active = useActiveApps()
+  return useMemo(() => active.map((a) => a.packageName), [active])
+}

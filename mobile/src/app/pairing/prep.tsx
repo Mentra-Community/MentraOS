@@ -16,7 +16,6 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
 import {toolkit} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -198,7 +197,7 @@ export default function PairingPrepScreen() {
     // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
     // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
     // before navigating to the scan screen, so don't block pairing on it.
-    void useAppStatusStore.getState().stopAll()
+    void toolkit.miniapps.stopAll()
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {

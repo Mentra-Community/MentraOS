@@ -14,19 +14,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {toolkit, BgTimer} from "@mentra/island"
-import {
-  appRegistry,
-  displayProcessor,
-  gallerySyncService,
-  phoneLocationService,
-  localDisplayManager,
-  localMiniappRuntime,
-  miniappLauncher,
-  localSttFallbackCoordinator,
-  micStateCoordinator,
-  offlineSpeechModelService,
-  useAppStatusStore,
-} from "@mentra/island/internal"
+import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/island/internal"
 import {SETTINGS} from "@mentra/island"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"

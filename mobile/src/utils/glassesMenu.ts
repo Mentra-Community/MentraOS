@@ -7,7 +7,6 @@
  */
 
 import {sortAppsByLastOpenTime, type ClientApp} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
 

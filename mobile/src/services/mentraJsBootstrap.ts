@@ -11,10 +11,11 @@
  * a singleton and the host attach runs once.
  */
 
+import {toolkit} from "@mentra/island"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine, useAppStatusStore} from "@mentra/island/internal"
+import {ensureMiniappEngine, getMiniappEngine} from "@mentra/island/internal"
 
 import showAlert from "@/utils/AlertUtils"
 
@@ -59,7 +60,7 @@ export function bootstrapMentraJS() {
     }
 
     // Look up the miniapp's display name for the alert + report.
-    const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+    const app = toolkit.miniapps.list().find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
 
     // User-facing alert. Last so even if Sentry/reporting fails the user
