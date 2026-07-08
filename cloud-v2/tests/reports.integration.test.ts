@@ -20,7 +20,7 @@ import crypto from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 // Crypto material and the storage root must be set BEFORE core reads them.
 // Signing keys are loaded lazily and the report service creates its storage
@@ -40,6 +40,9 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = "https://testproj.supabase.co";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
+  // Only the Slack notification tests opt in to a (mocked) webhook; everything
+  // else must run with the notifier disabled, whatever the shell env says.
+  delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
 }
 
 // eslint-disable-next-line import/first
@@ -271,6 +274,102 @@ describe("reports upload limits", () => {
   });
 });
 
+describe("report Slack notifications", () => {
+  const SLACK_WEBHOOK = "https://hooks.slack.test/services/T0/B0/reports";
+  const realFetch = globalThis.fetch;
+  let slackCalls: Array<{ url: string; payload: { text: string; blocks: unknown[] } }>;
+
+  // The in-process app is invoked via coreApp.fetch (a plain handler call),
+  // so replacing globalThis.fetch intercepts only the notifier's outbound
+  // webhook POST.
+  beforeEach(() => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = SLACK_WEBHOOK;
+    slackCalls = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      slackCalls.push({
+        url: String(input),
+        payload: JSON.parse(String(init?.body)) as { text: string; blocks: unknown[] },
+      });
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+  });
+
+  test("notifies Slack when feedback is submitted", async () => {
+    const res = await coreApp.fetch(
+      new Request(REPORTS_PATH, {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "feedback",
+          feedback: { type: "feature", message: "please add a dark mode" },
+          context: {},
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reportId: string; status: string };
+    expect(body.status).toBe("ready");
+
+    // The notifier fires before the response resolves (fire-and-forget, but
+    // the webhook call starts synchronously), so no waiting is needed.
+    expect(slackCalls).toHaveLength(1);
+    expect(slackCalls[0].url).toBe(SLACK_WEBHOOK);
+    expect(slackCalls[0].payload.text).toContain("feedback");
+    expect(slackCalls[0].payload.text).toContain(body.reportId);
+    expect(slackCalls[0].payload.text).toContain(mentraUserId);
+    expect(JSON.stringify(slackCalls[0].payload.blocks)).toContain("please add a dark mode");
+  });
+
+  test("notifies once with the artifact count when a bug report completes", async () => {
+    const reportId = await submitBugReport();
+    expect(slackCalls).toHaveLength(0);
+
+    const form = new FormData();
+    form.append("type", "screenshot");
+    form.append("source", "phone");
+    form.append("files", new File([crypto.randomBytes(64)], "a.jpg", { type: "image/jpeg" }));
+    form.append("files", new File([crypto.randomBytes(64)], "b.jpg", { type: "image/jpeg" }));
+    expect((await postArtifacts(reportId, form)).status).toBe(200);
+    expect(slackCalls).toHaveLength(0);
+
+    const complete = await completeReport(reportId);
+    expect(complete.status).toBe(200);
+    expect(slackCalls).toHaveLength(1);
+    expect(slackCalls[0].payload.text).toContain("bug");
+    expect(slackCalls[0].payload.text).toContain(reportId);
+    expect(slackCalls[0].payload.text).toContain("Artifacts: 2");
+    const blocksJson = JSON.stringify(slackCalls[0].payload.blocks);
+    expect(blocksJson).toContain("manual_bug_report");
+    expect(blocksJson).toContain("the app crashed");
+
+    // Repeated /complete calls keep the API response but stay silent.
+    const again = await completeReport(reportId);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ status: "ready" });
+    expect(slackCalls).toHaveLength(1);
+  });
+
+  test("submits successfully with no Slack call when the webhook env is unset", async () => {
+    delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
+
+    const res = await coreApp.fetch(
+      new Request(REPORTS_PATH, {
+        method: "POST",
+        headers: { ...authHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ kind: "feedback", feedback: "plain text note", context: {} }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("ready");
+    expect(slackCalls).toHaveLength(0);
+  });
+});
+
 // === Helpers ===
 
 function authHeaders(): Record<string, string> {
@@ -302,6 +401,16 @@ function postArtifacts(reportId: string, form: FormData): Promise<Response> {
       method: "POST",
       headers: authHeaders(),
       body: form,
+    }),
+  );
+}
+
+function completeReport(reportId: string): Promise<Response> {
+  return coreApp.fetch(
+    new Request(`${REPORTS_PATH}/${reportId}/complete`, {
+      method: "POST",
+      headers: { ...authHeaders(), "content-type": "application/json" },
+      body: "{}",
     }),
   );
 }
