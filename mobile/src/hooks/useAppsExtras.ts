@@ -4,7 +4,7 @@ import {useShallow} from "zustand/react/shallow"
 import {useApps} from "@mentra/island"
 import {useAppStatusStore} from "@mentra/island/internal"
 
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 
 /**
  * Foreground tray: standard + background apps. Filtered to offline-only when

@@ -1,17 +1,14 @@
 import {useEffect} from "react"
 import {AppState} from "react-native"
 
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {decideReconnect, toolkit} from "@mentra/island"
+import {decideReconnect, toolkit, SETTINGS, useSetting} from "@mentra/island"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
-  const reconnectOnAppForeground = await useSettingsStore
-    .getState()
-    .getSetting(SETTINGS.reconnect_on_app_foreground.key)
-  const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+  const reconnectOnAppForeground = await toolkit.settings.get(SETTINGS.reconnect_on_app_foreground.key)
+  const defaultWearable = await toolkit.settings.get<string>(SETTINGS.default_wearable.key)
 
   const decision = decideReconnect({
     reconnectOnForeground: !!reconnectOnAppForeground,

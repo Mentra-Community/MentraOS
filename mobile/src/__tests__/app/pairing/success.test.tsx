@@ -8,7 +8,8 @@ import {toolkit} from "@mentra/island"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/island"
+import {useSettingsStore} from "@mentra/island/internal"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
   ControllerTypes: {

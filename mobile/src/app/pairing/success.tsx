@@ -4,7 +4,7 @@ import {useRoute} from "@react-navigation/native"
 
 import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"

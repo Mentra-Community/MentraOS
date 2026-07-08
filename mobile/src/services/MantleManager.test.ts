@@ -5,7 +5,8 @@ import restComms from "@/services/RestComms"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/island"
+import {useSettingsStore} from "@mentra/island/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,

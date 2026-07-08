@@ -10,7 +10,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {decideConnectButtonAction, toolkit} from "@mentra/island"
 import {useSearchingState} from "@/hooks/useSearchingState"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {

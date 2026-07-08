@@ -3,7 +3,6 @@ import {Session} from "@supabase/supabase-js"
 
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
-import {useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
@@ -149,7 +148,7 @@ export class LogoutUtils {
 
     // burn it all:
     try {
-      useSettingsStore.getState().resetAllSettingsLocally()
+      toolkit.settings.resetAllLocal()
       storage.clearAll()
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)

@@ -16,7 +16,7 @@ import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/island"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
@@ -159,9 +159,8 @@ class BuiltInMiniappCatalog {
     }
     this.syncInFlight = true
     try {
-      const settingsStore = useSettingsStore.getState()
       const apps = useAppStatusStore.getState().apps
-      let menuItems = settingsStore.getSetting(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
+      let menuItems = toolkit.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
       if (!menuItems) {
         menuItems = await getDefaultMenuApps(apps)
       }
@@ -179,7 +178,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        settingsStore.setSetting(SETTINGS.menu_apps.key, itemsForNative)
+        toolkit.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false
@@ -207,10 +206,10 @@ class BuiltInMiniappCatalog {
         healthy: true,
         hidden: false,
         onStart: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, true)
+          toolkit.settings.set(SETTINGS.offline_camera_running.key, true)
         },
         onStop: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, false)
+          toolkit.settings.set(SETTINGS.offline_camera_running.key, false)
         },
         hardwareRequirements: [
           {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
@@ -233,10 +232,10 @@ class BuiltInMiniappCatalog {
         local: false,
         onStart: () => {
           void toolkit.speech.restartTranscriber()
-          useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
+          toolkit.settings.set(SETTINGS.offline_captions_running.key, true)
         },
         onStop: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false)
+          toolkit.settings.set(SETTINGS.offline_captions_running.key, false)
         },
         hardwareRequirements: [
           {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
@@ -319,8 +318,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (
-      useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) ||
-      useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
+      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key) || toolkit.settings.get(SETTINGS.debug_mode.key)
     ) {
       apps.push({
         packageName: "com.mentra.miniappdev",

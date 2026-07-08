@@ -22,7 +22,7 @@ trap 'rm -f "$TMP_ACTUAL" "$TMP_ALLOWLIST" "$TMP_NEW"' EXIT
 cd "$ROOT_DIR"
 
 rg -l \
-  'from ["'\'']@/stores/glasses|@/stores/gallerySync|useGlassesStore|useGallerySyncStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady|toolkit\.stores\.glasses|toolkit\.stores\.gallerySync' \
+  'from ["'\'']@/stores/glasses|@/stores/gallerySync|@/stores/settings|@/stores/bluetoothSettingKeys|useGlassesStore|useGallerySyncStore|useSettingsStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady|toolkit\.stores\.glasses|toolkit\.stores\.gallerySync' \
   mobile/src \
   mobile/assets \
   -g '*.ts' \
@@ -74,8 +74,10 @@ echo "boundary burn-down (informational):"
 # through the @/stores/* shims, which re-export from it). The hook-name
 # pattern counts every consumer regardless of route, so the number stays
 # comparable across the burn-down campaign.
-report_count "raw island stores via /internal + shims (settings/core/display/connection/cloudClientStatus/appStatus)" \
-  'useSettingsStore|useCoreStore|useDisplayStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore'
+# settings graduated to a FAILING pattern above (slice 2); the two allowlisted
+# Cloud V1 files are its only sanctioned users until tier 5 retires them.
+report_count "raw island stores via /internal + shims (core/display/connection/cloudClientStatus/appStatus)" \
+  'useCoreStore|useDisplayStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore'
 report_count "@mentra/island/internal importers" 'from "@mentra/island/internal"'
 report_count "@mentra/island/devtools importers" 'from "@mentra/island/devtools"'
 report_count "toolkit.stores escape hatch (deleted; should stay 0)" 'toolkit\.stores\.'

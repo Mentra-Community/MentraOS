@@ -3,7 +3,7 @@ import * as SystemUI from "expo-system-ui"
 import {Appearance, ColorSchemeName, Platform, StyleProp, useColorScheme} from "react-native"
 import * as NavigationBar from "expo-navigation-bar"
 
-import {useSetting, SETTINGS} from "@/stores/settings"
+import {useSetting, SETTINGS} from "@mentra/island"
 import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
 import {setStatusBarStyle} from "expo-status-bar"
 import {BgTimer} from "@mentra/island"

@@ -14,7 +14,7 @@
  */
 import {cloudClientService} from "@mentra/island/internal"
 
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, toolkit} from "@mentra/island"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
@@ -43,7 +43,7 @@ function metroUrl(port: number): string | undefined {
  *   3. Cloud Dev: the default shared backend for team testing.
  */
 function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
-  const override = useSettingsStore.getState().getSetting(settingKey)
+  const override = toolkit.settings.get(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
     const trimmed = override.trim()
     if (trimmed !== METRO_AUTO) return trimmed
@@ -83,7 +83,7 @@ export function resolvedEndpoints(): {core: string; runtime: string} {
 
 /** The LC3 frame size (bytes) the phone's encoder currently emits. */
 export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
-  const frameSize = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
+  const frameSize = toolkit.settings.get(SETTINGS.lc3_frame_size.key)
   return frameSize === 20 || frameSize === 40 || frameSize === 60 ? frameSize : 20
 }
 

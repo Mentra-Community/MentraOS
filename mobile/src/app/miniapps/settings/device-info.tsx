@@ -7,7 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {toolkit} from "@mentra/island"
 
 export default function DeviceInfoScreen() {

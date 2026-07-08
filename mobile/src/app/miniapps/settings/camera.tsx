@@ -11,7 +11,7 @@ import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import Toast from "react-native-toast-message"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {spacing, ThemedStyle} from "@/theme"
 import {toolkit} from "@mentra/island"
 

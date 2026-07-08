@@ -1,5 +1,5 @@
 import {OTA_VERSION_URL_LEGACY_PROD, OTA_VERSION_URL_PROD} from "@/config/ota"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, toolkit} from "@mentra/island"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
@@ -11,10 +11,10 @@ function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
 function getOtaVersionUrlDevOverride(): string | null {
   // Super mode only: a wrong OTA manifest can brick glasses, so a saved
   // override is inert unless super mode is currently enabled.
-  if (!useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)) {
+  if (!toolkit.settings.get(SETTINGS.super_mode.key)) {
     return null
   }
-  const value = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
+  const value = toolkit.settings.get(SETTINGS.ota_version_url.key)
   const trimmed = typeof value === "string" ? value.trim() : ""
   return trimmed || null
 }

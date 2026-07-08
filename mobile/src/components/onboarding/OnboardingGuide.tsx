@@ -8,7 +8,7 @@ import {Text, Button, Header, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {translate} from "@/i18n/translate"
 import {BgTimer} from "@mentra/island"
 
