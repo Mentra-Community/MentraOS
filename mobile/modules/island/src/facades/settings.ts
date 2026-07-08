@@ -34,4 +34,24 @@ export const settings = {
   descriptor: (key: string) => SETTINGS[key],
   /** All known setting keys. */
   keys: (): string[] => Object.keys(SETTINGS),
+  /**
+   * Reset every setting to its default on THIS device only (no server sync) —
+   * the logout path. Server-side settings are untouched.
+   */
+  resetAllLocal: (): void => useSettingsStore.getState().resetAllSettingsLocally(),
+  /**
+   * Hydrate the settings store from device storage — the host-boot step (fire
+   * once at app start, before UI reads settings). Single-flighted internally.
+   */
+  loadAll: () => useSettingsStore.getState().loadAllSettings(),
+  /**
+   * Every EXPLICITLY-SET setting (shallow copy; keys never written are absent —
+   * use get() for default-resolved reads). The data-export surface.
+   */
+  getAll: (): Record<string, unknown> => ({...useSettingsStore.getState().settings}),
+  /**
+   * Bulk device-local write without server sync — seeding the store from a
+   * backend settings payload.
+   */
+  setManyLocal: (values: Record<string, unknown>) => useSettingsStore.getState().setManyLocally(values),
 }

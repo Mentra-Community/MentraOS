@@ -269,6 +269,7 @@ const mockIslandEntries = () => {
   // Settings store + RestComms moved into island; tests used the real host store
   // before the move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/island/src/stores/settings")
+  const realBtSettingKeys = jest.requireActual("./modules/island/src/stores/bluetoothSettingKeys")
   const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
@@ -310,6 +311,10 @@ const mockIslandEntries = () => {
     start: jest.fn(),
     stop: jest.fn(),
     stopAll: jest.fn(),
+    setForeground: jest.fn(),
+    clearForeground: jest.fn(),
+    saveScreenshot: jest.fn(),
+    setHiddenStatus: jest.fn(),
   }
   const useAppStatusStore = jest.fn((selector) =>
     typeof selector === "function" ? selector(appStatusState) : appStatusState,
@@ -342,6 +347,12 @@ const mockIslandEntries = () => {
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,
     deriveDisplayState: realOtaDisplayState.deriveDisplayState,
+    // Settings contract on the public entry (real store-backed): SETTINGS registry,
+    // per-key hook, and the pure device-model key helpers.
+    SETTINGS: realSettings.SETTINGS,
+    useSetting: realSettings.useSetting,
+    MENTRA_LIVE_SETTING_KEYS: realBtSettingKeys.MENTRA_LIVE_SETTING_KEYS,
+    getBluetoothSettingKeysForDevice: realBtSettingKeys.getBluetoothSettingKeysForDevice,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -433,11 +444,13 @@ const mockIslandEntries = () => {
         },
       },
       display: {
+        // Real store-backed (mirrors the facade), same rationale as settings:
+        // converted host services assert store-level behavior through toolkit.
         mirror: {
-          current: jest.fn(() => null),
-          onMirror: jest.fn(() => () => {}),
-          view: jest.fn(() => "main"),
-          setView: jest.fn(),
+          current: jest.fn(() => ({...realDisplay.useDisplayStore.getState().currentEvent})),
+          onMirror: jest.fn((cb) => realDisplay.useDisplayStore.subscribe((st) => st.currentEvent, cb)),
+          view: jest.fn(() => realDisplay.useDisplayStore.getState().view),
+          setView: jest.fn((view) => realDisplay.useDisplayStore.getState().setView(view)),
         },
         text: jest.fn(() => Promise.resolve()),
         clear: jest.fn(() => Promise.resolve()),
@@ -531,16 +544,21 @@ const mockIslandEntries = () => {
         }),
       },
       miniapps: {
-        list: jest.fn(() => []),
+        // Delegates to the shared appStatusState fake (same as the useApps/
+        // useStart hook mocks) so converted host code and tests assert against
+        // one store double.
+        list: jest.fn(() => [...appStatusState.apps]),
         onChanged: jest.fn(() => () => {}),
-        refresh: jest.fn(() => Promise.resolve()),
-        start: jest.fn(() => Promise.resolve(true)),
-        stop: jest.fn(() => Promise.resolve()),
-        setForeground: jest.fn(() => Promise.resolve()),
-        clearForeground: jest.fn(),
-        stopAll: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        refresh: jest.fn((...a) => appStatusState.refresh(...a) ?? Promise.resolve()),
+        start: jest.fn((...a) => appStatusState.start(...a) ?? Promise.resolve(true)),
+        stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),
+        setForeground: jest.fn((...a) => appStatusState.setForeground(...a) ?? Promise.resolve()),
+        clearForeground: jest.fn(() => appStatusState.clearForeground()),
+        stopAll: jest.fn((...a) => appStatusState.stopAll(...a) ?? Promise.resolve({is_ok: () => true})),
         install: jest.fn(() => Promise.resolve({is_ok: () => true})),
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
+        saveScreenshot: jest.fn((...a) => appStatusState.saveScreenshot(...a) ?? Promise.resolve()),
+        setHiddenStatus: jest.fn((...a) => appStatusState.setHiddenStatus(...a)),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
@@ -552,11 +570,27 @@ const mockIslandEntries = () => {
         },
       },
       settings: {
-        get: jest.fn(() => undefined),
-        set: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
-        onChanged: jest.fn(() => () => {}),
-        descriptor: jest.fn(() => undefined),
-        keys: jest.fn(() => []),
+        // Real store-backed (host services converted to toolkit.settings assert
+        // settings-driven behavior, not just delegation) — jest.fn-wrapped so
+        // call assertions still work.
+        get: jest.fn((key) => {
+          // Mirror the facade's shallow-copy contract so tests can't mutate
+          // shared store state through returned values.
+          const value = realSettings.useSettingsStore.getState().getSetting(key)
+          if (Array.isArray(value)) return [...value]
+          if (value && typeof value === "object") return {...value}
+          return value
+        }),
+        set: jest.fn((key, value, syncToServer = true) =>
+          realSettings.useSettingsStore.getState().setSetting(key, value, syncToServer),
+        ),
+        onChanged: jest.fn((key, cb) => realSettings.useSettingsStore.subscribe((st) => st.getSetting(key), cb)),
+        descriptor: jest.fn((key) => realSettings.SETTINGS[key]),
+        keys: jest.fn(() => Object.keys(realSettings.SETTINGS)),
+        resetAllLocal: jest.fn(() => realSettings.useSettingsStore.getState().resetAllSettingsLocally()),
+        loadAll: jest.fn(() => realSettings.useSettingsStore.getState().loadAllSettings()),
+        getAll: jest.fn(() => ({...realSettings.useSettingsStore.getState().settings})),
+        setManyLocal: jest.fn((values) => realSettings.useSettingsStore.getState().setManyLocally(values)),
       },
       dev: {
         minimumClientVersion: jest.fn(() =>
@@ -569,6 +603,10 @@ const mockIslandEntries = () => {
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
         getMemoryMB: jest.fn(() => 0),
+        bluetoothStatus: jest.fn(() => {
+          const {setCoreInfo: _s, reset: _r, ...state} = realCore.useCoreStore.getState()
+          return {...state}
+        }),
       },
       reports: {
         submit: jest.fn(() => Promise.resolve({status: "submitted", reportId: "test", reportStatus: "ready"})),

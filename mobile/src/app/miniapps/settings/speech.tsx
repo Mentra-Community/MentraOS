@@ -15,7 +15,7 @@ import {
   ttsModelManager as TTSModelManager,
   type OfflineModelDownloadStatus as DownloadStatus,
 } from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import showAlert from "@/utils/AlertUtils"
 
 export default function SpeechSettingsScreen() {
@@ -39,7 +39,6 @@ export default function SpeechSettingsScreen() {
   const [autoStatus, setAutoStatus] = useState<DownloadStatus | null>(offlineSpeechModelService.getStatus())
 
   const [isLoading, setIsLoading] = useState(true)
-  const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
   const [_enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(
     SETTINGS.enforce_local_transcription.key,
   )
@@ -73,8 +72,6 @@ export default function SpeechSettingsScreen() {
           onPress: async () => {
             if (!offlineMode) {
               await stopAllApps()
-            } else {
-              setOfflineCaptionsAppRunning(false)
             }
             setOfflineMode(!offlineMode)
           },

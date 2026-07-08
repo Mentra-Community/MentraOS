@@ -13,7 +13,7 @@ import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, toolkit, useSetting} from "@mentra/island"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {BgTimer} from "@mentra/island"
@@ -74,7 +74,7 @@ export default function InitScreen() {
   const checkCustomUrl = async (): Promise<boolean> => {
     const defaultUrl = SETTINGS[SETTINGS.backend_url.key].defaultValue()
     // Read directly from the store to avoid stale React closure values
-    const currentUrl = useSettingsStore.getState().getSetting(SETTINGS.backend_url.key)
+    const currentUrl = toolkit.settings.get(SETTINGS.backend_url.key)
     const isCustom = currentUrl !== defaultUrl
     setIsUsingCustomUrl(isCustom)
     return isCustom
@@ -101,9 +101,8 @@ export default function InitScreen() {
 
     // Read directly from the store so we see values that mantle.init() just
     // loaded from the server, regardless of React render timing.
-    const store = useSettingsStore.getState()
-    const onboardingDone = store.getSetting(SETTINGS.onboarding_completed.key)
-    const wearable = store.getSetting(SETTINGS.default_wearable.key)
+    const onboardingDone = toolkit.settings.get(SETTINGS.onboarding_completed.key)
+    const wearable = toolkit.settings.get(SETTINGS.default_wearable.key)
 
     if (!onboardingDone && !wearable) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))

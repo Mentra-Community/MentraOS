@@ -10,8 +10,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute} from "@mentra/island"
-import {registerDevApp, useAppStatusStore, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "@mentra/island/internal"
+import {decideDevLaunchRoute, toolkit} from "@mentra/island"
+import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "@mentra/island/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
@@ -131,12 +131,12 @@ export default function MiniappDeveloperUrlScreen() {
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
     })
 
-    await useAppStatusStore.getState().refresh()
+    await toolkit.miniapps.refresh()
     // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
     // own install/spawn phase machine inside the overlay). Foreground the single
     // dev slot, NOT the manifest's real package name — the projected tile +
     // JSContext are registered under DEV_APP_PACKAGE_NAME.
-    await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
+    await toolkit.miniapps.setForeground(DEV_APP_PACKAGE_NAME)
   }
 
   const handleLoadUrl = async () => {

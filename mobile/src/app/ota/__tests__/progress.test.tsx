@@ -12,15 +12,11 @@ import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/island"
 
 const mockReplace = jest.fn()
 
-let mockSuperModeEnabled = false
-
-jest.mock("@/stores/settings", () => ({
-  SETTINGS: {super_mode: {key: "super_mode"}},
-  useSetting: (key: string) => {
-    if (key === "super_mode") return [mockSuperModeEnabled, jest.fn()]
-    return [undefined, jest.fn()]
-  },
-}))
+// super_mode is controlled through the REAL settings store — the screen's
+// useSetting comes from the global @mentra/island mock, which passes the real
+// store-backed hook through.
+import {useSettingsStore} from "../../../../modules/island/src/stores/settings"
+const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
   focusEffectPreventBack: jest.fn(),
@@ -84,7 +80,7 @@ function setGlassesDisconnected() {
 
 beforeEach(() => {
   jest.useFakeTimers()
-  mockSuperModeEnabled = false
+  setSuperMode(false)
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
@@ -224,7 +220,7 @@ describe("progress.tsx display states", () => {
   })
 
   it("shows Skip (super) when disconnected in super mode", () => {
-    mockSuperModeEnabled = true
+    setSuperMode(true)
     setGlassesDisconnected()
     useGlassesStore.getState().setOtaStatus({
       sessionId: "s1",

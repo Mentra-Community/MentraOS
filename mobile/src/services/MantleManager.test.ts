@@ -2,10 +2,11 @@ import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
-import {useCoreStore} from "@/stores/core"
-import {useDisplayStore} from "@/stores/display"
+import {useCoreStore} from "@mentra/island/internal"
+import {useDisplayStore} from "@mentra/island/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/island"
+import {useSettingsStore} from "@mentra/island/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -205,8 +206,8 @@ describe("MantleManager", () => {
     // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
     // Local transcripts no longer roundtrip through the cloud (SocketComms has
-    // no transcription send anymore). With no local-miniapp subscription and
-    // the offline-captions flag off, the transcript is simply dropped.
+    // no transcription send anymore). With no local-miniapp subscription,
+    // the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,

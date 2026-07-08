@@ -12,7 +12,6 @@ export const MENTRA_LIVE_SETTING_KEYS: string[] = [
   "button_max_recording_time",
   "camera_fov",
   "offline_mode",
-  "offline_captions_running",
   "local_stt_fallback_active",
   "gallery_mode",
   "default_wearable",

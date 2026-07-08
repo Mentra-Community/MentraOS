@@ -580,10 +580,6 @@ struct BluetoothStatus: CustomStringConvertible {
         boolValue(values, "should_send_transcript") ?? false
     }
 
-    var offlineCaptionsRunning: Bool {
-        boolValue(values, "offline_captions_running") ?? false
-    }
-
     var localSttFallbackActive: Bool {
         boolValue(values, "local_stt_fallback_active") ?? false
     }
@@ -946,10 +942,6 @@ struct BluetoothStatusUpdate: CustomStringConvertible {
 
     var shouldSendTranscript: Bool? {
         optionalBoolValue(values, "should_send_transcript")
-    }
-
-    var offlineCaptionsRunning: Bool? {
-        optionalBoolValue(values, "offline_captions_running")
     }
 
     var localSttFallbackActive: Bool? {

@@ -62,7 +62,8 @@ import {useRoute} from "@react-navigation/native"
 import BtClassicPairingScreen from "@/app/pairing/btclassic"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/island"
+import {useSettingsStore} from "@mentra/island/internal"
 import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}

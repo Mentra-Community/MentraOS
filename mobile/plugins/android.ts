@@ -17,7 +17,6 @@ import {
  */
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
-  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
@@ -32,67 +31,6 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
 // hardcode the base package (e.g. the DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION).
 function getAndroidPackageName(config: any): string {
   return config?.android?.package || "com.mentra.mentra"
-}
-
-/**
- * Modify root build.gradle to (1) exclude protobuf-javalite globally (conflicts
- * with protobuf-java required by core module's MentraosBle) and (2) register the
- * authenticated Mapbox Downloads Maven repo so the Mapbox Navigation SDK
- * resolves (see withMapboxDownloadsMavenRepo below for why it lives here).
- */
-function withProjectBuildGradleModifications(config: any) {
-  return withProjectBuildGradle(config, (config) => {
-    let buildGradle = config.modResults.contents
-
-    if (!buildGradle.includes("exclude group: 'com.google.protobuf', module: 'protobuf-javalite'")) {
-      buildGradle = buildGradle.replace(
-        /(allprojects\s*\{[^}]*repositories\s*\{[^}]*\})/s,
-        `$1
-  // Exclude protobuf-javalite globally to avoid conflicts with protobuf-java
-  configurations.all {
-    exclude group: 'com.google.protobuf', module: 'protobuf-javalite'
-  }`,
-      )
-    }
-
-    // Inject the authenticated Mapbox Downloads Maven repo into allprojects so
-    // `:app` (and `:mentra-crust`, which pulls com.mapbox.navigationcore:*) can
-    // resolve the Mapbox Navigation SDK. Those artifacts live ONLY in Mapbox's
-    // private registry, behind a Downloads:Read (sk.…) token; without this repo
-    // the build fails with "Could not find com.mapbox.navigationcore:navigation".
-    // We add it ourselves because we intentionally do NOT depend on
-    // @rnmapbox/maps (which would otherwise provide it) — see app.config.ts.
-    // The token is read from MAPBOX_DOWNLOADS_TOKEN (CI/Doppler env) with a
-    // gradle.properties fallback for the manual-setup path. This runs AFTER the
-    // protobuf edit above so that edit still matches a brace-free repositories
-    // block. Mirrors modules/bluetooth-sdk/plugin/src/withAndroid.ts.
-    if (!buildGradle.includes("api.mapbox.com/downloads")) {
-      const mapboxRepo = [
-        "    maven {",
-        "      // mapbox: navigation sdk downloads repo (injected by plugins/android.ts)",
-        "      url 'https://api.mapbox.com/downloads/v2/releases/maven'",
-        "      authentication { basic(BasicAuthentication) }",
-        "      credentials {",
-        "        username = 'mapbox'",
-        "        password = System.getenv('MAPBOX_DOWNLOADS_TOKEN') ?: (findProperty('MAPBOX_DOWNLOADS_TOKEN') ?: '')",
-        "      }",
-        "    }",
-      ].join("\n")
-      const reposMatch = buildGradle.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
-      if (reposMatch) {
-        const idx = (reposMatch.index ?? 0) + reposMatch[0].length
-        buildGradle = buildGradle.slice(0, idx) + "\n" + mapboxRepo + buildGradle.slice(idx)
-      } else {
-        // Safety net: older templates without an allprojects block put repos in
-        // settings.gradle. This codebase's prebuild has historically emitted
-        // allprojects (the bluetooth-sdk plugin relies on it too).
-        buildGradle += `\nallprojects {\n  repositories {\n${mapboxRepo}\n  }\n}\n`
-      }
-    }
-
-    config.modResults.contents = buildGradle
-    return config
-  })
 }
 
 /**
@@ -187,30 +125,6 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
                 cppFlags "-std=c++20"
             }
         }`,
-      )
-    }
-
-    // 4a. Enable Core Library Desugaring (required by :crust → Mapbox Nav SDK).
-    if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
-      buildGradle = buildGradle.replace(
-        /(namespace\s+['"]com\.mentra\.mentra(?:\.[A-Za-z0-9_.]+)?['"])/,
-        `$1
-    compileOptions {
-        coreLibraryDesugaringEnabled true
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }`,
-      )
-    }
-
-    // 4b. Add desugar_jdk_libs dependency (paired with coreLibraryDesugaringEnabled).
-    if (!buildGradle.includes("coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs")) {
-      buildGradle = buildGradle.replace(
-        /(implementation\("com\.facebook\.react:react-android"\))/,
-        `$1
-
-    // Required by :crust (Mapbox Navigation SDK uses Java 8+ APIs).
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`,
       )
     }
 

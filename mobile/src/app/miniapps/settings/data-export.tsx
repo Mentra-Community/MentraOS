@@ -20,10 +20,9 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {useApps} from "@mentra/island"
-import {useSettingsStore} from "@/stores/settings"
+import {toolkit} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
-import {useCoreStore} from "@/stores/core"
 
 export interface UserDataExport {
   metadata: {
@@ -171,7 +170,7 @@ class DataExportService {
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = useSettingsStore.getState().settings ?? {}
+    const settings: Record<string, any> = toolkit.settings.getAll()
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }
@@ -204,7 +203,6 @@ export default function DataExportPage() {
   const appStatus = useApps()
   const {goBack} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
-  const bluetoothStatus = useCoreStore()
 
   useEffect(() => {
     collectData()
@@ -215,7 +213,7 @@ export default function DataExportPage() {
     setLoading(true)
 
     try {
-      const data = await DataExportService.collectUserData(user, session, bluetoothStatus, appStatus)
+      const data = await DataExportService.collectUserData(user, session, toolkit.dev.bluetoothStatus(), appStatus)
       const formatted = DataExportService.formatAsJson(data)
 
       setExportData(data)

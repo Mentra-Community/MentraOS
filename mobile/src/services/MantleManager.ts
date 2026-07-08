@@ -14,21 +14,8 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {toolkit, BgTimer} from "@mentra/island"
-import {
-  appRegistry,
-  displayProcessor,
-  gallerySyncService,
-  phoneLocationService,
-  localDisplayManager,
-  localMiniappRuntime,
-  miniappLauncher,
-  localSttFallbackCoordinator,
-  micStateCoordinator,
-  offlineSpeechModelService,
-  useAppStatusStore,
-} from "@mentra/island/internal"
-import {useDisplayStore} from "@/stores/display"
-import {useSettingsStore, SETTINGS} from "@/stores/settings"
+import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/island/internal"
+import {SETTINGS} from "@mentra/island"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
@@ -200,7 +187,7 @@ class MantleManager {
       delete loadedSettings["controller_device_name"]
       delete loadedSettings["controller_address"]
 
-      await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
+      await toolkit.settings.setManyLocal(loadedSettings) // write settings to local storage
     } else {
       console.error("MANTLE: No settings received from server")
     }
@@ -232,7 +219,7 @@ class MantleManager {
   }
 
   private async syncTimezone() {
-    const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
+    const timezone = toolkit.settings.get(SETTINGS.time_zone.key)
     const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
@@ -340,7 +327,7 @@ class MantleManager {
           continue
         }
 
-        let superMode = await useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+        let superMode = await toolkit.settings.get(SETTINGS.super_mode.key)
         if (!superMode && packageName === "com.mentra.example") {
           // skip installing the example miniapp if super mode is not enabled
           continue
@@ -376,15 +363,15 @@ class MantleManager {
       // the island PhoneLocationService owns the background task + accuracy at the saved tier.
       const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
       if (hasLocation) {
-        const savedTier = await useSettingsStore.getState().getSetting(SETTINGS.location_tier.key)
-        await phoneLocationService.setLocationTier(savedTier)
+        const savedTier = await toolkit.settings.get<string>(SETTINGS.location_tier.key)
+        await phoneLocationService.setLocationTier(savedTier as string)
       }
     } catch (error) {
       console.error("MANTLE: Error starting location updates", error)
     }
 
     // check for requirements immediately, but only if we've passed through onboarding:
-    // const onboardingCompleted = await useSettingsStore.getState().getSetting(SETTINGS.onboarding_completed.key)
+    // const onboardingCompleted = await toolkit.settings.get(SETTINGS.onboarding_completed.key)
     // if (onboardingCompleted) {
     //   try {
     //     const requirementsCheck = await checkConnectivityRequirementsUI()
@@ -727,12 +714,12 @@ class MantleManager {
   public async handle_head_up(isUp: boolean) {
     // Only switch to dashboard view if contextual dashboard is enabled
     // Otherwise, always show main view regardless of head position
-    const contextualDashboardEnabled = await useSettingsStore.getState().getSetting(SETTINGS.contextual_dashboard.key)
+    const contextualDashboardEnabled = await toolkit.settings.get(SETTINGS.contextual_dashboard.key)
 
     if (isUp && contextualDashboardEnabled) {
-      useDisplayStore.getState().setView("dashboard")
+      toolkit.display.mirror.setView("dashboard")
     } else {
-      useDisplayStore.getState().setView("main")
+      toolkit.display.mirror.setView("main")
     }
   }
 }

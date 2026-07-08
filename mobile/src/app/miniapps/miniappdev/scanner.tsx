@@ -8,14 +8,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute} from "@mentra/island"
-import {
-  appRegistry,
-  registerDevApp,
-  useAppStatusStore,
-  DEV_APP_PACKAGE_NAME,
-  type DevAppRecord,
-} from "@mentra/island/internal"
+import {decideDevLaunchRoute, toolkit} from "@mentra/island"
+import {appRegistry, registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "@mentra/island/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -177,11 +171,11 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       clearHistoryAndGoHome()
-      await useAppStatusStore.getState().refresh()
+      await toolkit.miniapps.refresh()
       // Foreground the single dev slot, NOT the manifest's real package name —
       // the projected tile + JSContext are registered under DEV_APP_PACKAGE_NAME,
       // so setForeground(realName) would no-op (the store has no such app).
-      await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
+      await toolkit.miniapps.setForeground(DEV_APP_PACKAGE_NAME)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }

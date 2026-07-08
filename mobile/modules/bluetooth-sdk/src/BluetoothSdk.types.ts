@@ -1283,7 +1283,6 @@ export type BluetoothSettingsUpdate = Partial<{
   should_send_lc3: boolean
   should_send_transcript: boolean
   offline_mode: boolean
-  offline_captions_running: boolean
   local_stt_fallback_active: boolean
   pending_wearable: DeviceModel | ""
   default_wearable: DeviceModel | ""

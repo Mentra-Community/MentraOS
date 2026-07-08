@@ -5,7 +5,7 @@ import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {OTA_VERSION_URL_PROD, OTA_VERSION_URL_STAGING} from "@/config/ota"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 

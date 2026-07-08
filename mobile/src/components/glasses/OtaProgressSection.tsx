@@ -4,6 +4,7 @@ import {View, ViewStyle, TextStyle} from "react-native"
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle, type Theme} from "@/theme"
+import GlassView from "../ui/GlassView"
 
 interface OtaProgressSectionProps {
   otaProgress: OtaProgress | null
@@ -21,7 +22,7 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
   const showByteCount = otaProgress.stage === "download" && otaProgress.totalBytes > 0
 
   return (
-    <View style={themed($container)}>
+    <GlassView style={themed($container)}>
       <Text style={[themed($subtitle), {marginBottom: theme.spacing.s2}]}>Mentra Live Software Update</Text>
 
       <View style={themed($progressItem)}>
@@ -49,7 +50,7 @@ export default function OtaProgressSection({otaProgress}: OtaProgressSectionProp
           </>
         )}
       </View>
-    </View>
+    </GlassView>
   )
 }
 

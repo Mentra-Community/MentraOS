@@ -218,6 +218,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
+      // crust's own config plugin carries its Android build contract (Mapbox
+      // downloads repo, protobuf-javalite exclusion, core-library desugaring).
+      "@mentra/crust",
       "./plugins/android.ts",
       // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
       // ONLY supported v3 install path; CocoaPods can't resolve it). The

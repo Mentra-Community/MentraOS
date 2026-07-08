@@ -10,7 +10,7 @@ import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/island"
 
 /**
  * Pure renderer over the island OTA install state machine

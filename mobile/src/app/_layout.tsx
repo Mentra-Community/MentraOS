@@ -11,7 +11,7 @@ import {Platform} from "react-native"
 import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {useSettingsStore} from "@/stores/settings"
+import {toolkit} from "@mentra/island"
 import {customFontsToLoad} from "@/theme"
 import {loadDateFnsLocale} from "@/utils/formatDate"
 import {AllEffects} from "@/effects/AllEffects"
@@ -23,7 +23,7 @@ SentrySetup()
 logBuffer.startConsoleInterception()
 
 // initialize the settings store
-useSettingsStore.getState().loadAllSettings()
+toolkit.settings.loadAll()
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync()

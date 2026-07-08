@@ -1,7 +1,7 @@
 import {AppState} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, toolkit} from "@mentra/island"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
 import {SupabaseWrapperClient} from "@/utils/auth/provider/supabaseClient"
@@ -79,7 +79,7 @@ function createLazyAuthClient(): AuthClient {
   const ensureInit = async (): Promise<AuthClient> => {
     if (!initPromise) {
       initPromise = (async () => {
-        const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+        const isChina = toolkit.settings.get(SETTINGS.china_deployment.key)
         if (isChina) {
           client = await AuthingWrapperClient.getInstance()
         } else {
