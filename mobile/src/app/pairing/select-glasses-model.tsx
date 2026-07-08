@@ -42,6 +42,8 @@ export default function SelectGlassesModelScreen() {
         return <VuzixLogo color={theme.colors.text} />
       case DeviceTypes.NIMO:
         return <NimoLogo />
+      case DeviceTypes.AR99:
+        return <Text text="AR99" className="text-foreground font-semibold text-lg" />
       default:
         return null
     }
@@ -62,6 +64,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
           {deviceModel: DeviceTypes.NIMO, key: "nimo"},
+          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           //{deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
@@ -74,6 +77,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
           {deviceModel: DeviceTypes.NIMO, key: "nimo"},
+          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           // {deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
 

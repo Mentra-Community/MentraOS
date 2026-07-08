@@ -32,6 +32,9 @@ export const getGlassesImage = (glasses: string | null) => {
     case DeviceTypes.NIMO:
     case "nimo":
       return require("../../assets/glasses/nimo.png")
+    case DeviceTypes.AR99:
+    case "ar99":
+      return require("../../assets/glasses/ar99_display.png")
     case "virtual-wearable":
     case "Audio Wearable":
       return require("../../assets/glasses/audio_wearable.png")

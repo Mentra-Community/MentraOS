@@ -156,6 +156,18 @@ export default function PairingSuccessScreen() {
         },
       ]
       break
+    case DeviceTypes.AR99:
+      steps = [
+        {
+          name: "Start Onboarding",
+          type: "image",
+          source: glassesImage,
+          containerClassName: "px-12",
+          transition: false,
+          title: translate("common:success"),
+        },
+      ]
+      break
     case DeviceTypes.G1:
     default:
       steps = [

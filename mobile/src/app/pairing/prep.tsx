@@ -443,6 +443,28 @@ export default function PairingPrepScreen() {
     )
   }
 
+  const Ar99PairingGuide = () => {
+    return (
+      <View className="flex-1 mt-6">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="1. Make sure your AR99 glasses are fully charged and turned on."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="2. Disconnect AR99 from other phones or apps before pairing."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="3. Keep the glasses nearby and wait for an AR99 or AR99_Pro device to appear."
+          />
+        </ScrollView>
+      </View>
+    )
+  }
+
   const renderGuide = () => {
     switch (deviceModel) {
       case DeviceTypes.SIMULATED:
@@ -461,6 +483,8 @@ export default function PairingPrepScreen() {
         return <MentraDisplayGlassesPairingGuide />
       case DeviceTypes.NIMO:
         return <NimoPairingGuide />
+      case DeviceTypes.AR99:
+        return <Ar99PairingGuide />
     }
 
     throw new Error(`Unknown model name: ${deviceModel}`)

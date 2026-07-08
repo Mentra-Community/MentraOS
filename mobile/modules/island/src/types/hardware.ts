@@ -188,6 +188,15 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
   [DeviceTypes.MACH1]: vuzixZ100, // Mach1 uses same Vuzix Ultralite hardware as Z100
+  [DeviceTypes.AR99]: {
+    ...evenRealitiesG1,
+    modelName: DeviceTypes.AR99,
+    hasMicrophone: true,
+    microphone: {
+      count: 1,
+      hasVAD: false,
+    },
+  },
   [none.modelName]: none,
 };
 

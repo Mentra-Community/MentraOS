@@ -14,6 +14,7 @@ import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
+import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.SceneElement
@@ -1121,6 +1122,8 @@ class DeviceManager {
             sgc = MentraLive()
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
+        } else if (wearable.contains(DeviceTypes.AR99)) {
+            sgc = Ar99()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {

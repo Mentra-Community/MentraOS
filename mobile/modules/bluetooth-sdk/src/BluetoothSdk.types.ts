@@ -491,6 +491,7 @@ export const DeviceModels = {
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
   Nimo: "NIMO",
+  Ar99: "AR99",
   R1: "Even Realities R1",
 } as const
 

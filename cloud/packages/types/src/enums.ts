@@ -37,6 +37,7 @@ export enum DeviceTypes {
   NEX = "Mentra Display",
   FRAME = "Brilliant Frame",
   NIMO = "NIMO",
+  AR99 = "AR99",
 }
 
 export enum ControllerTypes {
