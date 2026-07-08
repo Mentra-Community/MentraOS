@@ -166,8 +166,10 @@ function buildSlackMessage(notification: MiniAppSubmissionSlackNotification): {
 /** V2 manifests have no required type field, so surface one only when the
  * developer-supplied manifest carries a plausible string. */
 function extractAppType(manifest: Record<string, unknown> | null | undefined): string | null {
-  const type = manifest?.type ?? manifest?.appType;
-  return typeof type === "string" && type.trim().length > 0 ? type : null;
+  for (const candidate of [manifest?.type, manifest?.appType]) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) return candidate;
+  }
+  return null;
 }
 
 /**

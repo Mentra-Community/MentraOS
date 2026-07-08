@@ -73,15 +73,22 @@ describe("notifyMiniAppSubmissionSlack", () => {
     await notifyMiniAppSubmissionSlack(
       submissionNotification({ manifest: { type: "background" } }),
     );
+    // A useless `type` (empty or non-string) must not block the appType fallback.
+    await notifyMiniAppSubmissionSlack(
+      submissionNotification({ manifest: { type: "", appType: "standard" } }),
+    );
+    await notifyMiniAppSubmissionSlack(
+      submissionNotification({ manifest: { type: 42, appType: "standard" } }),
+    );
 
-    const withoutType = JSON.stringify(
-      JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body)),
-    );
-    const withType = JSON.stringify(
-      JSON.parse(String((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body)),
-    );
-    expect(withoutType).not.toContain("*Type:*");
-    expect(withType).toContain("*Type:*\\nbackground");
+    const bodyAt = (index: number) =>
+      JSON.stringify(
+        JSON.parse(String((fetchMock.mock.calls[index] as unknown as [string, RequestInit])[1].body)),
+      );
+    expect(bodyAt(0)).not.toContain("*Type:*");
+    expect(bodyAt(1)).toContain("*Type:*\\nbackground");
+    expect(bodyAt(2)).toContain("*Type:*\\nstandard");
+    expect(bodyAt(3)).toContain("*Type:*\\nstandard");
   });
 
   test("falls back to placeholders when email and description are missing", async () => {
