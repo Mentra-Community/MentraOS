@@ -19,15 +19,22 @@ export class DisplayManager {
   // rounded frame itself, so we only send these content slots. `message` shares
   // the arrow's left x and spans the content area (staying clear of the map).
   static readonly HUD = {
-    map: {x: 335, y: 14, w: 150, h: 150},
-    arrow: {x: 12, y: 116, w: 38, h: 38},
-    // Stats box is one firmware text line tall — the fw font line is ~30px+,
-    // so a 28px box always overflowed (suspected trigger of the firmware's
-    // scroll-indicator tick). 40px fits one line with headroom.
-    stats: {x: 12, y: 9, w: 200, h: 40},
+    // Map dropped below the top row so the top-right stats slot clears it
+    // (the mockup stacks time+ETA across the top with the map underneath).
+    map: {x: 330, y: 70, w: 150, h: 150},
+    arrow: {x: 0, y: 182, w: 38, h: 38},
+    // Wall-clock current time, top-LEFT (the phone's clock, sent each refresh).
+    // One firmware text line tall (see stats note below).
+    clock: {x: 0, y: 0, w: 54, h: 26},
+    // Trip stats (distance remaining + ETA), top-RIGHT — mirrors the clock.
+    // No text alignment primitive exists, so the box is positioned right and
+    // the (short) text left-aligns within it. One firmware text line tall — the
+    // fw font line is ~30px+, so a 28px box always overflowed (suspected trigger
+    // of the firmware's scroll-indicator tick). 40px fits one line with headroom.
+    stats: {x: 359, y: 0, w: 121, h: 28},
     // Two full 40px G2 lines (lineHeightPx calibration clips to floor(h/40)
     // lines — 64px was silently clipping the street name to one line).
-    maneuver: {x: 54, y: 115, w: 270, h: 84},
+    maneuver: {x: 40, y: 168, w: 270, h: 52},
     message: {x: 12, y: 54, w: 310, h: 156},
   }
 
@@ -40,6 +47,7 @@ export class DisplayManager {
   private mode: "hud" | "message" | null = null
   private arrowBmp: string | null = null
   private mapBmp: string | null = null
+  private clock: string | null = null
   private stats: string | null = null
   private maneuver: string | null = null
   private message: string | null = null
@@ -54,7 +62,8 @@ export class DisplayManager {
     } else if (this.mode === "message" && this.message != null) {
       els.push({type: "text", id: "message", box: DisplayManager.HUD.message, text: this.message})
     }
-    // The minimap rides along in both modes (it sits clear of the message box).
+    // The clock (top-left) and minimap ride along in both modes.
+    if (this.clock != null) els.push({type: "text", id: "clock", box: DisplayManager.HUD.clock, text: this.clock})
     if (this.mapBmp) els.push({type: "image", id: "map", box: DisplayManager.HUD.map, data: this.mapBmp})
     return els
   }
@@ -69,11 +78,12 @@ export class DisplayManager {
    * null) overwrite that slot; omitted fields keep their cached content, so the
    * caller only re-encodes the arrow BMP when the direction changes.
    */
-  showNavHud(frame: {arrowBmp?: string; stats?: string | null; maneuver?: string | null}): void {
+  showNavHud(frame: {arrowBmp?: string; stats?: string | null; maneuver?: string | null; clock?: string | null}): void {
     this.mode = "hud"
     if (frame.arrowBmp !== undefined) this.arrowBmp = frame.arrowBmp
     if (frame.stats !== undefined) this.stats = frame.stats
     if (frame.maneuver !== undefined) this.maneuver = frame.maneuver
+    if (frame.clock !== undefined) this.clock = frame.clock
     this.pushFrame()
   }
 
@@ -82,9 +92,10 @@ export class DisplayManager {
    * whole frame becomes the message (plus minimap). Turn-by-turn slots simply
    * stop being rendered — render() replaces the frame, nothing to remove.
    */
-  showNavMessage(text: string): void {
+  showNavMessage(text: string, clock?: string | null): void {
     this.mode = "message"
     this.message = text
+    if (clock !== undefined) this.clock = clock
     this.pushFrame()
   }
 
@@ -303,6 +314,7 @@ export class DisplayManager {
     this.mode = null
     this.arrowBmp = null
     this.mapBmp = null
+    this.clock = null
     this.stats = null
     this.maneuver = null
     this.message = null

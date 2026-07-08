@@ -67,6 +67,25 @@ object NexProtobufUtils {
 
     private const val WHITELIST_CMD: Int = 0x04
 
+    // Characters the Nex font can render: letters, digits, whitespace, and a small
+    // punctuation set. Everything else (CJK, emoji, smart quotes, …) is stripped when
+    // Chinese captions are off. Compiled once — sanitizeDisplayText runs on every
+    // caption update (high frequency), so we don't rebuild it per call.
+    private val UNSUPPORTED_GLYPH_REGEX = Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]""")
+
+    /**
+     * Sanitize text bound for the glasses. When Chinese captions are disabled (the
+     * default) the Nex font can't render CJK/emoji/etc., so em-dashes are normalised
+     * to hyphens and any unsupported glyph is dropped. When enabled, text passes
+     * through untouched. Every text path that reaches the display funnels through
+     * here so the filter behaves identically for captions, text walls, and layouts.
+     */
+    private fun sanitizeDisplayText(text: String): String {
+        val chineseCaptionsEnabled = DeviceStore.get("bluetooth", "nex_chinese_captions") as? Boolean ?: false
+        if (chineseCaptionsEnabled) return text
+        return text.replace("—", "-").replace(UNSUPPORTED_GLYPH_REGEX, "")
+    }
+
     /**
      * Maps dashboard depth to the value Nex firmware expects in [DisplayDistanceConfig.distance_cm].
      * The protobuf field is still named `distance_cm`, but Nex treats it as a **tier** 1–4, not centimeters.
@@ -293,7 +312,7 @@ object NexProtobufUtils {
     fun generateCanvasUpdateTextCommandBytes(id: Int, text: String, scrollOffset: Int = 0): ByteArray {
         val update = CanvasUpdateText.newBuilder()
             .setId(id)
-            .setText(text)
+            .setText(sanitizeDisplayText(text))
             .setScrollOffset(scrollOffset)
             .build()
         val phoneToGlasses = PhoneToGlasses.newBuilder()
@@ -337,17 +356,7 @@ object NexProtobufUtils {
         Bridge.log("Nex: Text: \"$text\"")
         Bridge.log("Nex: Text Length: ${text.length} characters")
 
-        // When Chinese captions are disabled (default), strip characters the Nex font
-        // can't render (CJK etc.): replace m-dashes, then keep only the supported ASCII set.
-        val chineseCaptionsEnabled = DeviceStore.get("bluetooth", "nex_chinese_captions") as? Boolean ?: false
-        val displayText = if (chineseCaptionsEnabled) {
-            text
-        } else {
-            text.replace("—", "-").replace(
-                Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
-                ""
-            )
-        }
+        val displayText = sanitizeDisplayText(text)
 
         val textNewBuilder = DisplayText.newBuilder()
             .setColor(10000)
