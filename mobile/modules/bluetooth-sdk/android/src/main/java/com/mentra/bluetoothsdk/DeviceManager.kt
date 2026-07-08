@@ -146,10 +146,6 @@ class DeviceManager {
         get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
 
-    private var offlineCaptionsRunning: Boolean
-        get() = DeviceStore.store.get("bluetooth", "offline_captions_running") as? Boolean ?: false
-        set(value) = DeviceStore.apply("bluetooth", "offline_captions_running", value)
-
     private var localSttFallbackActive: Boolean
         get() = DeviceStore.store.get("bluetooth", "local_stt_fallback_active") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "local_stt_fallback_active", value)
@@ -749,7 +745,7 @@ class DeviceManager {
         // class to fire `vad_status` (a separate signal the cloud SDK
         // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
-        if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
+        if (shouldSendTranscript || localSttFallbackActive) {
             if (ensureTranscriberInitialized()) {
                 transcriber?.acceptAudio(pcmData)
             }
@@ -1776,7 +1772,7 @@ class DeviceManager {
 
     fun setMicState() {
         val willSendPcm = shouldSendPcm || shouldSendLc3
-        val willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
+        val willSendTranscript = shouldSendTranscript || localSttFallbackActive
         val nextEnabled = willSendPcm || willSendTranscript
         // Tell VAD when the mic is shutting down so it doesn't get stuck in
         // a stale "speaking" state and keep emitting vad_status=true after

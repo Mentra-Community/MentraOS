@@ -28,7 +28,6 @@ const INTERNAL_KEYS = new Set<string>([
   SETTINGS.controller_address.key,
   // internal runtime flags
   SETTINGS.local_stt_fallback_active.key,
-  SETTINGS.offline_captions_running.key,
 ])
 const DEVICE_KEYS = BLUETOOTH_SETTING_KEYS.filter((k) => !INTERNAL_KEYS.has(k))
 

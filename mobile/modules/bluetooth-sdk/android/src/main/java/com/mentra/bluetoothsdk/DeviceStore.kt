@@ -303,12 +303,6 @@ object DeviceStore {
                     DeviceManager.getInstance().setMicState()
                 }
             }
-            "bluetooth" to "offline_captions_running" -> {
-                (value as? Boolean)?.let { running ->
-                    Bridge.log("DeviceStore: offline_captions_running changed to $running")
-                    DeviceManager.getInstance().setMicState()
-                }
-            }
             "bluetooth" to "local_stt_fallback_active" -> {
                 (value as? Boolean)?.let { active ->
                     Bridge.log("DeviceStore: local_stt_fallback_active changed to $active")

@@ -255,7 +255,6 @@ internal data class BluetoothStatus(
     val shouldSendPcm: Boolean,
     val shouldSendLc3: Boolean,
     val shouldSendTranscript: Boolean,
-    val offlineCaptionsRunning: Boolean,
     val localSttFallbackActive: Boolean,
     val shouldSendBootingMessage: Boolean,
 ) {
@@ -307,7 +306,6 @@ internal data class BluetoothStatus(
             "should_send_pcm" to shouldSendPcm,
             "should_send_lc3" to shouldSendLc3,
             "should_send_transcript" to shouldSendTranscript,
-            "offline_captions_running" to offlineCaptionsRunning,
             "local_stt_fallback_active" to localSttFallbackActive,
             "shouldSendBootingMessage" to shouldSendBootingMessage,
         )
@@ -354,7 +352,6 @@ internal data class BluetoothStatus(
                 shouldSendPcm = boolValue(values, "should_send_pcm") ?: false,
                 shouldSendLc3 = boolValue(values, "should_send_lc3") ?: false,
                 shouldSendTranscript = boolValue(values, "should_send_transcript") ?: false,
-                offlineCaptionsRunning = boolValue(values, "offline_captions_running") ?: false,
                 localSttFallbackActive = boolValue(values, "local_stt_fallback_active") ?: false,
                 shouldSendBootingMessage = boolValue(values, "shouldSendBootingMessage") ?: true,
             )
@@ -558,7 +555,6 @@ internal data class BluetoothStatusUpdate(
     val shouldSendPcm: Boolean? = null,
     val shouldSendLc3: Boolean? = null,
     val shouldSendTranscript: Boolean? = null,
-    val offlineCaptionsRunning: Boolean? = null,
     val localSttFallbackActive: Boolean? = null,
     val shouldSendBootingMessage: Boolean? = null,
 ) {
@@ -600,7 +596,6 @@ internal data class BluetoothStatusUpdate(
             putIfNotNull("should_send_pcm", shouldSendPcm)
             putIfNotNull("should_send_lc3", shouldSendLc3)
             putIfNotNull("should_send_transcript", shouldSendTranscript)
-            putIfNotNull("offline_captions_running", offlineCaptionsRunning)
             putIfNotNull("local_stt_fallback_active", localSttFallbackActive)
             putIfNotNull("shouldSendBootingMessage", shouldSendBootingMessage)
         }
@@ -650,7 +645,6 @@ internal data class BluetoothStatusUpdate(
                 shouldSendPcm = optionalBoolValue(values, "should_send_pcm"),
                 shouldSendLc3 = optionalBoolValue(values, "should_send_lc3"),
                 shouldSendTranscript = optionalBoolValue(values, "should_send_transcript"),
-                offlineCaptionsRunning = optionalBoolValue(values, "offline_captions_running"),
                 localSttFallbackActive = optionalBoolValue(values, "local_stt_fallback_active"),
                 shouldSendBootingMessage = optionalBoolValue(values, "shouldSendBootingMessage"),
             )

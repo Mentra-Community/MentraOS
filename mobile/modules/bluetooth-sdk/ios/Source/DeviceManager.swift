@@ -186,11 +186,6 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
     }
 
-    private var offlineCaptionsRunning: Bool {
-        get { DeviceStore.shared.get("bluetooth", "offline_captions_running") as? Bool ?? false }
-        set { DeviceStore.shared.apply("bluetooth", "offline_captions_running", newValue) }
-    }
-
     private var localSttFallbackActive: Bool {
         get { DeviceStore.shared.get("bluetooth", "local_stt_fallback_active") as? Bool ?? false }
         set { DeviceStore.shared.apply("bluetooth", "local_stt_fallback_active", newValue) }
@@ -427,7 +422,7 @@ struct ViewState {
 
         // Send PCM to local transcriber.
 #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
+        if shouldSendTranscript || localSttFallbackActive {
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
 #endif
@@ -1431,7 +1426,7 @@ struct ViewState {
 
     func setMicState() {
         let willSendPcm = shouldSendPcm || shouldSendLc3
-        let willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
+        let willSendTranscript = shouldSendTranscript || localSttFallbackActive
         micEnabled = willSendPcm || willSendTranscript
         updateMicState()
     }

@@ -158,7 +158,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | nul
 const LOG_TAG = "LOCAL_MINIAPP"
 const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.camera",
-  "com.mentra.offline_captions",
   "com.mentra.gallery",
   "com.mentra.settings",
   "com.mentra.simulated",
