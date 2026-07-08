@@ -43,6 +43,17 @@ export enum MiniappRequestType {
   /** Speak text via cloud TTS — phone constructs the URL. */
   SPEAK = "miniapp_speak",
 
+  /**
+   * Live PCM output stream to the phone's audio playback service
+   * (speaker.createStream). OPEN provisions a native chunk player; WRITE
+   * appends base64 PCM (replies with {bufferedMs} for backpressure); CLOSE
+   * drains and finishes; ABORT drops immediately.
+   */
+  SPEAKER_STREAM_OPEN = "miniapp_speaker_stream_open",
+  SPEAKER_STREAM_WRITE = "miniapp_speaker_stream_write",
+  SPEAKER_STREAM_CLOSE = "miniapp_speaker_stream_close",
+  SPEAKER_STREAM_ABORT = "miniapp_speaker_stream_abort",
+
   /** Control the glasses RGB LED. */
   RGB_LED = "miniapp_rgb_led",
 

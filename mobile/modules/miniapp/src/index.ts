@@ -85,7 +85,17 @@ export type {
   VadData,
   WifiData,
 } from "./modules/events"
-export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
+export type {
+  PlayAudioOptions,
+  SpeakOptions,
+  SpeakResult,
+  SpeakerState,
+  SpeakerStateEvent,
+  SpeakerStreamOptions,
+  SpeakerStreamSampleRate,
+  SpeakerStreamWriteResult,
+} from "./modules/speaker"
+export {SpeakerStreamWriter, SPEAKER_STREAM_MAX_BUFFERED_MS, SPEAKER_WRITE_CHUNK_BYTES} from "./modules/speaker"
 export type {
   CameraFovPreset,
   CameraFovRequest,

@@ -180,6 +180,23 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Used to suspend LC3 mic during audio playback to avoid MCU overload
   setOwnAppAudioPlaying(playing: boolean): Promise<void>
 
+  // Live PCM output stream (miniapp speaker.createStream). MentraOS-internal
+  // — 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
+  // follows the phone's media route, e.g. A2DP to glasses). Android only in
+  // v1; iOS rejects with "not available in this native build".
+  /** Open a PCM stream session. One AudioTrack per id; caller manages ids. */
+  pcmStreamOpen(streamId: string, sampleRate: number, channels: number, volume: number): Promise<void>
+  /**
+   * Append base64 PCM. Resolves with the queued-but-unplayed backlog in ms;
+   * blocks (on a background dispatcher) while the backlog is above the
+   * backpressure ceiling, so awaited writes self-throttle to realtime.
+   */
+  pcmStreamWrite(streamId: string, base64: string): Promise<{bufferedMs: number}>
+  /** Drain the backlog, then stop. Resolves with the total played duration. */
+  pcmStreamClose(streamId: string): Promise<{durationMs: number}>
+  /** Stop immediately, dropping any backlog. Idempotent. */
+  pcmStreamAbort(streamId: string): Promise<void>
+
   /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
   /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0–15 on native. */
