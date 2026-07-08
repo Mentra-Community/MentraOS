@@ -440,11 +440,13 @@ const mockIslandEntries = () => {
         },
       },
       display: {
+        // Real store-backed (mirrors the facade), same rationale as settings:
+        // converted host services assert store-level behavior through toolkit.
         mirror: {
-          current: jest.fn(() => null),
-          onMirror: jest.fn(() => () => {}),
-          view: jest.fn(() => "main"),
-          setView: jest.fn(),
+          current: jest.fn(() => ({...realDisplay.useDisplayStore.getState().currentEvent})),
+          onMirror: jest.fn((cb) => realDisplay.useDisplayStore.subscribe((st) => st.currentEvent, cb)),
+          view: jest.fn(() => realDisplay.useDisplayStore.getState().view),
+          setView: jest.fn((view) => realDisplay.useDisplayStore.getState().setView(view)),
         },
         text: jest.fn(() => Promise.resolve()),
         clear: jest.fn(() => Promise.resolve()),

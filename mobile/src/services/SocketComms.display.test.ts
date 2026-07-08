@@ -1,7 +1,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {displayProcessor as MockDisplayProcessor} from "@mentra/island/internal"
 
-import {useDisplayStore, flushDisplayCoalesceForTests} from "@/stores/display"
+import {useDisplayStore, flushDisplayCoalesceForTests} from "@mentra/island/internal"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")

@@ -27,7 +27,6 @@ import {
   offlineSpeechModelService,
   useAppStatusStore,
 } from "@mentra/island/internal"
-import {useDisplayStore} from "@/stores/display"
 import {SETTINGS} from "@mentra/island"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -730,9 +729,9 @@ class MantleManager {
     const contextualDashboardEnabled = await toolkit.settings.get(SETTINGS.contextual_dashboard.key)
 
     if (isUp && contextualDashboardEnabled) {
-      useDisplayStore.getState().setView("dashboard")
+      toolkit.display.mirror.setView("dashboard")
     } else {
-      useDisplayStore.getState().setView("main")
+      toolkit.display.mirror.setView("main")
     }
   }
 }
