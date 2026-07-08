@@ -21,6 +21,14 @@ const SLACK_TIMEOUT_MS = 10_000;
 /** How much user-authored text a Slack field keeps, mirroring V1 limits. */
 const BEHAVIOR_TEXT_MAX = 500;
 const FEEDBACK_TEXT_MAX = 1000;
+/** Trigger metadata and other short client strings (the API only requires
+ * them to be non-empty, so none of them can be trusted to be short). */
+const TRIGGER_TEXT_MAX = 300;
+const SHORT_TEXT_MAX = 254;
+/** Slack rejects the whole message when one section text exceeds 2000 chars,
+ * which would silently lose the notification. Escaping expands text (up to
+ * 5x), so this cap applies to the escaped result, with headroom for labels. */
+const SLACK_FIELD_TEXT_MAX = 1900;
 
 export interface ReportSlackNotification {
   reportId: string;
@@ -122,9 +130,9 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   });
 
   const identityFields = [
-    { type: "mrkdwn", text: `*User:*\n${escapeSlackText(mentraUserId)}` },
-    { type: "mrkdwn", text: `*Report ID:*\n\`${escapeSlackText(reportId)}\`` },
-    { type: "mrkdwn", text: `*Env:*\n${escapeSlackText(env)}` },
+    { type: "mrkdwn", text: `*User:*\n${slackText(mentraUserId, SHORT_TEXT_MAX)}` },
+    { type: "mrkdwn", text: `*Report ID:*\n\`${slackText(reportId, SHORT_TEXT_MAX)}\`` },
+    { type: "mrkdwn", text: `*Env:*\n${slackText(env, SHORT_TEXT_MAX)}` },
   ];
   if (artifactCount !== undefined) {
     identityFields.push({ type: "mrkdwn", text: `*Artifacts:*\n${artifactCount}` });
@@ -139,20 +147,20 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   if (typeof trigger?.source === "string") {
     triggerFields.push({
       type: "mrkdwn",
-      text: `*Trigger source:*\n${escapeSlackText(trigger.source)}`,
+      text: `*Trigger source:*\n${slackText(trigger.source, TRIGGER_TEXT_MAX)}`,
     });
   }
   if (typeof trigger?.reason === "string") {
     triggerFields.push({
       type: "mrkdwn",
-      text: `*Trigger reason:*\n${escapeSlackText(trigger.reason)}`,
+      text: `*Trigger reason:*\n${slackText(trigger.reason, TRIGGER_TEXT_MAX)}`,
     });
   }
   const sourceApplet = formatSourceApplet(trigger);
   if (sourceApplet) {
     triggerFields.push({
       type: "mrkdwn",
-      text: `*Source applet:*\n${escapeSlackText(sourceApplet)}`,
+      text: `*Source applet:*\n${slackText(sourceApplet, TRIGGER_TEXT_MAX)}`,
     });
   }
   if (triggerFields.length > 0) {
@@ -168,7 +176,9 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   const fallbackParts = [
     `New ${kind} report from ${mentraUserId} (${env})`,
     `Report ID: ${reportId}`,
-    ...(typeof trigger?.reason === "string" ? [`Trigger: ${trigger.reason}`] : []),
+    ...(typeof trigger?.reason === "string"
+      ? [`Trigger: ${truncate(trigger.reason, TRIGGER_TEXT_MAX)}`]
+      : []),
     ...(artifactCount !== undefined ? [`Artifacts: ${artifactCount}`] : []),
   ];
 
@@ -185,13 +195,13 @@ function buildBodyBlocks(notification: ReportSlackNotification): SlackBlock[] {
     if (typeof report.actualBehavior === "string") {
       detailFields.push({
         type: "mrkdwn",
-        text: `*Actual:*\n${escapeSlackText(truncate(report.actualBehavior, BEHAVIOR_TEXT_MAX))}`,
+        text: `*Actual:*\n${slackText(report.actualBehavior, BEHAVIOR_TEXT_MAX)}`,
       });
     }
     if (typeof report.expectedBehavior === "string") {
       detailFields.push({
         type: "mrkdwn",
-        text: `*Expected:*\n${escapeSlackText(truncate(report.expectedBehavior, BEHAVIOR_TEXT_MAX))}`,
+        text: `*Expected:*\n${slackText(report.expectedBehavior, BEHAVIOR_TEXT_MAX)}`,
       });
     }
     if (detailFields.length > 0) {
@@ -215,7 +225,7 @@ function buildBodyBlocks(notification: ReportSlackNotification): SlackBlock[] {
     if (typeof report.contactEmail === "string") {
       blocks.push({
         type: "section",
-        text: { type: "mrkdwn", text: `*Contact:* ${escapeSlackText(report.contactEmail)}` },
+        text: { type: "mrkdwn", text: `*Contact:* ${slackText(report.contactEmail, SHORT_TEXT_MAX)}` },
       });
     }
   }
@@ -230,13 +240,13 @@ function buildBodyBlocks(notification: ReportSlackNotification): SlackBlock[] {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Feedback:*\n${escapeSlackText(truncate(message, FEEDBACK_TEXT_MAX))}`,
+        text: `*Feedback:*\n${slackText(message, FEEDBACK_TEXT_MAX)}`,
       },
     });
     if (typeof feedback.type === "string") {
       blocks.push({
         type: "section",
-        text: { type: "mrkdwn", text: `*Type:* ${escapeSlackText(feedback.type)}` },
+        text: { type: "mrkdwn", text: `*Type:* ${slackText(feedback.type, SHORT_TEXT_MAX)}` },
       });
     }
     if (typeof feedback.experienceRating === "number") {
@@ -252,7 +262,7 @@ function buildBodyBlocks(notification: ReportSlackNotification): SlackBlock[] {
     if (typeof feedback.contactEmail === "string") {
       blocks.push({
         type: "section",
-        text: { type: "mrkdwn", text: `*Contact:* ${escapeSlackText(feedback.contactEmail)}` },
+        text: { type: "mrkdwn", text: `*Contact:* ${slackText(feedback.contactEmail, SHORT_TEXT_MAX)}` },
       });
     }
   }
@@ -274,6 +284,18 @@ function formatSourceApplet(trigger: ReportSlackNotification["trigger"]): string
  */
 function environmentLabel(): string {
   return process.env.CLOUD_CORE_ENVIRONMENT || "unknown";
+}
+
+/**
+ * Prepare client-sourced text for a Slack field: cap at the field's own
+ * length budget, escape, then hard-cap the escaped result under Slack's
+ * 2000-char section text limit. A truncated trailing entity is stripped
+ * rather than left dangling.
+ */
+function slackText(text: string, max: number): string {
+  const escaped = escapeSlackText(truncate(text, max));
+  if (escaped.length <= SLACK_FIELD_TEXT_MAX) return escaped;
+  return `${escaped.slice(0, SLACK_FIELD_TEXT_MAX).replace(/&[a-z]*$/i, "")}...`;
 }
 
 /** Escape &, <, > which have special meaning in Slack mrkdwn. */

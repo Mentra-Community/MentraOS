@@ -90,6 +90,40 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain(":star::star::star::star: 4/5");
   });
 
+  test("keeps every block text under Slack's 2000-char section limit", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack({
+      reportId: "rep_LIMITS",
+      mentraUserId: "user-3",
+      kind: "bug",
+      // Worst cases: unbounded trigger strings (the API only requires
+      // non-empty), and behavior text whose escaping expands 4-5x past the
+      // raw truncation budget.
+      trigger: { type: "manual", source: "s".repeat(5000), reason: "r".repeat(5000) },
+      report: { actualBehavior: "<".repeat(5000), expectedBehavior: "&".repeat(5000) },
+      artifactCount: 1,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(init.body)) as {
+      blocks: Array<{ text?: { text: string }; fields?: Array<{ text: string }> }>;
+    };
+    const texts = payload.blocks.flatMap((block) => [
+      ...(block.text ? [block.text.text] : []),
+      ...(block.fields ?? []).map((field) => field.text),
+    ]);
+    expect(texts.length).toBeGreaterThan(0);
+    for (const text of texts) {
+      expect(text.length).toBeLessThanOrEqual(2000);
+    }
+
+    // Oversized values are truncated, not dropped.
+    const blocksJson = JSON.stringify(payload.blocks);
+    expect(blocksJson).toContain("r".repeat(300));
+    expect(blocksJson).not.toContain("r".repeat(301));
+  });
+
   test("resolves without throwing when the webhook request fails", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
     fetchMock.mockImplementation(async () => {
