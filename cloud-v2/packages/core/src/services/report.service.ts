@@ -12,6 +12,7 @@ import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
+import { notifyReportSlack } from "./report-slack.service";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -96,21 +97,34 @@ export interface AddReportArtifactsResult {
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
+  const feedback = "feedback" in input
+    ? typeof input.feedback === "string"
+      ? { message: input.feedback }
+      : input.feedback
+    : null;
   await ReportModel.create({
     reportId,
     mentraUserId: input.mentraUserId,
     kind: input.kind,
     trigger: "trigger" in input ? input.trigger : null,
     report: "report" in input ? input.report : null,
-    feedback: "feedback" in input
-      ? typeof input.feedback === "string"
-        ? { message: input.feedback }
-        : input.feedback
-      : null,
+    feedback,
     context: input.context,
     artifacts: [],
     status,
   });
+
+  // Feedback reports are complete as submitted, so they notify here;
+  // bug/automatic reports notify from markReportReady once artifact
+  // collection finishes. Fire-and-forget: the response never waits on Slack.
+  if (status === "ready") {
+    notifyReportSlack({
+      reportId,
+      mentraUserId: input.mentraUserId,
+      kind: input.kind,
+      feedback,
+    }).catch(() => {});
+  }
 
   return { reportId, status };
 }
@@ -158,11 +172,26 @@ export async function markReportReady(input: {
   mentraUserId: string;
   reportId: string;
 }): Promise<ReportStatus | null> {
-  const result = await ReportModel.updateOne(
+  // The pre-update document shows whether this call actually finished
+  // collection (repeated /complete calls find "ready" and stay silent) and
+  // carries the snapshot the Slack notification summarizes.
+  const before = await ReportModel.findOneAndUpdate(
     { reportId: input.reportId, mentraUserId: input.mentraUserId },
     { $set: { status: "ready", updatedAt: new Date() } },
-  );
-  if (result.matchedCount !== 1) return null;
+    { returnDocument: "before" },
+  ).lean();
+  if (!before) return null;
+  if (before.status === "collecting") {
+    notifyReportSlack({
+      reportId: input.reportId,
+      mentraUserId: input.mentraUserId,
+      kind: before.kind,
+      trigger: before.trigger,
+      report: before.report,
+      feedback: before.feedback,
+      artifactCount: before.artifacts?.length ?? 0,
+    }).catch(() => {});
+  }
   return "ready";
 }
 
