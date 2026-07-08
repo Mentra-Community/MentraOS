@@ -318,7 +318,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (
-      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key) || toolkit.settings.get(SETTINGS.debug_mode.key)
+      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key) && false
     ) {
       apps.push({
         packageName: "com.mentra.miniappdev",
