@@ -23,6 +23,52 @@ external system that calls `/api/oem/*`). For Mentra's consumer app, that role
 is currently played by Supabase plus legacy Cloud V1. This issue brings
 "Mentra's own OEM backend" into Cloud V2.
 
+## Why the old system needs replacing (motivation)
+
+This is not just a "move to V2" cleanup. The current login stack has real
+security and reliability problems, several of which we hit directly during the
+2026-07 debug-environment incidents. Ranked by impact:
+
+1. **Symmetric shared secrets: any backend can forge any user.** Core verifies
+   Supabase sessions with `SUPABASE_JWT_SECRET` and legacy tokens with
+   `MENTRA_CORE_JWT_SECRET`, both HS256. Symmetric verification means the verify
+   key is the mint key, and those secrets sit in every environment's Doppler
+   config (including throwaway debug). A compromise of any environment forges
+   identities valid everywhere, because HS tokens carry no issuer key identity
+   and pin no environment. The V2 OEM path (asymmetric, per-env JWKS) exists to
+   fix exactly this; Mentra's own login is the last thing not using it.
+2. **Three token systems glued together on the client.** The phone juggles a
+   Supabase session, a legacy core token, and the V2 access/refresh/runtime/
+   miniapp stack, and mobile is the integration point. The failures chased this
+   month were all seams between them (refresh 400 -> "re-auth required" ->
+   running miniapps stuck on stale tokens; the bug-hunt "cloud token refresh"
+   icon failure; "connect button fails after app restart"). Client-side identity
+   assembly means every seam failure ships to users and needs an app release.
+3. **Long-lived credentials at rest on the device and in URLs.** The full
+   Supabase session (access + refresh + profile) sits in plain MMKV storage, and
+   the legacy WS connects with the token in the query string
+   (`/glasses-ws?token=...`), which lands in logs and proxies. Server-mediated
+   auth shrinks what the device ever holds.
+4. **No central revocation / session control.** Supabase refresh happens
+   client-side against Supabase directly, so the server cannot kill sessions;
+   legacy tokens are verify-only symmetric. "Log out everywhere" today spans
+   three uncoordinated systems (the same revocation gap as issue 018, item 1).
+5. **Third-party coupled into the app binary.** `supabase-js`, the Supabase URL,
+   and the anon key are baked into the client, so key rotation or flow changes
+   require an app-store release. Behind a core-owned `/api/account/*` surface,
+   they become a server deploy.
+
+In fairness, the old design was reasonable V1 pragmatism (Supabase gave OAuth,
+email verification, and password reset for free). The debt came from bolting V2
+alongside it rather than under it. That is why Phase 1 keeps Supabase (do not
+rebuild what works) but moves the seam server-side, which removes the whole
+client-glue failure class.
+
+Scope honesty: items 1 and 2 justify this project on their own. Some of the July
+pain (E11000 sign-in failures, the chimera UDP host, the debug/dev DB mixup) was
+environment and ops drift, NOT login architecture; issue 019 does not fix those
+(see the env-hygiene notes) and should not be sold as doing so.
+
 ## Placement decision (made)
 
 The account module lives **inside `packages/core`** as a clearly bounded module
