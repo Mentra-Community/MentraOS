@@ -110,6 +110,8 @@ interface ConnectedMiniapp {
   authDelivered: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
+  /** Live PCM output stream this app has open (speaker.createStream), if any. */
+  activeSpeakerStreamId?: string
   /**
    * Location-tier rate this app is currently asking for via its
    * `location_stream` subscription, or null if it hasn't asked for
@@ -949,6 +951,18 @@ class LocalMiniappRuntime {
       case MiniappRequestType.SPEAK:
         this.handleSpeak(packageName, payload, requestId)
         break
+      case MiniappRequestType.SPEAKER_STREAM_OPEN:
+        void this.handleSpeakerStreamOpen(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_WRITE:
+        void this.handleSpeakerStreamWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_CLOSE:
+        void this.handleSpeakerStreamClose(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_ABORT:
+        void this.handleSpeakerStreamAbort(packageName, payload, requestId)
+        break
       case MiniappRequestType.RGB_LED:
         void this.handleRgbLed(packageName, payload, requestId)
         break
@@ -1732,6 +1746,167 @@ class LocalMiniappRuntime {
     audioPlaybackService.stopForApp(packageName)
     this.setSpeakerState(packageName, "stopped")
     this.sendResult(packageName, requestId, true)
+  }
+
+  // ── speaker.createStream (live PCM output) ────────────────────────────────
+
+  /** Valid PCM sample rates for speaker streams. Mirrors the SDK contract. */
+  private static readonly SPEAKER_STREAM_SAMPLE_RATES = new Set([16000, 24000, 48000])
+  private speakerStreamCounter = 0
+
+  private async handleSpeakerStreamOpen(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    // One stream per miniapp: opening a second closes the first.
+    const previous = app.activeSpeakerStreamId
+    if (previous) {
+      app.activeSpeakerStreamId = undefined
+      await audioPlaybackService.abortStream(previous).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
+      })
+    }
+
+    const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
+    if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: `unsupported sampleRate ${sampleRate} (use 16000, 24000, or 48000)`,
+      })
+      return
+    }
+
+    const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
+    this.setSpeakerState(packageName, "loading")
+    try {
+      await audioPlaybackService.openStream({
+        streamId,
+        appId: packageName,
+        sampleRate,
+        channels: 1,
+        volume: typeof payload.volume === "number" ? payload.volume : undefined,
+        stopOtherAudio: payload.stopOtherAudio !== false,
+        onEnded: (endedId, success, error, durationMs) => {
+          const current = this.connectedApps.get(packageName)
+          if (current?.activeSpeakerStreamId === endedId) {
+            current.activeSpeakerStreamId = undefined
+          }
+          if (success) {
+            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
+          } else {
+            this.setSpeakerState(packageName, "error", {
+              errorCode: MiniappErrorCode.INTERNAL,
+              errorMessage: error ?? "speaker stream failed",
+              durationMs: durationMs ?? undefined,
+            })
+          }
+        },
+      })
+    } catch (error) {
+      // Typically "not available in this native build" on iOS (Android-only v1).
+      const message = error instanceof Error ? error.message : String(error)
+      const notSupported = message.includes("not available in this native build")
+      this.setSpeakerState(packageName, "error", {
+        errorCode: notSupported ? MiniappErrorCode.NOT_IMPLEMENTED : MiniappErrorCode.INTERNAL,
+        errorMessage: message,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: notSupported ? MiniappErrorCode.NOT_IMPLEMENTED : MiniappErrorCode.INTERNAL,
+        message,
+      })
+      return
+    }
+
+    app.activeSpeakerStreamId = streamId
+    // Optimistic "playing", same as play(): the chunk player starts as soon
+    // as the first write lands. Microtask so "loading" flushes first.
+    queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+    this.sendResult(packageName, requestId, true, {streamId})
+  }
+
+  /** Resolve + validate a stream id from a payload against the app's active stream. */
+  private activeSpeakerStream(packageName: string, payload: Record<string, unknown>): string | null {
+    const streamId = typeof payload.streamId === "string" ? payload.streamId : undefined
+    const app = this.connectedApps.get(packageName)
+    if (!streamId || !app || app.activeSpeakerStreamId !== streamId) return null
+    return streamId
+  }
+
+  private async handleSpeakerStreamWrite(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speaker stream is not open",
+      })
+      return
+    }
+    const base64 = typeof payload.base64 === "string" ? payload.base64 : ""
+    try {
+      const result = await audioPlaybackService.writeStreamChunk(streamId, base64)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private async handleSpeakerStreamClose(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speaker stream is not open",
+      })
+      return
+    }
+    try {
+      // Resolves once the buffered audio has drained; onEnded delivers the
+      // terminal SPEAKER_STATE ("stopped").
+      const result = await audioPlaybackService.closeStream(streamId)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private async handleSpeakerStreamAbort(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      // Aborting an already-gone stream is fine — abort() is idempotent.
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+    try {
+      await audioPlaybackService.abortStream(streamId)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private async handleSpeak(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
