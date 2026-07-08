@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { adminAuth } from "../middleware/admin-auth.middleware";
+import adminReports from "./reports.api";
 import {
   PREINSTALLED_INSTALL_POLICIES,
 } from "../../models/preinstalled-registry-revision.model";
@@ -66,6 +67,9 @@ app.get("/preinstalled/registries/:registryId/revisions", getRevisions);
 app.post("/preinstalled/registries/:registryId/revisions", postRevision);
 app.post("/preinstalled/registries/:registryId/revisions/:revisionId/promote", postPromoteRevision);
 app.get("/audit-log", getAuditLog);
+// Report triage lives in its own router; mounting it behind the adminAuth
+// gate above keeps auth to a single pass per request.
+app.route("/reports", adminReports);
 
 async function getSubmissions(c: AppContext) {
   return c.json({ submissions: await miniapps.listAdminSubmissions() });

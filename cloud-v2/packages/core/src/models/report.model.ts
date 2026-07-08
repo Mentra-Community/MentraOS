@@ -59,6 +59,8 @@ const ReportSchema = new Schema(
 );
 
 ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
+// Admin triage lists reports newest-first across all users.
+ReportSchema.index({ createdAt: -1 });
 
 export type Report = InferSchemaType<typeof ReportSchema>;
 export const ReportModel = model("Report", ReportSchema);
