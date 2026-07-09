@@ -851,6 +851,7 @@ export type BluetoothSdkModuleEvents = {
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
+  ar99_ota_status: (event: Ar99OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
@@ -862,6 +863,16 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface Ar99OtaStatusEvent {
+  type: "ar99_ota_status"
+  phase: string
+  progress: number
+  offset: number
+  total: number
+  errorMessage?: string
+  error_message?: string
 }
 
 export type PublicGlassesStatus = Omit<
@@ -922,6 +933,7 @@ export type BluetoothSdkEventMap = {
   ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
+  ar99_ota_status: Ar99OtaStatusEvent
   version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
@@ -1037,6 +1049,9 @@ export interface BluetoothSdkPublicModule {
   checkForOtaUpdate(): Promise<boolean>
   /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
   startOtaUpdate(): Promise<OtaStartAckEvent>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  buildAr99OtaSignature(currentVersion: string, serialNumber: string, nonce: string): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

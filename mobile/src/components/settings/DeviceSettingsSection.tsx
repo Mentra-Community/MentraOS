@@ -1,3 +1,4 @@
+import {useEffect, useState} from "react"
 import {Image, View} from "react-native"
 
 import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
@@ -17,9 +18,14 @@ import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/pac
 import {toolkit} from "@mentra/island"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
+import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+
+const isAr99Identifier = (value: unknown): boolean => {
+  return typeof value === "string" && value.toUpperCase().includes(DeviceTypes.AR99)
+}
 
 /**
  * Returns whether device-information rows (bluetooth name, build number, local
@@ -51,6 +57,7 @@ export function DeviceSettingsSection() {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const hasDeviceInfo = useHasDeviceInfo()
+  const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
   const [autoBrightness, setAutoBrightness] = useSetting(SETTINGS.auto_brightness.key)
   const [brightness, setBrightness] = useSetting(SETTINGS.brightness.key)
   // Button-action settings are no longer surfaced in the UI — the action button always launches the
@@ -60,6 +67,7 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [ar99OtaVisible, setAr99OtaVisible] = useState(false)
   const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
   const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
   const glassesConnected = glassesStatus.state === "connected"
@@ -68,6 +76,17 @@ export function DeviceSettingsSection() {
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = otaSnapshot.legacyProgress
+  const showAr99OtaEntry =
+    glassesConnected &&
+    (isAr99Identifier(defaultWearable) ||
+      isAr99Identifier(glassesInfo.model) ||
+      isAr99Identifier(glassesInfo.bluetoothName))
+
+  useEffect(() => {
+    if (!showAr99OtaEntry && ar99OtaVisible) {
+      setAr99OtaVisible(false)
+    }
+  }, [ar99OtaVisible, showAr99OtaEntry])
 
   const confirmForgetGlasses = async () => {
     let result = await showAlert({
@@ -181,6 +200,17 @@ export function DeviceSettingsSection() {
       />
 
       {/* WiFi — connected glasses that support WiFi */}
+      {showAr99OtaEntry && (
+        <>
+          <RouteButton
+            icon={<Icon name="world-download" size={24} color={theme.colors.secondary_foreground} />}
+            label="Firmware Update"
+            onPress={() => setAr99OtaVisible(true)}
+          />
+          <Ar99OtaModal visible={ar99OtaVisible} onClose={() => setAr99OtaVisible(false)} />
+        </>
+      )}
+
       {glassesConnected && features?.hasWifi && (
         <RouteButton
           icon={<Icon name="wifi" size={24} color={theme.colors.secondary_foreground} />}

@@ -147,6 +147,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkForOtaUpdate(): Promise<boolean>
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  buildAr99OtaSignature(currentVersion: string, serialNumber: string, nonce: string): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>

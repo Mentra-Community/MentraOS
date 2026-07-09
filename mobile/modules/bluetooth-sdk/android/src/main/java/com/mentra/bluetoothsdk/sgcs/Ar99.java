@@ -24,15 +24,19 @@ import com.mentra.bluetoothsdk.Bridge;
 import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.DeviceStore;
 import com.mentra.bluetoothsdk.PhotoRequest;
+import com.mentra.bluetoothsdk.ota.Ar99OtaManager;
+import com.mentra.bluetoothsdk.ota.OtaGattTransport;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.audio.Ar99OpusPcmDecoder;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,6 +59,13 @@ public class Ar99 extends SGCManager {
       UUID.fromString("F6B26AAD-41A5-93F5-F640-AC3BA3C73597");
   private static final UUID OPUS_SLAVE_TO_HOST =
       UUID.fromString("F6B26AAF-41A5-93F5-F640-AC3BA3C73597");
+
+  private static final UUID OTA_SERVICE_UUID =
+      UUID.fromString("e49a25f8-f69a-11e8-8eb2-f2801f1b9fd1");
+  private static final UUID OTA_WRITE_UUID =
+      UUID.fromString("e49a25e0-f69a-11e8-8eb2-f2801f1b9fd1");
+  private static final UUID OTA_NOTIFY_UUID =
+      UUID.fromString("e49a28e1-f69a-11e8-8eb2-f2801f1b9fd1");
 
   private static final UUID CLIENT_CHARACTERISTIC_CONFIG_UUID =
       UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
@@ -120,6 +131,7 @@ public class Ar99 extends SGCManager {
 
   private final LinkedHashSet<String> discoveredNames = new LinkedHashSet<>();
   private final Deque<byte[]> writeQueue = new ArrayDeque<>();
+  private final Deque<byte[]> otaWriteQueue = new ArrayDeque<>();
   private final Deque<BluetoothGattCharacteristic> notifyQueue = new ArrayDeque<>();
   private byte[] controlNotifyBuffer = new byte[0];
 
@@ -131,6 +143,8 @@ public class Ar99 extends SGCManager {
   private BluetoothGattCharacteristic controlWriteCharacteristic;
   private BluetoothGattCharacteristic controlNotifyCharacteristic;
   private BluetoothGattCharacteristic opusNotifyCharacteristic;
+  private BluetoothGattCharacteristic otaWriteCharacteristic;
+  private BluetoothGattCharacteristic otaNotifyCharacteristic;
 
   /** Lazily created; decodes 48-byte framed Opus from {@link #OPUS_SLAVE_TO_HOST} notifies. */
   private Ar99OpusPcmDecoder opusPcmDecoder;
@@ -142,6 +156,8 @@ public class Ar99 extends SGCManager {
   @SuppressWarnings("unused")
   private boolean connecting = false;
   private boolean isWriteInFlight = false;
+  private boolean isOtaWriteInFlight = false;
+  private boolean isOtaNotificationEnabled = false;
   private boolean isNotifyWriteInFlight = false;
   private boolean minimalModeReady = false;
   private boolean displaySessionStarted = false;
@@ -246,6 +262,9 @@ public class Ar99 extends SGCManager {
             gatt.discoverServices();
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             Bridge.log(TAG + ": disconnected status=" + status);
+            if (Ar99OtaManager.getInstance().isOTAInProgress()) {
+              Ar99OtaManager.getInstance().onBleDisconnected();
+            }
             cleanupGatt();
             updateConnectionState(ConnTypes.DISCONNECTED);
           }
@@ -265,6 +284,11 @@ public class Ar99 extends SGCManager {
           BluetoothGattService opusService = gatt.getService(OPUS_SERVICE_UUID);
           opusNotifyCharacteristic = opusService != null ? opusService.getCharacteristic(OPUS_SLAVE_TO_HOST) : null;
 
+          BluetoothGattService otaService = gatt.getService(OTA_SERVICE_UUID);
+          otaWriteCharacteristic = otaService != null ? otaService.getCharacteristic(OTA_WRITE_UUID) : null;
+          otaNotifyCharacteristic = otaService != null ? otaService.getCharacteristic(OTA_NOTIFY_UUID) : null;
+          isOtaNotificationEnabled = false;
+
           notifyQueue.clear();
           if (controlNotifyCharacteristic != null) notifyQueue.add(controlNotifyCharacteristic);
           if (opusNotifyCharacteristic != null) notifyQueue.add(opusNotifyCharacteristic);
@@ -282,11 +306,30 @@ public class Ar99 extends SGCManager {
           if (status != BluetoothGatt.GATT_SUCCESS) {
             Bridge.log(TAG + ": descriptor write failed status=" + status);
           }
+          if (otaNotifyCharacteristic != null
+              && descriptor.getCharacteristic() != null
+              && OTA_NOTIFY_UUID.equals(descriptor.getCharacteristic().getUuid())) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+              isOtaNotificationEnabled = true;
+              Ar99OtaManager.getInstance().onOtaNotifyEnabled();
+            }
+          }
           processNextNotifyDescriptor();
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+          if (characteristic != null && OTA_WRITE_UUID.equals(characteristic.getUuid())) {
+            synchronized (otaWriteQueue) {
+              isOtaWriteInFlight = false;
+            }
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+              Bridge.log(TAG + ": OTA characteristic write failed status=" + status);
+            }
+            processNextOtaWrite();
+            return;
+          }
+
           handler.removeCallbacks(writeDrainRunnable);
           isWriteInFlight = false;
           if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -301,11 +344,21 @@ public class Ar99 extends SGCManager {
           if (data == null) return;
 
           UUID uuid = characteristic.getUuid();
-          if (CTRL_SLAVE_TO_HOST.equals(uuid)) {
+          if (OTA_NOTIFY_UUID.equals(uuid)) {
+            Ar99OtaManager.getInstance().handleOTAResponse(data);
+          } else if (CTRL_SLAVE_TO_HOST.equals(uuid)) {
             handleControlNotifyChunk(data);
           } else if (OPUS_SLAVE_TO_HOST.equals(uuid)) {
             handleOpusData(data);
           }
+        }
+
+        @Override
+        public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+          if (Ar99OtaManager.getInstance().handleGattMtuChangedForOta(status)) {
+            return;
+          }
+          super.onMtuChanged(gatt, mtu, status);
         }
       };
 
@@ -319,6 +372,35 @@ public class Ar99 extends SGCManager {
     this.hasMic = true;
 
     DeviceStore.INSTANCE.apply("glasses", "micEnabled", false);
+    Ar99OtaManager.getInstance()
+        .setTransport(
+            new OtaGattTransport() {
+              @Override
+              public boolean enableOtaNotification() {
+                return Ar99.this.enableOtaNotification();
+              }
+
+              @Override
+              public void sendOtaData(byte[] data) {
+                Ar99.this.sendOtaData(data);
+              }
+
+              @Override
+              public void requestMtu(int mtu) {
+                BluetoothGatt gatt = controlGatt;
+                if (gatt != null) {
+                  gatt.requestMtu(mtu);
+                }
+              }
+
+              @Override
+              public boolean isBleConnected() {
+                return controlGatt != null
+                    && controlWriteCharacteristic != null
+                    && otaWriteCharacteristic != null
+                    && otaNotifyCharacteristic != null;
+              }
+            });
   }
 
   @Override
@@ -679,6 +761,7 @@ public class Ar99 extends SGCManager {
     BluetoothGattCharacteristic characteristic = notifyQueue.pollFirst();
     if (characteristic == null) {
       markReady();
+      Ar99OtaManager.getInstance().tryResumeOtaAfterGattReady();
       return;
     }
 
@@ -706,6 +789,129 @@ public class Ar99 extends SGCManager {
       Bridge.log(TAG + ": failed to start descriptor write for " + characteristic.getUuid());
       processNextNotifyDescriptor();
     }
+  }
+
+  public boolean startOtaFromFile(String path) {
+    if (path == null || path.trim().isEmpty()) {
+      sendAr99OtaStatus("failed", 0, 0, 0, "Firmware path is empty");
+      return false;
+    }
+    Ar99OtaManager manager = Ar99OtaManager.getInstance();
+    manager.setCallback(
+        new Ar99OtaManager.OTACallback() {
+          private int lastOffset = 0;
+          private int lastTotal = 0;
+
+          @Override
+          public void onProgress(int offset, int total, int progress) {
+            lastOffset = offset;
+            lastTotal = total;
+            sendAr99OtaStatus("transferring", progress, offset, total, null);
+          }
+
+          @Override
+          public void onCompleted(boolean needReboot) {
+            sendAr99OtaStatus("success", 100, lastTotal, lastTotal, null);
+            manager.setCallback(null);
+          }
+
+          @Override
+          public void onError(int errorCode, String message) {
+            sendAr99OtaStatus("failed", manager.getProgress(), lastOffset, lastTotal, message);
+            manager.setCallback(null);
+          }
+
+          @Override
+          public void onCancelled() {
+            sendAr99OtaStatus("cancelled", manager.getProgress(), lastOffset, lastTotal, null);
+            manager.setCallback(null);
+          }
+
+          @Override
+          public void onPausedWaitingReconnect() {
+            sendAr99OtaStatus(
+                "paused", manager.getProgress(), lastOffset, lastTotal, "Waiting for reconnect");
+          }
+        });
+    sendAr99OtaStatus("preparing", 0, 0, 0, null);
+    boolean started = manager.startOTA(new File(path));
+    if (!started) {
+      sendAr99OtaStatus("failed", 0, 0, 0, "Unable to start AR99 OTA");
+      manager.setCallback(null);
+    }
+    return started;
+  }
+
+  public void cancelAr99Ota() {
+    Ar99OtaManager.getInstance().cancelOTA();
+  }
+
+  private boolean enableOtaNotification() {
+    BluetoothGatt gatt = controlGatt;
+    BluetoothGattCharacteristic characteristic = otaNotifyCharacteristic;
+    if (gatt == null || characteristic == null) return false;
+    if (isOtaNotificationEnabled) {
+      Ar99OtaManager.getInstance().onOtaNotifyEnabled();
+      return true;
+    }
+    BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID);
+    if (descriptor == null) return false;
+    gatt.setCharacteristicNotification(characteristic, true);
+    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+    return gatt.writeDescriptor(descriptor);
+  }
+
+  private void sendOtaData(byte[] data) {
+    if (data == null || data.length == 0) return;
+    if (controlGatt == null || otaWriteCharacteristic == null || !isOtaNotificationEnabled) return;
+    synchronized (otaWriteQueue) {
+      otaWriteQueue.add(data);
+      if (!isOtaWriteInFlight) {
+        processNextOtaWrite();
+      }
+    }
+  }
+
+  private void processNextOtaWrite() {
+    synchronized (otaWriteQueue) {
+      BluetoothGatt gatt = controlGatt;
+      BluetoothGattCharacteristic characteristic = otaWriteCharacteristic;
+      if (gatt == null || characteristic == null || isOtaWriteInFlight) return;
+      byte[] next = otaWriteQueue.pollFirst();
+      if (next == null) return;
+
+      isOtaWriteInFlight = true;
+      int props = characteristic.getProperties();
+      int writeType =
+          (props & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+              ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+              : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
+      characteristic.setWriteType(writeType);
+      characteristic.setValue(next);
+      boolean started = gatt.writeCharacteristic(characteristic);
+      if (!started) {
+        isOtaWriteInFlight = false;
+        otaWriteQueue.addFirst(next);
+        handler.postDelayed(this::processNextOtaWrite, 15L);
+      } else if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+        isOtaWriteInFlight = false;
+        handler.post(this::processNextOtaWrite);
+      }
+    }
+  }
+
+  private void sendAr99OtaStatus(String phase, int progress, int offset, int total, String errorMessage) {
+    java.util.HashMap<String, Object> body = new java.util.HashMap<>();
+    body.put("type", "ar99_ota_status");
+    body.put("phase", phase);
+    body.put("progress", Math.max(0, Math.min(100, progress)));
+    body.put("offset", offset);
+    body.put("total", total);
+    if (errorMessage != null && !errorMessage.isEmpty()) {
+      body.put("errorMessage", errorMessage);
+      body.put("error_message", errorMessage);
+    }
+    Bridge.sendTypedMessage("ar99_ota_status", body);
   }
 
   private void enqueueMessage(int function, int cmd, byte[] payload, int receiver) {
@@ -1201,6 +1407,7 @@ public class Ar99 extends SGCManager {
         if (info.deviceName != null && !info.deviceName.trim().isEmpty()) {
           Bridge.saveSetting("device_name", info.deviceName);
         }
+        sendVersionInfo(info);
       }
     } else if (cmd == CMD_DISPLAY_GET_BRIGHT) {
       Integer brightness = parseBrightnessResponse(payload);
@@ -1467,6 +1674,20 @@ public class Ar99 extends SGCManager {
     } catch (Throwable t) {
       return null;
     }
+  }
+
+  private void sendVersionInfo(DeviceInfo info) {
+    HashMap<String, Object> values = new HashMap<>();
+    if (info.firmwareVersion != null) {
+      values.put("firmwareVersion", info.firmwareVersion);
+    }
+    if (info.productName != null) {
+      values.put("deviceModel", info.productName);
+    }
+    if (info.serialNumber != null) {
+      values.put("serialNumber", info.serialNumber);
+    }
+    Bridge.sendVersionInfo(values);
   }
 
   private Integer parseBrightnessResponse(byte[] payload) {
@@ -1848,8 +2069,13 @@ public class Ar99 extends SGCManager {
 
   private void cleanupGatt() {
     writeQueue.clear();
+    synchronized (otaWriteQueue) {
+      otaWriteQueue.clear();
+      isOtaWriteInFlight = false;
+    }
     notifyQueue.clear();
     isWriteInFlight = false;
+    isOtaNotificationEnabled = false;
     isNotifyWriteInFlight = false;
     minimalModeReady = false;
     displaySessionStarted = false;
@@ -1873,6 +2099,8 @@ public class Ar99 extends SGCManager {
     controlWriteCharacteristic = null;
     controlNotifyCharacteristic = null;
     opusNotifyCharacteristic = null;
+    otaWriteCharacteristic = null;
+    otaNotifyCharacteristic = null;
 
     BluetoothGatt gatt = controlGatt;
     if (gatt != null) {

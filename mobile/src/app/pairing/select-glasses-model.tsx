@@ -57,6 +57,7 @@ export default function SelectGlassesModelScreen() {
     Platform.OS === "ios"
       ? [
           // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
+          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
           {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
           {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
@@ -64,12 +65,12 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
           {deviceModel: DeviceTypes.NIMO, key: "nimo"},
-          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           //{deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
           // Android:
           // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
+          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
           {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
           {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
@@ -77,7 +78,6 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
           {deviceModel: DeviceTypes.NIMO, key: "nimo"},
-          {deviceModel: DeviceTypes.AR99, key: "ar99"},
           // {deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
 

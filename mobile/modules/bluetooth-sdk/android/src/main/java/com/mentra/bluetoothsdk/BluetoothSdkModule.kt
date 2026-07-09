@@ -5,6 +5,7 @@ import com.mentra.bluetoothsdk.utils.DeviceTypes
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -248,6 +249,7 @@ class BluetoothSdkModule : Module() {
             "ota_progress",
             "ota_start_ack",
             "ota_status",
+            "ar99_ota_status",
             // Nex / BLE debug (NexEventUtils → Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
@@ -516,6 +518,17 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
+
+        AsyncFunction("startAr99OtaFromFile") { path: String -> requireSdk().startAr99OtaFromFile(path) }
+
+        AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
+
+        Function("buildAr99OtaSignature") { currentVersion: String, serialNumber: String, nonce: String ->
+            val secret = "a01afc69-b5c6-477a-88ca-5039cf795086"
+            val raw = secret + "AR99" + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
+            val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
 
         // MARK: - Version Info Commands
 

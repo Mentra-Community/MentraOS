@@ -1613,6 +1613,15 @@ class DeviceManager {
         (sgc as? MentraLive)?.sendOtaQueryStatus()
     }
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        return ar99.startOtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)

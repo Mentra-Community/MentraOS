@@ -1071,6 +1071,15 @@ class MentraBluetoothSdk private constructor(
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        requireGlassesConnected("start AR99 OTA")
+        return deviceManager.startAr99OtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        deviceManager.cancelAr99Ota()
+    }
+
     private fun getFreshGlassesStatus(): GlassesStatus {
         val status = getRawGlassesStatus()
         if (!status.connected || status.buildNumber.isNotBlank()) {

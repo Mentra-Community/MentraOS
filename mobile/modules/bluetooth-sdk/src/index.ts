@@ -44,6 +44,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "stream_status",
   "ota_start_ack",
   "ota_status",
+  "ar99_ota_status",
   "version_info",
   "extraction_progress",
 ])
@@ -125,6 +126,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   requestVersionInfo: bindPublicMethod("requestVersionInfo"),
   checkForOtaUpdate: bindPublicMethod("checkForOtaUpdate"),
   startOtaUpdate,
+  startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),
+  cancelAr99Ota: bindPublicMethod("cancelAr99Ota"),
+  buildAr99OtaSignature: bindPublicMethod("buildAr99OtaSignature"),
   setSttModelDetails: bindPublicMethod("setSttModelDetails"),
   getSttModelPath: bindPublicMethod("getSttModelPath"),
   checkSttModelAvailable: bindPublicMethod("checkSttModelAvailable"),
@@ -155,6 +159,7 @@ export {
 
 export type {
   AccelEvent,
+  Ar99OtaStatusEvent,
   AudioConnectedEvent,
   AudioDisconnectedEvent,
   AudioPairingNeededEvent,
