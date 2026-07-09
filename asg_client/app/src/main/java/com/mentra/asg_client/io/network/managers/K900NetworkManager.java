@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
+import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -474,14 +475,36 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
         }
 
-        // Create new WiFi config
+        // Create new WiFi config. Security is derived from the AP's advertised capabilities
+        // (the glasses scanned this network moments ago in the provisioning flow) rather
+        // than inferred from password presence — see WifiSecurityChooser.
         android.net.wifi.WifiConfiguration config = new android.net.wifi.WifiConfiguration();
         config.SSID = quotedSsid;
-        if (password != null && !password.isEmpty()) {
-            config.preSharedKey = "\"" + password + "\"";
-            config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK);
-        } else {
-            config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+        String capabilities = findScanCapabilitiesForSsid(ssid);
+        WifiSecurityChooser.Security security = WifiSecurityChooser.choose(password, capabilities);
+        Log.i(
+                TAG,
+                "📶 Configuring "
+                        + security
+                        + " for "
+                        + ssid
+                        + " (scan caps="
+                        + capabilities
+                        + ")");
+        switch (security) {
+            case OPEN:
+                config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+                break;
+            case SAE:
+                // setSecurityParams(SAE) sets SAE key management + required PMF.
+                config.setSecurityParams(android.net.wifi.WifiConfiguration.SECURITY_TYPE_SAE);
+                config.preSharedKey = "\"" + password + "\"";
+                break;
+            case PSK:
+            default:
+                config.setSecurityParams(android.net.wifi.WifiConfiguration.SECURITY_TYPE_PSK);
+                config.preSharedKey = "\"" + password + "\"";
+                break;
         }
 
         int netId = wifiManager.addNetwork(config);
@@ -505,6 +528,31 @@ public class K900NetworkManager extends BaseNetworkManager {
                         + ", netId="
                         + netId
                         + ")");
+    }
+
+    /**
+     * Latest scan capabilities string for an SSID (strongest BSS wins), or null when the
+     * SSID is not in current scan results.
+     */
+    private String findScanCapabilitiesForSsid(String ssid) {
+        try {
+            List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
+            if (results == null) {
+                return null;
+            }
+            String best = null;
+            int bestLevel = Integer.MIN_VALUE;
+            for (android.net.wifi.ScanResult result : results) {
+                if (ssid.equals(result.SSID) && result.level > bestLevel) {
+                    bestLevel = result.level;
+                    best = result.capabilities;
+                }
+            }
+            return best;
+        } catch (Exception e) {
+            Log.w(TAG, "📶 ⚠️ Could not read scan results for security detection", e);
+            return null;
+        }
     }
 
     @Override

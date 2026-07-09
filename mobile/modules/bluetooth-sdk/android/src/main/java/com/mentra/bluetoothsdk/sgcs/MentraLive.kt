@@ -3177,6 +3177,14 @@ class MentraLive : SGCManager() {
                 val ssid = json.optString("ssid", "")
                 val localIp = json.optString("local_ip", "")
 
+                // Provisioning failure reason (e.g. connect_timeout); empty when connected
+                // or on older glasses firmware that doesn't send it.
+                val wifiError = json.optString("error", "")
+                if (wifiError.isNotEmpty()) {
+                    Bridge.log("LIVE: 🌐 WiFi provisioning error from glasses: $wifiError")
+                }
+                DeviceStore.apply("glasses", "wifiError", wifiError)
+
                 updateWifiStatus(wifiConnectedStatus, ssid, localIp)
             }
             "hotspot_status_update" -> {
