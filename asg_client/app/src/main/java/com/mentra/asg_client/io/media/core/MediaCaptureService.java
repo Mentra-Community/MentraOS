@@ -29,6 +29,7 @@ import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.VideoSettings;
+import com.mentra.asg_client.utils.CaptureRequestId;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
 import com.mentra.asg_client.utils.GallerySyncFilter;
 import java.io.File;
@@ -634,7 +635,13 @@ public class MediaCaptureService {
         String timeStamp =
                 new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
         int randomSuffix = (int) (Math.random() * 1000);
-        String captureDir = "VID_" + timeStamp + "_" + randomSuffix + "_" + requestId;
+        String embeddedRequestId = CaptureRequestId.sanitizeForDirName(requestId);
+        String captureDir =
+                "VID_"
+                        + timeStamp
+                        + "_"
+                        + randomSuffix
+                        + (embeddedRequestId.isEmpty() ? "" : "_" + embeddedRequestId);
         File captureDirFile = new File(fileManager.getDefaultMediaDirectory(), captureDir);
         captureDirFile.mkdirs();
         String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
@@ -1468,8 +1475,8 @@ public class MediaCaptureService {
         Log.i(
                 TAG,
                 "📸 take_photo (button/local) resolved params"
-                        + " requestId=local_"
-                        + timeStamp
+                        + " requestId="
+                        + captureDir
                         + " size="
                         + size
                         + " compress="
@@ -1490,8 +1497,10 @@ public class MediaCaptureService {
         // Log test configuration for debugging
         PhotoCaptureTestHooks.logTestConfig();
 
-        // Generate a temporary requestId first
-        String requestId = "local_" + timeStamp;
+        // Button captures have no phone-originated requestId; the capture directory name is
+        // their stable ID (it is what gallery sync exposes as capture_id), so status messages
+        // carry it instead of a throwaway local_<timestamp> string.
+        String requestId = captureDir;
         sendPhotoStatus(requestId, "queued");
 
         // TESTING: Check for fake camera initialization failure

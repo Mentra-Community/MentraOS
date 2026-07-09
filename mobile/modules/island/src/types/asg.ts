@@ -14,7 +14,8 @@ export interface CaptureFile {
 }
 
 export interface CaptureGroup {
-  capture_id: string // folder name: "IMG_20250302_143022_456_123"
+  capture_id: string // folder name: "IMG_20250302_143022_456_123" or "IMG_..._<requestId>"
+  request_id?: string // originating SDK requestId embedded in the folder name (absent for button captures / legacy files)
   type: "photo" | "video"
   timestamp: number
   total_size: number
