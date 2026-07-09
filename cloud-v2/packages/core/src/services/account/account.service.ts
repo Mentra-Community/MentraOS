@@ -168,8 +168,15 @@ export async function confirmAccountDeletion(
   code: string,
 ): Promise<void> {
   await otc.consumeCode({ code, purpose: "account_deletion", expectSubject: tenantUserId });
-  // Order: kill V2 sessions, then delete the Supabase user. The V2 user row is
-  // left tombstoned by session removal; a follow-up may hard-delete it.
+  // Order: kill V2 sessions, then delete the Supabase user. Everything
+  // human-identifying (email, password, name) lives in GoTrue and dies here.
+  //
+  // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
+  // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
+  // tombstone for identifier stability and audit lineage. If we want
+  // gone-means-gone, hard-delete it here. This flow also still needs an
+  // integration test covering the cascade.
+  //
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({ mentraUserId });
