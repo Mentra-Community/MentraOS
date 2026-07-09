@@ -115,10 +115,14 @@ describe("notifyMiniAppSubmissionSlack", () => {
     );
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    const payload = JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
+    const blocksJson = JSON.stringify(payload.blocks);
     expect(blocksJson).toContain("Weather &lt;Pro&gt; &amp; Friends");
     expect(blocksJson).toContain(`${"d".repeat(500)}...`);
     expect(blocksJson).not.toContain("d".repeat(501));
+    // The top-level fallback text is mrkdwn too, so it gets the same escaping.
+    expect(payload.text).toContain("Weather &lt;Pro&gt; &amp; Friends");
+    expect(payload.text).not.toContain("<Pro>");
   });
 
   test("keeps every block text under Slack's 2000-char section limit", async () => {

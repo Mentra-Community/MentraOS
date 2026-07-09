@@ -156,8 +156,8 @@ function buildSlackMessage(notification: MiniAppSubmissionSlackNotification): {
   });
 
   const fallbackParts = [
-    `New miniapp release submitted: ${truncate(appName || "Unnamed", SHORT_TEXT_MAX)} v${truncate(version, SHORT_TEXT_MAX)} (${truncate(packageName, SHORT_TEXT_MAX)})`,
-    `Developer: ${truncate(developerEmail || "unknown", SHORT_TEXT_MAX)} (${env})`,
+    `New miniapp release submitted: ${slackText(appName || "Unnamed", SHORT_TEXT_MAX)} v${slackText(version, SHORT_TEXT_MAX)} (${slackText(packageName, SHORT_TEXT_MAX)})`,
+    `Developer: ${slackText(developerEmail || "unknown", SHORT_TEXT_MAX)} (${slackText(env, SHORT_TEXT_MAX)})`,
   ];
 
   return { text: fallbackParts.join("\n"), blocks };
