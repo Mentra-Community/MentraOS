@@ -40,6 +40,7 @@ import {
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
 import { resetSigningKeyCache, getPublicJwks } from "../packages/core/src/services/signing-keys.service";
+import { resetAccountRateLimits } from "../packages/core/src/api/account/rate-limit";
 import { gotrue, otc } from "../packages/core/src/services/account/account.service";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
@@ -140,6 +141,7 @@ beforeEach(async () => {
   userVerified = true;
   storedPassword = TEST_PASSWORD;
   storedEmail = TEST_EMAIL;
+  resetAccountRateLimits();
   await Promise.all([
     UserModel.deleteMany({ tenantId: "mentra" }),
     RefreshTokenModel.deleteMany({}),
@@ -340,6 +342,25 @@ describe("account auth", () => {
     expect(u.searchParams.get("provider")).toBe("google");
     expect(u.searchParams.get("code_challenge")).toBe("CHALLENGE-S256");
     expect(u.searchParams.get("code_challenge_method")).toBe("s256");
+  });
+
+  test("login is rate limited per spec: 429 with rate_limited after the window fills", async () => {
+    // Limit is 10/min per IP; the 11th attempt in the window must 429.
+    let last: Response | null = null;
+    for (let i = 0; i < 11; i++) {
+      last = await post("/api/account/login", { email: TEST_EMAIL, password: "wrong-password" });
+    }
+    expect(last!.status).toBe(429);
+    expect((await last!.json()).error).toBe("rate_limited");
+    // A different source IP is not affected by the exhausted bucket.
+    const other = await app.fetch(
+      new Request("http://localhost/api/account/login", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.7" },
+        body: JSON.stringify({ email: "someone-else@example.com", password: "nope" }),
+      }),
+    );
+    expect(other.status).not.toBe(429);
   });
 
   test("JWKS omits the account kid (and does not 500) when account keys are unset", async () => {

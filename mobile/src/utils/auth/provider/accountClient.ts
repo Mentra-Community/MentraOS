@@ -70,6 +70,22 @@ export class AccountAuthProvider extends AuthClient {
     return Res.ok({unsubscribe: () => (stateCb = null)})
   }
 
+  /** Run the V2 refresh grant. Returns the new tokens, or null if the server
+   * definitively rejected the refresh token (revoked / expired session).
+   * Throws on network failure so callers can tell "offline" from "signed out". */
+  private async refreshTokens(refresh: string): Promise<Tokens | null> {
+    const res = await fetch(core("/api/client/auth/refresh"), {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded"},
+      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as {access_token: string; refresh_token: string}
+    const t = {access: body.access_token, refresh: body.refresh_token}
+    saveTokens(t)
+    return t
+  }
+
   /** Return a valid access token, refreshing once via the V2 refresh grant if
    * the stored one is rejected. Throws if there is no usable session. */
   private async ensureFreshAccess(): Promise<string> {
@@ -79,33 +95,49 @@ export class AccountAuthProvider extends AuthClient {
       headers: {authorization: `Bearer ${tokens.access}`},
     })
     if (probe.status !== 401) return tokens.access
-    const refreshed = await fetch(core("/api/client/auth/refresh"), {
-      method: "POST",
-      headers: {"content-type": "application/x-www-form-urlencoded"},
-      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: tokens.refresh}),
-    })
-    if (!refreshed.ok) {
+    const refreshed = await this.refreshTokens(tokens.refresh)
+    if (!refreshed) {
       clearTokens()
       throw new Error("session expired")
     }
-    const body = (await refreshed.json()) as {access_token: string; refresh_token: string}
-    saveTokens({access: body.access_token, refresh: body.refresh_token})
-    return body.access_token
+    return refreshed.access
   }
 
   public getSession(): AsyncResult<MentraAuthSession, Error> {
     return Res.try_async(async () => {
       const tokens = loadTokens()
       if (!tokens) return {token: undefined}
-      const meRes = await fetch(core("/api/account/me"), {
-        headers: {authorization: `Bearer ${tokens.access}`},
-      }).catch(() => null)
+      let access = tokens.access
+      let meRes = await fetch(core("/api/account/me"), {
+        headers: {authorization: `Bearer ${access}`},
+      }).catch(() => null) // null = offline; keep tokens, report no user
+      if (meRes?.status === 401) {
+        // Access token expired (1h TTL): silently refresh, then retry /me, so a
+        // cold boot after an hour restores the session instead of bouncing the
+        // user to /auth/start while their refresh token is still good.
+        let refreshed: Tokens | null = null
+        let offline = false
+        try {
+          refreshed = await this.refreshTokens(tokens.refresh)
+        } catch {
+          offline = true // network failure: not a rejection, keep tokens
+        }
+        if (refreshed) {
+          access = refreshed.access
+          meRes = await fetch(core("/api/account/me"), {
+            headers: {authorization: `Bearer ${access}`},
+          }).catch(() => null)
+        } else if (!offline) {
+          clearTokens()
+          return {token: undefined}
+        }
+      }
       let user: MentraAuthUser | undefined
       if (meRes?.ok) {
         const me = (await meRes.json()) as {mentraUserId: string; email?: string; name?: string; avatarUrl?: string}
         user = {id: me.mentraUserId, email: me.email, name: me.name ?? me.email ?? "", avatarUrl: me.avatarUrl}
       }
-      return {token: tokens.access, user}
+      return {token: access, user}
     })
   }
 

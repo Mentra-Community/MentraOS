@@ -8,6 +8,7 @@ import { InvalidRequest } from "../../types/oauth.types";
 import { userAuth } from "../middleware/user-auth.middleware";
 import { UserModel } from "../../models/user.model";
 import * as account from "../../services/account/account.service";
+import { accountRateLimit } from "./rate-limit";
 import {
   revokeSession,
   revokeAllSessionsForUser,
@@ -17,38 +18,60 @@ import {
 const app = new Hono<AppEnv>();
 
 // === Unauthenticated ===
+// Every route carries per-IP (+ per-email where a body has one) limits per
+// spec.md; credential and email-sending flows get the tightest windows.
 
-app.post("/signup", async (c) => {
-  const { email, password } = await creds(c);
-  await account.signup(email, password);
-  return c.json({ status: "verification_sent" }, 202);
-});
+app.post(
+  "/signup",
+  accountRateLimit({ scope: "signup", limit: 5, windowSec: 300, perEmail: true }),
+  async (c) => {
+    const { email, password } = await creds(c);
+    await account.signup(email, password);
+    return c.json({ status: "verification_sent" }, 202);
+  },
+);
 
-app.post("/verify/resend", async (c) => {
-  const { email } = await emailOnly(c);
-  await account.resendVerification(email);
-  return c.json({ status: "verification_sent" }, 202);
-});
+app.post(
+  "/verify/resend",
+  accountRateLimit({ scope: "resend", limit: 5, windowSec: 300, perEmail: true }),
+  async (c) => {
+    const { email } = await emailOnly(c);
+    await account.resendVerification(email);
+    return c.json({ status: "verification_sent" }, 202);
+  },
+);
 
-app.post("/login", async (c) => {
-  const { email, password } = await creds(c);
-  return c.json(await account.login(email, password));
-});
+app.post(
+  "/login",
+  accountRateLimit({ scope: "login", limit: 10, windowSec: 60, perEmail: true }),
+  async (c) => {
+    const { email, password } = await creds(c);
+    return c.json(await account.login(email, password));
+  },
+);
 
-app.post("/password/forgot", async (c) => {
-  const { email } = await emailOnly(c);
-  await account.requestPasswordReset(email);
-  return c.json({ status: "verification_sent" }, 202);
-});
+app.post(
+  "/password/forgot",
+  accountRateLimit({ scope: "forgot", limit: 5, windowSec: 300, perEmail: true }),
+  async (c) => {
+    const { email } = await emailOnly(c);
+    await account.requestPasswordReset(email);
+    return c.json({ status: "verification_sent" }, 202);
+  },
+);
 
-app.post("/password/reset", async (c) => {
-  const body = await json(c);
-  const email = str(body.email);
-  const code = str(body.code);
-  const newPassword = str(body.newPassword);
-  if (!email || !code || !newPassword) throw new InvalidRequest("email, code, newPassword required");
-  return c.json(await account.resetPassword(email, code, newPassword));
-});
+app.post(
+  "/password/reset",
+  accountRateLimit({ scope: "reset", limit: 10, windowSec: 300, perEmail: true }),
+  async (c) => {
+    const body = await json(c);
+    const email = str(body.email);
+    const code = str(body.code);
+    const newPassword = str(body.newPassword);
+    if (!email || !code || !newPassword) throw new InvalidRequest("email, code, newPassword required");
+    return c.json(await account.resetPassword(email, code, newPassword));
+  },
+);
 
 // === Authenticated ===
 
@@ -80,37 +103,54 @@ app.post("/subject-token", userAuth, async (c) => {
   return c.json({ token, type: "oem-jwt" });
 });
 
-app.post("/password/change", userAuth, async (c) => {
-  const u = c.var.user!;
-  const body = await json(c);
-  const currentPassword = str(body.currentPassword);
-  const newPassword = str(body.newPassword);
-  if (!currentPassword || !newPassword) throw new InvalidRequest("currentPassword, newPassword required");
-  const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
-  await account.changePassword(u.mentraUserId, tenantUserId, currentPassword, newPassword, email, u.sessionId);
-  return c.body(null, 204);
-});
+// Authenticated, but still limited: these re-verify a password or consume a
+// short numeric code, so a stolen session must not get unlimited guesses.
+app.post(
+  "/password/change",
+  accountRateLimit({ scope: "pwchange", limit: 10, windowSec: 300 }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const body = await json(c);
+    const currentPassword = str(body.currentPassword);
+    const newPassword = str(body.newPassword);
+    if (!currentPassword || !newPassword) throw new InvalidRequest("currentPassword, newPassword required");
+    const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
+    await account.changePassword(u.mentraUserId, tenantUserId, currentPassword, newPassword, email, u.sessionId);
+    return c.body(null, 204);
+  },
+);
 
-app.post("/email/change", userAuth, async (c) => {
-  const u = c.var.user!;
-  const body = await json(c);
-  const newEmail = str(body.newEmail);
-  const password = str(body.password);
-  if (!newEmail || !password) throw new InvalidRequest("newEmail, password required");
-  const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
-  await account.requestEmailChange(tenantUserId, email, password, newEmail);
-  return c.json({ status: "verification_sent" }, 202);
-});
+app.post(
+  "/email/change",
+  accountRateLimit({ scope: "emchange", limit: 5, windowSec: 300, perEmail: true }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const body = await json(c);
+    const newEmail = str(body.newEmail);
+    const password = str(body.password);
+    if (!newEmail || !password) throw new InvalidRequest("newEmail, password required");
+    const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
+    await account.requestEmailChange(tenantUserId, email, password, newEmail);
+    return c.json({ status: "verification_sent" }, 202);
+  },
+);
 
-app.post("/email/change/confirm", userAuth, async (c) => {
-  const u = c.var.user!;
-  const body = await json(c);
-  const code = str(body.code);
-  if (!code) throw new InvalidRequest("code required");
-  const tenantUserId = await tenantUserIdFor(u.mentraUserId);
-  await account.confirmEmailChange(tenantUserId, code);
-  return c.body(null, 204);
-});
+app.post(
+  "/email/change/confirm",
+  accountRateLimit({ scope: "emconfirm", limit: 10, windowSec: 300 }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const body = await json(c);
+    const code = str(body.code);
+    if (!code) throw new InvalidRequest("code required");
+    const tenantUserId = await tenantUserIdFor(u.mentraUserId);
+    await account.confirmEmailChange(tenantUserId, code);
+    return c.body(null, 204);
+  },
+);
 
 app.post("/delete/request", userAuth, async (c) => {
   const u = c.var.user!;
@@ -119,15 +159,20 @@ app.post("/delete/request", userAuth, async (c) => {
   return c.json({ status: "verification_sent" }, 202);
 });
 
-app.post("/delete/confirm", userAuth, async (c) => {
-  const u = c.var.user!;
-  const body = await json(c);
-  const code = str(body.code);
-  if (!code) throw new InvalidRequest("code required");
-  const tenantUserId = await tenantUserIdFor(u.mentraUserId);
-  await account.confirmAccountDeletion(u.mentraUserId, tenantUserId, code);
-  return c.body(null, 204);
-});
+app.post(
+  "/delete/confirm",
+  accountRateLimit({ scope: "delconfirm", limit: 10, windowSec: 300 }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const body = await json(c);
+    const code = str(body.code);
+    if (!code) throw new InvalidRequest("code required");
+    const tenantUserId = await tenantUserIdFor(u.mentraUserId);
+    await account.confirmAccountDeletion(u.mentraUserId, tenantUserId, code);
+    return c.body(null, 204);
+  },
+);
 
 // === helpers ===
 

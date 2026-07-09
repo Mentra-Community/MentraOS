@@ -14,10 +14,15 @@ import { Hono } from "hono";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 import { gotrue, otc } from "../../services/account/account.service";
+import { accountRateLimit } from "./rate-limit";
 import { mintAccountSubjectToken } from "../../services/session.service";
 import { createSession } from "../../services/session.service";
 
 const app = new Hono<AppEnv>();
+
+// All three legs are unauthenticated; per-IP limits per spec.md. Generous
+// enough for real sign-in flows, tight enough to blunt code/state brute force.
+app.use("/*", accountRateLimit({ scope: "oauth", limit: 30, windowSec: 60 }));
 
 const APP_SCHEME = "com.mentra";
 const PROVIDERS = new Set(["google", "apple"]);
