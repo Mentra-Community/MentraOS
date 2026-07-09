@@ -1,8 +1,8 @@
 # 019 spike: the Cloud V1 dependency ledger and the auth chain
 
-**Status:** First pass complete (code inventory, 2026-07-08, branch
-`mentra-account-auth` @ dev f77623007). Remaining spike questions are listed at
-the bottom; they need product answers or live-system checks, not more grepping.
+**Status:** Complete (2026-07-08). Code inventory done, all open questions
+resolved into decisions (section 5), and the accepted-breakage ledger for the
+V1-removal PR is recorded (section 6). spec.md is unblocked.
 
 ## Purpose
 
@@ -121,24 +121,70 @@ Ranked; items 1-2 justify the project on their own.
 Cuts 2-4 are separate issues; this spike scopes them so 019 does not silently
 absorb them.
 
-## 5. Open questions (need answers before spec.md)
+## 5. Decisions (spike resolved 2026-07-08)
 
-- **OAuth redirect mechanics.** Google sign-in server side: core drives the
-  OAuth dance and deep-links back into the app (`state`/PKCE, app links). What
-  does Supabase GoTrue support server side vs what must stay client-initiated?
-  This is the riskiest unknown of Phase 1.
-- **Session model on device.** Does mobile hold ONLY V2 access+refresh (and
-  core holds the Supabase session server side), or keep the Supabase refresh
-  token on device as a recovery root? Tradeoffs: revocation vs offline login
-  vs "logged out after 30 days idle."
-- **Legacy coexistence during rollout.** Until cuts 2-3 land, a V2-logged-in
-  app still needs the V1 websocket. Options: core mints a legacy-compatible
-  coreToken (requires core to hold MENTRA_CORE_JWT_SECRET, extending the
-  symmetric debt temporarily) vs mobile keeps the Supabase session until V1
-  dies. Needs a decision with security signoff.
-- **Migration of logged-in users.** On app update, silent re-exchange from the
-  stored Supabase session vs forced re-login. What percent of sessions survive?
-- **Identity side-channels.** posthog/sentry/bug-report identity currently
-  read the Supabase user object; inventory and re-point them.
-- **Account deletion flow ownership.** V1 owns request/confirm today; the
-  account module must own it before any V1-free build ships to stores.
+1. **OAuth: system browser + core-hosted flow.** Core hosts
+   `GET /api/account/oauth/google/start`; the system browser (Custom Tabs /
+   ASWebAuthenticationSession) runs Supabase's `/auth/v1/authorize`; the
+   callback lands on core, core exchanges the code server side, mints the V2
+   session, and deep-links back into the app with a one-time code. Mirrors the
+   WorkOS PKCE + device flow already built for the console/CLI
+   (`cli-auth.api.ts`), so every moving part has in-repo precedent and no
+   provider secret touches the client. Native Google Sign-In SDK is a later UX
+   optimization, not the foundation. Note: offering Google login means the App
+   Store requires Sign in with Apple; the same core-hosted flow covers it as
+   another provider route.
+2. **Session model: V2 tokens only on device; no Supabase material at all.**
+   Core does NOT persist Supabase sessions: it uses GoTrue's password grant
+   transiently at login (verify, fetch identity, discard) and the GoTrue admin
+   API (service key) for management flows (password/email change, reset links,
+   deletion). The device holds exactly V2 access + refresh. V2 refresh already
+   rolls on rotation, so active users never re-login; only fully-idle-30-days
+   does. TTL stays config-driven if product wants longer.
+3. **No legacy coexistence bridge.** SocketComms is being deprecated and Cloud
+   V1 removal is planned for the PR immediately after this one, so a
+   core-minted legacy coreToken bridge would be engineering for a two-week
+   window. Decision: do not build it. When login moves to V2, the V1 websocket
+   and coreToken-authenticated REST simply stop working, and we track the
+   fallout in the breakage ledger below (section 6) as the work list for the
+   V1-removal PR. One carve-out: account deletion moves in THIS PR (see 5.6),
+   because store compliance cannot be in the broken list.
+4. **Migration: silent bootstrap, then retire the ramp.** On first boot after
+   update, a stored Supabase session is posted to the existing V2 exchange
+   (which already accepts Supabase JWTs), the V2 session is minted, and all
+   Supabase material is wiped from the device. Expired sessions see the login
+   screen, same as today. Instrument with a `migration_source` metric and
+   delete the symmetric exchange branch once usage is ~zero; that is the moment
+   tech-debt item 1 actually dies.
+5. **Identity side-channels: one `GET /api/account/me`.** Returns
+   `{mentraUserId, email, name, avatar}`; posthog/sentry/bug-report identity
+   re-points to it, keyed on `mentraUserId` (stable server id, less PII in
+   third-party tools).
+6. **Account deletion moves in Phase 1.** `request` sends the confirmation
+   email (core already carries `RESEND_API_KEY`), `confirm` deletes the
+   Supabase user (admin API), the V2 user + sessions, and, while V1 lives,
+   calls V1's deletion server-to-server so mobile only ever talks to V2. When
+   V1 dies the fan-out call is deleted.
+
+Remaining sign-off: none blocking. Decision 3 accepts a short window of broken
+V1 features (product call, made 2026-07-08); decision 2's idle-logout TTL is a
+product knob, defaulting to current 30-day rolling.
+
+## 6. Breakage ledger: what stops working when V1 auth goes away
+
+When this PR lands and mobile no longer produces a legacy coreToken, the
+following break by design. This list IS the work list for the V1-removal PR;
+anything discovered broken later gets appended here.
+
+| What breaks | Mechanism | Disposition (next PR) |
+|---|---|---|
+| OS dashboard content (HUD glasses) | dashboard is driven over the V1 WS | move dashboard to Cloud V2 (anticipated in SocketComms comments) |
+| V1 cloud app bridge | display events, photo/stream/video commands, app_started/stopped over V1 WS | V2 runtime already owns these for V2 apps; delete the V1 bridge (SocketComms, WebSocketManager) |
+| V1 audio uplink | `AudioCloudUplink` (island) feeding V1 apps | V2 path exists (cloud-client); delete V1 uplink |
+| Device event routing to V1 | `DeviceEventRouter`, `MantleManager` V1 hooks | re-point or delete with the bridge |
+| Server-synced user settings | `/api/client/user/settings` (coreToken auth) | add V2 settings sync endpoint or accept local-only until then |
+| Calendar / location / notifications feeds | RestComms pushes (coreToken auth) | add V2 client-data endpoints; dashboard/miniapps consuming them move with the dashboard |
+| Error reports | `/app/error` | add V2 equivalent or route to existing report tooling |
+| Legacy `/auth/exchange` + `goodbye` | replaced by the account module | delete client code |
+| Min-version check | `/api/client/min` | already exists on V2 (`/api/client/min-version`); just re-point |
+| Account deletion | `/api/account/request|confirm` | NOT allowed to break; moves in this PR (decision 5.6) |
