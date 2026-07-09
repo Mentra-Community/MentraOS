@@ -153,7 +153,12 @@ async function backfillLegacyRefreshTokenTenant(): Promise<void> {
 
 async function dropLegacyUserIdentityIndex(): Promise<void> {
   const collection = mongoose.connection.collection(USERS_COLLECTION);
-  const indexes = await collection.indexes();
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch {
+    return; // collection does not exist yet (fresh database)
+  }
   const hasLegacyIndex = indexes.some(
     (index) => index.name === LEGACY_USER_IDENTITY_INDEX,
   );

@@ -8,7 +8,11 @@ import { InvalidRequest } from "../../types/oauth.types";
 import { userAuth } from "../middleware/user-auth.middleware";
 import { UserModel } from "../../models/user.model";
 import * as account from "../../services/account/account.service";
-import { revokeSession, revokeAllSessionsForUser } from "../../services/session.service";
+import {
+  revokeSession,
+  revokeAllSessionsForUser,
+  mintAccountSubjectToken,
+} from "../../services/session.service";
 
 const app = new Hono<AppEnv>();
 
@@ -63,6 +67,17 @@ app.get("/me", userAuth, async (c) => {
   const u = c.var.user!;
   const tenantUserId = await tenantUserIdFor(u.mentraUserId);
   return c.json(await account.me(u.mentraUserId, tenantUserId));
+});
+
+// The device's cloud-client fetches a fresh short-lived subject token from here
+// (authenticated by the current V2 session) and exchanges it at the public
+// /api/client/auth/exchange, exactly as an external OEM's app would. This is the
+// OEM-backend "mint a subject token for my app" surface.
+app.post("/subject-token", userAuth, async (c) => {
+  const u = c.var.user!;
+  const tenantUserId = await tenantUserIdFor(u.mentraUserId);
+  const token = await mintAccountSubjectToken({ tenantUserId });
+  return c.json({ token, type: "oem-jwt" });
 });
 
 app.post("/password/change", userAuth, async (c) => {
