@@ -163,9 +163,10 @@ absorb them.
    third-party tools).
 6. **Account deletion moves in Phase 1.** `request` sends the confirmation
    email (core already carries `RESEND_API_KEY`), `confirm` deletes the
-   Supabase user (admin API), the V2 user + sessions, and, while V1 lives,
-   calls V1's deletion server-to-server so mobile only ever talks to V2. When
-   V1 dies the fan-out call is deleted.
+   Supabase user (admin API) and the V2 user + sessions. Cloud V1 is a
+   separate system with its own database; cloud-v2 code never talks to it.
+   Any V1 record cleanup is an operational task on the V1 side, not a
+   cloud-v2 code path.
 
 Remaining sign-off: none blocking. Decision 3 accepts a short window of broken
 V1 features (product call, made 2026-07-08); decision 2's idle-logout TTL is a

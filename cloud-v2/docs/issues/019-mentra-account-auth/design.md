@@ -112,14 +112,14 @@ app                core                        Supabase/provider
 - V1 surfaces broken by this (dashboard, V1 bridge, settings sync, feeds) are
   NOT patched here; they are the spike section 6 ledger for the V1-removal PR.
 
-## 6. Account deletion fan-out
+## 6. Account deletion
 
-`delete/confirm` runs, in order: revoke all V2 sessions, delete V2 user row,
-delete GoTrue user (admin API), then while V1 exists call V1's internal
-deletion endpoint server-to-server (env `LEGACY_CORE_URL` +
-`LEGACY_DELETE_SECRET`; both live only in core's Doppler). V1 fan-out failures
-are logged and retried by a small reconciliation job rather than failing the
-user-facing request (the user's V2 identity is already gone).
+`delete/confirm` runs, in order: revoke all V2 sessions, delete the V2 user
+row, delete the GoTrue user (admin API). Cloud V1 is a separate system with
+its own database and cloud-v2 code has no knowledge of it: there is no
+server-to-server fan-out, no legacy env vars, no reconciliation job. If V1
+records need cleanup while V1 still exists, that is handled on the V1 side
+as an operational task.
 
 ## 7. Testing
 

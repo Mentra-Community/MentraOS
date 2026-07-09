@@ -168,25 +168,12 @@ export async function confirmAccountDeletion(
   code: string,
 ): Promise<void> {
   await otc.consumeCode({ code, purpose: "account_deletion", expectSubject: tenantUserId });
-  // Order: kill V2 sessions, delete the Supabase user, fan out to V1 (best
-  // effort; a reconciliation job retries). The V2 user row is left tombstoned
-  // by session removal; a follow-up may hard-delete it.
+  // Order: kill V2 sessions, then delete the Supabase user. The V2 user row is
+  // left tombstoned by session removal; a follow-up may hard-delete it.
+  // Cloud V1 is a different system with its own database; its data lifecycle
+  // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({ mentraUserId });
   await gotrue.deleteUser(tenantUserId);
-  await deleteFromLegacy(tenantUserId).catch(() => {
-    // Non-fatal: the user's V2 identity is already gone. Log-and-reconcile.
-  });
-}
-
-async function deleteFromLegacy(tenantUserId: string): Promise<void> {
-  const url = process.env.LEGACY_CORE_URL?.trim();
-  const secret = process.env.LEGACY_DELETE_SECRET?.trim();
-  if (!url || !secret) return; // V1 removal in progress; nothing to fan out to.
-  await fetch(`${url.replace(/\/+$/, "")}/api/internal/account/delete`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-    body: JSON.stringify({ userId: tenantUserId }),
-  });
 }
 
 export { gotrue, otc };
