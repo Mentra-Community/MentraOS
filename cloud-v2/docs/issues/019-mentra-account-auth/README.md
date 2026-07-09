@@ -140,6 +140,7 @@ Questions the spike must answer, with evidence:
   from core? keep dual login temporarily?).
 - Migration: what happens to existing logged-in users on app update (silent
   re-exchange vs forced re-login), and the account-recovery story.
+  (RESOLVED in spike.md decision 4: forced re-login, no migration ramp.)
 
 ### 2. spec.md - the contract
 

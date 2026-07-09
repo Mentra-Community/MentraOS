@@ -149,13 +149,14 @@ absorb them.
    fallout in the breakage ledger below (section 6) as the work list for the
    V1-removal PR. One carve-out: account deletion moves in THIS PR (see 5.6),
    because store compliance cannot be in the broken list.
-4. **Migration: silent bootstrap, then retire the ramp.** On first boot after
-   update, a stored Supabase session is posted to the existing V2 exchange
-   (which already accepts Supabase JWTs), the V2 session is minted, and all
-   Supabase material is wiped from the device. Expired sessions see the login
-   screen, same as today. Instrument with a `migration_source` metric and
-   delete the symmetric exchange branch once usage is ~zero; that is the moment
-   tech-debt item 1 actually dies.
+4. **Migration: none. Everyone logs in again.** On first boot after update,
+   any stored Supabase/legacy material is wiped and the user lands on the new
+   login screen; signing in creates their V2 session and they are migrated.
+   No silent bootstrap, no migration ramp to build or retire. This also means
+   the symmetric Supabase/legacy branch of `resolveSubjectIdentity` can be
+   deleted in the same effort instead of lingering behind a metric (tech-debt
+   item 1 dies immediately). Cost: a one-time re-login for every user on
+   update, accepted as part of the same product call as decision 3.
 5. **Identity side-channels: one `GET /api/account/me`.** Returns
    `{mentraUserId, email, name, avatar}`; posthog/sentry/bug-report identity
    re-points to it, keyed on `mentraUserId` (stable server id, less PII in
