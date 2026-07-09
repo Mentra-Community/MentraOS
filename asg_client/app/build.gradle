@@ -46,32 +46,9 @@ if (envFile.exists()) {
     logger.warn(".env file not found at ${envFile}")
 }
 
-// Match mobile/scripts/build-number.mjs: 100000 + seconds since Jan 1 2025 UTC.
-// CI pins ASG_VERSION_CODE so generated manifests exactly match the built APK.
-def asgBuildEpochMs = 1735689600000L
-def asgBuildBaseline = 100000
-
-def resolveAsgVersionCode = {
-    def pinned = project.findProperty("ASG_VERSION_CODE")
-            ?: System.getenv("ASG_VERSION_CODE")
-            ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
-    if (pinned != null && !pinned.toString().trim().isEmpty()) {
-        def parsed = pinned.toString().trim().toInteger()
-        if (parsed <= 0) {
-            throw new GradleException("ASG_VERSION_CODE must be a positive integer")
-        }
-        return parsed
-    }
-
-    return asgBuildBaseline + ((System.currentTimeMillis() - asgBuildEpochMs) / 1000L).toInteger()
-}
-
-def asgVersionCodeValue = resolveAsgVersionCode()
-def asgVersionNameValue = (
-        project.findProperty("ASG_VERSION_NAME")
-                ?: System.getenv("ASG_VERSION_NAME")
-                ?: asgVersionCodeValue.toString()
-).toString()
+// Hardcoded APK build version.
+def asgVersionCodeValue = 40
+def asgVersionNameValue = "40.0"
 
 /**
  * Release signing credentials from environment variables

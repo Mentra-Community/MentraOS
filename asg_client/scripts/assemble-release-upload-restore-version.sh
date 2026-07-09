@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# 1) Set app version to 28 (versionCode + versionName) in app/build.gradle
+# 1) Set app version to 40 (versionCode + versionName) in app/build.gradle
 # 2) ./gradlew assembleRelease (from asg_client/)
 # 3) Upload release APK via upload-asg-client-github-release.sh
-# 4) Restore version to 26 in build.gradle
+# 4) Restore version to 38 in build.gradle
 #
-# If the script fails after step 1, an EXIT trap still restores 26 so the tree
-# does not stay on 28.
+# If the script fails after step 1, an EXIT trap still restores 38 so the tree
+# does not stay on 40.
 #
 # Usage (from repo root or asg_client):
 #   ./asg_client/scripts/assemble-release-upload-restore-version.sh
@@ -21,10 +21,10 @@ GRADLE_FILE="$ASG_DIR/app/build.gradle"
 UPLOAD_SCRIPT="$SCRIPT_DIR/upload-asg-client-github-release.sh"
 
 # Build and upload with this version; then restore below.
-BUILD_VERSION_CODE=38
-BUILD_VERSION_NAME="38.0"
-RESTORE_VERSION_CODE=36
-RESTORE_VERSION_NAME="36.0"
+BUILD_VERSION_CODE=40
+BUILD_VERSION_NAME="40.0"
+RESTORE_VERSION_CODE=38
+RESTORE_VERSION_NAME="38.0"
 
 MODIFIED=0
 
