@@ -2225,9 +2225,12 @@ class MentraLive: NSObject, SGCManager {
             handleGlassesReady()
 
         case "battery_status":
-            let level = json["level"] as? Int ?? batteryLevel
-            let isCharging = json["charging"] as? Bool ?? charging
-            updateBatteryStatus(level: level, isCharging: isCharging)
+            // Percent only (the glasses send it as "percent"; the old "level" read never
+            // matched). battery_status derives from hm_batv, which carries no charge bit —
+            // older glasses fabricate `charging` from a voltage threshold. Charging state
+            // comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
+            let level = json["percent"] as? Int ?? json["level"] as? Int ?? batteryLevel
+            updateBatteryStatus(level: level, isCharging: charging)
 
         case "voice_activity_detection_status":
             let enabled = json["voiceActivityDetectionEnabled"] as? Bool
@@ -2627,10 +2630,13 @@ class MentraLive: NSObject, SGCManager {
             if let bodyObj = json["B"] as? [String: Any] {
                 let readyResponse = bodyObj["ready"] as? Int ?? 0
 
-                // Extract battery info from heartbeat
+                // Extract battery info from heartbeat. charg is the PMU charging bit — the
+                // only truthful charging source in the protocol. Old firmware omits it;
+                // keep the last known state then instead of defaulting to not-charging.
                 let percentage = bodyObj["pt"] as? Int ?? 0
                 let voltage = bodyObj["vt"] as? Int ?? 0
-                let charging = (bodyObj["charg"] as? Int ?? 0) == 1
+                let chargBit = bodyObj["charg"] as? Int
+                let charging = chargBit != nil ? (chargBit == 1) : self.charging
 
                 // SOC is still booting
                 if readyResponse == 0 {
@@ -2678,12 +2684,15 @@ class MentraLive: NSObject, SGCManager {
                let percentage = body["pt"] as? Int
             {
                 let voltageVolts = Double(voltage) / 1000.0
-                let isCharging = voltage > 4000
 
                 Bridge.log(
                     "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%"
                 )
-                updateBatteryStatus(level: percentage, isCharging: isCharging)
+                // Percent only. sr_batv carries just voltage+percent; inferring charging
+                // from voltage (>4.0V) reads "not charging" for most of a genuinely-charging
+                // pack's range. Charging state comes exclusively from the PMU charg bit in
+                // the sr_hrt heartbeat.
+                updateBatteryStatus(level: percentage, isCharging: charging)
             }
 
         case "sr_getvol":

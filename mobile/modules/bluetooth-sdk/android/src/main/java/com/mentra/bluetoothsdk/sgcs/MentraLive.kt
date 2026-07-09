@@ -3155,10 +3155,12 @@ class MentraLive : SGCManager() {
                     )
             "speaking_status" -> handleSpeakingStatus(json.optBoolean("speaking", false))
             "battery_status" -> {
-                // Process battery status
+                // Percent only. battery_status derives from hm_batv, which carries no charge
+                // bit — older glasses fabricate `charging` from a voltage threshold (>3.9V)
+                // that reads "charging" for most of a discharging pack's range. Charging
+                // state comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
                 val percent = json.optInt("percent", batteryLevel)
-                val charging = json.optBoolean("charging", isCharging)
-                updateBatteryStatus(percent, charging)
+                updateBatteryStatus(percent, isCharging)
             }
             "pong" ->
                     // Process heartbeat pong response
@@ -4395,11 +4397,10 @@ class MentraLive : SGCManager() {
                                         "%"
                         )
 
-                        // Determine charging status based on voltage (K900 typical charging voltage
-                        // is >4.0V)
-                        val isCharging = voltageMillivolts > 4000
-
-                        // Update battery status using the existing method
+                        // Percent only. sr_batv carries just voltage+percent; inferring
+                        // charging from voltage (>4.0V) reads "not charging" for most of a
+                        // genuinely-charging pack's range. Charging state comes exclusively
+                        // from the PMU charg bit in the sr_hrt heartbeat.
                         updateBatteryStatus(batteryPercentage, isCharging)
                     }
                 } catch (e: Exception) {
