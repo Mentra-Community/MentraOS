@@ -1,0 +1,27 @@
+{
+  "name": "@mentra/console-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "description": "MCP server for MentraOS Cloud V2 report triage (admin reports API)",
+  "type": "module",
+  "bin": {
+    "mentra-console-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "smoke": "bun run scripts/smoke-test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

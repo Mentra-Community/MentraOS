@@ -4,6 +4,7 @@
     { "path": "./packages/shared" },
     { "path": "./packages/auth" },
     { "path": "./packages/cli" },
+    { "path": "./packages/console-mcp" },
     { "path": "./packages/core" },
     { "path": "./packages/runtime" },
     { "path": "./packages/cloud-client" },

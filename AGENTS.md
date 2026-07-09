@@ -171,8 +171,8 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 When working on bug reports linked to `console.mentra.glass/admin/incidents/{id}`:
 
 1. Extract the incident ID from the URL
-2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}` — or use the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) from Cursor
-3. Requires `MENTRA_AGENT_API_KEY` in your environment (or in MCP `env` / `~/.zshrc` when using `scripts/run-mcp.sh`)
+2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}` (requires `MENTRA_AGENT_API_KEY` in your environment)
+3. For Cloud V2 reports (`rep_...` ids, from the reports Slack notifications or the admin console) use the **mentra-console** MCP server (`cloud-v2/packages/console-mcp`, tools `report_list` / `report_get` / `report_get_logs`) from Cursor; requires `MENTRA_ADMIN_TOKEN` (in MCP `env` / `~/.zshrc` when using its `scripts/run-mcp.sh`) — see the package README
 
 The logs JSON contains:
 
