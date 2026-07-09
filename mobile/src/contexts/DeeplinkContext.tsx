@@ -195,6 +195,31 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         }
       }
 
+      // Account OAuth handoff (issue 019): core deep-links ?code=&state= query
+      // params (no fragment). Swap the one-time code + in-app PKCE verifier for
+      // the V2 session; an intercepted link is useless without the verifier.
+      const query = new URLSearchParams(url.split("?")[1]?.split("#")[0] ?? "")
+      const handoffCode = params.code ?? query.get("code")
+      const handoffState = params.state ?? query.get("state")
+      if (handoffCode && handoffState && !url.includes("#")) {
+        const res = await mentraAuth.completeOAuthHandoff({code: handoffCode, state: handoffState})
+        try {
+          WebBrowser.dismissBrowser()
+        } catch {
+          // browser might not be open
+        }
+        if (res.is_error()) {
+          console.error("[LOGIN DEBUG] OAuth handoff failed:", res.error)
+          nav.replace(`/auth/start?authError=oauth_failed`)
+          return
+        }
+        BgTimer.setTimeout(() => {
+          nav.setAnimation("none")
+          nav.replaceAll("/")
+        }, 100)
+        return
+      }
+
       const authParams = parseAuthParams(url)
 
       // Check if there's an error in the URL (e.g., expired verification link)

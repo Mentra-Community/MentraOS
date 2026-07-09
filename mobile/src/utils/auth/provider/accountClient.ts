@@ -12,11 +12,14 @@ import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
+import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {storage} from "@/utils/storage"
 
 const ACCESS_KEY = "mentra.account.accessToken"
 const REFRESH_KEY = "mentra.account.refreshToken"
+const OAUTH_STATE_KEY = "mentra.account.oauth.state"
+const OAUTH_VERIFIER_KEY = "mentra.account.oauth.verifier"
 
 type Tokens = {access: string; refresh: string}
 
@@ -201,6 +204,93 @@ export class AccountAuthProvider extends AuthClient {
     return Res.try_async(async () => {
       saveTokens({access: tokens.access_token, refresh: tokens.refresh_token})
       this.notify("TOKEN_REFRESHED")
+    })
+  }
+
+  public updateUserPassword(newPassword: string, currentPassword?: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      // The account backend re-verifies the current password server side; a
+      // stolen session alone must not be enough to rotate the credential.
+      if (!currentPassword) throw new Error("current password required")
+      const access = await this.ensureFreshAccess()
+      const res = await fetch(core("/api/account/password/change"), {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        body: JSON.stringify({currentPassword, newPassword}),
+      })
+      if (!res.ok) await throwApiError(res)
+    })
+  }
+
+  public updateUserEmail(newEmail: string, password?: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      if (!password) throw new Error("password required")
+      const access = await this.ensureFreshAccess()
+      const res = await fetch(core("/api/account/email/change"), {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        body: JSON.stringify({newEmail, password}),
+      })
+      if (!res.ok && res.status !== 202) await throwApiError(res)
+    })
+  }
+
+  public confirmEmailChange(code: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const access = await this.ensureFreshAccess()
+      const res = await fetch(core("/api/account/email/change/confirm"), {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        body: JSON.stringify({code}),
+      })
+      if (!res.ok) await throwApiError(res)
+      this.notify("USER_UPDATED")
+    })
+  }
+
+  /** Build the OAuth start URL for the system browser. The PKCE verifier and
+   * state stay in MMKV; only the S256 challenge leaves the device, so an
+   * intercepted deep link cannot be completed without the verifier. */
+  private oauthStartUrl(provider: "google" | "apple"): string {
+    const state = randomUrlSafe(16)
+    const verifier = randomUrlSafe(32)
+    storage.save(OAUTH_STATE_KEY, state)
+    storage.save(OAUTH_VERIFIER_KEY, verifier)
+    const q = new URLSearchParams({state, code_challenge: s256Challenge(verifier)})
+    return core(`/api/account/oauth/${provider}/start?${q}`)
+  }
+
+  public googleSignIn(): AsyncResult<string, Error> {
+    return Res.try_async(async () => this.oauthStartUrl("google"))
+  }
+
+  public appleSignIn(): AsyncResult<string, Error> {
+    return Res.try_async(async () => this.oauthStartUrl("apple"))
+  }
+
+  /** Deep link landed with ?code&state: verify state, swap the handoff code +
+   * verifier for the V2 session at /oauth/complete. */
+  public completeOAuthHandoff(params: {code: string; state: string}): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const expectedState = storage.load<string>(OAUTH_STATE_KEY)
+      const verifier = storage.load<string>(OAUTH_VERIFIER_KEY)
+      if (expectedState.is_error() || verifier.is_error() || !expectedState.value || !verifier.value) {
+        throw new Error("no oauth flow in progress")
+      }
+      if (params.state !== expectedState.value) throw new Error("oauth state mismatch")
+      storage.remove(OAUTH_STATE_KEY)
+      storage.remove(OAUTH_VERIFIER_KEY)
+      const res = await fetch(core("/api/account/oauth/complete"), {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: params.code, code_verifier: verifier.value}),
+      })
+      if (!res.ok) await throwApiError(res)
+      const body = (await res.json()) as {access_token: string; refresh_token: string}
+      if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
+      saveTokens({access: body.access_token, refresh: body.refresh_token})
+      const session = await this.getSession()
+      stateCb?.("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
     })
   }
 

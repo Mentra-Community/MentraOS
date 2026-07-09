@@ -35,11 +35,16 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  public updateUserPassword(_password: string): AsyncResult<void, Error> {
+  public updateUserPassword(_password: string, _currentPassword?: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  public updateUserEmail(_email: string): AsyncResult<void, Error> {
+  public updateUserEmail(_email: string, _password?: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Second step of the email change: the code emailed to the NEW address. */
+  public confirmEmailChange(_code: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
@@ -75,6 +80,12 @@ export abstract class AuthClient {
    * Providers back this differently (Supabase session token vs a minted OEM
    * subject token). */
   public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Finish an OAuth flow: the deep link handed back `?code&state`; swap the
+   * handoff code + the in-app PKCE verifier for a session. */
+  public completeOAuthHandoff(_params: {code: string; state: string}): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 }
