@@ -238,8 +238,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             // the transient _sdk_pending tree so in-flight SDK photos are invisible to gallery
             // sync and are cleaned up automatically after upload.
             String photoFilePath = save
-                    ? generateCaptureFilePath(packageName, "IMG_", ".jpg")
-                    : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
+                    ? generateCaptureFilePath(packageName, "IMG_", ".jpg", requestId)
+                    : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg", requestId);
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 captureService.sendPhotoErrorResponse(
