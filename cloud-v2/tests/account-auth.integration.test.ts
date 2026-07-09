@@ -39,7 +39,8 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
-import { resetSigningKeyCache } from "../packages/core/src/services/signing-keys.service";
+import { resetSigningKeyCache, getPublicJwks } from "../packages/core/src/services/signing-keys.service";
+import { gotrue, otc } from "../packages/core/src/services/account/account.service";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
@@ -55,6 +56,7 @@ let gotrueServer: http.Server;
 // mutable mock state
 let userVerified = true;
 let storedPassword = TEST_PASSWORD;
+let storedEmail = TEST_EMAIL;
 
 beforeAll(async () => {
   // Mock GoTrue: password grant, admin user lookup/update.
@@ -70,7 +72,7 @@ beforeAll(async () => {
       const body = raw ? JSON.parse(raw) : {};
       const userObj = {
         id: SUPABASE_USER_ID,
-        email: TEST_EMAIL,
+        email: storedEmail,
         email_confirmed_at: userVerified ? "2026-01-01T00:00:00Z" : null,
         user_metadata: { full_name: "Isaiah Android" },
       };
@@ -92,6 +94,7 @@ beforeAll(async () => {
       // PUT /auth/v1/admin/users/:id  (password/email change)
       if (url.pathname.startsWith("/auth/v1/admin/users/") && req.method === "PUT") {
         if (body.password) storedPassword = body.password;
+        if (body.email) storedEmail = body.email;
         return send(200, userObj);
       }
       if (url.pathname === "/auth/v1/signup") return send(200, userObj);
@@ -136,6 +139,7 @@ afterAll(async () => {
 beforeEach(async () => {
   userVerified = true;
   storedPassword = TEST_PASSWORD;
+  storedEmail = TEST_EMAIL;
   await Promise.all([
     UserModel.deleteMany({ tenantId: "mentra" }),
     RefreshTokenModel.deleteMany({}),
@@ -300,5 +304,63 @@ describe("account auth", () => {
     const res = await post("/api/account/logout", { everywhere: true }, a.access_token);
     expect(res.status).toBe(204);
     expect(await RefreshTokenModel.countDocuments({})).toBe(0);
+  });
+
+  test("email change is verification-gated: request does NOT apply, confirm with the code does", async () => {
+    const a = (await (await post("/api/account/login", { email: TEST_EMAIL, password: TEST_PASSWORD })).json()) as {
+      access_token: string;
+    };
+    const newEmail = "isaiah+new@mentraglass.com";
+
+    // Step 1: request. Issues a code to the new address, applies NOTHING yet.
+    const req = await post("/api/account/email/change", { newEmail, password: TEST_PASSWORD }, a.access_token);
+    expect(req.status).toBe(202);
+    expect(storedEmail).toBe(TEST_EMAIL); // GoTrue untouched — the old bug applied it here
+    expect(await AccountCodeModel.countDocuments({ purpose: "email_change" })).toBe(1);
+
+    // Wrong code is rejected.
+    const bad = await post("/api/account/email/change/confirm", { code: "000000" }, a.access_token);
+    expect(bad.status).toBe(400);
+    expect(storedEmail).toBe(TEST_EMAIL);
+
+    // Step 2: a valid code (minted via the same service the email uses) applies it.
+    const code = await otc.issueEmailCode({
+      purpose: "email_change",
+      subject: SUPABASE_USER_ID,
+      ttlSec: 60,
+      payload: { newEmail },
+    });
+    const ok = await post("/api/account/email/change/confirm", { code }, a.access_token);
+    expect(ok.status).toBe(204);
+    expect(storedEmail).toBe(newEmail);
+  });
+
+  test("OAuth authorize URL carries the PKCE challenge for the core<->GoTrue leg", () => {
+    const u = new URL(gotrue.authorizeUrl("google", "https://core.example/cb", "CHALLENGE-S256"));
+    expect(u.searchParams.get("provider")).toBe("google");
+    expect(u.searchParams.get("code_challenge")).toBe("CHALLENGE-S256");
+    expect(u.searchParams.get("code_challenge_method")).toBe("s256");
+  });
+
+  test("JWKS omits the account kid (and does not 500) when account keys are unset", async () => {
+    const priv = process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY;
+    const pub = process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY;
+    try {
+      delete process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY;
+      delete process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY;
+      resetSigningKeyCache();
+      const jwks = await getPublicJwks();
+      const kids = jwks.keys.map((k) => k.kid);
+      expect(kids).toContain("mentra-access-1");
+      expect(kids).toContain("mentra-miniapp-1");
+      expect(kids).not.toContain("mentra-account-1");
+    } finally {
+      process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY = priv;
+      process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY = pub;
+      resetSigningKeyCache();
+    }
+    // With the keys restored the account kid is published again.
+    const jwks = await getPublicJwks();
+    expect(jwks.keys.map((k) => k.kid)).toContain("mentra-account-1");
   });
 });

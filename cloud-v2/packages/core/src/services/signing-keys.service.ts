@@ -79,6 +79,15 @@ export async function getAccountKeys() {
   return accountKeys;
 }
 
+/** Whether the account signing keypair is configured. Environments deployed
+ * before the account rollout run with the feature dark; everything account-key
+ * dependent (JWKS entry, OEM-row seeding) must degrade gracefully, not 500. */
+export function accountKeysConfigured(): boolean {
+  return Boolean(
+    process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY && process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY,
+  );
+}
+
 /**
  * Reset the lazy-loaded signing keypair caches. **Test-only.** Production has no
  * reason to rotate keys mid-process; tests that mutate the key env vars between
@@ -106,18 +115,23 @@ export function getAccountPublicKeyPem(): string {
  * Publishing keys ahead of need makes rotation a no-coordination change.
  */
 export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
-  const [access, miniapp, account] = await Promise.all([getMentraKeys(), getMiniappKeys(), getAccountKeys()]);
-  const [accessJwk, miniappJwk, accountJwk] = await Promise.all([
+  const [access, miniapp] = await Promise.all([getMentraKeys(), getMiniappKeys()]);
+  const [accessJwk, miniappJwk] = await Promise.all([
     jose.exportJWK(access.publicKey),
     jose.exportJWK(miniapp.publicKey),
-    jose.exportJWK(account.publicKey),
   ]);
-  return {
-    keys: [
-      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
-      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
-      { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
-      { ...accountJwk, alg: MENTRA_ALG, use: "sig", kid: ACCOUNT_TOKEN_KID },
-    ],
-  };
+  const keys: jose.JWK[] = [
+    { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
+    { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
+    { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
+  ];
+  // The account key is optional: environments deployed before the account env
+  // vars exist must keep serving the access/runtime/miniapp keys (the startup
+  // migration skips the mentra OEM seed the same way).
+  if (accountKeysConfigured()) {
+    const account = await getAccountKeys();
+    const accountJwk = await jose.exportJWK(account.publicKey);
+    keys.push({ ...accountJwk, alg: MENTRA_ALG, use: "sig", kid: ACCOUNT_TOKEN_KID });
+  }
+  return { keys };
 }

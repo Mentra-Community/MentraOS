@@ -98,8 +98,18 @@ app.post("/email/change", userAuth, async (c) => {
   const password = str(body.password);
   if (!newEmail || !password) throw new InvalidRequest("newEmail, password required");
   const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
-  await account.changeEmail(u.mentraUserId, tenantUserId, email, password, newEmail);
+  await account.requestEmailChange(tenantUserId, email, password, newEmail);
   return c.json({ status: "verification_sent" }, 202);
+});
+
+app.post("/email/change/confirm", userAuth, async (c) => {
+  const u = c.var.user!;
+  const body = await json(c);
+  const code = str(body.code);
+  if (!code) throw new InvalidRequest("code required");
+  const tenantUserId = await tenantUserIdFor(u.mentraUserId);
+  await account.confirmEmailChange(tenantUserId, code);
+  return c.body(null, 204);
 });
 
 app.post("/delete/request", userAuth, async (c) => {

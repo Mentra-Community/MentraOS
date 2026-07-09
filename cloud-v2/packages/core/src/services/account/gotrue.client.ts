@@ -170,9 +170,16 @@ export async function deleteUser(userId: string): Promise<void> {
 }
 
 /** Build the GoTrue authorize URL for an OAuth provider (browser is redirected
- * here; the callback lands back on core). */
-export function authorizeUrl(provider: string, redirectTo: string): string {
-  const q = new URLSearchParams({ provider, redirect_to: redirectTo });
+ * here; the callback lands back on core). `codeChallenge` is S256 of core's
+ * verifier: GoTrue only issues a PKCE-exchangeable auth code when the challenge
+ * rides on the authorize request, so omitting it breaks `exchangeOAuthCode`. */
+export function authorizeUrl(provider: string, redirectTo: string, codeChallenge: string): string {
+  const q = new URLSearchParams({
+    provider,
+    redirect_to: redirectTo,
+    code_challenge: codeChallenge,
+    code_challenge_method: "s256",
+  });
   return `${baseUrl()}/auth/v1/authorize?${q}`;
 }
 

@@ -17,6 +17,7 @@ import { AccountError } from "./account-error";
 
 const RESET_CODE_TTL_SEC = 15 * 60;
 const DELETE_CODE_TTL_SEC = 15 * 60;
+const EMAIL_CHANGE_CODE_TTL_SEC = 15 * 60;
 
 /** Turn a verified GoTrue identity into a Cloud V2 session (the shared tail of
  * login and oauth). */
@@ -105,16 +106,46 @@ export async function changePassword(
   await revokeAllSessionsForUser({ mentraUserId, exceptSessionId: currentSessionId });
 }
 
-export async function changeEmail(
-  _mentraUserId: string,
+/**
+ * Step 1 of the email change: re-verify the password, then email a one-time
+ * code to the NEW address. The change is only applied by `confirmEmailChange`,
+ * so the user must prove they control the new inbox first. (The GoTrue admin
+ * update applies immediately with no confirmation, so core owns this flow with
+ * the same code mechanism as password reset and account deletion.)
+ */
+export async function requestEmailChange(
   tenantUserId: string,
   currentEmail: string,
   password: string,
   newEmail: string,
 ): Promise<void> {
-  // Re-verify the password, then hand the address change to GoTrue, which
-  // emails the new address a confirmation link and only applies it on click.
   await gotrue.verifyPassword(currentEmail, password);
+  // If the address already belongs to an account, silently no-op: the caller
+  // returns the uniform "verification_sent" either way (anti-enumeration).
+  const taken = await gotrue.findUserByEmail(newEmail);
+  if (taken) return;
+  const code = await otc.issueEmailCode({
+    purpose: "email_change",
+    subject: tenantUserId,
+    ttlSec: EMAIL_CHANGE_CODE_TTL_SEC,
+    payload: { newEmail },
+  });
+  await sendEmail({
+    to: newEmail,
+    subject: "Confirm your new Mentra email address",
+    html: `<p>Your email change code is <b>${code}</b>. It expires in 15 minutes. If you did not request this, ignore this email.</p>`,
+  });
+}
+
+/** Step 2: consume the code (bound to this user) and apply the new address. */
+export async function confirmEmailChange(tenantUserId: string, code: string): Promise<void> {
+  const { payload } = await otc.consumeCode({
+    code,
+    purpose: "email_change",
+    expectSubject: tenantUserId,
+  });
+  const newEmail = (payload as { newEmail?: string })?.newEmail;
+  if (!newEmail) throw new AccountError("code_invalid", "code is invalid", 400);
   await gotrue.setEmail(tenantUserId, newEmail);
 }
 

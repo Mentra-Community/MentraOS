@@ -54,7 +54,7 @@ app.get("/:provider/start", async (c) => {
   });
 
   const redirectTo = `${publicOrigin(c)}/api/account/oauth/callback?state=${encodeURIComponent(state)}`;
-  return c.redirect(gotrue.authorizeUrl(provider, redirectTo));
+  return c.redirect(gotrue.authorizeUrl(provider, redirectTo, s256(coreVerifier)));
 });
 
 /** Callback from the provider: exchange the code, mint the session, store it
