@@ -509,9 +509,10 @@ public class WhipStreamingService extends Service {
   }
 
   /**
-   * Cap the video encoder bitrate via RTP sender parameters and set degradation
-   * preference to MAINTAIN_FRAMERATE so WebRTC drops quality-per-frame instead of
-   * frame rate when thermals get tight.
+   * Cap the video encoder bitrate via RTP sender parameters. Degradation preference is
+   * set to DISABLED so WebRTC never auto-scales resolution or framerate under bandwidth/CPU
+   * pressure — resolution/fps are hard-coded (see WhipStreamConfig) and must stay fixed;
+   * any shortfall shows up as encoder quality (blockiness) or dropped frames instead.
    */
   private void applyBitrateConstraints() {
     for (RtpSender sender : mPeerConnection.getSenders()) {
@@ -521,15 +522,17 @@ public class WhipStreamingService extends Service {
       RtpParameters params = sender.getParameters();
       if (params == null) continue;
 
-      params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
+      params.degradationPreference = RtpParameters.DegradationPreference.DISABLED;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
         encoding.maxBitrateBps = mStreamConfig.getVideoBitrate();
+        encoding.scaleResolutionDownBy = 1.0;
+        encoding.maxFramerate = mStreamConfig.getVideoFps();
       }
 
       sender.setParameters(params);
       Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
-          + " kbps, degradation: MAINTAIN_FRAMERATE");
+          + " kbps, degradation: DISABLED (resolution/fps locked)");
     }
   }
 
