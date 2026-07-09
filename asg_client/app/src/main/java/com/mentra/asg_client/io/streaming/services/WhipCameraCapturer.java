@@ -83,6 +83,8 @@ public class WhipCameraCapturer implements VideoCapturer {
   private int mFallbackDeviceRotation;
   private boolean mIsFrontCamera;
   private boolean mLoggedFrameSize = false;
+  /** AE target FPS range actually supported by the camera HAL for the selected sensor mode. */
+  private Range<Integer> mAeFpsRange;
 
   @Override
   public void initialize(SurfaceTextureHelper surfaceTextureHelper, Context context,
@@ -130,6 +132,14 @@ public class WhipCameraCapturer implements VideoCapturer {
       Size normalizedCaptureSize = selection.getNormalizedCaptureSize();
       mCaptureWidth = normalizedCaptureSize.getWidth();
       mCaptureHeight = normalizedCaptureSize.getHeight();
+      @SuppressWarnings("unchecked")
+      Range<Integer>[] availableFpsRanges =
+          chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+      mAeFpsRange = selectBestFpsRange(availableFpsRanges, mFps);
+      if (mAeFpsRange.getUpper() < mFps) {
+        Log.w(TAG, "Requested " + mFps + "fps not supported by camera HAL for this sensor mode; "
+            + "falling back to " + mAeFpsRange);
+      }
       initializeDeviceRotationState();
       updateOutputCrop();
       mSurfaceTextureHelper.setTextureSize(mCameraSurfaceWidth, mCameraSurfaceHeight);
@@ -177,6 +187,7 @@ public class WhipCameraCapturer implements VideoCapturer {
       mCameraSurfaceHeight = height;
       mCaptureWidth = width;
       mCaptureHeight = height;
+      mAeFpsRange = new Range<>(fps, fps);
       initializeDeviceRotationState();
       updateOutputCrop();
       mSurfaceTextureHelper.setTextureSize(mCameraSurfaceWidth, mCameraSurfaceHeight);
@@ -233,9 +244,8 @@ public class WhipCameraCapturer implements VideoCapturer {
           mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
       builder.addTarget(surface);
 
-      // Fixed FPS range
-      builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-          new Range<>(mFps, mFps));
+      // FPS range clamped to what this camera/sensor mode actually supports (see startCapture)
+      builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, mAeFpsRange);
       builder.set(CaptureRequest.CONTROL_MODE,
           CaptureRequest.CONTROL_MODE_AUTO);
 
@@ -295,7 +305,7 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       mObserver.onCapturerStarted(true);
       Log.d(TAG, "Camera capture started with power-saving optimizations: "
-          + mCaptureWidth + "x" + mCaptureHeight + " @" + mFps + "fps");
+          + mCaptureWidth + "x" + mCaptureHeight + " @" + mFps + "fps (AE range: " + mAeFpsRange + ")");
 
     } catch (CameraAccessException e) {
       Log.e(TAG, "Failed to start repeating request", e);
@@ -471,5 +481,38 @@ public class WhipCameraCapturer implements VideoCapturer {
   private Size normalizeLandscapeSize(Size size) {
     return new Size(Math.max(size.getWidth(), size.getHeight()),
         Math.min(size.getWidth(), size.getHeight()));
+  }
+
+  /**
+   * Picks the best {@code CONTROL_AE_TARGET_FPS_RANGE} advertised by the camera HAL for the
+   * requested fps. Requesting an unsupported fixed range (e.g. {@code [30, 30]} when the HAL
+   * only advertises {@code [5, 15]} for this sensor mode) causes some HALs to silently stall
+   * to a near-frozen framerate instead of throwing, so this must always return a range the HAL
+   * actually advertised.
+   */
+  private static Range<Integer> selectBestFpsRange(Range<Integer>[] availableRanges, int targetFps) {
+    if (availableRanges == null || availableRanges.length == 0) {
+      return new Range<>(targetFps, targetFps);
+    }
+
+    Range<Integer> best = null;
+    long bestScore = Long.MAX_VALUE;
+    for (Range<Integer> range : availableRanges) {
+      long score;
+      if (range.getUpper() < targetFps) {
+        // Range can't reach the target at all; heavily penalize but prefer the highest max fps.
+        score = 1_000_000L + (targetFps - range.getUpper());
+      } else if (range.getLower() > targetFps) {
+        score = 1_000L + (range.getLower() - targetFps);
+      } else {
+        // Target is within [lower, upper]; prefer the narrowest (most stable) range.
+        score = range.getUpper() - range.getLower();
+      }
+      if (best == null || score < bestScore) {
+        best = range;
+        bestScore = score;
+      }
+    }
+    return best;
   }
 }
