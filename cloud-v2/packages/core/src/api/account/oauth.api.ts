@@ -69,11 +69,11 @@ app.get("/callback", async (c) => {
   const code = c.req.query("code");
   if (!state || !code) throw new InvalidRequest("missing oauth callback params");
 
-  const start = await otc.consumeCode({
-    code: state,
-    purpose: "oauth_handoff",
-    expectSubject: otc.OAUTH_START_SUBJECT,
-  });
+  // Read (don't burn) the start record: the GoTrue exchange below is
+  // irreversible, so the start record is only consumed once everything
+  // succeeds. That keeps a transient failure from stranding a burned record.
+  const start = await otc.peekOAuthStart(state);
+  if (!start) throw new InvalidRequest("oauth start record missing or expired");
   const { coreVerifier, appChallenge } = start.payload as {
     coreVerifier: string;
     appChallenge: string;
@@ -88,6 +88,14 @@ app.get("/callback", async (c) => {
     codeChallenge: appChallenge,
     ttlSec: HANDOFF_TTL_SEC,
     payload: { session },
+  });
+
+  // Everything succeeded: now atomically burn the start record. This also
+  // guards against a duplicate callback re-minting a second session.
+  await otc.consumeCode({
+    code: state,
+    purpose: "oauth_handoff",
+    expectSubject: otc.OAUTH_START_SUBJECT,
   });
 
   return c.redirect(

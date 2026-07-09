@@ -122,16 +122,32 @@ export async function resendVerification(email: string): Promise<void> {
   // Always uniform; ignore result.
 }
 
-/** Look up a user id by email via the admin API (for reset/change/delete). */
+/**
+ * Look up a user by email via the admin API (for reset/change/delete).
+ *
+ * GoTrue's `filter` narrows by a partial email match when honored, but it is
+ * not a guaranteed exact lookup and older/self-hosted configs ignore it, so
+ * `per_page: 1` could silently return the wrong (or no) user. We page through
+ * results (bounded) and exact-match the email ourselves, so a missing user is
+ * a real miss, not a pagination artifact.
+ */
 export async function findUserByEmail(email: string): Promise<GotrueIdentity | null> {
-  const { status, body } = await gotrue("/admin/users", {
-    method: "GET",
-    admin: true,
-    query: { filter: email, per_page: "1" },
-  });
-  if (status !== 200) return null;
-  const user = (body?.users ?? []).find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
-  return user ? identityFrom(user) : null;
+  const wanted = email.toLowerCase();
+  const PER_PAGE = 200;
+  const MAX_PAGES = 20; // safety cap: 4000 users scanned worst case
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const { status, body } = await gotrue("/admin/users", {
+      method: "GET",
+      admin: true,
+      query: { filter: email, page: String(page), per_page: String(PER_PAGE) },
+    });
+    if (status !== 200) return null;
+    const users: any[] = body?.users ?? [];
+    const match = users.find((u) => u.email?.toLowerCase() === wanted);
+    if (match) return identityFrom(match);
+    if (users.length < PER_PAGE) break; // last page reached, no match
+  }
+  return null;
 }
 
 export async function getUserById(userId: string): Promise<GotrueIdentity | null> {

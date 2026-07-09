@@ -87,6 +87,23 @@ export async function issueOAuthStart(args: {
 export const OAUTH_START_SUBJECT = "__oauth_start__";
 
 /**
+ * Read an OAuth start record by `state` WITHOUT burning it. The callback needs
+ * the stored verifier before it runs the (irreversible) GoTrue exchange; the
+ * record is only consumed once the whole callback succeeds, so a transient
+ * failure mid-callback leaves it intact rather than stranded-and-burned.
+ */
+export async function peekOAuthStart(state: string): Promise<{ payload: unknown } | null> {
+  const doc = await AccountCodeModel.findOne({
+    codeHash: hash(state),
+    purpose: "oauth_handoff",
+    subject: OAUTH_START_SUBJECT,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  }).lean();
+  return doc ? { payload: doc.payload } : null;
+}
+
+/**
  * Verify + burn a code in one atomic update (findOneAndUpdate on consumedAt
  * null), so a concurrent double-submit can't consume the same code twice.
  * `expectSubject`, if given, must match (reset code bound to its email, etc.).

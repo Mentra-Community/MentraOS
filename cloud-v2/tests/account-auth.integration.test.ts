@@ -85,9 +85,14 @@ beforeAll(async () => {
         }
         return send(400, { error: "invalid_grant", error_description: "bad creds" });
       }
-      // GET /auth/v1/admin/users?filter=email
+      // GET /auth/v1/admin/users?filter=&page=&per_page=
       if (url.pathname === "/auth/v1/admin/users" && req.method === "GET") {
-        return send(200, { users: [userObj] });
+        const filter = (url.searchParams.get("filter") ?? "").toLowerCase();
+        const page = Number(url.searchParams.get("page") ?? "1");
+        // Page 1 returns the single known user only when the filter matches its
+        // email; every later page is empty (the client stops on a short page).
+        const matches = !filter || storedEmail.toLowerCase().includes(filter);
+        return send(200, { users: page === 1 && matches ? [userObj] : [] });
       }
       // GET /auth/v1/admin/users/:id
       if (url.pathname.startsWith("/auth/v1/admin/users/") && req.method === "GET") {
@@ -407,6 +412,20 @@ describe("account auth", () => {
       }),
     );
     expect(me.status).toBe(403);
+  });
+
+  test("password reset finds the user by exact email (paginated lookup) and issues a code", async () => {
+    // The matching email produces a single-use code...
+    const ok = await post("/api/account/password/forgot", { email: TEST_EMAIL });
+    expect(ok.status).toBe(202);
+    expect(await AccountCodeModel.countDocuments({ purpose: "password_reset" })).toBe(1);
+
+    // ...a non-matching email finds no user, so no code is issued (the response
+    // stays uniform 202 for anti-enumeration).
+    await AccountCodeModel.deleteMany({});
+    const miss = await post("/api/account/password/forgot", { email: "nobody@mentraglass.com" });
+    expect(miss.status).toBe(202);
+    expect(await AccountCodeModel.countDocuments({ purpose: "password_reset" })).toBe(0);
   });
 
   test("login is rate limited per spec: 429 with rate_limited after the window fills", async () => {
