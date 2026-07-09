@@ -33,8 +33,13 @@ the **ALB** (Porter manages it; it's the `*.onporter.run` hostname).
 
 ## What's deployed (verified 2026-07-09)
 
-Short version: **no environment has a working public UDP path right now.**
-Every env runs on the WS audio fallback.
+Per-environment state:
+
+| Env | NLB Service | UDP path |
+| --- | --- | --- |
+| `cloud-isaiah` | `cloud-isaiah-audio-udp` (applied 2026-07-09) | WORKING: probe packets from the internet reach the pod; `AUDIO_UDP_ADVERTISED_HOST` is the raw NLB hostname |
+| `cloud-dev` / `cloud-debug` / `cloud-staging` / `cloud-prod` | none applied | WS fallback only; Doppler advertises `audio-udp.<env>` names that have no DNS record |
+| (legacy) | `cloud-v2-audio-udp` still exists in-cluster | DEAD: selects the retired `cloud-v2` app, zero endpoints, still billing ~$16/mo; candidate for `kubectl delete svc cloud-v2-audio-udp` |
 
 - The apps are now per-environment (`cloud-dev`, `cloud-debug`,
   `cloud-staging`, `cloud-prod`, plus personal envs like `cloud-isaiah`),
