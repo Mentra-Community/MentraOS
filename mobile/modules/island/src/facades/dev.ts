@@ -155,16 +155,22 @@ export const dev = {
       return {ok: false, error: "dev server unreachable, or no miniapp.json served there"}
     }
     const manifest = result.manifest
+    // The `mentra-miniapp dev` server puts the hot-reload/log sidecar on the
+    // user port PLUS ONE — same convention as the first-party developer-URL
+    // screen's deriveDevPort.
     let devPort: number | undefined
     try {
-      const parsed = new URL(devUrl).port
-      devPort = parsed ? Number(parsed) : undefined
+      const parsed = Number(new URL(devUrl).port)
+      devPort = Number.isFinite(parsed) && parsed > 0 ? parsed + 1 : undefined
     } catch {
       devPort = undefined
     }
     const appName = name ?? manifest.name ?? "Dev Miniapp"
     registerDevApp({
-      packageName: DEV_APP_PACKAGE_NAME,
+      // The REAL manifest package: registerDevApp preserves it as
+      // sourcePackageName (miniapp auth + dev-slot cleanup key off it) before
+      // forcing packageName to the single dev slot.
+      packageName: (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME,
       name: appName,
       iconUrl: manifest.icon ? new URL(manifest.icon, `${devUrl}/`).toString() : `${devUrl}/icon.png`,
       devUrl,
@@ -172,6 +178,7 @@ export const dev = {
       type: manifest.type as DevAppRecord["type"],
       permissions: manifest.permissions as DevAppRecord["permissions"],
       hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      actions: manifest.actions as DevAppRecord["actions"],
     })
     await useAppStatusStore.getState().refresh()
     return {ok: true, packageName: DEV_APP_PACKAGE_NAME, name: appName}
