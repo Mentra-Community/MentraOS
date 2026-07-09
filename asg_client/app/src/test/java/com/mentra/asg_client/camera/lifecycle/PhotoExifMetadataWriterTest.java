@@ -49,6 +49,69 @@ public class PhotoExifMetadataWriterTest {
     }
 
     @Test
+    public void writeCaptureIdStampsImageUniqueIdFromCaptureDirName() throws Exception {
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_photoReq99");
+        File jpeg = new File(captureDir, "base.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(jpeg.getAbsolutePath());
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(jpeg.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isEqualTo("IMG_20260709_120000_123_456_photoReq99");
+    }
+
+    @Test
+    public void writeCaptureIdIsNoOpOutsideCaptureDirectories() throws Exception {
+        File jpeg = tempFolder.newFile("loose.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(jpeg.getAbsolutePath());
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(jpeg.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isNull();
+    }
+
+    @Test
+    public void copyImuMetadataAlsoCarriesImageUniqueId() throws Exception {
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_reqA");
+        File source = new File(captureDir, "base.jpg");
+        File dest = tempFolder.newFile("reencoded.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(source);
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(dest);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(source.getAbsolutePath());
+        PhotoExifMetadataWriter.copyImuMetadata(source.getAbsolutePath(), dest.getAbsolutePath());
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(dest.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isEqualTo("IMG_20260709_120000_123_456_reqA");
+    }
+
+    @Test
+    public void imuWriteAfterCaptureIdPreservesImageUniqueId() throws Exception {
+        // Production order: saveImageDataToFile stamps ImageUniqueID, then
+        // finishImuRecording writes the IMU UserComment. The second save must not
+        // clobber the first tag.
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_reqB");
+        File jpeg = new File(captureDir, "base.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(jpeg.getAbsolutePath());
+        PhotoExifMetadataWriter.writeImuPayload(jpeg.getAbsolutePath(), samplePayload(2));
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(jpeg.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isEqualTo("IMG_20260709_120000_123_456_reqB");
+        assertThat(PhotoExifMetadataWriter.hasImuMetadata(jpeg.getAbsolutePath())).isTrue();
+    }
+
+    @Test
     public void buildExifApp1SegmentStartsWithExifHeader() throws Exception {
         byte[] segment = PhotoExifMetadataWriter.buildExifApp1Segment(samplePayload(1));
         assertThat(segment.length).isGreaterThan(10);

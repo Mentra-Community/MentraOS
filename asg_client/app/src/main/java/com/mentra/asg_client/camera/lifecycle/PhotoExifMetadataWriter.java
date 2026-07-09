@@ -40,18 +40,54 @@ public final class PhotoExifMetadataWriter {
         }
     }
 
+    /**
+     * Stamp the capture ID (the capture directory name, e.g. {@code IMG_..._<requestId>})
+     * into EXIF ImageUniqueID so the request correlation survives file renames and
+     * camera-roll export. Derived from the file's own path, which covers every capture
+     * flow (SDK and button, gallery and transient) without threading IDs through the
+     * camera layer. No-op for files that don't live in a capture directory. Best-effort:
+     * a capture must never fail over metadata.
+     */
+    public static void writeCaptureIdFromPath(String jpegPath) {
+        try {
+            File parent = new File(jpegPath).getParentFile();
+            String captureId = parent != null ? parent.getName() : null;
+            if (captureId == null
+                    || !(captureId.startsWith("IMG_") || captureId.startsWith("VID_"))) {
+                return;
+            }
+            ExifInterface exif = new ExifInterface(jpegPath);
+            exif.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, captureId);
+            exif.saveAttributes();
+            Log.d(TAG, "Wrote ImageUniqueID EXIF to " + jpegPath + ": " + captureId);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write ImageUniqueID EXIF on " + jpegPath, e);
+        }
+    }
+
+    /** Copies capture metadata (IMU UserComment + ImageUniqueID) onto a re-encoded copy. */
     public static void copyImuMetadata(String sourcePath, String destPath) {
         try {
             String json = readImuJsonFromJpeg(sourcePath);
-            if (json == null || json.isEmpty()) {
+            String uniqueId =
+                    new ExifInterface(sourcePath)
+                            .getAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID);
+            boolean hasJson = json != null && !json.isEmpty();
+            boolean hasUniqueId = uniqueId != null && !uniqueId.isEmpty();
+            if (!hasJson && !hasUniqueId) {
                 return;
             }
             ExifInterface dest = new ExifInterface(destPath);
-            dest.setAttribute(ExifInterface.TAG_USER_COMMENT, json);
+            if (hasJson) {
+                dest.setAttribute(ExifInterface.TAG_USER_COMMENT, json);
+            }
+            if (hasUniqueId) {
+                dest.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, uniqueId);
+            }
             dest.saveAttributes();
-            Log.d(TAG, "Copied IMU EXIF from " + sourcePath + " to " + destPath);
+            Log.d(TAG, "Copied capture EXIF from " + sourcePath + " to " + destPath);
         } catch (IOException e) {
-            Log.w(TAG, "Failed to copy IMU EXIF metadata", e);
+            Log.w(TAG, "Failed to copy capture EXIF metadata", e);
         }
     }
 
