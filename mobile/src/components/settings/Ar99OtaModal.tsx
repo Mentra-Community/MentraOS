@@ -42,10 +42,13 @@ function readAr99DeviceInfo() {
   }
 }
 
-async function waitForAr99DeviceInfo() {
+async function waitForAr99SerialNumber(firmwareVersion: string) {
   const deadline = Date.now() + DEVICE_INFO_WAIT_MS
   let info = readAr99DeviceInfo()
-  while ((!info.firmwareVersion || !info.serialNumber) && Date.now() < deadline) {
+  while (
+    (!info.serialNumber || info.firmwareVersion.trim() !== firmwareVersion.trim()) &&
+    Date.now() < deadline
+  ) {
     await sleep(DEVICE_INFO_POLL_MS)
     info = readAr99DeviceInfo()
   }
@@ -88,12 +91,14 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     setOffset(0)
     setTotal(0)
     setErrorMessage("")
+    setCurrentVersion("")
+    setSerialNumber("")
     setVersionInfo(null)
     try {
-      void toolkit.glasses.requestVersionInfo().catch((error) => {
-        console.warn("AR99 OTA: requestVersionInfo failed; using cached device info", error)
-      })
-      const {firmwareVersion, serialNumber: sn} = await waitForAr99DeviceInfo()
+      const freshVersionInfo = await toolkit.glasses.requestVersionInfo()
+      const firmwareVersion = freshVersionInfo.firmwareVersion.trim()
+      const {serialNumber: syncedSerialNumber} = await waitForAr99SerialNumber(firmwareVersion)
+      const sn = syncedSerialNumber.trim()
       setCurrentVersion(firmwareVersion)
       setSerialNumber(sn)
       if (!firmwareVersion || !sn) {

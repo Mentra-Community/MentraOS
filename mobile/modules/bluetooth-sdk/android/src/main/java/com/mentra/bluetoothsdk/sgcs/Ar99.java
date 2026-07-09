@@ -74,6 +74,7 @@ public class Ar99 extends SGCManager {
 
   private static final int MAGIC_NUMBER = 0x1A2B3C4D;
 
+  private static final int FUNC_COMM = 1;
   private static final int FUNC_TRANS = 3;
   private static final int FUNC_COMM_DISPLAY = 7;
 
@@ -91,6 +92,10 @@ public class Ar99 extends SGCManager {
 
   private static final int CMD_DISPLAY_CTRL_AUDIO_RECORD = 161;
   private static final int CMD_DISPLAY_CTRL_SYS_FUNCTION = 164;
+  private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_START = 181;
+  private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_SET = 182;
+  private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_CLEAR = 183;
+  private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_STOP = 184;
 
   private static final int TEXT_STREAM_STATE_BEGIN = 0;
   private static final int TEXT_STREAM_STATE_UPDATE = 1;
@@ -164,14 +169,11 @@ public class Ar99 extends SGCManager {
   private boolean isNotifyWriteInFlight = false;
   private boolean minimalModeReady = false;
   private boolean displaySessionStarted = false;
-  private boolean displayContentStarted = false;
   private boolean awaitingMicDisableAck = false;
   private long lastDisplayContentAtMs = 0L;
   private boolean hasPendingDisplayUpdate = false;
-  private String pendingSourceText = "";
-  private String pendingTargetText = "";
-  private String lastDisplaySourceText = "";
-  private String lastDisplayTargetText = "";
+  private String pendingDisplayText = "";
+  private String lastDisplayText = "";
   private boolean hasReceivedBatteryForCurrentConnection = false;
   private int pendingBatteryRetries = 0;
   private final Runnable writeDrainRunnable =
@@ -475,12 +477,12 @@ public class Ar99 extends SGCManager {
 
   @Override
   public void clearDisplay() {
-    sendTranslationDisplayContent("", " ");
+    clearMinimalText();
   }
 
   @Override
   public void sendTextWall(String text) {
-    sendTranslationDisplayContent("", text);
+    sendMinimalText(text);
   }
 
   @Override
@@ -490,7 +492,7 @@ public class Ar99 extends SGCManager {
 
   @Override
   public void sendDoubleTextWall(String top, String bottom) {
-    sendTranslationDisplayContent(top, bottom);
+    sendMinimalText(joinDisplayLines(top, bottom));
   }
 
   @Override
@@ -800,6 +802,13 @@ public class Ar99 extends SGCManager {
       return false;
     }
     Ar99OtaManager manager = Ar99OtaManager.getInstance();
+    // Match the validated c100_client flow: if the user manually restarts OTA after a
+    // BLE disconnect, abandon the paused/in-progress native session first so the fresh
+    // start call is not rejected as "already in progress".
+    manager.setCallback(null);
+    if (manager.isOTAInProgress()) {
+      manager.cancelOTA();
+    }
     manager.setCallback(
         new Ar99OtaManager.OTACallback() {
           private int lastOffset = 0;
@@ -1122,19 +1131,27 @@ public class Ar99 extends SGCManager {
     return output.toByteArray();
   }
 
+  private byte[] buildMinimalTextSetPayload(String text) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    CodedOutputStream coded = CodedOutputStream.newInstance(output);
+    try {
+      coded.writeString(1, text != null ? text : "");
+      coded.flush();
+    } catch (IOException e) {
+      Bridge.log(TAG + ": buildMinimalTextSetPayload error: " + e.getMessage());
+    }
+    return output.toByteArray();
+  }
+
   // ---------------- High-level AR99 messages ----------------
 
-  private void sendTranslationDisplayContent(String sourceText, String targetText) {
-
+  private void sendMinimalText(String text) {
+    String normalizedText = text != null ? text : "";
     if (!minimalModeReady) {
-      pendingSourceText = sourceText != null ? sourceText : "";
-      pendingTargetText = targetText != null ? targetText : "";
+      pendingDisplayText = normalizedText;
       hasPendingDisplayUpdate = true;
       logSend(
-          "translation display deferred until minimal mode ready: srcLen="
-              + pendingSourceText.length()
-              + " targetLen="
-              + pendingTargetText.length());
+          "minimal text deferred until minimal mode ready: len=" + pendingDisplayText.length());
       return;
     }
     long now = System.currentTimeMillis();
@@ -1142,97 +1159,94 @@ public class Ar99 extends SGCManager {
         && lastDisplayContentAtMs > 0L
         && now - lastDisplayContentAtMs >= DISPLAY_SESSION_IDLE_RESTART_MS) {
       displaySessionStarted = false;
-      displayContentStarted = false;
-      lastDisplaySourceText = "";
-      lastDisplayTargetText = "";
+      lastDisplayText = "";
     }
-    sendTranslationDisplayContentNow(sourceText, targetText);
+    sendMinimalTextNow(normalizedText);
   }
 
-  private void sendTranslationDisplayContentNow(String sourceText, String targetText) {
-    String fullSourceText = sourceText != null ? sourceText : "";
-    String fullTargetText = targetText != null ? targetText : "";
-
-    if (fullSourceText.equals(lastDisplaySourceText) && fullTargetText.equals(lastDisplayTargetText)) {
+  private void sendMinimalTextNow(String text) {
+    String normalizedText = text != null ? text : "";
+    if (normalizedText.equals(lastDisplayText)) {
       return;
     }
 
-    if (fullSourceText.isEmpty() && fullTargetText.isEmpty()) {
-      lastDisplaySourceText = "";
-      lastDisplayTargetText = "";
+    if (normalizedText.isEmpty()) {
+      clearMinimalTextNow();
       return;
     }
 
-    startTranslationDisplayIfNeeded();
-    logDisplayRequest(fullSourceText, fullTargetText, TEXT_STREAM_STATE_UPDATE);
+    startMinimalTextIfNeeded();
+    logDisplayRequest(normalizedText);
 
     enqueueMessage(
-        FUNC_TRANS,
-        CMD_TRANS_DISPLAY_SET_CONTENT,
-        buildTranslationDisplaySetContentPayload(
-            TEXT_STREAM_STATE_UPDATE,
-            TRANS_DISPLAY_FONT_SIZE,
-            fullSourceText,
-            fullTargetText),
+        FUNC_COMM_DISPLAY,
+        CMD_DISPLAY_CTRL_MINIMAL_TEXT_SET,
+        buildMinimalTextSetPayload(normalizedText),
         TARGET_GLASS_MCU_DISPLAY);
 
-    lastDisplaySourceText = fullSourceText;
-    lastDisplayTargetText = fullTargetText;
-    displayContentStarted = true;
+    lastDisplayText = normalizedText;
     lastDisplayContentAtMs = System.currentTimeMillis();
   }
 
   private void flushPendingDisplayUpdateIfNeeded() {
     if (!minimalModeReady || !hasPendingDisplayUpdate) return;
-    String sourceText = pendingSourceText;
-    String targetText = pendingTargetText;
+    String text = pendingDisplayText;
     hasPendingDisplayUpdate = false;
-    pendingSourceText = "";
-    pendingTargetText = "";
-    logSend(
-        "flushing deferred translation display update: srcLen="
-            + sourceText.length()
-            + " targetLen="
-            + targetText.length());
-    sendTranslationDisplayContentNow(sourceText, targetText);
+    pendingDisplayText = "";
+    logSend("flushing deferred minimal text update: len=" + text.length());
+    sendMinimalTextNow(text);
   }
 
-  private void startTranslationDisplayIfNeeded() {
+  private void startMinimalTextIfNeeded() {
     if (displaySessionStarted) return;
     enqueueMessage(
-        FUNC_TRANS,
-        CMD_TRANS_DISPLAY_START,
-        buildTranslationDisplayStartPayload(
-            TRANS_DISPLAY_SOURCE_LANGUAGE,
-            TRANS_DISPLAY_TARGET_LANGUAGE,
-            TRANS_DISPLAY_MIC_SOURCE_PHONE),
+        FUNC_COMM_DISPLAY,
+        CMD_DISPLAY_CTRL_MINIMAL_TEXT_START,
+        new byte[0],
         TARGET_GLASS_MCU_DISPLAY);
     displaySessionStarted = true;
-    displayContentStarted = false;
     lastDisplayContentAtMs = System.currentTimeMillis();
   }
 
-  private void stopTranslationDisplay() {
-    // Temporarily avoid sending STOP(101); keep this method for local session reset only.
-    displaySessionStarted = false;
-    displayContentStarted = false;
-    lastDisplayContentAtMs = 0L;
+  private void clearMinimalText() {
+    if (!minimalModeReady) {
+      pendingDisplayText = "";
+      hasPendingDisplayUpdate = false;
+      lastDisplayText = "";
+      return;
+    }
+    clearMinimalTextNow();
   }
 
-  private void logDisplayRequest(String fullSourceText, String fullTargetText, int state) {
-    String mode = fullSourceText != null && !fullSourceText.isEmpty() ? "sendDoubleTextWall" : "sendTextWall";
+  private void clearMinimalTextNow() {
+    enqueueMessage(
+        FUNC_COMM_DISPLAY,
+        CMD_DISPLAY_CTRL_MINIMAL_TEXT_CLEAR,
+        new byte[0],
+        TARGET_GLASS_MCU_DISPLAY);
+    resetMinimalTextSession();
+  }
+
+  private void resetMinimalTextSession() {
+    displaySessionStarted = false;
+    lastDisplayContentAtMs = 0L;
+    lastDisplayText = "";
+  }
+
+  private String joinDisplayLines(String top, String bottom) {
+    String first = top != null ? top.trim() : "";
+    String second = bottom != null ? bottom.trim() : "";
+    if (first.isEmpty()) return second;
+    if (second.isEmpty()) return first;
+    return first + "\n" + second;
+  }
+
+  private void logDisplayRequest(String text) {
     logSend(
-        mode
-            + " fullSrcLen="
-            + (fullSourceText != null ? fullSourceText.length() : 0)
-            + " fullTargetLen="
-            + (fullTargetText != null ? fullTargetText.length() : 0)
-            + " state="
-            + state
-            + " src=\""
-            + formatDisplayTextForLog(fullSourceText)
-            + "\" target=\""
-            + formatDisplayTextForLog(fullTargetText)
+        "minimalText len="
+            + (text != null ? text.length() : 0)
+            + " text=\""
+            + formatDisplayTextForLog(text)
             + "\"");
   }
 
@@ -1285,7 +1299,7 @@ public class Ar99 extends SGCManager {
   public void sendSetSystemTime(long timestampMs) {
     Bridge.log(TAG + ": sending set time timestampMs=" + timestampMs);
     enqueueMessage(
-        FUNC_COMM_DISPLAY,
+        FUNC_COMM,
         CMD_COMM_SET_TIME,
         buildSetTimePayload(timestampMs),
         TARGET_GLASS_MCU_DISPLAY);
@@ -1309,7 +1323,9 @@ public class Ar99 extends SGCManager {
             + " isResponse="
             + isResponse);
 
-    if (header.function == FUNC_COMM_DISPLAY) {
+    if (header.function == FUNC_COMM) {
+      handleCommMessage(header.cmd, isResponse, header.payload);
+    } else if (header.function == FUNC_COMM_DISPLAY) {
       if (header.cmd == CMD_DISPLAY_CTRL_AUDIO_RECORD) {
         handleLegacyAudioRecordMessage(isResponse, header.payload);
       } else {
@@ -1323,9 +1339,7 @@ public class Ar99 extends SGCManager {
   private void handleTransMessage(int cmd, boolean isResponse, byte[] payload) {
     if (!isResponse && cmd == CMD_TRANS_DISPLAY_STOP) {
       setMicEnabled(false);
-      displaySessionStarted = false;
-      displayContentStarted = false;
-      lastDisplayContentAtMs = 0L;
+      resetMinimalTextSession();
       logRecv("parsed trans stop request; local display session reset");
       return;
     }
@@ -1333,9 +1347,7 @@ public class Ar99 extends SGCManager {
     if (isResponse && cmd == CMD_TRANS_DISPLAY_STOP) {
       Boolean success = parseSuccessResponse(payload);
       if (success != null && success) {
-        displaySessionStarted = false;
-        displayContentStarted = false;
-        lastDisplayContentAtMs = 0L;
+        resetMinimalTextSession();
       }
       logRecv(
           "parsed trans stop response success="
@@ -1454,6 +1466,26 @@ public class Ar99 extends SGCManager {
                 + " brightness="
                 + brightness);
       }
+    } else if (cmd == CMD_DISPLAY_SET_LANGUAGE) {
+      LanguageResponse response = parseLanguageResponse(payload);
+      if (response != null) {
+        logRecv(
+            "parsed cmd="
+                + cmd
+                + " isResponse="
+                + isResponse
+                + " success="
+                + response.success
+                + " language="
+                + response.language);
+      } else {
+        Bridge.log(
+            TAG
+                + ": failed to parse display response cmd="
+                + cmd
+                + " payload="
+                + bytesToHex(payload));
+      }
     } else if (cmd == CMD_DISPLAY_SET_BRIGHT) {
       Integer brightness = parseSetBrightnessResponse(payload);
       if (brightness != null) {
@@ -1474,6 +1506,42 @@ public class Ar99 extends SGCManager {
           minimalModeReady = true;
           flushPendingDisplayUpdateIfNeeded();
         }
+      }
+    } else if (cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_START
+        || cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_SET
+        || cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_CLEAR
+        || cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_STOP) {
+      Boolean success = parseSuccessResponse(payload);
+      logRecv("parsed cmd=" + cmd + " isResponse=" + isResponse + " success=" + success);
+      if (isResponse && Boolean.FALSE.equals(success)) {
+        if (cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_START) {
+          displaySessionStarted = false;
+        } else if (cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_CLEAR
+            || cmd == CMD_DISPLAY_CTRL_MINIMAL_TEXT_STOP) {
+          resetMinimalTextSession();
+        }
+      }
+    }
+  }
+
+  private void handleCommMessage(int cmd, boolean isResponse, byte[] payload) {
+    if (cmd == CMD_COMM_SET_TIME) {
+      SetTimeResponse response = parseSetTimeResponse(payload);
+      if (response != null) {
+        StringBuilder log =
+            new StringBuilder("parsed cmd=")
+                .append(cmd)
+                .append(" isResponse=")
+                .append(isResponse)
+                .append(" success=")
+                .append(response.success);
+        if (response.timeValue != null) {
+          log.append(" timeValue=").append(response.timeValue);
+        }
+        logRecv(log.toString());
+      } else {
+        Bridge.log(
+            TAG + ": failed to parse comm response cmd=" + cmd + " payload=" + bytesToHex(payload));
       }
     }
   }
@@ -1709,6 +1777,71 @@ public class Ar99 extends SGCManager {
     }
   }
 
+  private LanguageResponse parseLanguageResponse(byte[] payload) {
+    try {
+      CodedInputStream input = CodedInputStream.newInstance(payload);
+      Boolean success = null;
+      Integer language = null;
+
+      while (!input.isAtEnd()) {
+        int tag = input.readTag();
+        if (tag == 0) break;
+        switch (WireFormat.getTagFieldNumber(tag)) {
+          case 1:
+            success = readSuccessField(input, tag);
+            break;
+          case 2:
+            language = input.readUInt32();
+            break;
+          default:
+            input.skipField(tag);
+            break;
+        }
+      }
+
+      if (success == null) return null;
+      return new LanguageResponse(success, language);
+    } catch (Throwable t) {
+      return null;
+    }
+  }
+
+  private SetTimeResponse parseSetTimeResponse(byte[] payload) {
+    try {
+      CodedInputStream input = CodedInputStream.newInstance(payload);
+      Boolean success = null;
+      Long timeValue = null;
+
+      while (!input.isAtEnd()) {
+        int tag = input.readTag();
+        if (tag == 0) break;
+        int fieldNumber = WireFormat.getTagFieldNumber(tag);
+        int wireType = WireFormat.getTagWireType(tag);
+
+        switch (fieldNumber) {
+          case 1:
+            success = readSuccessField(input, tag);
+            break;
+          case 2:
+            if (wireType == WireFormat.WIRETYPE_VARINT) {
+              timeValue = input.readUInt64();
+            } else {
+              input.skipField(tag);
+            }
+            break;
+          default:
+            input.skipField(tag);
+            break;
+        }
+      }
+
+      if (success == null) return null;
+      return new SetTimeResponse(success, timeValue);
+    } catch (Throwable t) {
+      return null;
+    }
+  }
+
   private void sendVersionInfo(DeviceInfo info) {
     HashMap<String, Object> values = new HashMap<>();
     if (info.firmwareVersion != null) {
@@ -1831,6 +1964,26 @@ public class Ar99 extends SGCManager {
       return !start;
     } catch (Throwable t) {
       return null;
+    }
+  }
+
+  private static final class LanguageResponse {
+    final boolean success;
+    final Integer language;
+
+    LanguageResponse(boolean success, Integer language) {
+      this.success = success;
+      this.language = language;
+    }
+  }
+
+  private static final class SetTimeResponse {
+    final boolean success;
+    final Long timeValue;
+
+    SetTimeResponse(boolean success, Long timeValue) {
+      this.success = success;
+      this.timeValue = timeValue;
     }
   }
 
@@ -2068,11 +2221,8 @@ public class Ar99 extends SGCManager {
 
     minimalModeReady = false;
     hasPendingDisplayUpdate = false;
-    pendingSourceText = "";
-    pendingTargetText = "";
-    displaySessionStarted = false;
-    displayContentStarted = false;
-    lastDisplayContentAtMs = 0L;
+    pendingDisplayText = "";
+    resetMinimalTextSession();
     hasReceivedBatteryForCurrentConnection = false;
     DeviceStore.INSTANCE.apply("glasses", "connected", true);
     DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
@@ -2111,12 +2261,9 @@ public class Ar99 extends SGCManager {
     isOtaNotificationEnabled = false;
     isNotifyWriteInFlight = false;
     minimalModeReady = false;
-    displaySessionStarted = false;
-    displayContentStarted = false;
-    lastDisplayContentAtMs = 0L;
+    resetMinimalTextSession();
     hasPendingDisplayUpdate = false;
-    pendingSourceText = "";
-    pendingTargetText = "";
+    pendingDisplayText = "";
     hasReceivedBatteryForCurrentConnection = false;
     controlNotifyBuffer = new byte[0];
     pendingBatteryRetries = 0;
