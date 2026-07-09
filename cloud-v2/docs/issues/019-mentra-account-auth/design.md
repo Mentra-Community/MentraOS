@@ -20,6 +20,12 @@ Mounted under `/api/account` in `api/app.ts`. Rate limiting via a small
 middleware over a Mongo TTL counter (no new infra; swap for Redis later if
 needed).
 
+Note: while implementing this, `session.service.ts` was split — the crypto key
+loading + JWKS moved to `services/signing-keys.service.ts` (it had accreted key
+management alongside session lifecycle). The account subject-token key lives
+there with the access/miniapp keys. Dependency direction: signing-keys <- token
+minting <- session.
+
 ## 2. GoTrue (Supabase) server-side integration
 
 Core talks to GoTrue with two credentials, both server-only Doppler secrets
