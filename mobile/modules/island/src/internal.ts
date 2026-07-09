@@ -141,7 +141,6 @@ export {useAppStatusStore, installAppStoreHooks, type AppStoreHooks} from "./sto
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
 export {cloudClientService} from "./services/CloudClientService"
 export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
-export {default as restComms} from "./services/RestComms"
 
 // Log ring buffer + console interception (bug-report attachments).
 export {logBuffer, type LogEntry} from "./utils/devLogging"

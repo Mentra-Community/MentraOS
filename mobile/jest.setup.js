@@ -266,11 +266,10 @@ const mockIslandEntries = () => {
   const realConnection = jest.requireActual("./modules/island/src/stores/connection")
   const realGallerySync = jest.requireActual("./modules/island/src/stores/gallerySync")
   const realCloudStatus = jest.requireActual("./modules/island/src/stores/cloudClientStatus")
-  // Settings store + RestComms moved into island; tests used the real host store
-  // before the move, so requireActual preserves that exact behavior.
+  // Settings store moved into island; tests used the real host store before the
+  // move, so requireActual preserves that exact behavior.
   const realSettings = jest.requireActual("./modules/island/src/stores/settings")
   const realBtSettingKeys = jest.requireActual("./modules/island/src/stores/bluetoothSettingKeys")
-  const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
@@ -754,10 +753,8 @@ const mockIslandEntries = () => {
     ...realGallerySync,
     // Real cloud-client runtime status store (useCloudClientStatusStore).
     ...realCloudStatus,
-    // Real settings store (SETTINGS, useSettingsStore, useSetting, OFFLINE_APPLETS)
-    // + RestComms singleton — both moved into island.
+    // Real settings store (SETTINGS, useSettingsStore, useSetting, OFFLINE_APPLETS).
     ...realSettings,
-    restComms: realRestComms.default,
     // Clock-skew utils (real, pure) — consumed by the host gallery sync + OTA checker.
     fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
     maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
@@ -937,43 +934,6 @@ jest.mock("@mentra/island", () => mockIslandEntries().main)
 jest.mock("@mentra/island/internal", () => mockIslandEntries().internal)
 jest.mock("@mentra/island/devtools", () => mockIslandEntries().devtools)
 
-// Mock SocketComms to avoid complex dependency chains
-jest.mock("@/services/SocketComms", () => ({
-  default: {
-    getInstance: jest.fn(() => ({
-      connect: jest.fn(),
-      disconnect: jest.fn(),
-      send_socket_message: jest.fn(),
-      cleanup: jest.fn(),
-    })),
-  },
-}))
-
-// Mock WebSocketManager to avoid circular dependency issues
-jest.mock("@/services/WebSocketManager", () => {
-  const {EventEmitter} = require("events")
-
-  const WebSocketStatus = {
-    DISCONNECTED: "disconnected",
-    CONNECTING: "connecting",
-    CONNECTED: "connected",
-    ERROR: "error",
-  }
-
-  class MockWebSocketManager extends EventEmitter {
-    connect = jest.fn()
-    disconnect = jest.fn()
-    isConnected = jest.fn(() => false)
-    sendText = jest.fn()
-    sendBinary = jest.fn()
-    cleanup = jest.fn()
-  }
-
-  return {
-    WebSocketStatus,
-    default: new MockWebSocketManager(),
-  }
-})
 
 // Mock crust native module to avoid native bridge errors
 jest.mock("@mentra/crust", () => ({

@@ -2,7 +2,7 @@
  * Phone location service — island-owned. Owns the background phone-GPS task: the
  * accuracy-tier control (`setLocationTier`), the accuracy mapping, and the
  * `expo-task-manager` background task that fans each fix to the v2 cloud
- * (`restComms.sendLocationData`) + local miniapps (`location_update`).
+ * local miniapps (`location_update`). Cloud upload was V1 (removed).
  *
  * This used to be the host-injected `locationTier` runtime hook + a MantleManager
  * `TaskManager.defineTask`. It's device/OS plumbing (no UI), so it moved into island:
@@ -17,7 +17,6 @@
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
 
-import restComms from "./RestComms"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 
 export const LOCATION_TASK_NAME = "handleLocationUpdates"
@@ -37,29 +36,17 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
     return
   }
   const first = locs[0]!
-  const sendResult = restComms.sendLocationData(first)
   // Cloud path (relayMessageToApps) never reaches __phone__, so local miniapps rely
   // on this direct push.
+  // Local miniapps get the update directly (the cloud relay never reaches
+  // __phone__). The Cloud V1 upload that used to run here was removed with the
+  // V1 ripout (issue #3392); a V2 location channel is separate product work.
   localMiniappRuntime.forwardEvent("location_update", {
     lat: first.coords.latitude,
     lng: first.coords.longitude,
     accuracy: first.coords.accuracy ?? undefined,
     timestamp: first.timestamp,
   })
-  // Await after the miniapp push (send order unchanged) so the task callback
-  // spans the upload and failures are visible instead of silently dropped —
-  // but bounded: RestComms has no request timeout, and an OS background task
-  // must not hang indefinitely on an unresponsive server.
-  const UPLOAD_WAIT_MS = 15_000
-  const result = await Promise.race([
-    sendResult,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), UPLOAD_WAIT_MS)),
-  ])
-  if (result === null) {
-    console.warn(`ISLAND: LOCATION: cloud upload still pending after ${UPLOAD_WAIT_MS}ms; not blocking the task`)
-  } else if (result.is_error()) {
-    console.warn("ISLAND: LOCATION: failed to send location to cloud:", result.error)
-  }
 })
 
 /** Map a MentraOS location tier/accuracy string to an expo-location accuracy. */

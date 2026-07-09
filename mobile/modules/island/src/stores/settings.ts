@@ -3,7 +3,6 @@ import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
-import restComms from "../services/RestComms"
 import {storage} from "../utils/storage"
 import {getBluetoothSettingKeysForDevice} from "./bluetoothSettingKeys"
 import {useGlassesStore} from "./glasses"
@@ -148,23 +147,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
-  backend_url: {
-    key: "backend_url",
-    defaultValue: () => {
-      if (process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE) {
-        return process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
-      }
-      if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
-        return "https://api.mentraglass.cn:443"
-      }
-      return "https://api.mentra.glass"
-    },
-    // If env var is set, always use it (on every boot)
-    override: () => process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE,
-    writable: true,
-    saveOnServer: false,
-    persist: true,
-  },
   // Cloud V2 endpoint OVERRIDES. Empty = no override; cloudClient's resolveUrl
   // owns the full precedence (override -> env -> Metro-derived dev default).
   // The value may be an explicit URL or the METRO_AUTO sentinel ("my dev
@@ -193,13 +175,6 @@ export const SETTINGS: Record<string, Setting> = {
     defaultValue: () => [],
     writable: true,
     saveOnServer: false,
-    persist: true,
-  },
-  saved_backend_urls: {
-    key: "saved_backend_urls",
-    defaultValue: () => [],
-    writable: true,
-    saveOnServer: true,
     persist: true,
   },
   // Developer override for the ASG OTA manifest URL. null/empty = no override;
@@ -770,8 +745,6 @@ export interface SettingsState {
   // loadSetting: (key: string) => AsyncResult<void, Error>
   loadAllSettings: () => AsyncResult<void, Error>
   // Utility methods
-  getRestUrl: () => string
-  getWsUrl: () => string
   getBluetoothSettings: () => Record<string, any>
   resetAllSettingsLocally: () => void
 }
@@ -796,7 +769,7 @@ export const useSettingsStore = create<SettingsState>()(
     settings: getDefaultSettings(),
     isInitialized: false,
     loadingKeys: new Set(),
-    setSetting: (key: string, value: any, updateServer = true): AsyncResult<void, Error> => {
+    setSetting: (key: string, value: any, _updateServer = true): AsyncResult<void, Error> => {
       return Res.try_async(async () => {
         const setting = SETTINGS[key]
         const originalKey = key
@@ -825,13 +798,9 @@ export const useSettingsStore = create<SettingsState>()(
             throw new Error(`SETTINGS: couldn't save setting to storage: ${res.error}`)
           }
 
-          // Sync with server if needed
-          if (updateServer && setting.saveOnServer) {
-            const result = await restComms.writeUserSettings({[key]: value})
-            if (result.is_error()) {
-              throw new Error(`SETTINGS: couldn't sync setting to server: ${result.error}`)
-            }
-          }
+          // Cloud V1 per-change server sync removed with the V1 ripout (issue
+          // #3392). Settings are local-first until a V2 sync lands; the
+          // saveOnServer flags are retained as intent markers for that work.
         }
       })
     },
@@ -991,19 +960,6 @@ export const useSettingsStore = create<SettingsState>()(
         }
       })
       return inFlight
-    },
-    getRestUrl: () => {
-      const serverUrl = get().getSetting(SETTINGS.backend_url.key)
-      // console.log("GET REST URL: serverUrl:", serverUrl)
-      const url = new URL(serverUrl)
-      const secure = url.protocol === "https:"
-      return `${secure ? "https" : "http"}://${url.hostname}:${url.port || (secure ? 443 : 80)}`
-    },
-    getWsUrl: () => {
-      const serverUrl = get().getSetting(SETTINGS.backend_url.key)
-      const url = new URL(serverUrl)
-      const secure = url.protocol === "https:"
-      return `${secure ? "wss" : "ws"}://${url.hostname}:${url.port || (secure ? 443 : 80)}/glasses-ws`
     },
     getBluetoothSettings: () => {
       const state = get()

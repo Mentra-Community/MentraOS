@@ -1,4 +1,3 @@
-import restComms from "@/services/RestComms"
 import {SETTINGS, toolkit} from "@mentra/island"
 // In-memory forced write below has no facade equivalent by design (it exists
 // for the storage-failure fallback) — allowlisted raw store access.
@@ -31,9 +30,9 @@ export async function ensureDevModeForUser(email: string | null | undefined): Pr
   if (result.is_error()) {
     console.warn("DEV: Failed to persist debug_mode:", result.error)
     // Still enable locally so Developer settings is reachable this session.
+    // (V1 server write removed; settings are local-first post-cutover.)
     useSettingsStore.setState((state) => ({
       settings: {...state.settings, [SETTINGS.debug_mode.key]: true},
     }))
-    void restComms.writeUserSettings({[SETTINGS.debug_mode.key]: true})
   }
 }

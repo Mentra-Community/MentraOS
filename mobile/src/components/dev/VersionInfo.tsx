@@ -17,7 +17,7 @@ export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [backendUrl] = useSetting(SETTINGS.backend_url.key)
+  const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
   const audioTransport = useToolkitSnapshot(toolkit.session.status, (onChange) =>
     toolkit.session.onStatus(onChange),
   ).audioTransport
@@ -75,7 +75,7 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `backend_url: ${backendUrl}`,
+      `cloud_core_url: ${coreUrl || "(default)"}`,
       `audio: ${audioTransport}`,
     ]
 
@@ -135,7 +135,7 @@ export const VersionInfo = () => {
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${backendUrl}`} />
+            <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

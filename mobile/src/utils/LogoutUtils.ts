@@ -1,8 +1,6 @@
 import {toolkit} from "@mentra/island"
-import {Session} from "@supabase/supabase-js"
 
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
@@ -24,11 +22,8 @@ export class LogoutUtils {
       // Step 2: Stop island runtime services before clearing auth/session state
       await this.stopToolkitRuntime()
 
-      // Step 3: Clear Supabase authentication
-      await this.clearSupabaseAuth()
-
-      // Step 4: Clear backend communication tokens
-      await this.clearBackendTokens()
+      // Step 3: Sign out of the account provider + wipe legacy auth storage
+      await this.clearAuthSession()
 
       // Step 5: Clear all app settings and user data
       await this.clearAppSettings()
@@ -96,17 +91,19 @@ export class LogoutUtils {
   }
 
   /**
-   * Clear Supabase authentication and related tokens
+   * Sign out of the auth provider (V2 account tokens), then wipe the legacy
+   * Supabase storage keys so users upgrading from pre-cutover builds don't
+   * carry stale auth material forward.
    */
-  private static async clearSupabaseAuth(): Promise<void> {
-    console.log(`${this.TAG}: Clearing Supabase authentication...`)
+  private static async clearAuthSession(): Promise<void> {
+    console.log(`${this.TAG}: Clearing auth session...`)
 
     const res = await mentraAuth.signOut()
     if (res.is_error()) {
       console.error(`${this.TAG}: Error signing out:`, res.error)
     }
 
-    // Completely clear ALL Supabase Auth storage
+    // Legacy pre-cutover Supabase storage keys (migration hygiene only).
     const supabaseKeys = [
       "supabase.auth.token",
       "supabase.auth.refreshToken",
@@ -122,21 +119,6 @@ export class LogoutUtils {
       if (res.is_error()) {
         console.error(`${this.TAG}: Error clearing Supabase token:`, res.error)
       }
-    }
-  }
-
-  /**
-   * Clear backend server communication tokens
-   */
-  private static async clearBackendTokens(): Promise<void> {
-    console.log(`${this.TAG}: Clearing backend tokens...`)
-
-    try {
-      // Clear the core token from RestComms
-      restComms.setCoreToken(null)
-      console.log(`${this.TAG}: Cleared backend core token`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing backend tokens:`, error)
     }
   }
 
@@ -202,15 +184,10 @@ export class LogoutUtils {
    * Check if user is properly logged out by verifying key storage items
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
-    // Check if any critical auth tokens remain
-    const res = storage.load<Session>("supabase.auth.session")
-    let supabaseSession = null
-    if (res.is_ok()) {
-      supabaseSession = res.value
-    }
-    const coreToken = restComms.getCoreToken()
-
-    const isLoggedOut = !supabaseSession && !coreToken
+    // The device only holds V2 account tokens now (issue 019); logged out
+    // means the MMKV token pair is gone.
+    const access = storage.load<string>("mentra.account.accessToken")
+    const isLoggedOut = access.is_error() || !access.value
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut

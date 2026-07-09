@@ -11,11 +11,10 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
-import socketComms from "@/services/SocketComms"
 import {SETTINGS, toolkit, useSetting} from "@mentra/island"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
+import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 import {BgTimer} from "@mentra/island"
 
 // Types
@@ -53,7 +52,10 @@ export default function InitScreen() {
   const [isRetrying, setIsRetrying] = useState(false)
   const [isBlockedByVersion, setIsBlockedByVersion] = useState(false)
   // Zustand store hooks
-  const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)
+  // The boot version gate hits cloud_core_url (resolvedEndpoints().core), so the
+  // custom-URL detection + reset recovery operate on that setting, not the
+  // retired V1 backend_url.
+  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
   const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
@@ -72,9 +74,9 @@ export default function InitScreen() {
   }
 
   const checkCustomUrl = async (): Promise<boolean> => {
-    const defaultUrl = SETTINGS[SETTINGS.backend_url.key].defaultValue()
+    const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
     // Read directly from the store to avoid stale React closure values
-    const currentUrl = toolkit.settings.get(SETTINGS.backend_url.key)
+    const currentUrl = toolkit.settings.get(SETTINGS.cloud_core_url.key)
     const isCustom = currentUrl !== defaultUrl
     setIsUsingCustomUrl(isCustom)
     return isCustom
@@ -169,12 +171,10 @@ export default function InitScreen() {
       return
     }
 
-    // The phone often fires this the instant wifi reconnects, before the DNS
-    // path is warm — on China cloud the api.mentraglass.cn → Aliyun ALB CNAME
-    // chain intermittently returns SERVFAIL (EAI_FAIL) at that moment. Retry
-    // with backoff so a single transient DNS blip at boot doesn't dump the user
-    // to the connection-error screen (which blocks login).
-    const res = await restComms.retry(() => restComms.getMinimumClientVersion(), 3, 1000)
+    // Cloud V2 core serves the version gate (V1's copy is retired with
+    // RestComms). Retries cover the boot-time DNS blips that historically
+    // dumped users at the connection-error screen (which blocks login).
+    const res = await fetchMinimumClientVersion(3, 1000)
     if (res.is_error()) {
       console.error("Failed to fetch cloud version:", res.error)
 
@@ -231,8 +231,8 @@ export default function InitScreen() {
 
   const handleResetUrl = async (): Promise<void> => {
     try {
-      const defaultUrl = SETTINGS[SETTINGS.backend_url.key].defaultValue()
-      await setBackendUrl(defaultUrl)
+      const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
+      await setCoreUrl(defaultUrl)
       setIsUsingCustomUrl(false)
       await checkCloudVersion(true) // Pass true for retry to avoid flash
     } catch (error) {
@@ -298,15 +298,15 @@ export default function InitScreen() {
   // Clear cached required version when backend URL changes so a stricter
   // server's requirement doesn't block access to a different backend.
   // Skip the initial mount so the cached value is preserved for offline enforcement.
-  const backendUrlRef = useRef(backendUrl)
+  const coreUrlRef = useRef(coreUrl)
   useEffect(() => {
-    if (backendUrlRef.current !== backendUrl) {
-      backendUrlRef.current = backendUrl
+    if (coreUrlRef.current !== coreUrl) {
+      coreUrlRef.current = coreUrl
       if (cachedRequiredVersion) {
         setCachedRequiredVersion("")
       }
     }
-  }, [backendUrl])
+  }, [coreUrl])
 
   useEffect(() => {
     setAnimation("fade")
