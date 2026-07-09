@@ -4,7 +4,7 @@ import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {SETTINGS, toolkit} from "@mentra/island"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
-import {SupabaseWrapperClient} from "@/utils/auth/provider/supabaseClient"
+import {AccountAuthProvider} from "@/utils/auth/provider/accountClient"
 
 export abstract class AuthClient {
   public onAuthStateChange(_callback: (event: string, session: MentraAuthSession) => void): Result<any, Error> {
@@ -70,6 +70,13 @@ export abstract class AuthClient {
   public googleSignIn(): AsyncResult<string, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
+
+  /** Return a token cloud-client can exchange at /api/client/auth/exchange.
+   * Providers back this differently (Supabase session token vs a minted OEM
+   * subject token). */
+  public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
 }
 
 function createLazyAuthClient(): AuthClient {
@@ -83,7 +90,9 @@ function createLazyAuthClient(): AuthClient {
         if (isChina) {
           client = await AuthingWrapperClient.getInstance()
         } else {
-          client = await SupabaseWrapperClient.getInstance()
+          // Cloud V2 account auth (issue 019): Mentra's own OEM backend, no
+          // embedded Supabase, no legacy Cloud V1 exchange.
+          client = await AccountAuthProvider.getInstance()
         }
         return client
       })()
