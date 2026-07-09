@@ -18,6 +18,7 @@ import {storage} from "@/utils/storage"
 
 const ACCESS_KEY = "mentra.account.accessToken"
 const REFRESH_KEY = "mentra.account.refreshToken"
+const PROFILE_KEY = "mentra.account.userProfile"
 const OAUTH_STATE_KEY = "mentra.account.oauth.state"
 const OAUTH_VERIFIER_KEY = "mentra.account.oauth.verifier"
 
@@ -38,6 +39,24 @@ function saveTokens(t: Tokens): void {
 function clearTokens(): void {
   storage.remove(ACCESS_KEY)
   storage.remove(REFRESH_KEY)
+  storage.remove(PROFILE_KEY)
+}
+
+/** Last successful /me result, cached so an OFFLINE cold start can restore the
+ * signed-in identity instead of bouncing to /auth/start (home boot requires a
+ * user, not just a token). */
+function loadCachedProfile(): MentraAuthUser | undefined {
+  const raw = storage.load<string>(PROFILE_KEY)
+  if (raw.is_error() || !raw.value) return undefined
+  try {
+    return JSON.parse(raw.value) as MentraAuthUser
+  } catch {
+    return undefined
+  }
+}
+
+function saveCachedProfile(user: MentraAuthUser): void {
+  storage.save(PROFILE_KEY, JSON.stringify(user))
 }
 
 function core(path: string): string {
@@ -70,16 +89,19 @@ export class AccountAuthProvider extends AuthClient {
     return Res.ok({unsubscribe: () => (stateCb = null)})
   }
 
-  /** Run the V2 refresh grant. Returns the new tokens, or null if the server
-   * definitively rejected the refresh token (revoked / expired session).
-   * Throws on network failure so callers can tell "offline" from "signed out". */
+  /** Run the V2 refresh grant. Returns the new tokens, or null ONLY when the
+   * server definitively rejected the refresh token (400/401: revoked or
+   * expired session). Throws on network failure AND transient server errors
+   * (5xx, 429) so callers keep the tokens instead of signing the user out
+   * during a brief core outage. */
   private async refreshTokens(refresh: string): Promise<Tokens | null> {
     const res = await fetch(core("/api/client/auth/refresh"), {
       method: "POST",
       headers: {"content-type": "application/x-www-form-urlencoded"},
       body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}),
     })
-    if (!res.ok) return null
+    if (AccountAuthProvider.tokenRejected(res.status)) return null
+    if (!res.ok) throw new Error(`refresh failed transiently: HTTP ${res.status}`)
     const body = (await res.json()) as {access_token: string; refresh_token: string}
     const t = {access: body.access_token, refresh: body.refresh_token}
     saveTokens(t)
@@ -143,6 +165,12 @@ export class AccountAuthProvider extends AuthClient {
       if (meRes?.ok) {
         const me = (await meRes.json()) as {mentraUserId: string; email?: string; name?: string; avatarUrl?: string}
         user = {id: me.mentraUserId, email: me.email, name: me.name ?? me.email ?? "", avatarUrl: me.avatarUrl}
+        saveCachedProfile(user)
+      } else {
+        // /me unreachable (offline boot) or transiently failing: restore the
+        // last known identity so home boot (which requires a user, not just a
+        // token) doesn't dump a signed-in user at /auth/start.
+        user = loadCachedProfile()
       }
       return {token: access, user}
     })
