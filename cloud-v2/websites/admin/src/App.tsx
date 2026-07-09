@@ -288,7 +288,11 @@ function AdminPage() {
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
-  if (me.isError) return <LoginGate />;
+  if (me.isError) {
+    // A 403 means the Mentra login itself worked but the account isn't on the
+    // admin allowlist; offering the login button again would be misleading.
+    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+  }
 
   return (
     <AppShell
@@ -1197,8 +1201,17 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate() {
+function LoginGate({ denied = false }: { denied?: boolean }) {
   const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(`${window.location.origin}/`)}`;
+
+  async function signOutAndReload() {
+    try {
+      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
+    } catch {
+      // best-effort; the reload lands back on this gate either way
+    }
+    window.location.reload();
+  }
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -1219,21 +1232,33 @@ function LoginGate() {
 
             <div className="h-[18px]" />
             <h1 className="font-display text-[26px] font-bold leading-[30px] tracking-[-0.52px] text-[#14141a]">
-              Sign into Mentra Admin
+              {denied ? "No admin access" : "Sign into Mentra Admin"}
             </h1>
 
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
-              Review miniapp releases, publish preinstalled registries, and manage internal operations.
+              {denied
+                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
+                : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
             </p>
 
             <div className="h-8" />
-            <a
-              className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-              href={loginUrl}
-            >
-              Continue with Mentra login
-            </a>
+            {denied ? (
+              <button
+                type="button"
+                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
+                onClick={signOutAndReload}
+              >
+                Sign out and switch account
+              </button>
+            ) : (
+              <a
+                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
+                href={loginUrl}
+              >
+                Continue with Mentra login
+              </a>
+            )}
 
             <div className="h-5" />
             <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
@@ -1274,6 +1299,12 @@ function ErrorText({ error }: { error: unknown }) {
   );
 }
 
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function api<T>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
   const res = await fetch(path, {
     method: opts?.method ?? "GET",
@@ -1291,7 +1322,7 @@ async function api<T>(path: string, opts?: { method?: string; body?: unknown }):
     } catch {
       // keep status detail
     }
-    throw new Error(detail);
+    throw new ApiError(detail, res.status);
   }
   return res.json() as Promise<T>;
 }
