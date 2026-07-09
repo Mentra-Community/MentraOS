@@ -372,13 +372,22 @@ export class AccountAuthProvider extends AuthClient {
         throw new Error("no oauth flow in progress")
       }
       if (params.state !== expectedState.value) throw new Error("oauth state mismatch")
+      // Keep state+verifier until the server definitively answers: a transient
+      // network failure here must leave the deep link retryable (the handoff
+      // code is unconsumed server-side). Clear on success or on a definitive
+      // rejection (the code is burned either way).
+      let res: Response
+      try {
+        res = await fetch(core("/api/account/oauth/complete"), {
+          method: "POST",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({code: params.code, code_verifier: verifier.value}),
+        })
+      } catch (err) {
+        throw err instanceof Error ? err : new Error(String(err))
+      }
       storage.remove(OAUTH_STATE_KEY)
       storage.remove(OAUTH_VERIFIER_KEY)
-      const res = await fetch(core("/api/account/oauth/complete"), {
-        method: "POST",
-        headers: {"content-type": "application/json"},
-        body: JSON.stringify({code: params.code, code_verifier: verifier.value}),
-      })
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
       if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
@@ -399,11 +408,18 @@ export class AccountAuthProvider extends AuthClient {
     return Res.try_async(async () => {
       const tokens = loadTokens()
       if (tokens) {
-        await fetch(core("/api/account/logout"), {
-          method: "POST",
-          headers: {"content-type": "application/json", authorization: `Bearer ${tokens.access}`},
-          body: JSON.stringify({}),
-        }).catch(() => null)
+        // Refresh first if the access token expired (1h TTL): revoking with a
+        // stale token 400s and would leave the server session alive even
+        // though the device forgets it. Best-effort — a dead session throws
+        // in ensureFreshAccess (already cleared) and offline just skips.
+        const access = await this.ensureFreshAccess().catch(() => null)
+        if (access) {
+          await fetch(core("/api/account/logout"), {
+            method: "POST",
+            headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+            body: JSON.stringify({}),
+          }).catch(() => null)
+        }
       }
       clearTokens()
       this.notify("SIGNED_OUT")
