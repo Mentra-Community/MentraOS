@@ -5,6 +5,7 @@ import { MiniAppModel } from "../../models/miniapp.model";
 import { MiniAppReleaseModel } from "../../models/miniapp-release.model";
 import { createStorageService, sha256Hex } from "../storage/storage.service";
 import type { SignedBundleMetadata } from "./developer-signing.service";
+import { notifyMiniAppSubmissionSlack } from "./miniapp-slack.service";
 
 const logger = createLogger("core").child({ service: "miniapp.service" });
 
@@ -131,6 +132,20 @@ export class MiniAppService {
     release.submittedAt = new Date();
     release.reviewNotes = null;
     await release.save();
+
+    // Fire-and-forget: a Slack failure can never delay or fail the submit
+    // response, and an unset webhook env var is a silent skip.
+    notifyMiniAppSubmissionSlack({
+      releaseId: release._id.toString(),
+      packageName: release.packageName,
+      version: release.version,
+      appName: app.displayName,
+      description: app.description ?? null,
+      developerEmail: developer.email ?? null,
+      orgId: developer.orgId,
+      manifest: release.manifest as Record<string, unknown> | null,
+    }).catch(() => {});
+
     return serializeRelease(release.toObject());
   }
 
