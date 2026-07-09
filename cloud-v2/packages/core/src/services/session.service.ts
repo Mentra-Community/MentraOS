@@ -78,6 +78,12 @@ const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
 const ACCESS_TOKEN_KID = "mentra-access-1";
 const RUNTIME_TOKEN_KID = "cloud-core-runtime-1";
 const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
+const ACCOUNT_TOKEN_KID = "mentra-account-1";
+// Mentra's own first-party account backend signs subject tokens with this key
+// and pushes them through the SAME exchange path OEMs use (see issue 019). The
+// `mentra` OEM row (startup migration) carries this public key so verifyTenantJwt
+// verifies them. TTL is tiny: the token exists only to cross into createSession.
+const ACCOUNT_SUBJECT_TOKEN_TTL_SEC = 60;
 
 // === Public API ===
 
@@ -277,6 +283,23 @@ export async function revokeAllForOem(tenantId: string): Promise<{ deletedSessio
     { tenantId, deletedSessions: result.deletedCount },
     "bulk-revoked oem sessions",
   );
+  return { deletedSessions: result.deletedCount ?? 0 };
+}
+
+/**
+ * Revoke every refresh token for one user (logout-everywhere, and the
+ * "password change/reset revokes other sessions" requirement). `exceptSessionId`
+ * keeps the current session alive (e.g. logout-everywhere from the active app
+ * without kicking itself). Deleting the refresh token means the session cannot
+ * re-up; the access token dies at its natural expiry.
+ */
+export async function revokeAllSessionsForUser(args: {
+  mentraUserId: string;
+  exceptSessionId?: string;
+}): Promise<{ deletedSessions: number }> {
+  const filter: Record<string, unknown> = { mentraUserId: args.mentraUserId };
+  if (args.exceptSessionId) filter.sessionId = { $ne: args.exceptSessionId };
+  const result = await RefreshTokenModel.deleteMany(filter);
   return { deletedSessions: result.deletedCount ?? 0 };
 }
 
@@ -525,6 +548,54 @@ async function getMiniappKeys() {
 export function resetSigningKeyCache(): void {
   mentraKeys = null;
   miniappKeys = null;
+  accountKeys = null;
+}
+
+/**
+ * Mint a short-lived Ed25519 subject token for Mentra's first-party account
+ * backend, issued under the `mentra` tenant. It is fed straight into
+ * createSession, where verifyTenantJwt validates it against the `mentra` OEM
+ * row's public key. This is how Mentra dogfoods its own OEM path instead of a
+ * bespoke identity branch (issue 019).
+ */
+export async function mintAccountSubjectToken(args: { tenantUserId: string }): Promise<string> {
+  const { privateKey } = await getAccountKeys();
+  return new jose.SignJWT({})
+    .setProtectedHeader({ alg: MENTRA_ALG, kid: ACCOUNT_TOKEN_KID })
+    // iss = the OEM tenantId ("mentra"); aud = "mentra", the value the OEM
+    // verifier (verifySignatureWithOemKey) pins for all OEM subject tokens.
+    .setIssuer(MENTRA_OEM_ID)
+    .setAudience(MENTRA_OEM_ID)
+    .setSubject(args.tenantUserId)
+    .setJti(ulid())
+    .setIssuedAt()
+    .setExpirationTime(`${ACCOUNT_SUBJECT_TOKEN_TTL_SEC}s`)
+    .sign(privateKey);
+}
+
+let accountKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
+
+async function getAccountKeys() {
+  if (!accountKeys) accountKeys = loadAccountKeys();
+  return accountKeys;
+}
+
+async function loadAccountKeys() {
+  const privB64 = requireEnv("MENTRA_ACCOUNT_JWT_PRIVATE_KEY");
+  const pubB64 = requireEnv("MENTRA_ACCOUNT_JWT_PUBLIC_KEY");
+  const [privateKey, publicKey] = await Promise.all([
+    jose.importPKCS8(toPem(privB64, "PRIVATE KEY"), MENTRA_ALG, { extractable: false }),
+    jose.importSPKI(toPem(pubB64, "PUBLIC KEY"), MENTRA_ALG, { extractable: true }),
+  ]);
+  logger.info("loaded Mentra account-token signing keypair");
+  return { privateKey, publicKey };
+}
+
+/** The account signing public key in SPKI PEM form, for seeding the `mentra`
+ * OEM row (static key mode). */
+export async function getAccountPublicKeyPem(): Promise<string> {
+  const pubB64 = requireEnv("MENTRA_ACCOUNT_JWT_PUBLIC_KEY");
+  return toPem(pubB64, "PUBLIC KEY");
 }
 
 async function loadMentraKeys() {
@@ -574,16 +645,22 @@ async function loadMiniappKeys() {
  * change: a new key is added here alongside the old until old tokens expire.
  */
 export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
-  const [access, miniapp] = await Promise.all([getMentraKeys(), getMiniappKeys()]);
-  const [accessJwk, miniappJwk] = await Promise.all([
+  const [access, miniapp, account] = await Promise.all([
+    getMentraKeys(),
+    getMiniappKeys(),
+    getAccountKeys(),
+  ]);
+  const [accessJwk, miniappJwk, accountJwk] = await Promise.all([
     jose.exportJWK(access.publicKey),
     jose.exportJWK(miniapp.publicKey),
+    jose.exportJWK(account.publicKey),
   ]);
   return {
     keys: [
       { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
       { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
       { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
+      { ...accountJwk, alg: MENTRA_ALG, use: "sig", kid: ACCOUNT_TOKEN_KID },
     ],
   };
 }
