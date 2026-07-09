@@ -1662,7 +1662,9 @@ public class OtaHelper {
      * Find MTK firmware patch matching the current version.
      * MTK requires sequential updates - must find patch starting from current version.
      * @param patches Array of patch objects with start_firmware, end_firmware, url
-     * @param currentVersion Current MTK firmware version string (e.g., "20241130")
+     * @param currentVersion Current MTK firmware version as reported by
+     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260626"; both sides are
+     *     normalized before comparison, so a bare "20260626" would also match
      * @return Matching patch object, or null if no match or version unknown
      */
     private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
@@ -1690,6 +1692,11 @@ public class OtaHelper {
         return null;
     }
 
+    /**
+     * Reduce an MTK version string to its bare date so manifest entries and the device
+     * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
+     * prefix; this is defensive so a bare-date value on either side still matches.
+     */
     private String normalizeMtkFirmwareVersion(String version) {
         if (version == null) {
             return "";
@@ -1737,7 +1744,9 @@ public class OtaHelper {
 
     /**
      * Compare two version strings.
-     * Supports formats like "17.26.1.14" (BES) or "20241130" (MTK date format).
+     * Supports dotted formats like "17.26.1.14" (BES) or bare dates like "20241130".
+     * MTK patch matching does not use this - it uses normalized exact equality in
+     * {@link #findMatchingMtkPatch}.
      * @param version1 First version string
      * @param version2 Second version string
      * @return positive if version1 > version2, negative if version1 < version2, 0 if equal

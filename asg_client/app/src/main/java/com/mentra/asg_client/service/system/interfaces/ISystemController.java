@@ -29,6 +29,11 @@ public interface ISystemController {
 
     void restartCameraHal();
 
+    /**
+     * Current MTK firmware version from {@code ro.custom.ota.version}, returned verbatim.
+     * Mentra Live firmware reports "MentraLive_YYYYMMDD" (e.g. "MentraLive_20260626"), the
+     * same form OTA manifest {@code start_firmware} entries use.
+     */
     String getSystemOtaVersion();
 
     void setHotspot5GEnabled(boolean enable);
