@@ -16,6 +16,7 @@ import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.format.DateFormat;
 import android.util.Log;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
@@ -38,6 +39,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -83,6 +85,7 @@ public class Ar99 extends SGCManager {
   private static final int CMD_DISPLAY_SET_LANGUAGE = 131;
   private static final int CMD_DISPLAY_GET_BRIGHT = 102;
   private static final int CMD_DISPLAY_GET_BATTERY = 104;
+  private static final int CMD_COMM_SET_TIME = 31;
   private static final int CMD_DISPLAY_SET_BRIGHT = 132;
   private static final int CMD_DISPLAY_SET_AUTO_ADJUST_LIGHT = 138;
 
@@ -1040,6 +1043,26 @@ public class Ar99 extends SGCManager {
     return output.toByteArray();
   }
 
+  private byte[] buildSetTimePayload(long timestampMs) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    CodedOutputStream coded = CodedOutputStream.newInstance(output);
+    try {
+      TimeZone timeZone = TimeZone.getDefault();
+      int timezoneOffsetMinutes = timeZone.getOffset(timestampMs) / (60 * 1000);
+      boolean is24Hour = DateFormat.is24HourFormat(context);
+
+      coded.writeInt64(1, timestampMs);
+      coded.writeUInt32(2, 1);
+      coded.writeBool(3, is24Hour);
+      coded.writeInt32(4, timezoneOffsetMinutes);
+      coded.writeString(5, timeZone.getID());
+      coded.flush();
+    } catch (IOException e) {
+      Bridge.log(TAG + ": buildSetTimePayload error: " + e.getMessage());
+    }
+    return output.toByteArray();
+  }
+
   private byte[] buildTranslationDisplayStartPayload(
       int sourceLanguage, int targetLanguage, int micSource) {
     ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -1255,6 +1278,16 @@ public class Ar99 extends SGCManager {
         FUNC_COMM_DISPLAY,
         CMD_DISPLAY_GET_BRIGHT,
         new byte[0],
+        TARGET_GLASS_MCU_DISPLAY);
+  }
+
+  @Override
+  public void sendSetSystemTime(long timestampMs) {
+    Bridge.log(TAG + ": sending set time timestampMs=" + timestampMs);
+    enqueueMessage(
+        FUNC_COMM_DISPLAY,
+        CMD_COMM_SET_TIME,
+        buildSetTimePayload(timestampMs),
         TARGET_GLASS_MCU_DISPLAY);
   }
 
