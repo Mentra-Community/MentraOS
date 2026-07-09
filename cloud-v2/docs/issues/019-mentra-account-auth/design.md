@@ -144,7 +144,45 @@ user-facing request (the user's V2 identity is already gone).
    branch usage remnants, SocketComms/WebSocketManager/RestComms, and work the
    spike section 6 ledger.
 
-## 9. Phase 2 seam (for the record)
+## 9. OEM reference parity (a hard requirement, not a nicety)
+
+The account module is a REFERENCE implementation of "how to build an OEM
+backend." Mentra must not be a privileged tenant: everything the module does
+must be doable by an external OEM against public surfaces, so this code can be
+handed to OEMs as the example for both their backend and their mobile client.
+
+The mapping:
+
+| Account module does | An external OEM does |
+|---|---|
+| verifies credentials via GoTrue | verifies credentials however they like |
+| holds `MENTRA_ACCOUNT_JWT_PRIVATE_KEY` | holds their own signing key |
+| `mentra` oems row (static public key, seeded by migration) | their oems row, registered with Mentra |
+| signs subject JWT `iss/aud = mentra`, sub, jti, iat, exp | signs the identical shape with `iss = <their tenantId>` |
+| calls `createSession(subjectToken)` in-process | POSTs the token to the PUBLIC `/api/client/auth/exchange` (either from their backend, server-side broker style, or from their app) |
+| returns the V2 TokenResponse from `/api/account/login` | returns the V2 TokenResponse from their own `/login` |
+
+The only difference is topological: an in-process function call instead of an
+HTTP hop to the exchange endpoint, and `createSession` IS that endpoint's
+implementation, so the semantics are identical.
+
+Enforced by tests in `tests/account-auth.integration.test.ts`:
+- "OEM parity: the mentra subject token works through the PUBLIC exchange
+  endpoint" - if Mentra ever grows a private path the public endpoint cannot
+  serve, this fails.
+- "OEM parity: a DISABLED mentra oems row blocks refresh like any OEM" -
+  refresh authorization goes through the same oems-row check as every OEM (the
+  old `mentra` early-return is now only a transitional fallback for
+  environments whose seed migration has not run, and dies at the V1 cutover).
+
+The `/api/account/*` endpoints themselves are Mentra's OEM-backend surface
+(mounted in core for ops reasons, per the README placement decision); an
+external OEM builds their equivalents on their own backend and never calls
+ours. The mobile client pattern is likewise symmetric: the app calls "my OEM
+backend's login," stores V2 tokens, and hands them to cloud-client; nothing in
+the client knows Mentra's backend is special.
+
+## 10. Phase 2 seam (for the record)
 
 Everything Supabase-specific is behind `gotrue.client.ts` + the
 `tenantUserId = Supabase user id` mapping. A Phase 2 credential-store swap

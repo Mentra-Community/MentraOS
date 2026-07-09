@@ -221,18 +221,22 @@ export async function refreshSession(args: {
 /**
  * Mid-session revocation guard for the refresh flow. A session's tenant is one
  * of three kinds, each with its own backing record and "still authorized" rule:
- *   - the built-in "mentra" tenant: no backing record, always allowed,
- *   - an OEM (legacy JWKS issuer): allowed while its `oems` row is not disabled,
+ *   - an OEM: allowed while its `oems` row is not disabled. This INCLUDES the
+ *     `mentra` tenant, whose account module registers a real oems row (issue
+ *     019) so Mentra is validated exactly like any other OEM,
  *   - an enterprise trusted-issuer org: allowed while its `enterprise_orgs` row
  *     has status "active".
  * Enterprise tenants have NO `oems` row (their tenantId comes from EnterpriseOrg,
  * see verifyTrustedIssuerJwt in oem.service), so checking only OemModel would
  * reject every enterprise session on its first refresh once the access token
  * expired. We check OEMs first, then enterprise orgs, then reject.
+ *
+ * Transitional: environments that predate the account rollout have no `mentra`
+ * oems row (the seed migration skips when the account key env is unset), so
+ * `mentra` with NO row falls back to allowed. That fallback dies at the V1
+ * cutover, at which point mentra is a hard oems-row check like everyone.
  */
 async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
-  if (tenantId === MENTRA_OEM_ID) return;
-
   const oem = await OemModel.findOne({ tenantId }).lean();
   if (oem) {
     if (oem.disabled) {
@@ -240,6 +244,7 @@ async function assertTenantStillAuthorized(tenantId: string): Promise<void> {
     }
     return;
   }
+  if (tenantId === MENTRA_OEM_ID) return; // transitional fallback, see above
 
   const enterpriseOrg = await EnterpriseOrgModel.findOne({ tenantId }).lean();
   if (enterpriseOrg) {

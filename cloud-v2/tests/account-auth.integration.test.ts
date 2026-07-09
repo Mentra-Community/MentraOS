@@ -232,6 +232,61 @@ describe("account auth", () => {
     expect(await RefreshTokenModel.countDocuments({})).toBe(2);
   });
 
+  test("OEM parity: the mentra subject token works through the PUBLIC exchange endpoint", async () => {
+    // Issue 019 requirement: Mentra must be just another OEM. The account
+    // module's subject token has to be exchangeable at the same public RFC 8693
+    // endpoint any external OEM uses, with no special path. If this test fails,
+    // Mentra has grown a privileged backdoor.
+    const { mintAccountSubjectToken } = await import("../packages/core/src/services/session.service");
+    const subjectToken = await mintAccountSubjectToken({ tenantUserId: SUPABASE_USER_ID });
+
+    const res = await app.fetch(
+      new Request("http://localhost/api/client/auth/exchange", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: subjectToken,
+          subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { access_token?: string; refresh_token?: string };
+    expect(body.access_token).toBeTruthy();
+    expect(body.refresh_token).toBeTruthy();
+
+    // And the resulting session refreshes via the oems-row check (no mentra
+    // special case), because the seeded `mentra` row authorizes it.
+    const refresh = await app.fetch(
+      new Request("http://localhost/api/client/auth/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: body.refresh_token! }),
+      }),
+    );
+    expect(refresh.status).toBe(200);
+  });
+
+  test("OEM parity: a DISABLED mentra oems row blocks refresh like any OEM", async () => {
+    const login = (await (await post("/api/account/login", { email: TEST_EMAIL, password: TEST_PASSWORD })).json()) as {
+      refresh_token: string;
+    };
+    await OemModel.updateOne({ tenantId: "mentra" }, { $set: { disabled: true } });
+    try {
+      const refresh = await app.fetch(
+        new Request("http://localhost/api/client/auth/refresh", {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: login.refresh_token }),
+        }),
+      );
+      expect(refresh.status).toBe(401);
+    } finally {
+      await OemModel.updateOne({ tenantId: "mentra" }, { $set: { disabled: false } });
+    }
+  });
+
   test("logout everywhere clears all of the user's sessions", async () => {
     const a = (await (await post("/api/account/login", { email: TEST_EMAIL, password: TEST_PASSWORD })).json()) as {
       access_token: string;
