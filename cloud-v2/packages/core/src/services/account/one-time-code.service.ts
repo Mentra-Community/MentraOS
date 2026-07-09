@@ -27,15 +27,26 @@ export async function issueEmailCode(args: {
   ttlSec: number;
   payload?: unknown;
 }): Promise<string> {
-  const code = numericCode();
-  await AccountCodeModel.create({
-    codeHash: hash(code),
-    purpose: args.purpose,
-    subject: args.subject,
-    payload: args.payload ?? null,
-    expiresAt: new Date(Date.now() + args.ttlSec * 1000),
-  });
-  return code;
+  // codeHash is globally unique but 6-digit codes are not: with enough live
+  // codes two users WILL draw the same number (birthday bound), and the second
+  // insert would 500 an innocent request. Redraw on duplicate-key instead.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = numericCode();
+    try {
+      await AccountCodeModel.create({
+        codeHash: hash(code),
+        purpose: args.purpose,
+        subject: args.subject,
+        payload: args.payload ?? null,
+        expiresAt: new Date(Date.now() + args.ttlSec * 1000),
+      });
+      return code;
+    } catch (err) {
+      const dup = (err as { code?: number })?.code === 11000;
+      if (!dup) throw err;
+    }
+  }
+  throw new AccountError("server_error", "could not allocate a one-time code", 500);
 }
 
 export async function issueOAuthHandoff(args: {

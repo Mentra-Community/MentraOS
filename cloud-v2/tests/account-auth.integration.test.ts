@@ -58,6 +58,7 @@ let gotrueServer: http.Server;
 let userVerified = true;
 let storedPassword = TEST_PASSWORD;
 let storedEmail = TEST_EMAIL;
+let lastEmailConfirmFlag: unknown = null;
 
 beforeAll(async () => {
   // Mock GoTrue: password grant, admin user lookup/update.
@@ -95,7 +96,10 @@ beforeAll(async () => {
       // PUT /auth/v1/admin/users/:id  (password/email change)
       if (url.pathname.startsWith("/auth/v1/admin/users/") && req.method === "PUT") {
         if (body.password) storedPassword = body.password;
-        if (body.email) storedEmail = body.email;
+        if (body.email) {
+          storedEmail = body.email;
+          lastEmailConfirmFlag = body.email_confirm;
+        }
         return send(200, userObj);
       }
       if (url.pathname === "/auth/v1/signup") return send(200, userObj);
@@ -141,6 +145,7 @@ beforeEach(async () => {
   userVerified = true;
   storedPassword = TEST_PASSWORD;
   storedEmail = TEST_EMAIL;
+  lastEmailConfirmFlag = null;
   resetAccountRateLimits();
   await Promise.all([
     UserModel.deleteMany({ tenantId: "mentra" }),
@@ -335,6 +340,9 @@ describe("account auth", () => {
     const ok = await post("/api/account/email/change/confirm", { code }, a.access_token);
     expect(ok.status).toBe(204);
     expect(storedEmail).toBe(newEmail);
+    // Core's code already proved the new inbox, so GoTrue must be told the
+    // address is confirmed - otherwise the next password login rejects it.
+    expect(lastEmailConfirmFlag).toBe(true);
   });
 
   test("OAuth authorize URL carries the PKCE challenge for the core<->GoTrue leg", () => {

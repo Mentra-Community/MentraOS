@@ -255,7 +255,10 @@ class MantleManager {
   }
 
   private async initServices() {
-    socketComms.connectWebsocket()
+    // Cloud V1 websocket intentionally NOT started: post-cutover there is no
+    // V1 coreToken, so it would dial prod with `token=` and retry-loop forever
+    // (burning battery on every boot). SocketComms/WSM removal lands in the
+    // V1-ripout PR; until then the path is dormant, not broken.
     gallerySyncService.initialize()
 
     // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +

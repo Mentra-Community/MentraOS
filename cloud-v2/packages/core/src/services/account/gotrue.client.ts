@@ -154,10 +154,15 @@ export async function setPassword(userId: string, password: string): Promise<voi
 }
 
 export async function setEmail(userId: string, email: string): Promise<void> {
+  // Only called AFTER core's own one-time code proved the user controls the
+  // new inbox (confirmEmailChange), so apply it confirmed. Leaving it
+  // unconfirmed would make the next password login hit verification_required
+  // (verifyPassword rejects unverified emails) and could trigger GoTrue's own
+  // redundant confirmation flow.
   const { status } = await gotrue(`/admin/users/${userId}`, {
     method: "PUT",
     admin: true,
-    body: { email, email_confirm: false },
+    body: { email, email_confirm: true },
   });
   if (status !== 200) throw new AccountError("server_error", "email update failed", 502);
 }
