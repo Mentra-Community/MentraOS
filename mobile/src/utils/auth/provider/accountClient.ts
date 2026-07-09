@@ -86,6 +86,13 @@ export class AccountAuthProvider extends AuthClient {
     return t
   }
 
+  /** Core's userAuth rejects an expired/invalid access token as the RFC
+   * `invalid_grant` shape — HTTP 400, not 401 — so both statuses mean
+   * "token no longer accepted, try the refresh grant". */
+  private static tokenRejected(status: number): boolean {
+    return status === 400 || status === 401
+  }
+
   /** Return a valid access token, refreshing once via the V2 refresh grant if
    * the stored one is rejected. Throws if there is no usable session. */
   private async ensureFreshAccess(): Promise<string> {
@@ -94,7 +101,7 @@ export class AccountAuthProvider extends AuthClient {
     const probe = await fetch(core("/api/account/me"), {
       headers: {authorization: `Bearer ${tokens.access}`},
     })
-    if (probe.status !== 401) return tokens.access
+    if (!AccountAuthProvider.tokenRejected(probe.status)) return tokens.access
     const refreshed = await this.refreshTokens(tokens.refresh)
     if (!refreshed) {
       clearTokens()
@@ -111,7 +118,7 @@ export class AccountAuthProvider extends AuthClient {
       let meRes = await fetch(core("/api/account/me"), {
         headers: {authorization: `Bearer ${access}`},
       }).catch(() => null) // null = offline; keep tokens, report no user
-      if (meRes?.status === 401) {
+      if (meRes && AccountAuthProvider.tokenRejected(meRes.status)) {
         // Access token expired (1h TTL): silently refresh, then retry /me, so a
         // cold boot after an hour restores the session instead of bouncing the
         // user to /auth/start while their refresh token is still good.

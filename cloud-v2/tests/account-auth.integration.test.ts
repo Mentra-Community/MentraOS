@@ -344,6 +344,63 @@ describe("account auth", () => {
     expect(u.searchParams.get("code_challenge_method")).toBe("s256");
   });
 
+  test("external-OEM sessions are rejected by the account endpoints (tenant gate)", async () => {
+    // Stand up a second OEM ("acme-test") exactly the way an external partner
+    // would exist: static-key oems row + a self-signed subject token.
+    const strip = (pem: string) =>
+      pem.replace(/-----BEGIN [^-]+-----/, "").replace(/-----END [^-]+-----/, "").replace(/\s+/g, "");
+    const acme = crypto.generateKeyPairSync("ed25519");
+    await OemModel.updateOne(
+      { tenantId: "acme-test" },
+      {
+        $set: {
+          displayName: "Acme Test",
+          publicKeyMode: "static",
+          publicKey: `-----BEGIN PUBLIC KEY-----\n${strip(acme.publicKey.export({ type: "spki", format: "pem" }).toString())}\n-----END PUBLIC KEY-----`,
+          disabled: false,
+        },
+      },
+      { upsert: true },
+    );
+    // Hand-rolled EdDSA JWS (jose isn't resolvable from tests/ under the
+    // isolated installer; Ed25519 signing is one node:crypto call anyway).
+    const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const header = b64u(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
+    const claims = b64u(
+      JSON.stringify({ iss: "acme-test", aud: "mentra", sub: "acme-user-42", jti: "acme-jti-1", iat: now, exp: now + 60 }),
+    );
+    const sig = crypto.sign(null, Buffer.from(`${header}.${claims}`), acme.privateKey);
+    const subjectToken = `${header}.${claims}.${b64u(sig)}`;
+
+    // The public exchange gives the OEM user a perfectly valid session...
+    const ex = await app.fetch(
+      new Request("http://localhost/api/client/auth/exchange", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: subjectToken,
+          subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        }),
+      }),
+    );
+    expect(ex.status).toBe(200);
+    const { access_token } = (await ex.json()) as { access_token: string };
+
+    // ...but the first-party account surface must reject it. Without the gate,
+    // /subject-token would mint this OEM user a `mentra` session.
+    const st = await post("/api/account/subject-token", {}, access_token);
+    expect(st.status).toBe(403);
+    expect((await st.json()).error).toBe("unauthorized_client");
+    const me = await app.fetch(
+      new Request("http://localhost/api/account/me", {
+        headers: { authorization: `Bearer ${access_token}` },
+      }),
+    );
+    expect(me.status).toBe(403);
+  });
+
   test("login is rate limited per spec: 429 with rate_limited after the window fills", async () => {
     // Limit is 10/min per IP; the 11th attempt in the window must 429.
     let last: Response | null = null;

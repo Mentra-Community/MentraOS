@@ -8,6 +8,7 @@ import { InvalidRequest } from "../../types/oauth.types";
 import { userAuth } from "../middleware/user-auth.middleware";
 import { UserModel } from "../../models/user.model";
 import * as account from "../../services/account/account.service";
+import { AccountError } from "../../services/account/account-error";
 import { accountRateLimit } from "./rate-limit";
 import {
   revokeSession,
@@ -206,6 +207,17 @@ async function emailOnly(c: AppContext): Promise<{ email: string }> {
 async function tenantUserIdFor(mentraUserId: string): Promise<string> {
   const user = await UserModel.findOne({ mentraUserId }).lean();
   if (!user) throw new InvalidRequest("user not found");
+  // Every authenticated account route resolves identity through here, so this
+  // is the single gate keeping external-OEM sessions out of the first-party
+  // account surface. Without it, an OEM-authenticated user could hit
+  // /subject-token and mint themselves a `mentra` session.
+  if (user.tenantId !== "mentra") {
+    throw new AccountError(
+      "unauthorized_client",
+      "account endpoints require a Mentra first-party session",
+      403,
+    );
+  }
   return user.tenantUserId;
 }
 

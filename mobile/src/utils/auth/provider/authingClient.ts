@@ -362,6 +362,22 @@ export class AuthingWrapperClient extends AuthClient {
   public googleSignIn(): AsyncResult<string, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
+
+  /** cloud-client subject token for the China deployment. Reproduces the
+   * pre-cutover MantleManager behavior exactly: hand over the session token
+   * with the "supabase" type tag, which the China cloud's exchange accepts.
+   * (The 019 cutover moved this seam from MantleManager into the providers;
+   * without this override China sign-in worked but cloud-client could never
+   * authenticate.) */
+  public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
+    return Res.try_async(async () => {
+      const res = await this.getSession()
+      if (res.is_error() || !res.value.token) {
+        throw new Error("getSubjectToken: no session token available")
+      }
+      return {token: res.value.token, type: "supabase"}
+    })
+  }
 }
 
 export const authingClient = AuthingWrapperClient.getInstance()
