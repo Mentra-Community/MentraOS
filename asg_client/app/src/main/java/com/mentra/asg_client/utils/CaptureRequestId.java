@@ -26,16 +26,22 @@ public final class CaptureRequestId {
      * Sanitize a request ID so it is safe to use as part of a single directory-name segment on
      * the glasses and on the phone after sync. Returns an empty string when nothing embeddable
      * remains (callers should then omit the suffix entirely).
+     *
+     * <p>Dots are excluded from the allowlist entirely: a surviving ".." sequence would embed
+     * into the directory name and later be rejected by FileSecurityValidator's path-traversal
+     * check, leaving a capture that syncs into listings but can never be served or deleted.
      */
     public static String sanitizeForDirName(String requestId) {
         if (requestId == null) {
             return "";
         }
-        String sanitized = requestId.replaceAll("[^A-Za-z0-9._-]", "-");
-        // A leading dot could hide the directory from naive listings; strip it.
-        sanitized = sanitized.replaceAll("^\\.+", "");
+        String sanitized = requestId.replaceAll("[^A-Za-z0-9_-]", "-");
         if (sanitized.length() > MAX_EMBEDDED_LENGTH) {
             sanitized = sanitized.substring(0, MAX_EMBEDDED_LENGTH);
+        }
+        // A suffix that is all separators carries no information; omit it.
+        if (sanitized.matches("-+")) {
+            return "";
         }
         return sanitized;
     }

@@ -19,10 +19,12 @@ public class CaptureRequestIdTest {
 
     @Test
     public void sanitizeForDirName_stripsPathAndUnsafeCharacters() {
-        // Slashes are replaced and leading dots stripped, so no path segment survives.
-        assertEquals("-..-etc-passwd", CaptureRequestId.sanitizeForDirName("../../etc/passwd"));
+        // Dots are not allowlisted: a surviving ".." would trip FileSecurityValidator's
+        // path-traversal check when serving/deleting, stranding the capture.
+        assertEquals("------etc-passwd", CaptureRequestId.sanitizeForDirName("../../etc/passwd"));
         assertEquals("a-b-c", CaptureRequestId.sanitizeForDirName("a/b\\c"));
         assertEquals("", CaptureRequestId.sanitizeForDirName("..."));
+        assertEquals("v1-2-3", CaptureRequestId.sanitizeForDirName("v1.2.3"));
     }
 
     @Test
