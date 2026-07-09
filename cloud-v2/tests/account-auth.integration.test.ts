@@ -39,6 +39,7 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
+import { resetSigningKeyCache } from "../packages/core/src/services/signing-keys.service";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
@@ -105,6 +106,9 @@ beforeAll(async () => {
   process.env.SUPABASE_ANON_KEY = "anon-test";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "service-test";
 
+  // Discard any signing keys another test file cached into the shared module
+  // state, so this file's own key env vars are used (mirrors the audio tests).
+  resetSigningKeyCache();
   await connectMongo(process.env.MONGO_URL!);
   await Promise.all([
     OemModel.syncIndexes(),

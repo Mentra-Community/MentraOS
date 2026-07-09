@@ -42,6 +42,25 @@ import {
 } from "../types/oauth.types";
 import { findOrCreateUser } from "./user.service";
 import { recordSeenJti, verifyTenantJwt } from "./oem.service";
+import {
+  MENTRA_ALG,
+  ACCESS_TOKEN_KID,
+  RUNTIME_TOKEN_KID,
+  MINIAPP_TOKEN_KID,
+  ACCOUNT_TOKEN_KID,
+  requireEnv,
+  getMentraKeys,
+  getMiniappKeys,
+  getAccountKeys,
+} from "./signing-keys.service";
+
+// Key management and the public JWKS moved to signing-keys.service.ts. These
+// re-exports keep existing importers (well-known.api, tests) working.
+export {
+  getPublicJwks,
+  resetSigningKeyCache,
+  getAccountPublicKeyPem,
+} from "./signing-keys.service";
 
 const logger = createLogger("core").child({ service: "session.service" });
 
@@ -53,7 +72,6 @@ const REFRESH_TOKEN_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
 
 const CORE_ISSUER = "cloud-core";
 const CORE_AUDIENCE = "cloud-core";
-const MENTRA_ALG = "EdDSA";
 
 // Miniapp-scoped tokens are issued by cloud-core but signed with a separate
 // miniapp-token key. Developer backends verify iss/aud/signature via JWKS.
@@ -69,20 +87,10 @@ const MENTRA_OEM_ID = "mentra";
 // so tests can shorten it without touching code.
 const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
 
-// JWKS key ids. Each published public key carries a stable `kid` so verifiers
-// (developer backends, internal services) select the right key by header,
-// which is what makes key rotation a no-coordination change. Access and
-// Core-brokered runtime tokens share the Core signing key but have distinct kids
-// because they are distinct token kinds/audiences; miniapp tokens use their own
-// signing key.
-const ACCESS_TOKEN_KID = "mentra-access-1";
-const RUNTIME_TOKEN_KID = "cloud-core-runtime-1";
-const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
-const ACCOUNT_TOKEN_KID = "mentra-account-1";
-// Mentra's own first-party account backend signs subject tokens with this key
-// and pushes them through the SAME exchange path OEMs use (see issue 019). The
-// `mentra` OEM row (startup migration) carries this public key so verifyTenantJwt
-// verifies them. TTL is tiny: the token exists only to cross into createSession.
+// Mentra's own first-party account backend signs subject tokens and pushes them
+// through the SAME exchange path OEMs use (see issue 019). The `mentra` OEM row
+// (startup migration) carries the account public key so verifyTenantJwt verifies
+// them. TTL is tiny: the token exists only to cross into createSession.
 const ACCOUNT_SUBJECT_TOKEN_TTL_SEC = 60;
 
 // === Public API ===
@@ -514,49 +522,6 @@ async function verifyHs256Subject(
 // === Internals: Mentra signing keys ===
 
 /**
- * Lazy-loaded Mentra signing keypair for **access tokens**. We hold both
- * halves on `core` so we can sign and verify in this same process. Audio/proxy
- * will receive only the public half.
- */
-let mentraKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
-
-/**
- * Lazy-loaded Mentra signing keypair for **miniapp tokens**. Kept separate
- * from the access-token key on purpose: per auth/spec.md "Signing keys", two
- * keys limit blast radius, a leak of the miniapp key can't forge access
- * tokens, and vice versa. The public half is published in the JWKS so
- * developer backends can verify miniapp tokens.
- */
-let miniappKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
-
-async function getMentraKeys() {
-  if (!mentraKeys) {
-    mentraKeys = loadMentraKeys();
-  }
-  return mentraKeys;
-}
-
-async function getMiniappKeys() {
-  if (!miniappKeys) {
-    miniappKeys = loadMiniappKeys();
-  }
-  return miniappKeys;
-}
-
-/**
- * Reset the lazy-loaded signing keypair caches. **Test-only.** Production
- * has no reason to rotate keys mid-process; tests that mutate
- * `MENTRA_JWT_*` / `MENTRA_MINIAPP_JWT_*` env vars (e.g. running multiple test
- * files in the same Bun process) need to discard the cached imports so the
- * next call reads the new env.
- */
-export function resetSigningKeyCache(): void {
-  mentraKeys = null;
-  miniappKeys = null;
-  accountKeys = null;
-}
-
-/**
  * Mint a short-lived Ed25519 subject token for Mentra's first-party account
  * backend, issued under the `mentra` tenant. It is fed straight into
  * createSession, where verifyTenantJwt validates it against the `mentra` OEM
@@ -578,112 +543,6 @@ export async function mintAccountSubjectToken(args: { tenantUserId: string }): P
     .sign(privateKey);
 }
 
-let accountKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
-
-async function getAccountKeys() {
-  if (!accountKeys) accountKeys = loadAccountKeys();
-  return accountKeys;
-}
-
-async function loadAccountKeys() {
-  const privB64 = requireEnv("MENTRA_ACCOUNT_JWT_PRIVATE_KEY");
-  const pubB64 = requireEnv("MENTRA_ACCOUNT_JWT_PUBLIC_KEY");
-  const [privateKey, publicKey] = await Promise.all([
-    jose.importPKCS8(toPem(privB64, "PRIVATE KEY"), MENTRA_ALG, { extractable: false }),
-    jose.importSPKI(toPem(pubB64, "PUBLIC KEY"), MENTRA_ALG, { extractable: true }),
-  ]);
-  logger.info("loaded Mentra account-token signing keypair");
-  return { privateKey, publicKey };
-}
-
-/** The account signing public key in SPKI PEM form, for seeding the `mentra`
- * OEM row (static key mode). */
-export async function getAccountPublicKeyPem(): Promise<string> {
-  const pubB64 = requireEnv("MENTRA_ACCOUNT_JWT_PUBLIC_KEY");
-  return toPem(pubB64, "PUBLIC KEY");
-}
-
-async function loadMentraKeys() {
-  const privB64 = requireEnv("MENTRA_JWT_PRIVATE_KEY");
-  const pubB64 = requireEnv("MENTRA_JWT_PUBLIC_KEY");
-  const privatePem = toPem(privB64, "PRIVATE KEY");
-  const publicPem = toPem(pubB64, "PUBLIC KEY");
-  const [privateKey, publicKey] = await Promise.all([
-    // Public key stays extractable so we can export it to JWK form for the
-    // /.well-known/jwks.json endpoint.
-    jose.importPKCS8(privatePem, MENTRA_ALG, { extractable: false }),
-    jose.importSPKI(publicPem, MENTRA_ALG, { extractable: true }),
-  ]);
-  logger.info("loaded Mentra access-token signing keypair");
-  return { privateKey, publicKey };
-}
-
-/**
- * Load the miniapp-token signing keypair from env. Falls back to the
- * access-token key env vars is intentionally NOT done: the keys must be
- * distinct for the blast-radius guarantee, so the miniapp env vars are
- * required in their own right.
- */
-async function loadMiniappKeys() {
-  const privB64 = requireEnv("MENTRA_MINIAPP_JWT_PRIVATE_KEY");
-  const pubB64 = requireEnv("MENTRA_MINIAPP_JWT_PUBLIC_KEY");
-  const privatePem = toPem(privB64, "PRIVATE KEY");
-  const publicPem = toPem(pubB64, "PUBLIC KEY");
-  const [privateKey, publicKey] = await Promise.all([
-    jose.importPKCS8(privatePem, MENTRA_ALG, { extractable: false }),
-    jose.importSPKI(publicPem, MENTRA_ALG, { extractable: true }),
-  ]);
-  logger.info("loaded Mentra miniapp-token signing keypair");
-  return { privateKey, publicKey };
-}
-
-/**
- * Build the public JWKS document Mentra publishes at /.well-known/jwks.json.
- *
- * Contains both public keys, each tagged with its `kid` (and `alg`/`use`), so
- * a verifier picks the right key by the JWT header's `kid`:
- *   - the access-token key, used by internal services to verify access tokens
- *   - the Core-brokered runtime-token key, used by Runtime when it trusts Core
- *   - the miniapp-token key, used by developer backends to verify miniapp tokens
- *
- * Publishing both from day one is what makes key rotation a no-coordination
- * change: a new key is added here alongside the old until old tokens expire.
- */
-export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
-  const [access, miniapp, account] = await Promise.all([
-    getMentraKeys(),
-    getMiniappKeys(),
-    getAccountKeys(),
-  ]);
-  const [accessJwk, miniappJwk, accountJwk] = await Promise.all([
-    jose.exportJWK(access.publicKey),
-    jose.exportJWK(miniapp.publicKey),
-    jose.exportJWK(account.publicKey),
-  ]);
-  return {
-    keys: [
-      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
-      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
-      { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
-      { ...accountJwk, alg: MENTRA_ALG, use: "sig", kid: ACCOUNT_TOKEN_KID },
-    ],
-  };
-}
-
-/**
- * Reconstruct a PEM block from a stored base64 body. We store only the body
- * to keep env values short and free of `\n` escapes; the wrapper is
- * informationless for Ed25519 (always PKCS#8 / SPKI).
- */
-function toPem(base64Body: string, label: "PRIVATE KEY" | "PUBLIC KEY"): string {
-  return `-----BEGIN ${label}-----\n${base64Body}\n-----END ${label}-----`;
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new OauthServerError(`env var ${name} is not set`);
-  return v;
-}
 
 // === Internals: token issuance ===
 
