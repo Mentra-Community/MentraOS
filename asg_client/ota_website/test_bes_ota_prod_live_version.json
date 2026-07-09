@@ -1,10 +1,10 @@
 {
   "apps": {
     "com.mentra.asg_client": {
-      "versionCode": 38,
-      "versionName": "38.0",
-      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-38-test.apk",
-      "sha256": "d504e1f164e50109419c8c2181428f468a393575884294700270fcffe0cc7b59"
+      "versionCode": 37,
+      "versionName": "37.0",
+      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg_client_37-test.apk",
+      "sha256": "9fe9510a3c92dda9d6d15416303be7625908388caf02ff1be72a918170371628"
     },
     "com.augmentos.otaupdater": {
       "versionCode": 0,
@@ -16,9 +16,9 @@
   "mtk_patches": [
     {
       "start_firmware": "MentraLive_20260418",
-      "end_firmware": "MentraLive_20260709",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260709.zip",
-      "sha256": "f82c55c53dd54ffe1b4885ea002f34bc6f7f96e1c30e8c3d717f438722d6925f"
+      "end_firmware": "MentraLive_20260525",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260525.zip",
+      "sha256": "169e9b94ea4b8ff283dccd2b2db4102966bbb424dc16a188f9ff28dfb202b256"
     },
     {
       "start_firmware": "MentraLive_20260421",
@@ -43,12 +43,6 @@
       "end_firmware": "MentraLive_20260525",
       "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260525.zip",
       "sha256": "23b391985ee5da2ac3ec0adca2186e48bcaf5fa8ea50eb2f90a7145fe8d856a7"
-    },
-    {
-      "start_firmware": "MentraLive_20260525",
-      "end_firmware": "MentraLive_20260626",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260525_20260626.zip",
-      "sha256": "0c7e78764e175346cd78343befdd06e3a53c0ce9a1841e451a069d9d7f8a11a6"
     }
   ],
   "bes_firmware": {
