@@ -1,8 +1,8 @@
 # 019 - Mentra account auth: mobile login on Cloud V2
 
-**Status:** Spike in progress. This issue frames the work; the deliverables are
-three docs in this folder (spike.md, spec.md, design.md), each gated on the
-previous one.
+**Status:** Docs complete, ready for review. spike.md (V1 dependency ledger +
+decisions), spec.md (the /api/account contract), and design.md (implementation
+plan) are all in this folder. Implementation not started.
 
 ## Goal (the actual headline)
 
