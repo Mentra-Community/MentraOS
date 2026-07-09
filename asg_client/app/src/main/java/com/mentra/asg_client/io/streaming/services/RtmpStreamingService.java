@@ -114,6 +114,46 @@ public class RtmpStreamingService extends Service {
     // Notification management
     private boolean mHasShownReconnectingNotification = false;
 
+    // Real-time resolution/fps logging
+    private static final long FPS_LOG_INTERVAL_MS = 2000;
+    private final java.util.concurrent.atomic.AtomicLong mFrameCount = new java.util.concurrent.atomic.AtomicLong(0);
+    private Handler mFpsLogHandler;
+    private long mLastFpsLogTimeMs = 0;
+    private final Runnable mFpsLoggerRunnable = new Runnable() {
+        @Override
+        public void run() {
+            long now = System.currentTimeMillis();
+            long elapsedMs = mLastFpsLogTimeMs > 0 ? (now - mLastFpsLogTimeMs) : FPS_LOG_INTERVAL_MS;
+            mLastFpsLogTimeMs = now;
+            long frames = mFrameCount.getAndSet(0);
+            double realFps = elapsedMs > 0 ? (frames * 1000.0 / elapsedMs) : 0;
+            Log.i(TAG, String.format(
+                    "📹 Live stream resolution: %dx%d @ %.1f fps (real-time, configured %dx%d @ %dfps)",
+                    mStreamConfig.getVideoWidth(), mStreamConfig.getVideoHeight(), realFps,
+                    mStreamConfig.getVideoWidth(), mStreamConfig.getVideoHeight(), mStreamConfig.getVideoFps()));
+            if (mFpsLogHandler != null) {
+                mFpsLogHandler.postDelayed(this, FPS_LOG_INTERVAL_MS);
+            }
+        }
+    };
+
+    /** Starts periodic logging of the real-time (measured) stream resolution/fps. */
+    private void startFpsLogging() {
+        stopFpsLogging();
+        mFrameCount.set(0);
+        mLastFpsLogTimeMs = System.currentTimeMillis();
+        mFpsLogHandler = new Handler(Looper.getMainLooper());
+        mFpsLogHandler.postDelayed(mFpsLoggerRunnable, FPS_LOG_INTERVAL_MS);
+    }
+
+    /** Stops periodic real-time resolution/fps logging. */
+    private void stopFpsLogging() {
+        if (mFpsLogHandler != null) {
+            mFpsLogHandler.removeCallbacksAndMessages(null);
+            mFpsLogHandler = null;
+        }
+    }
+
     // Stream state management
     private enum StreamState {
         IDLE,
@@ -348,6 +388,7 @@ public class RtmpStreamingService extends Service {
                     + " (encode " + mStreamConfig.getVideoWidth() + "x" + mStreamConfig.getVideoHeight() + ")");
             mSurfaceTexture = new SurfaceTexture(0);
             mSurfaceTexture.setDefaultBufferSize(surfaceWidth, surfaceHeight);
+            mSurfaceTexture.setOnFrameAvailableListener(texture -> mFrameCount.incrementAndGet());
             mSurface = new Surface(mSurfaceTexture);
             Log.d(TAG, "Surface created successfully");
         } catch (Exception e) {
@@ -661,6 +702,7 @@ public class RtmpStreamingService extends Service {
             if (mSurface != null && mSurface.isValid()) {
                 mStreamer.startPreview(mSurface, "0"); // Using "0" for back camera
                 Log.d(TAG, "Started camera preview on surface");
+                startFpsLogging();
             } else {
                 Log.e(TAG, "Cannot start preview, surface is invalid");
             }
@@ -842,6 +884,7 @@ public class RtmpStreamingService extends Service {
                 // Start fresh preview
                 mStreamer.startPreview(mSurface, "0");
                 Log.d(TAG, "Started camera preview for streaming");
+                startFpsLogging();
 
                 // ADD THIS DELAY:
                 try {
@@ -971,6 +1014,8 @@ public class RtmpStreamingService extends Service {
      */
     private void forceStopStreamingInternal(boolean preserveSession) {
         Log.d(TAG, "Force stopping stream and cleaning up resources (preserveSession=" + preserveSession + ")");
+
+        stopFpsLogging();
 
         // Stop battery monitoring if not preserving session
         if (!preserveSession) {

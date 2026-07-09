@@ -158,6 +158,8 @@ public class WhipStreamingService extends Service {
       mPeerConnection.getStats(report -> {
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
+        int frameWidth = 0, frameHeight = 0;
+        double framesPerSecond = 0;
         for (RTCStats stats : report.getStatsMap().values()) {
           if (!"outbound-rtp".equals(stats.getType())) continue;
           Object kind  = stats.getMembers().get("kind");
@@ -166,8 +168,16 @@ public class WhipStreamingService extends Service {
           if (bytes == null) continue;
           long b = ((Number) bytes).longValue();
           long p = pkts != null ? ((Number) pkts).longValue() : 0;
-          if ("video".equals(kind)) { videoBytesTotal = b; videoPackets = p; }
-          else if ("audio".equals(kind)) { audioBytesTotal = b; audioPackets = p; }
+          if ("video".equals(kind)) {
+            videoBytesTotal = b;
+            videoPackets = p;
+            Object w = stats.getMembers().get("frameWidth");
+            Object h = stats.getMembers().get("frameHeight");
+            Object fps = stats.getMembers().get("framesPerSecond");
+            if (w != null) frameWidth = ((Number) w).intValue();
+            if (h != null) frameHeight = ((Number) h).intValue();
+            if (fps != null) framesPerSecond = ((Number) fps).doubleValue();
+          } else if ("audio".equals(kind)) { audioBytesTotal = b; audioPackets = p; }
         }
         long videoDelta = videoBytesTotal - mLastVideoBytesSent;
         long audioDelta = audioBytesTotal - mLastAudioBytesSent;
@@ -177,6 +187,11 @@ public class WhipStreamingService extends Service {
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
             videoDelta * 1000 / STATS_INTERVAL_MS, videoPackets,
             audioDelta * 1000 / STATS_INTERVAL_MS, audioPackets));
+        if (frameWidth > 0 && frameHeight > 0) {
+          Log.i(TAG, String.format(
+              "📹 Live stream resolution: %dx%d @ %.1f fps (real-time)",
+              frameWidth, frameHeight, framesPerSecond));
+        }
       });
       mMainHandler.postDelayed(this, STATS_INTERVAL_MS);
     }

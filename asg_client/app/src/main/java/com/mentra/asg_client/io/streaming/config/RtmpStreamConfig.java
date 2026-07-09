@@ -9,10 +9,13 @@ import org.json.JSONObject;
 public class RtmpStreamConfig {
 
     // Default values (16:9; native crop applied when sensor mode differs)
-    public static final int DEFAULT_VIDEO_WIDTH = 854;
-    public static final int DEFAULT_VIDEO_HEIGHT = 480;
+    public static final int DEFAULT_VIDEO_WIDTH = 1280;
+    public static final int DEFAULT_VIDEO_HEIGHT = 720;
     public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
-    public static final int DEFAULT_VIDEO_FPS = 15;
+    public static final int DEFAULT_VIDEO_FPS = 30;
+
+    // Resolution/FPS are hard-coded to 720p30; SDK-provided width/height/frameRate are ignored.
+    private static final boolean FORCE_HARDCODED_RESOLUTION = true;
 
     public static final int DEFAULT_AUDIO_BITRATE = 64000; // 64 kbps
     public static final int DEFAULT_AUDIO_SAMPLE_RATE = 44100;
@@ -55,16 +58,23 @@ public class RtmpStreamConfig {
 
         // Parse video config (supports both full and compact keys)
         if (videoJson != null) {
-            config.videoWidth = optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH);
-            config.videoHeight = optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT);
-            config.videoBitrate = optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE);
-            config.videoFps = optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS);
+            if (FORCE_HARDCODED_RESOLUTION) {
+                // Resolution/FPS are hard-coded to 720p30; ignore any SDK-requested values.
+                config.videoWidth = DEFAULT_VIDEO_WIDTH;
+                config.videoHeight = DEFAULT_VIDEO_HEIGHT;
+                config.videoFps = DEFAULT_VIDEO_FPS;
+            } else {
+                config.videoWidth = optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH);
+                config.videoHeight = optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT);
+                config.videoFps = optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS);
 
-            // Validate and clamp values to reasonable ranges
-            config.videoWidth = clamp(config.videoWidth, 320, 1920);
-            config.videoHeight = clamp(config.videoHeight, 240, 1080);
+                // Validate and clamp values to reasonable ranges
+                config.videoWidth = clamp(config.videoWidth, 320, 1920);
+                config.videoHeight = clamp(config.videoHeight, 240, 1080);
+                config.videoFps = clamp(config.videoFps, 10, 60);
+            }
+            config.videoBitrate = optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE);
             config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000); // 100 kbps to 10 Mbps
-            config.videoFps = clamp(config.videoFps, 10, 60);
         }
 
         // Parse audio config (supports both full and compact keys)
@@ -125,12 +135,12 @@ public class RtmpStreamConfig {
 
     // Setters with validation
     public RtmpStreamConfig setVideoWidth(int width) {
-        this.videoWidth = clamp(width, 320, 1920);
+        this.videoWidth = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_WIDTH : clamp(width, 320, 1920);
         return this;
     }
 
     public RtmpStreamConfig setVideoHeight(int height) {
-        this.videoHeight = clamp(height, 240, 1080);
+        this.videoHeight = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_HEIGHT : clamp(height, 240, 1080);
         return this;
     }
 
@@ -140,7 +150,7 @@ public class RtmpStreamConfig {
     }
 
     public RtmpStreamConfig setVideoFps(int fps) {
-        this.videoFps = clamp(fps, 10, 60);
+        this.videoFps = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_FPS : clamp(fps, 10, 60);
         return this;
     }
 

@@ -44,17 +44,17 @@ public class WhipStreamConfigTest {
     }
 
     @Test
-    public void videoClamps_matchRtmpThresholds() throws JSONException {
+    public void widthHeightFps_areHardcodedRegardlessOfJson() throws JSONException {
         JSONObject low = new JSONObject();
         low.put("width", 100);
         low.put("height", 100);
         low.put("bitrate", 1);
         low.put("frameRate", 1);
         WhipStreamConfig c = WhipStreamConfig.fromJson(low, null);
-        assertEquals(320, c.getVideoWidth());
-        assertEquals(240, c.getVideoHeight());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
         assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(10, c.getVideoFps());
+        assertEquals(30, c.getVideoFps());
 
         JSONObject high = new JSONObject();
         high.put("width", 4000);
@@ -62,10 +62,10 @@ public class WhipStreamConfigTest {
         high.put("bitrate", 100_000_000);
         high.put("frameRate", 240);
         c = WhipStreamConfig.fromJson(high, null);
-        assertEquals(1920, c.getVideoWidth());
-        assertEquals(1080, c.getVideoHeight());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
         assertEquals(10_000_000, c.getVideoBitrate());
-        assertEquals(60, c.getVideoFps());
+        assertEquals(30, c.getVideoFps());
     }
 
     @Test

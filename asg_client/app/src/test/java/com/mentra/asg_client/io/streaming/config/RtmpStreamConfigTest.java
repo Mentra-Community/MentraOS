@@ -60,37 +60,37 @@ public class RtmpStreamConfigTest {
     }
 
     @Test
-    public void videoClamps_widthAndHeight() throws JSONException {
+    public void widthHeightFps_areHardcodedRegardlessOfJson() throws JSONException {
         JSONObject low = new JSONObject();
         low.put("width", 100);
         low.put("height", 100);
+        low.put("frameRate", 1);
         RtmpStreamConfig c = RtmpStreamConfig.fromJson(low, null);
-        assertEquals(320, c.getVideoWidth());
-        assertEquals(240, c.getVideoHeight());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
+        assertEquals(30, c.getVideoFps());
 
         JSONObject high = new JSONObject();
         high.put("width", 4000);
         high.put("height", 4000);
+        high.put("frameRate", 240);
         c = RtmpStreamConfig.fromJson(high, null);
-        assertEquals(1920, c.getVideoWidth());
-        assertEquals(1080, c.getVideoHeight());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
+        assertEquals(30, c.getVideoFps());
     }
 
     @Test
-    public void videoClamps_bitrateAndFrameRate() throws JSONException {
+    public void videoClamps_bitrate() throws JSONException {
         JSONObject low = new JSONObject();
         low.put("bitrate", 1);
-        low.put("frameRate", 1);
         RtmpStreamConfig c = RtmpStreamConfig.fromJson(low, null);
         assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(10, c.getVideoFps());
 
         JSONObject high = new JSONObject();
         high.put("bitrate", 100_000_000);
-        high.put("frameRate", 240);
         c = RtmpStreamConfig.fromJson(high, null);
         assertEquals(10_000_000, c.getVideoBitrate());
-        assertEquals(60, c.getVideoFps());
     }
 
     @Test
@@ -114,10 +114,10 @@ public class RtmpStreamConfigTest {
 
     @Test
     public void setCaptureSize_zeroHeightClearsCapture() {
-        RtmpStreamConfig c = new RtmpStreamConfig().setVideoWidth(854).setVideoHeight(480);
-        c.setCaptureSize(1280, 0);
-        assertEquals(854, c.getCaptureSurfaceWidth());
-        assertEquals(480, c.getCaptureSurfaceHeight());
+        RtmpStreamConfig c = new RtmpStreamConfig().setVideoWidth(1280).setVideoHeight(720);
+        c.setCaptureSize(1920, 0);
+        assertEquals(1280, c.getCaptureSurfaceWidth());
+        assertEquals(720, c.getCaptureSurfaceHeight());
     }
 
     @Test

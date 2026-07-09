@@ -7,10 +7,13 @@ import org.json.JSONObject;
  */
 public class WhipStreamConfig {
 
-  public static final int DEFAULT_VIDEO_WIDTH = 854;
-  public static final int DEFAULT_VIDEO_HEIGHT = 480;
-  public static final int DEFAULT_VIDEO_FPS = 15;
+  public static final int DEFAULT_VIDEO_WIDTH = 1280;
+  public static final int DEFAULT_VIDEO_HEIGHT = 720;
+  public static final int DEFAULT_VIDEO_FPS = 30;
   public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
+
+  // Resolution/FPS are hard-coded to 720p30; SDK-provided width/height/frameRate are ignored.
+  private static final boolean FORCE_HARDCODED_RESOLUTION = true;
 
   public static final boolean DEFAULT_ECHO_CANCELLATION = false;
   public static final boolean DEFAULT_NOISE_SUPPRESSION = false;
@@ -40,10 +43,17 @@ public class WhipStreamConfig {
     WhipStreamConfig config = new WhipStreamConfig();
 
     if (videoJson != null) {
-      config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
-      config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
+      if (FORCE_HARDCODED_RESOLUTION) {
+        // Resolution/FPS are hard-coded to 720p30; ignore any SDK-requested values.
+        config.videoWidth = DEFAULT_VIDEO_WIDTH;
+        config.videoHeight = DEFAULT_VIDEO_HEIGHT;
+        config.videoFps = DEFAULT_VIDEO_FPS;
+      } else {
+        config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
+        config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
+        config.videoFps = clamp(optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS), 10, 60);
+      }
       config.videoBitrate = clamp(optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE), 100000, 10000000);
-      config.videoFps = clamp(optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS), 10, 60);
     }
 
     if (audioJson != null) {
@@ -79,17 +89,17 @@ public class WhipStreamConfig {
 
   // Setters with validation (fluent API)
   public WhipStreamConfig setVideoWidth(int width) {
-    this.videoWidth = clamp(width, 320, 1920);
+    this.videoWidth = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_WIDTH : clamp(width, 320, 1920);
     return this;
   }
 
   public WhipStreamConfig setVideoHeight(int height) {
-    this.videoHeight = clamp(height, 240, 1080);
+    this.videoHeight = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_HEIGHT : clamp(height, 240, 1080);
     return this;
   }
 
   public WhipStreamConfig setVideoFps(int fps) {
-    this.videoFps = clamp(fps, 10, 60);
+    this.videoFps = FORCE_HARDCODED_RESOLUTION ? DEFAULT_VIDEO_FPS : clamp(fps, 10, 60);
     return this;
   }
 
