@@ -315,6 +315,33 @@ export class AccountAuthProvider extends AuthClient {
     })
   }
 
+  public requestAccountDeletion(): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const access = await this.ensureFreshAccess()
+      const res = await fetch(core("/api/account/delete/request"), {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        body: JSON.stringify({}),
+      })
+      if (!res.ok && res.status !== 202) await throwApiError(res)
+    })
+  }
+
+  public confirmAccountDeletion(code: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      const access = await this.ensureFreshAccess()
+      const res = await fetch(core("/api/account/delete/confirm"), {
+        method: "POST",
+        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        body: JSON.stringify({code}),
+      })
+      if (!res.ok) await throwApiError(res)
+      // The account is gone; the server revoked every session already.
+      clearTokens()
+      stateCb?.("SIGNED_OUT", {token: undefined})
+    })
+  }
+
   /** Build the OAuth start URL for the system browser. The PKCE verifier and
    * state stay in MMKV; only the S256 challenge leaves the device, so an
    * intercepted deep link cannot be completed without the verifier. */

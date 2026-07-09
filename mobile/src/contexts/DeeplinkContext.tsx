@@ -231,18 +231,12 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       }
 
       if (authParams && authParams.access_token && authParams.refresh_token) {
-        // Update the Supabase session manually
-        const res = await mentraAuth.updateSessionWithTokens({
-          access_token: authParams.access_token,
-          refresh_token: authParams.refresh_token,
-        })
-        if (res.is_error()) {
-          console.error("Error setting session:", res.error)
-          return
-        }
-        // console.log("Session updated:", data.session)
-        // console.log("[LOGIN DEBUG] Session set successfully, data.session exists:", !!data.session)
-        console.log("[LOGIN DEBUG] Session set successfully")
+        // Fragment tokens come from GoTrue links (email verification, legacy
+        // magic links). They are SUPABASE tokens: adopting them as V2 tokens
+        // via updateSessionWithTokens would persist a broken session (every
+        // core call rejects them). The account backend never hands tokens over
+        // deep links, so just confirm the verification and route to login.
+        console.log("[LOGIN DEBUG] GoTrue fragment link (type:", authParams.type, ") — routing to login")
         // Dismiss the WebView after successful authentication (non-blocking)
         console.log("[LOGIN DEBUG] About to dismiss browser, platform:", Platform.OS)
         try {
@@ -258,21 +252,17 @@ const deepLinkRoutes: DeepLinkRoute[] = [
           // Ignore - browser might not be open or function might not exist
         }
 
-        // Small delay to ensure auth state propagates
+        // The email is now verified server-side; the user signs in normally.
         // Use replace() instead of replaceAll() to avoid POP_TO_TOP errors
-        // when the navigation stack is empty (coming back from browser)
-        console.log("[LOGIN DEBUG] About to set timeout for navigation")
+        // when the navigation stack is empty (coming back from browser).
         BgTimer.setTimeout(() => {
-          console.log("[LOGIN DEBUG] Inside setTimeout, navigating to index")
           try {
             nav.setAnimation("none")
-            nav.replaceAll("/")
-            console.log("[LOGIN DEBUG] router.replace called successfully")
+            nav.replace("/auth/start")
           } catch (navError) {
-            console.error("[LOGIN DEBUG] Error calling router.replace:", navError)
+            console.error("[LOGIN DEBUG] Error navigating to login:", navError)
           }
         }, 100)
-        console.log("[LOGIN DEBUG] setTimeout scheduled")
         return // Don't do the navigation below
       }
 

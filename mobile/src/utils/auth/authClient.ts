@@ -48,6 +48,16 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
+  /** Start account deletion: the backend emails a confirmation code. */
+  public requestAccountDeletion(): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Finish account deletion with the emailed code. Destroys the account. */
+  public confirmAccountDeletion(_code: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
   public getSession(): AsyncResult<MentraAuthSession, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }

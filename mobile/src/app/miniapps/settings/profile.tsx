@@ -10,11 +10,10 @@ import {useAuth} from "@/contexts/AuthContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import restComms from "@/services/RestComms"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {mapAuthError} from "@/utils/auth/authErrors"
 
 // Default user icon component for profile pictures
 const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: string}) => {
@@ -152,56 +151,17 @@ export default function ProfileSettingsPage() {
   const proceedWithAccountDeletion = async () => {
     console.log("Profile: User confirmed account deletion - proceeding")
 
-    let deleteRequestSuccessful = false
-
-    console.log("Profile: Requesting account deletion from server")
-    const result = await restComms.requestAccountDeletion()
-
-    // Check if the result indicates success
-    if (result.is_ok()) {
-      deleteRequestSuccessful = true
-      console.log("Profile: Account deletion request successful")
-    } else {
+    // Account backend flow (issue 019): request emails a one-time code; the
+    // account is only destroyed when the code is confirmed. Keep the session
+    // alive here — the confirm call needs it — and finish (including logout)
+    // on the confirm-deletion screen.
+    const result = await mentraAuth.requestAccountDeletion()
+    if (result.is_error()) {
       console.error("Profile: Error requesting account deletion:", result.error)
-      deleteRequestSuccessful = false
+      showAlert(translate("common:error"), mapAuthError(result.error), [{text: translate("common:ok")}])
+      return
     }
-
-    // Always perform logout regardless of deletion request success
-    try {
-      console.log("Profile: Starting comprehensive logout")
-      await LogoutUtils.performCompleteLogout()
-      console.log("Profile: Logout completed successfully")
-    } catch (logoutError) {
-      console.error("Profile: Error during logout:", logoutError)
-      // Continue with navigation even if logout fails
-    }
-
-    // Show appropriate message based on deletion request result
-    if (deleteRequestSuccessful) {
-      showAlert(
-        translate("profileSettings:deleteAccountSuccessTitle"),
-        translate("profileSettings:deleteAccountSuccessMessage"),
-        [
-          {
-            text: translate("common:ok"),
-            onPress: () => replace("/"),
-          },
-        ],
-        {cancelable: false},
-      )
-    } else {
-      showAlert(
-        translate("profileSettings:deleteAccountPendingTitle"),
-        translate("profileSettings:deleteAccountPendingMessage"),
-        [
-          {
-            text: translate("common:ok"),
-            onPress: () => replace("/"),
-          },
-        ],
-        {cancelable: false},
-      )
-    }
+    push("/miniapps/settings/confirm-deletion")
   }
 
   const handleSignOut = async () => {

@@ -76,16 +76,21 @@ app.post(
 
 // === Authenticated ===
 
-app.post("/logout", userAuth, async (c) => {
-  const u = c.var.user!;
-  const { everywhere } = await json(c);
-  if (everywhere) {
-    await revokeAllSessionsForUser({ mentraUserId: u.mentraUserId });
-  } else {
-    await revokeSession({ sessionId: u.sessionId });
-  }
-  return c.body(null, 204);
-});
+app.post(
+  "/logout",
+  accountRateLimit({ scope: "logout", limit: 30, windowSec: 60 }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const { everywhere } = await json(c);
+    if (everywhere) {
+      await revokeAllSessionsForUser({ mentraUserId: u.mentraUserId });
+    } else {
+      await revokeSession({ sessionId: u.sessionId });
+    }
+    return c.body(null, 204);
+  },
+);
 
 app.get("/me", userAuth, async (c) => {
   const u = c.var.user!;
@@ -153,12 +158,17 @@ app.post(
   },
 );
 
-app.post("/delete/request", userAuth, async (c) => {
-  const u = c.var.user!;
-  const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
-  await account.requestAccountDeletion(email, tenantUserId);
-  return c.json({ status: "verification_sent" }, 202);
-});
+app.post(
+  "/delete/request",
+  accountRateLimit({ scope: "delrequest", limit: 5, windowSec: 300 }),
+  userAuth,
+  async (c) => {
+    const u = c.var.user!;
+    const { tenantUserId, email } = await authedIdentity(u.mentraUserId);
+    await account.requestAccountDeletion(email, tenantUserId);
+    return c.json({ status: "verification_sent" }, 202);
+  },
+);
 
 app.post(
   "/delete/confirm",

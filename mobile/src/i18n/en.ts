@@ -697,6 +697,10 @@ const en = {
       "This will PERMANENTLY DELETE:\n• All your data\n• All your settings\n• All your app configurations\n• Your entire account history\n\nThere is NO way to recover this data!",
     deleteAccountSuccessTitle: "Account Deleted",
     deleteAccountSuccessMessage: "Your account has been successfully deleted.",
+    deleteAccountCodeSubtitle:
+      "We emailed you a confirmation code. Enter it below to permanently delete your account.",
+    deleteAccountCodePlaceholder: "Confirmation code",
+    deleteAccountConfirmButton: "Delete My Account",
     deleteAccountPendingTitle: "Account Deletion Requested",
     deleteAccountPendingMessage:
       "Your account deletion request has been received and will be processed within 2-3 business days.",
