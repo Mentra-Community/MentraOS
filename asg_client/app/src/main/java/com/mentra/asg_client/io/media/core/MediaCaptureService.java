@@ -1639,6 +1639,190 @@ public class MediaCaptureService {
     }
 
     /**
+     * Capture a photo that is only saved to the gallery: an SDK take_photo with save=true
+     * and no upload target. There is no delivery leg (no webhook upload, no BLE transfer),
+     * so this bypasses the single-flight photo-job gate and enqueues straight into the
+     * camera queue, exactly like button photos — rapid bursts serialize at the camera
+     * instead of failing CAMERA_BUSY. The terminal photo_response carries the captureId
+     * (the requestId-stamped capture directory name) for sync-time correlation.
+     */
+    public boolean takePhotoForLocalSave(
+            String photoFilePath,
+            String requestId,
+            String size,
+            boolean enableFlash,
+            boolean enableSound,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
+        if (captureSettings == null) {
+            captureSettings = PhotoCaptureSettings.EMPTY;
+        }
+
+        // Photos cannot interrupt streams
+        if (RtmpStreamingService.isStreaming()
+                || SrtStreamingService.isStreaming()
+                || WhipStreamingService.isStreaming()) {
+            Log.e(TAG, "Cannot take local-save photo - streaming active");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
+            return false;
+        }
+
+        if (CameraRestartCooldown.isActive()) {
+            Log.w(TAG, "Cannot take local-save photo - camera HAL restarting after FOV change");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            return false;
+        }
+
+        StorageManager storageManager = StorageManager.getInstance(mContext);
+        if (!storageManager.canTakePhoto()) {
+            Log.w(TAG, "🚫 Local-save photo rejected - insufficient storage");
+            playStorageFullSound();
+            sendPhotoErrorResponse(
+                    requestId,
+                    "INSUFFICIENT_STORAGE",
+                    "Insufficient storage space for photo capture");
+            return false;
+        }
+
+        Log.i(
+                TAG,
+                "📸 take_photo (local-save) accepted requestId="
+                        + requestId
+                        + " size="
+                        + size
+                        + " path="
+                        + photoFilePath);
+        sendPhotoStatus(requestId, "queued");
+
+        // The capture directory name is the stable capture_id exposed by gallery sync.
+        File captureDirFile = new File(photoFilePath).getParentFile();
+        final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
+
+        if (!shouldSuppressPhotoFeedback()) {
+            triggerPhotoFlashLed();
+            if (enableSound) {
+                // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
+                playShutterSound(size, true, exposureTimeNs);
+            }
+            if (enableFlash) {
+                flashPrivacyLedForPhoto();
+            }
+        }
+
+        try {
+            CameraNeoService.enqueuePhotoRequest(
+                    mContext,
+                    photoFilePath,
+                    size,
+                    enableFlash,
+                    true, // isFromSdk — honor the SDK size tier
+                    exposureTimeNs,
+                    iso,
+                    captureSettings,
+                    new CameraNeoService.PhotoCaptureCallback() {
+                        @Override
+                        public void onPhotoConfigured(JSONObject resolvedConfig) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "configuring",
+                                    addPhotoTransferDetails(resolvedConfig, true, "local", "none"),
+                                    null,
+                                    null);
+                        }
+
+                        @Override
+                        public void onPhotoCapturing(
+                                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "capturing",
+                                    null,
+                                    null,
+                                    null,
+                                    requestedCaptureConfig,
+                                    meteredPreview,
+                                    null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath) {
+                            onPhotoCaptured(filePath, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            Log.d(TAG, "Local-save photo captured: " + filePath);
+                            sendPhotoStatus(
+                                    requestId,
+                                    "captured",
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    captureMetadata);
+
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+                            }
+
+                            sendLocalSaveSuccessResponse(requestId, captureId);
+                            sendGalleryStatusUpdate();
+                        }
+
+                        @Override
+                        public void onPhotoError(String errorMessage) {
+                            Log.e(TAG, "Failed to capture local-save photo: " + errorMessage);
+                            sendPhotoErrorResponse(
+                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
+
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onMediaError(
+                                        requestId,
+                                        errorMessage,
+                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                            }
+                        }
+                    });
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error taking local-save photo", e);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Terminal success for a local-save capture: no uploadUrl (nothing was delivered);
+     * carries the captureId so the caller can match the file at gallery-sync time.
+     */
+    private void sendLocalSaveSuccessResponse(String requestId, String captureId) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_response");
+            json.put("requestId", requestId);
+            json.put("state", "success");
+            json.put("success", true);
+            json.put("saved", true);
+            json.put("captureId", captureId);
+            json.put("timestamp", System.currentTimeMillis());
+
+            Log.i(TAG, "📸 SENDING LOCAL-SAVE COMPLETE: requestId=" + requestId);
+
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+                Log.i(TAG, "📸 SENT VIA BLE: " + json);
+            } else {
+                Log.e(TAG, "❌ Service callback not available for local-save photo response");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating local-save photo response", e);
+        }
+    }
+
+    /**
      * Take a photo and upload it to the specified destination
      *
      * @param photoFilePath Local path where photo will be saved
