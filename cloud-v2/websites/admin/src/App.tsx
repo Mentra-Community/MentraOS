@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
@@ -148,10 +148,15 @@ export function App() {
   );
 }
 
+// Deep link used by report Slack notifications: /?report=rep_… lands on the
+// Incident system page with that report open. Read once at load; the param is
+// cleared from the address bar after it is consumed.
+const deepLinkReportId = new URLSearchParams(window.location.search).get("report");
+
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>("home");
+  const [page, setPage] = useState<AdminPageKey>(deepLinkReportId ? "incidents" : "home");
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -357,7 +362,7 @@ function AdminPage() {
 
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
-      {page === "incidents" ? <ReportsPage /> : null}
+      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
 
       {detailRelease ? (
         <SubmissionDetail
@@ -819,10 +824,16 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
   );
 }
 
-function ReportsPage() {
+function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
   const [kind, setKind] = useState<"all" | ReportKind>("all");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(initialReportId);
+
+  useEffect(() => {
+    // Consume the deep link so refreshes and later visits to this page do not
+    // keep reopening the same report.
+    if (initialReportId) window.history.replaceState(null, "", window.location.pathname);
+  }, [initialReportId]);
 
   const reports = useQuery({
     queryKey: ["admin-reports", kind, status],
