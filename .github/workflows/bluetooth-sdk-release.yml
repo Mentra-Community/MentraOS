@@ -155,8 +155,7 @@ jobs:
           NOW_SECONDS=$(git show -s --format=%ct HEAD)
           VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
           SHORT_SHA=$(git rev-parse --short HEAD)
-          BUILD_TIMESTAMP=$(date -u -r "$NOW_SECONDS" +%Y%m%d.%H%M%S)
-          VERSION_NAME="sdk.${SDK_VERSION}.${BUILD_TIMESTAMP}.${SHORT_SHA}"
+          VERSION_NAME="${SDK_VERSION}"
 
           echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
