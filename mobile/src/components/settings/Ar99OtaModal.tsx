@@ -1,28 +1,14 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {ActivityIndicator, Modal, Platform, TouchableOpacity, View} from "react-native"
+import {ActivityIndicator, Modal, TouchableOpacity, View} from "react-native"
 
 import BluetoothSdk, {Ar99OtaStatusEvent} from "@mentra/bluetooth-sdk"
 import {toolkit} from "@mentra/island"
 
 import {Text} from "@/components/ignite"
-import {
-  Ar99VersionInfo,
-  checkAr99OtaVersion,
-  clearAr99OtaFiles,
-  downloadAr99Firmware,
-} from "@/services/ar99Ota"
+import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
-type OtaPhase =
-  | "unsupported"
-  | "checking"
-  | "no_update"
-  | "confirm"
-  | "downloading"
-  | "transferring"
-  | "paused"
-  | "success"
-  | "failed"
+type OtaPhase = "checking" | "no_update" | "confirm" | "downloading" | "transferring" | "paused" | "success" | "failed"
 
 interface Ar99OtaModalProps {
   visible: boolean
@@ -45,10 +31,7 @@ function readAr99DeviceInfo() {
 async function waitForAr99SerialNumber(firmwareVersion: string) {
   const deadline = Date.now() + DEVICE_INFO_WAIT_MS
   let info = readAr99DeviceInfo()
-  while (
-    (!info.serialNumber || info.firmwareVersion.trim() !== firmwareVersion.trim()) &&
-    Date.now() < deadline
-  ) {
+  while ((!info.serialNumber || info.firmwareVersion.trim() !== firmwareVersion.trim()) && Date.now() < deadline) {
     await sleep(DEVICE_INFO_POLL_MS)
     info = readAr99DeviceInfo()
   }
@@ -77,15 +60,6 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   }, [])
 
   const checkVersion = useCallback(async () => {
-    if (Platform.OS !== "android") {
-      setPhase("unsupported")
-      setProgress(0)
-      setOffset(0)
-      setTotal(0)
-      setErrorMessage("")
-      setVersionInfo(null)
-      return
-    }
     setPhase("checking")
     setProgress(0)
     setOffset(0)
@@ -145,7 +119,11 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       } else if (nativePhase === "failed" || nativePhase === "cancelled") {
         setOffset(event.offset ?? 0)
         setTotal(event.total ?? 0)
-        setErrorMessage(event.errorMessage || event.error_message || "AR99 OTA failed.")
+        setErrorMessage(
+          nativePhase === "cancelled"
+            ? "AR99 OTA was cancelled. You can retry the update after reconnecting the glasses."
+            : event.errorMessage || event.error_message || "AR99 OTA failed.",
+        )
         setPhase("failed")
         await cleanupDownloadedFile()
       }
@@ -183,6 +161,16 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     }
   }, [cleanupDownloadedFile, versionInfo])
 
+  const cancelPausedUpgrade = useCallback(async () => {
+    try {
+      await BluetoothSdk.cancelAr99Ota()
+    } finally {
+      setErrorMessage("AR99 OTA was cancelled. You can retry the update after reconnecting the glasses.")
+      setPhase("failed")
+      await cleanupDownloadedFile()
+    }
+  }, [cleanupDownloadedFile])
+
   const close = useCallback(() => {
     if (!canDismiss) return
     onClose()
@@ -192,8 +180,6 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     switch (phase) {
       case "checking":
         return "Checking firmware"
-      case "unsupported":
-        return "Firmware update unavailable"
       case "no_update":
         return "Firmware is up to date"
       case "confirm":
@@ -232,10 +218,6 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
 
           {phase === "checking" && <ActivityIndicator color={theme.colors.foreground} />}
 
-          {phase === "unsupported" && (
-            <Text className="text-sm text-muted-foreground" text="AR99 firmware update is only supported on Android." />
-          )}
-
           {phase === "no_update" && (
             <Text className="text-sm text-muted-foreground" text={`Current version: ${currentVersion || "--"}`} />
           )}
@@ -243,7 +225,10 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
           {phase === "confirm" && versionInfo && (
             <View style={{gap: theme.spacing.s2}}>
               <Text className="text-sm text-secondary-foreground" text={`Current: ${currentVersion || "--"}`} />
-              <Text className="text-sm text-secondary-foreground" text={`Latest: ${versionInfo.currentVersion || "--"}`} />
+              <Text
+                className="text-sm text-secondary-foreground"
+                text={`Latest: ${versionInfo.currentVersion || "--"}`}
+              />
               {!!serialNumber && <Text className="text-xs text-muted-foreground" text={`SN: ${serialNumber}`} />}
               {!!versionInfo.changeLog && (
                 <Text className="text-sm text-muted-foreground" text={versionInfo.changeLog.trim()} />
@@ -253,9 +238,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
 
           {(phase === "downloading" || phase === "transferring" || phase === "paused") && (
             <View style={{gap: theme.spacing.s2}}>
-              <View
-                className="h-2 w-full overflow-hidden rounded-full"
-                style={{backgroundColor: theme.colors.border}}>
+              <View className="h-2 w-full overflow-hidden rounded-full" style={{backgroundColor: theme.colors.border}}>
                 <View
                   className="h-2 rounded-full"
                   style={{
@@ -267,14 +250,21 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
               <Text className="text-sm text-muted-foreground" text={`${Math.max(0, Math.min(100, progress))}%`} />
               {!!progressDetail && <Text className="text-sm text-muted-foreground" text={progressDetail} />}
               {phase === "paused" && (
-                <Text className="text-sm text-muted-foreground" text="Keep the app open and reconnect the glasses." />
+                <Text
+                  className="text-sm text-muted-foreground"
+                  text="Reconnect the glasses to continue, or cancel and retry later."
+                />
               )}
             </View>
           )}
 
-          {phase === "success" && <Text className="text-sm text-muted-foreground" text="The AR99 firmware update finished." />}
+          {phase === "success" && (
+            <Text className="text-sm text-muted-foreground" text="The AR99 firmware update finished." />
+          )}
 
-          {phase === "failed" && <Text className="text-sm text-destructive" text={errorMessage || "Firmware update failed."} />}
+          {phase === "failed" && (
+            <Text className="text-sm text-destructive" text={errorMessage || "Firmware update failed."} />
+          )}
 
           <View className="flex-row justify-end gap-3">
             {phase === "confirm" && canDismiss && (
@@ -282,7 +272,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
             )}
             {phase === "confirm" && <ModalButton label="Upgrade" onPress={startUpgrade} />}
             {phase === "no_update" && <ModalButton label="Done" onPress={close} />}
-            {phase === "unsupported" && <ModalButton label="Done" onPress={close} />}
+            {phase === "paused" && <ModalButton label="Cancel" onPress={cancelPausedUpgrade} muted />}
             {phase === "success" && <ModalButton label="Done" onPress={close} />}
             {phase === "failed" && <ModalButton label="Retry" onPress={checkVersion} muted />}
             {phase === "failed" && canDismiss && <ModalButton label="Close" onPress={close} />}

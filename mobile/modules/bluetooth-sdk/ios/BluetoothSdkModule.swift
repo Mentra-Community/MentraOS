@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import CryptoKit
 import Foundation
 
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
@@ -62,6 +63,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "ota_progress",
             "ota_start_ack",
             "ota_status",
+            "ar99_ota_status",
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -430,6 +432,23 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("sendOtaQueryStatus") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.sendOtaQueryStatus().values
+        }
+
+        AsyncFunction("startAr99OtaFromFile") { (path: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await MainActor.run { try sdk.startAr99OtaFromFile(path) }
+        }
+
+        AsyncFunction("cancelAr99Ota") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await MainActor.run { sdk.cancelAr99Ota() }
+        }
+
+        Function("buildAr99OtaSignature") { (currentVersion: String, serialNumber: String, nonce: String) in
+            let secret = "a01afc69-b5c6-477a-88ca-5039cf795086"
+            let raw = secret + "AR99" + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
+            let digest = Insecure.MD5.hash(data: Data(raw.utf8))
+            return digest.map { String(format: "%02x", $0) }.joined()
         }
 
         // MARK: - Version Info Commands

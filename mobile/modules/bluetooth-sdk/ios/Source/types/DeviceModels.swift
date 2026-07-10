@@ -19,6 +19,7 @@ public enum DeviceModel: String {
     case z100
     case frame
     case nimo
+    case ar99
     case simulated
     case r1
 
@@ -40,6 +41,8 @@ public enum DeviceModel: String {
             DeviceTypes.FRAME
         case .nimo:
             DeviceTypes.NIMO
+        case .ar99:
+            DeviceTypes.AR99
         case .simulated:
             DeviceTypes.SIMULATED
         case .r1:
@@ -65,6 +68,8 @@ public enum DeviceModel: String {
             .frame
         case DeviceTypes.NIMO:
             .nimo
+        case DeviceTypes.AR99:
+            .ar99
         case DeviceTypes.SIMULATED:
             .simulated
         case ControllerTypes.R1:

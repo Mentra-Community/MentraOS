@@ -1129,6 +1129,15 @@ public final class MentraBluetoothSDK {
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
 
+    func startAr99OtaFromFile(_ path: String) throws -> Bool {
+        try requireGlassesConnected(operation: "start AR99 OTA")
+        return try DeviceManager.shared.startAr99OtaFromFile(path)
+    }
+
+    func cancelAr99Ota() {
+        DeviceManager.shared.cancelAr99Ota()
+    }
+
     private func getFreshGlassesStatus() async -> GlassesStatus {
         let status = glassesStatus
         if !status.connected || !status.buildNumber.isEmpty {

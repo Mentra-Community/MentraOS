@@ -631,6 +631,8 @@ struct ViewState {
             sgc = MentraLive()
         } else if wearable.contains(DeviceTypes.NIMO) {
             sgc = Nimo()
+        } else if wearable.contains(DeviceTypes.AR99) {
+            sgc = Ar99()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
@@ -1328,6 +1330,17 @@ struct ViewState {
     func sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    func startAr99OtaFromFile(_ path: String) throws -> Bool {
+        guard let ar99 = sgc as? Ar99 else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires AR99 glasses.")
+        }
+        return ar99.startOtaFromFile(path)
+    }
+
+    func cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
     }
 
     private func liveSgc() throws -> MentraLive {
