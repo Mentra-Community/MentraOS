@@ -46,10 +46,14 @@ describe("Core JWKS", () => {
 function setSigningEnv(): void {
   const access = createEd25519Keypair();
   const miniapp = createEd25519Keypair();
+  const account = createEd25519Keypair();
   process.env.MENTRA_JWT_PRIVATE_KEY = access.privateKey;
   process.env.MENTRA_JWT_PUBLIC_KEY = access.publicKey;
   process.env.MENTRA_MINIAPP_JWT_PRIVATE_KEY = miniapp.privateKey;
   process.env.MENTRA_MINIAPP_JWT_PUBLIC_KEY = miniapp.publicKey;
+  // getPublicJwks now also publishes the account-token key (issue 019).
+  process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY = account.privateKey;
+  process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY = account.publicKey;
   resetSigningKeyCache();
 }
 

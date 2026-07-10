@@ -52,6 +52,9 @@ export interface ReportSlackNotification {
     contactEmail?: string;
   } | null;
   feedback?: Record<string, unknown> | null;
+  /** Toolkit-collected diagnostic context (Mixed in Mongo, read defensively);
+   * feeds the compact System line. */
+  context?: Record<string, unknown> | null;
   /** Set on ready-time notifications: how many artifacts were attached. */
   artifactCount?: number;
 }
@@ -145,6 +148,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
     timeZone: "America/Los_Angeles",
   });
 
+  const consoleUrl = adminConsoleReportUrl(reportId);
   const identityFields = [
     { type: "mrkdwn", text: `*User:*\n${slackText(mentraUserId, SHORT_TEXT_MAX)}` },
     { type: "mrkdwn", text: `*Report ID:*\n\`${slackText(reportId, SHORT_TEXT_MAX)}\`` },
@@ -152,6 +156,9 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   ];
   if (artifactCount !== undefined) {
     identityFields.push({ type: "mrkdwn", text: `*Artifacts:*\n${artifactCount}` });
+  }
+  if (consoleUrl) {
+    identityFields.push({ type: "mrkdwn", text: `*Console:*\n<${consoleUrl}|Open incident>` });
   }
 
   const blocks: SlackBlock[] = [
@@ -184,6 +191,15 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   }
 
   blocks.push(...buildBodyBlocks(notification));
+
+  const systemLine = formatSystemLine(notification.context);
+  if (systemLine) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*System:* ${slackText(systemLine, BEHAVIOR_TEXT_MAX)}` },
+    });
+  }
+
   blocks.push({
     type: "section",
     text: { type: "mrkdwn", text: `_Submitted: ${timestamp}_` },
@@ -192,6 +208,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   const fallbackParts = [
     `New ${kind} report from ${mentraUserId} (${env})`,
     `Report ID: ${reportId}`,
+    ...(consoleUrl ? [`Console: ${consoleUrl}`] : []),
     ...(typeof trigger?.reason === "string"
       ? [`Trigger: ${truncate(trigger.reason, TRIGGER_TEXT_MAX)}`]
       : []),
@@ -300,6 +317,95 @@ function formatSourceApplet(trigger: ReportSlackNotification["trigger"]): string
  */
 function environmentLabel(): string {
   return process.env.CLOUD_CORE_ENVIRONMENT || "unknown";
+}
+
+/**
+ * Deep link to this report in the admin console (Incident system page).
+ * An explicit CLOUD_ADMIN_CONSOLE_URL wins; otherwise the URL is derived from
+ * the deployment environment per docs/runbooks/cloudflare/pages-websites.md
+ * (admin.<env>.mentraglass.com, admin.mentraglass.com for prod). Unknown
+ * environments get no link rather than a wrong one.
+ */
+function adminConsoleReportUrl(reportId: string): string | null {
+  const env = process.env.CLOUD_CORE_ENVIRONMENT;
+  const base =
+    process.env.CLOUD_ADMIN_CONSOLE_URL ||
+    (env === "prod" || env === "production"
+      ? "https://admin.mentraglass.com"
+      : env === "dev" || env === "staging"
+        ? `https://admin.${env}.mentraglass.com`
+        : null);
+  if (!base) return null;
+  return `${base.replace(/\/+$/, "")}/?report=${encodeURIComponent(reportId)}`;
+}
+
+/**
+ * Compact V1-style system summary built from the toolkit-collected context
+ * (see mobile island diagnosticContext). Context is client-sourced Mixed
+ * data, so every field is read defensively and value lengths are capped;
+ * the assembled line is escaped by the caller via slackText.
+ */
+function formatSystemLine(context: Record<string, unknown> | null | undefined): string | null {
+  if (!context || typeof context !== "object") return null;
+  const app = asRecord(context.app);
+  const phone = asRecord(context.phone);
+  const glasses = asRecord(context.glasses);
+  const settings = asRecord(context.settings);
+
+  const parts: string[] = [];
+  const push = (label: string, value: unknown) => {
+    if (typeof value === "string" && value.trim()) {
+      parts.push(`${label}: ${truncate(value.trim(), 80)}`);
+    }
+  };
+  push("App", app?.appVersion);
+  push("Platform", phone?.platform);
+  push("Device", phone?.deviceName);
+  push("OS", phone?.osVersion);
+  if (glasses) {
+    const connection = glassesConnectionLabel(glasses);
+    const model = firstNonEmptyString(glasses.deviceModel, glasses.modelName);
+    if (connection || model) {
+      const suffix = model ? ` (${truncate(model, 80)})` : "";
+      parts.push(`Glasses: ${connection ?? "Unknown"}${suffix}`);
+    }
+  }
+  push("Wearable", settings?.defaultWearable);
+
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+/**
+ * Human label for the glasses link state. The mobile toolkit sends the raw
+ * glasses store state, where `connection` is a `{ state: "connected" | ... }`
+ * object (btsdk GlassesConnectionStatus); a plain string or a normalized
+ * `connected` boolean are accepted for robustness against client versions.
+ */
+function glassesConnectionLabel(glasses: Record<string, unknown>): string | null {
+  if (typeof glasses.connected === "boolean") {
+    return glasses.connected ? "Connected" : "Disconnected";
+  }
+  const connection = glasses.connection;
+  const state =
+    typeof connection === "string" ? connection : asRecord(connection)?.state;
+  if (typeof state === "string" && state.trim()) {
+    const label = truncate(state.trim(), 40);
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
+  return null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 /**

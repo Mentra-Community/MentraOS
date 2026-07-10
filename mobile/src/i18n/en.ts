@@ -657,6 +657,8 @@ const en = {
     createdAt: "Created At",
     provider: "Provider",
     changePassword: "Change Password",
+    currentPassword: "Current Password",
+    enterCurrentPassword: "Enter your current password",
     newPassword: "New Password",
     enterNewPassword: "Enter your new password",
     confirmPassword: "Confirm Password",
@@ -695,6 +697,10 @@ const en = {
       "This will PERMANENTLY DELETE:\n• All your data\n• All your settings\n• All your app configurations\n• Your entire account history\n\nThere is NO way to recover this data!",
     deleteAccountSuccessTitle: "Account Deleted",
     deleteAccountSuccessMessage: "Your account has been successfully deleted.",
+    deleteAccountCodeSubtitle:
+      "We emailed you a confirmation code. Enter it below to permanently delete your account.",
+    deleteAccountCodePlaceholder: "Confirmation code",
+    deleteAccountConfirmButton: "Delete My Account",
     deleteAccountPendingTitle: "Account Deletion Requested",
     deleteAccountPendingMessage:
       "Your account deletion request has been received and will be processed within 2-3 business days.",
@@ -704,12 +710,16 @@ const en = {
     passwordUpdatedSuccess: "Password updated successfully",
     // Change email
     changeEmail: "Change Email",
-    changeEmailSubtitle: "Enter your new email address. We'll send a verification link to confirm the change.",
+    changeEmailSubtitle: "Enter your new email address and your password. We'll email a code to the new address to confirm the change.",
     newEmailPlaceholder: "New email address",
     sendVerificationEmail: "Send Verification Email",
     emailChangeRequested: "Verification Email Sent",
     checkNewEmailForVerification:
       "Please check your new email address and click the verification link to complete the change.",
+    emailChangeCodeSubtitle: "Enter the code we emailed to your new address.",
+    emailChangeCodePlaceholder: "Verification code",
+    confirmEmailChange: "Confirm Email Change",
+    emailChangeSuccess: "Email updated successfully",
   },
   login: {
     title: "MentraOS",

@@ -9,6 +9,7 @@ const savedEnv = {
   CLOUD_REPORTS_SLACK_WEBHOOK_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL,
   CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
   CLOUD_CORE_ENVIRONMENT: process.env.CLOUD_CORE_ENVIRONMENT,
+  CLOUD_ADMIN_CONSOLE_URL: process.env.CLOUD_ADMIN_CONSOLE_URL,
 };
 const realFetch = globalThis.fetch;
 
@@ -19,6 +20,7 @@ let fetchMock: ReturnType<typeof mock<FetchCall>>;
 beforeEach(() => {
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
+  delete process.env.CLOUD_ADMIN_CONSOLE_URL;
   process.env.CLOUD_CORE_ENVIRONMENT = "test-env";
   fetchMock = mock<FetchCall>(async () => new Response("ok", { status: 200 }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -32,6 +34,7 @@ afterEach(() => {
     savedEnv.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
   );
   restoreEnv("CLOUD_CORE_ENVIRONMENT", savedEnv.CLOUD_CORE_ENVIRONMENT);
+  restoreEnv("CLOUD_ADMIN_CONSOLE_URL", savedEnv.CLOUD_ADMIN_CONSOLE_URL);
 });
 
 describe("notifyReportSlack", () => {
@@ -104,6 +107,96 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("glasses stuck on boot screen");
     expect(blocksJson).toContain("*Artifacts:*\\n3");
     expect(blocksJson).toContain("*Env:*\\ntest-env");
+  });
+
+  test("links the report to the admin console for known environments", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
+    const blocksJson = JSON.stringify(payload.blocks);
+    expect(blocksJson).toContain(
+      "<https://admin.dev.mentraglass.com/?report=rep_TEST123|Open incident>",
+    );
+    expect(payload.text).toContain("https://admin.dev.mentraglass.com/?report=rep_TEST123");
+  });
+
+  test("prefers CLOUD_ADMIN_CONSOLE_URL over the derived console link", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_ADMIN_CONSOLE_URL = "https://admin.example.test/";
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain("<https://admin.example.test/?report=rep_TEST123|Open incident>");
+  });
+
+  test("omits the console link and System line when environment and context are unknown", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).not.toContain("Open incident");
+    expect(blocksJson).not.toContain("*System:*");
+  });
+
+  test("renders a System line from the raw mobile toolkit context", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    // Shape as the mobile island's collectDiagnosticContext actually sends it:
+    // the glasses store state with a GlassesConnectionStatus object and
+    // deviceModel, not a normalized connected/modelName pair.
+    await notifyReportSlack(
+      bugNotification({
+        context: {
+          app: { appVersion: "2.11.0" },
+          phone: { platform: "android", deviceName: "SM-S948U", osVersion: "android 36" },
+          glasses: { connection: { state: "connected" }, deviceModel: "Even Realities G2" },
+          settings: { defaultWearable: "Even Realities G2" },
+        },
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain(
+      "*System:* App: 2.11.0 | Platform: android | Device: SM-S948U | OS: android 36 | Glasses: Connected (Even Realities G2) | Wearable: Even Realities G2",
+    );
+  });
+
+  test("accepts a normalized glasses shape in the System line", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack(
+      bugNotification({
+        context: { glasses: { connected: false, modelName: "Mentra Live" } },
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain("*System:* Glasses: Disconnected (Mentra Live)");
+  });
+
+  test("escapes client-sourced context values in the System line", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack(
+      bugNotification({
+        context: { phone: { deviceName: "SM<S&>948", platform: 42, network: null } },
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain("Device: SM&lt;S&amp;&gt;948");
+    expect(blocksJson).not.toContain("Platform: 42");
   });
 
   test("truncates long user-authored text", async () => {

@@ -18,6 +18,9 @@ import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import restComms from "../services/RestComms"
 import {getConfigValues} from "../runtime/bootstrap"
+import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
+import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
+import {useAppStatusStore} from "../stores/apps"
 
 type CloudUrlOverrides = {core?: string; runtime?: string}
 
@@ -130,6 +133,55 @@ export const dev = {
   bluetoothStatus: (): Record<string, unknown> => {
     const {setCoreInfo: _setCoreInfo, reset: _reset, ...state} = useCoreStore.getState()
     return {...state}
+  },
+
+  /**
+   * Side-load a miniapp being served from a dev machine (the `mentra dev` / CLI
+   * flow) by its URL: probes `<url>/miniapp.json`, and on a reachable manifest
+   * registers it into the single dev slot so it appears in `toolkit.miniapps`
+   * and can be started. This is the OEM-host equivalent of the first-party
+   * developer-URL screen — the registration itself is island-internal, so a
+   * host reaches it here rather than the internal registry. Rendering still
+   * flows through the normal display path once the miniapp is started.
+   */
+  loadDevMiniapp: async (
+    url: string,
+    name?: string,
+  ): Promise<{ok: true; packageName: string; name: string} | {ok: false; error: string}> => {
+    const devUrl = url.trim().replace(/\/+$/, "")
+    if (!devUrl) return {ok: false, error: "empty url"}
+    const result = await decideDevLaunchRoute("", devUrl)
+    if (result.decision !== "live") {
+      return {ok: false, error: "dev server unreachable, or no miniapp.json served there"}
+    }
+    const manifest = result.manifest
+    // The `mentra-miniapp dev` server puts the hot-reload/log sidecar on the
+    // user port PLUS ONE — same convention as the first-party developer-URL
+    // screen's deriveDevPort.
+    let devPort: number | undefined
+    try {
+      const parsed = Number(new URL(devUrl).port)
+      devPort = Number.isFinite(parsed) && parsed > 0 ? parsed + 1 : undefined
+    } catch {
+      devPort = undefined
+    }
+    const appName = name ?? manifest.name ?? "Dev Miniapp"
+    registerDevApp({
+      // The REAL manifest package: registerDevApp preserves it as
+      // sourcePackageName (miniapp auth + dev-slot cleanup key off it) before
+      // forcing packageName to the single dev slot.
+      packageName: (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME,
+      name: appName,
+      iconUrl: manifest.icon ? new URL(manifest.icon, `${devUrl}/`).toString() : `${devUrl}/icon.png`,
+      devUrl,
+      devPort,
+      type: manifest.type as DevAppRecord["type"],
+      permissions: manifest.permissions as DevAppRecord["permissions"],
+      hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      actions: manifest.actions as DevAppRecord["actions"],
+    })
+    await useAppStatusStore.getState().refresh()
+    return {ok: true, packageName: DEV_APP_PACKAGE_NAME, name: appName}
   },
 
   /** Current island runtime status for toolkit-owned debug surfaces. */

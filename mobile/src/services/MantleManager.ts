@@ -125,11 +125,13 @@ class MantleManager {
     toolkit.configure({
       auth: {
         getSubjectToken: async () => {
-          const res = await mentraAuth.getSession()
+          // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
+          // token which cloud-client exchanges at /api/client/auth/exchange.
+          const res = await mentraAuth.getSubjectToken()
           if (res.is_error() || !res.value.token) {
-            throw new Error("toolkit.configure: no session token available")
+            throw new Error("toolkit.configure: no subject token available")
           }
-          return {token: res.value.token, type: "supabase"}
+          return {token: res.value.token, type: res.value.type}
         },
         onStateChange: (callback) => mentraAuth.onAuthStateChange((event, session) => callback(event, session)),
       },
@@ -253,7 +255,10 @@ class MantleManager {
   }
 
   private async initServices() {
-    socketComms.connectWebsocket()
+    // Cloud V1 websocket intentionally NOT started: post-cutover there is no
+    // V1 coreToken, so it would dial prod with `token=` and retry-loop forever
+    // (burning battery on every boot). SocketComms/WSM removal lands in the
+    // V1-ripout PR; until then the path is dormant, not broken.
     gallerySyncService.initialize()
 
     // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +

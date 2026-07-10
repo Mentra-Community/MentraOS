@@ -807,6 +807,11 @@ public final class PhotoSession {
                 output.write(data);
             }
 
+            // Stamp the capture ID (directory name, carries the SDK requestId) into EXIF
+            // ImageUniqueID so the correlation survives renames and camera-roll export.
+            // Runs before finishImuRecording's EXIF pass; saveAttributes preserves it.
+            PhotoExifMetadataWriter.writeCaptureIdFromPath(filePath);
+
             Log.d(TAG, "Saved image to: " + filePath);
             return true;
         } catch (Exception e) {

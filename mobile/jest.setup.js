@@ -603,6 +603,7 @@ const mockIslandEntries = () => {
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
         getMemoryMB: jest.fn(() => 0),
+        loadDevMiniapp: jest.fn(() => Promise.resolve({ok: false, error: "not available in tests"})),
         bluetoothStatus: jest.fn(() => {
           const {setCoreInfo: _s, reset: _r, ...state} = realCore.useCoreStore.getState()
           return {...state}

@@ -134,26 +134,15 @@ export default function InitScreen() {
 
   const handleTokenExchange = async (): Promise<void> => {
     console.log("INDEX: handleTokenExchange()")
-    setBootPhase("Exchanging auth token…")
+    // Cloud V2 cutover (issue 019): the app holds V2 tokens directly. There is no
+    // legacy Cloud V1 exchange; cloud-client obtains and exchanges a subject token
+    // itself via the auth provider. Boot just needs a valid session, then init.
     const token = session?.token
     if (!token) {
       setState("auth")
       return
     }
 
-    let res = await restComms.exchangeToken(token)
-    if (res.is_error()) {
-      console.log("Token exchange failed:", res.error)
-      await checkCustomUrl()
-      setState("connection")
-      return
-    }
-
-    const coreToken = res.value
-    const uid = user?.email || user?.id || ""
-
-    socketComms.setAuthCreds(coreToken, uid)
-    console.log("INDEX: Socket comms auth creds set")
     setBootPhase("Initializing core…")
     await mantle.init()
 
