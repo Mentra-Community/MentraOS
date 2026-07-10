@@ -365,6 +365,11 @@ public class K900NetworkManager extends BaseNetworkManager {
     private void failHotspotStartup(String errorMessage) {
         Log.e(TAG, "🔥 ❌ " + errorMessage + " - disabling hotspot");
 
+        // This is a stop: the disable intent below produces its own teardown echo on the
+        // tethering broadcast, which must not restart the watch off lingering ssid/gateway.
+        // Runs under hotspotWatchLock (called from the watch tick).
+        hotspotStopRequested = true;
+
         try {
             Intent disableIntent = new Intent();
             disableIntent.setAction("com.xy.xsetting.action");

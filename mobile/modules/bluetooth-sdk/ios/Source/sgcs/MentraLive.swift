@@ -2245,13 +2245,17 @@ class MentraLive: NSObject, SGCManager {
             let connected = json["connected"] as? Bool ?? false
             let ssid = json["ssid"] as? String ?? ""
             let ip = json["local_ip"] as? String ?? ""
-            // Provisioning failure reason (e.g. connect_timeout); empty when connected
-            // or on older glasses firmware that doesn't send it.
+            // Provisioning failure reason (e.g. connect_timeout). Sticky: routine
+            // error-less status updates (link-state debounce, request_wifi_status)
+            // must not clear a failure nothing recovered from — only a newer error
+            // or a successful connection overwrites it.
             let wifiError = json["error"] as? String ?? ""
             if !wifiError.isEmpty {
                 Bridge.log("LIVE: 🌐 WiFi provisioning error from glasses: \(wifiError)")
+                DeviceStore.shared.apply("glasses", "wifiError", wifiError)
+            } else if connected {
+                DeviceStore.shared.apply("glasses", "wifiError", "")
             }
-            DeviceStore.shared.apply("glasses", "wifiError", wifiError)
             updateWifiStatus(connected: connected, ssid: ssid, ip: ip)
 
         case "hotspot_status_update":
