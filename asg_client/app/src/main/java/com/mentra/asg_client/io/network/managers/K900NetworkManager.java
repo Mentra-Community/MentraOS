@@ -49,6 +49,12 @@ public class K900NetworkManager extends BaseNetworkManager {
     private long hotspotReadinessStartMs = 0;
     private long hotspotReadinessDeadlineMs = 0;
 
+    // Watch ticks run on the main looper but stopHotspot can run on a command-processing
+    // thread. The lock + stop flag prevent a mid-flight tick from reporting "enabled"
+    // after the user disabled the AP (removeCallbacks alone can't cancel a running tick).
+    private final Object hotspotWatchLock = new Object();
+    private boolean hotspotStopRequested = false;
+
     /**
      * Create a new K900NetworkManager
      *
@@ -241,20 +247,32 @@ public class K900NetworkManager extends BaseNetworkManager {
      * generous multiple of that.
      */
     private void beginHotspotReadinessWatch() {
-        if (pendingHotspotReadinessRunnable != null) {
-            Log.d(TAG, "🔥 ⏳ Hotspot readiness watch already running");
-            return;
+        synchronized (hotspotWatchLock) {
+            hotspotStopRequested = false;
+            if (pendingHotspotReadinessRunnable != null) {
+                Log.d(TAG, "🔥 ⏳ Hotspot readiness watch already running");
+                return;
+            }
+            hotspotReadinessStartMs = System.currentTimeMillis();
+            hotspotReadinessDeadlineMs = hotspotReadinessStartMs + HOTSPOT_READINESS_TIMEOUT_MS;
         }
-        hotspotReadinessStartMs = System.currentTimeMillis();
-        hotspotReadinessDeadlineMs = hotspotReadinessStartMs + HOTSPOT_READINESS_TIMEOUT_MS;
         Log.d(TAG, "🔥 ⏳ Watching for hotspot readiness (AP state + gateway IP + SSID)...");
         checkHotspotReadiness();
     }
 
     /** One tick of the readiness watch; reschedules itself until ready, timeout, or cancel. */
     private void checkHotspotReadiness() {
-        pendingHotspotReadinessRunnable = null;
+        synchronized (hotspotWatchLock) {
+            pendingHotspotReadinessRunnable = null;
+            if (hotspotStopRequested) {
+                Log.d(TAG, "🔥 ⛔ Hotspot stopped - abandoning readiness check");
+                return;
+            }
+            checkHotspotReadinessLocked();
+        }
+    }
 
+    private void checkHotspotReadinessLocked() {
         // Gate on the direct signal: the tethering state machine assigns the gateway IP to
         // the AP interface only after hostapd reports AP-ENABLED, so gatewayUp implies the
         // AP accepts clients. The framework AP state (reflection, hidden API) is logged as
@@ -406,8 +424,12 @@ public class K900NetworkManager extends BaseNetworkManager {
             // Clear hotspot state immediately
             clearHotspotState();
 
-            // Cancel any pending readiness checks
-            cancelHotspotReadinessWatch();
+            // Cancel any pending readiness checks. The flag also stops a tick that is
+            // already executing on the main looper from reporting a late "enabled".
+            synchronized (hotspotWatchLock) {
+                hotspotStopRequested = true;
+                cancelHotspotReadinessWatch();
+            }
 
             Log.d(TAG, "🔥 ✅ K900 hotspot disable intent sent");
             notificationManager.showHotspotStateNotification(false);

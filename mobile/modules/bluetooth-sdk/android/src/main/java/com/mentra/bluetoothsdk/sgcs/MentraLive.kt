@@ -4704,6 +4704,11 @@ class MentraLive : SGCManager() {
      * pattern
      */
     private fun updateBatteryStatus(level: Int, isCharging: Boolean) {
+        // Keep the field in sync: percent-only messages (battery_status/sr_batv) re-pass
+        // it as the last-known charging state, so a stale field would clobber the value
+        // the sr_hrt PMU charg bit established.
+        this.isCharging = isCharging
+
         // Update parent SGCManager fields
         DeviceStore.apply("glasses", "batteryLevel", level)
         DeviceStore.apply("glasses", "charging", isCharging)
