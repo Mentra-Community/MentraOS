@@ -3155,10 +3155,12 @@ class MentraLive : SGCManager() {
                     )
             "speaking_status" -> handleSpeakingStatus(json.optBoolean("speaking", false))
             "battery_status" -> {
-                // Process battery status
+                // Percent only. battery_status derives from hm_batv, which carries no charge
+                // bit — older glasses fabricate `charging` from a voltage threshold (>3.9V)
+                // that reads "charging" for most of a discharging pack's range. Charging
+                // state comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
                 val percent = json.optInt("percent", batteryLevel)
-                val charging = json.optBoolean("charging", isCharging)
-                updateBatteryStatus(percent, charging)
+                updateBatteryStatus(percent, isCharging)
             }
             "pong" ->
                     // Process heartbeat pong response
@@ -3176,6 +3178,18 @@ class MentraLive : SGCManager() {
                 val wifiConnectedStatus = json.optBoolean("connected", false)
                 val ssid = json.optString("ssid", "")
                 val localIp = json.optString("local_ip", "")
+
+                // Provisioning failure reason (e.g. connect_timeout). Sticky: routine
+                // error-less status updates (link-state debounce, request_wifi_status)
+                // must not clear a failure nothing recovered from — only a newer error
+                // or a successful connection overwrites it.
+                val wifiError = json.optString("error", "")
+                if (wifiError.isNotEmpty()) {
+                    Bridge.log("LIVE: 🌐 WiFi provisioning error from glasses: $wifiError")
+                    DeviceStore.apply("glasses", "wifiError", wifiError)
+                } else if (wifiConnectedStatus) {
+                    DeviceStore.apply("glasses", "wifiError", "")
+                }
 
                 updateWifiStatus(wifiConnectedStatus, ssid, localIp)
             }
@@ -4387,11 +4401,10 @@ class MentraLive : SGCManager() {
                                         "%"
                         )
 
-                        // Determine charging status based on voltage (K900 typical charging voltage
-                        // is >4.0V)
-                        val isCharging = voltageMillivolts > 4000
-
-                        // Update battery status using the existing method
+                        // Percent only. sr_batv carries just voltage+percent; inferring
+                        // charging from voltage (>4.0V) reads "not charging" for most of a
+                        // genuinely-charging pack's range. Charging state comes exclusively
+                        // from the PMU charg bit in the sr_hrt heartbeat.
                         updateBatteryStatus(batteryPercentage, isCharging)
                     }
                 } catch (e: Exception) {
@@ -4695,6 +4708,11 @@ class MentraLive : SGCManager() {
      * pattern
      */
     private fun updateBatteryStatus(level: Int, isCharging: Boolean) {
+        // Keep the field in sync: percent-only messages (battery_status/sr_batv) re-pass
+        // it as the last-known charging state, so a stale field would clobber the value
+        // the sr_hrt PMU charg bit established.
+        this.isCharging = isCharging
+
         // Update parent SGCManager fields
         DeviceStore.apply("glasses", "batteryLevel", level)
         DeviceStore.apply("glasses", "charging", isCharging)

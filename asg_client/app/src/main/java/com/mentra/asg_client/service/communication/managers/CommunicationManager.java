@@ -78,10 +78,15 @@ public class CommunicationManager
 
     @Override
     public void sendWifiStatusOverBle(boolean isConnected) {
+        sendWifiStatusOverBle(isConnected, null);
+    }
+
+    @Override
+    public void sendWifiStatusOverBle(boolean isConnected, String error) {
         Log.d(TAG, "🔄 =========================================");
         Log.d(TAG, "🔄 SEND WIFI STATUS OVER BLE");
         Log.d(TAG, "🔄 =========================================");
-        Log.d(TAG, "🔄 WiFi connected: " + isConnected);
+        Log.d(TAG, "🔄 WiFi connected: " + isConnected + (error != null ? ", error: " + error : ""));
 
         if (transport != null && transport.isConnected()) {
             Log.d(TAG, "🔄 ✅ Transport available and connected");
@@ -91,6 +96,9 @@ public class CommunicationManager
                 // Use proper type for reliable sending
                 wifiStatus.put("type", "wifi_status");
                 wifiStatus.put("connected", isConnected);
+                if (error != null && !error.isEmpty()) {
+                    wifiStatus.put("error", error);
+                }
                 if (isConnected && networkManager != null) {
                     String ssid = networkManager.getCurrentWifiSsid();
                     String localIp = networkManager.getLocalIpAddress();

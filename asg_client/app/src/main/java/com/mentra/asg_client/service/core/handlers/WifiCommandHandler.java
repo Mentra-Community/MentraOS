@@ -122,9 +122,17 @@ public class WifiCommandHandler implements ICommandHandler {
 
                     // Send status if connected to target network, or if we've reached final attempt
                     if ((isConnected && currentSsid.equals(targetSsid)) || i == 3) {
+                        boolean connectedToTarget = isConnected && currentSsid.equals(targetSsid);
+                        // Surface why provisioning failed instead of a bare connected=false —
+                        // "never associates, no error shown" was a field complaint.
+                        String error = null;
+                        if (!connectedToTarget) {
+                            error = isConnected ? "connected_to_other_network" : "connect_timeout";
+                        }
                         Log.d(TAG, "📶 ✅ Sending WiFi status update: " +
-                                (isConnected ? "CONNECTED to " + currentSsid : "DISCONNECTED"));
-                        communicationManager.sendWifiStatusOverBle(isConnected);
+                                (isConnected ? "CONNECTED to " + currentSsid : "DISCONNECTED") +
+                                (error != null ? " (error=" + error + ")" : ""));
+                        communicationManager.sendWifiStatusOverBle(isConnected, error);
                         break;
                     }
 
