@@ -96,6 +96,24 @@ app                core                        Supabase/provider
 - Apple provider is the same route pair; Supabase handles the Apple client
   secret; required by App Store review because Google login is offered.
 
+### Deployment prerequisites (Supabase configuration)
+
+Two requirements discovered the hard way after the merge (PR #3382); neither
+is enforced by code, both fail at runtime if missed:
+
+- **`SUPABASE_URL` (section 2) must point at the project's ACTIVE custom
+  domain, `https://auth.mentra.glass`.** The old `https://auth.augmentos.org`
+  returns Cloudflare error 1014 "CNAME Cross-User Banned": Supabase allows one
+  custom domain per project, and that hostname is no longer registered as it.
+- **The core OAuth callback must be in the Supabase Auth redirect allowlist**
+  (dashboard -> Authentication -> URL Configuration -> Redirect URLs):
+  `https://<CORE_PUBLIC_URL host>/api/account/oauth/callback` plus a `?*` glob
+  variant, for every environment/origin that runs the flow. If an entry is
+  missing, GoTrue silently falls back to the Site URL (an old "Email
+  verified!" landing page) and the flow dead-ends before the core `/callback`
+  leg. Per-developer Porter deployments (e.g. `porter.isaiah.yaml` ->
+  `core.isaiah.us-west-2.mentraglass.com`) each need their own entry.
+
 ## 5. Mobile changes
 
 - New `CoreAccountAuthProvider` implementing the existing `authClient.ts`
