@@ -31,17 +31,41 @@ a `Service` of `type: LoadBalancer` with the right annotations.
 Our audio path needs **NLB** (UDP, low latency). Our HTTP/WS path stays on
 the **ALB** (Porter manages it; it's the `*.onporter.run` hostname).
 
-## What's deployed
+## What's deployed (verified 2026-07-09)
 
-The NLB lives in front of the audio pods on the dev cluster
-(`aws-us-west-2`, cluster id 5692). Manifest:
-[`deploy/audio-udp-nlb.yaml`](../../../deploy/audio-udp-nlb.yaml).
+Per-environment state:
+
+| Env | NLB Service | UDP path |
+| --- | --- | --- |
+| `cloud-isaiah` | `cloud-isaiah-audio-udp` (applied 2026-07-09) | WORKING: probe packets from the internet reach the pod; `AUDIO_UDP_ADVERTISED_HOST` is the raw NLB hostname |
+| `cloud-dev` / `cloud-debug` / `cloud-staging` / `cloud-prod` | none applied | WS fallback only; Doppler advertises `audio-udp.<env>` names that have no DNS record |
+| (legacy) | `cloud-v2-audio-udp` still exists in-cluster | DEAD: selects the retired `cloud-v2` app, zero endpoints, still billing ~$16/mo; candidate for `kubectl delete svc cloud-v2-audio-udp` |
+
+- The apps are now per-environment (`cloud-dev`, `cloud-debug`,
+  `cloud-staging`, `cloud-prod`, plus personal envs like `cloud-isaiah`),
+  each with a `runtime` service. An NLB Service is also per-environment: its
+  selector pins one app's runtime pods, so one NLB cannot serve two envs.
+- [`deploy/audio-udp-nlb-debug.yaml`](../../../deploy/audio-udp-nlb-debug.yaml)
+  is the per-env template (targets `cloud-debug`). Clone it and swap the
+  app name in `metadata` and `selector` for a new env
+  (`cloud-<env>-audio-udp`).
+- [`deploy/audio-udp-nlb.yaml`](../../../deploy/audio-udp-nlb.yaml) is the
+  LEGACY manifest from before the per-env split: it selects
+  `porter.run/app-name: cloud-v2`, an app name that no longer deploys.
+  Kept for reference; do not apply it.
+- The Doppler configs advertise per-env hostnames (for example `dev_debug`
+  sets `AUDIO_UDP_ADVERTISED_HOST=audio-udp.debug.us-west-2.mentraglass.com`),
+  but as of 2026-07-09 those names have NO Cloudflare record and do not
+  resolve. Clients try UDP, fail, and fall back to WS. If you provision an
+  NLB, fix the advertised host in the same change or the new NLB is unused.
+
+The intended shape, once an env's NLB exists:
 
 ```
 internet
   │
   ▼
-audio-udp.cloud-v2.mentra.glass        ← Cloudflare DNS-only mode (no proxy)
+audio-udp.<env>.us-west-2.mentraglass.com   ← Cloudflare DNS-only (optional for dev-grade envs)
   │
   ▼
 <nlb-hostname>.elb.us-west-2.amazonaws.com  ← AWS NLB (UDP :8000)
@@ -50,7 +74,7 @@ audio-udp.cloud-v2.mentra.glass        ← Cloudflare DNS-only mode (no proxy)
 EKS nodes
   │
   ▼ (k8s Service routes to pods by selector)
-cloud-v2-audio pods (Porter-managed)
+cloud-<env> runtime pods (Porter-managed)
   │
   ▼
 container :8000/udp → Bun.udpSocket → parse → Redis Stream
@@ -62,10 +86,10 @@ container :8000/udp → Bun.udpSocket → parse → Redis Stream
 apiVersion: v1
 kind: Service
 metadata:
-  name: cloud-v2-audio-udp
+  name: cloud-<env>-audio-udp               # per-env: cloud-debug-audio-udp, ...
   namespace: default
   labels:
-    porter.run/app-name: cloud-v2           # match Porter's app labeling
+    porter.run/app-name: cloud-<env>        # match Porter's app labeling
     app.kubernetes.io/managed-by: kubectl   # NOT Porter — kubectl-applied
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
@@ -74,13 +98,14 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    porter.run/app-name: cloud-v2
-    porter.run/service-name: audio          # audio pods ONLY (NOT core/proxy)
+    porter.run/app-name: cloud-<env>
+    porter.run/service-name: runtime        # runtime pods ONLY (NOT core)
   ports:
     - name: udp-audio
       protocol: UDP
       port: 8000
       targetPort: 8000
+  externalTrafficPolicy: Local              # REQUIRED for UDP (see Gotchas)
 ```
 
 Annotation breakdown:
@@ -98,45 +123,51 @@ Annotation breakdown:
 Selector breakdown:
 
 - Porter labels pods with `porter.run/app-name=<app>` +
-  `porter.run/service-name=<service>`. We want audio pods only.
+  `porter.run/service-name=<service>`. We want one env's runtime pods only.
 - Verify the labels match real pods with:
   ```bash
-  porter kubectl get pods -l porter.run/app-name=cloud-v2,porter.run/service-name=audio --show-labels
+  kubectl get pods -l porter.run/app-name=cloud-<env>,porter.run/service-name=runtime --show-labels
   ```
 
-## How to provision a new NLB (e.g. for a new region)
+## How to provision a new NLB (per environment)
 
 > ⚠️ **Porter's `kubectl` is read-only** — it can't create Services. You need
 > direct kubectl access to the cluster via AWS CLI. See "Getting kubectl
-> write access" below.
+> write access" below. (The auth is SSO-backed on our setup: if kubectl
+> errors with "Token has expired and refresh failed", run `aws sso login`
+> first.)
 
 ```bash
-# 1. Switch Porter context to the target cluster (for the deploy step later).
-porter cluster list                          # find the cluster ID
-porter config set-cluster <ID>
+# 1. Make the env's manifest: clone deploy/audio-udp-nlb-debug.yaml and
+#    replace cloud-debug with cloud-<env> in metadata.name, metadata.labels,
+#    and spec.selector. Keep externalTrafficPolicy: Local (see Gotchas).
 
 # 2. Get kubectl write access via AWS CLI (one-time setup, see section below).
-aws eks update-kubeconfig --region us-west-2 --name <cluster-name>
+aws eks update-kubeconfig --region us-west-2 --name aws-us-west-2
 
 # 3. Apply the manifest with your own kubectl (NOT `porter kubectl`).
-kubectl apply -f deploy/audio-udp-nlb.yaml
+kubectl apply -f deploy/audio-udp-nlb-<env>.yaml
 
-# 3. Wait ~2-4 min for AWS to provision the NLB. Get the hostname:
-porter kubectl get svc cloud-v2-audio-udp \
+# 4. Wait ~2-4 min for AWS to provision the NLB. Get the hostname:
+kubectl get svc cloud-<env>-audio-udp \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 # → something like: a1b2c3d4...elb.us-west-2.amazonaws.com
 
-# 4. Plug it into Doppler so audio's CONNECTION_ACK advertises the right host.
-doppler secrets set "AUDIO_UDP_ADVERTISED_HOST=<nlb-hostname>" --config dev_aws
+# 5. Plug it into the ENV'S OWN Doppler config so the runtime's
+#    CONNECTION_ACK advertises the right host. For dev-grade envs the raw
+#    NLB hostname is fine (skip the Cloudflare CNAME); for staging/prod add
+#    a DNS-only CNAME first and advertise the friendly name (see DNS below).
+doppler secrets set "AUDIO_UDP_ADVERTISED_HOST=<nlb-hostname>" \
+  --project cloud-v2 --config dev_<env>
 
-# 5. Doppler→Porter integration auto-syncs to the env group (or run the
-#    sync script if you haven't enabled the integration yet).
-
-# 6. Redeploy audio so the new env propagates to the pods.
-porter apply -f porter.yaml
+# 6. The Doppler→Porter integration auto-syncs the env group in ~5s, but
+#    pods do not restart on env changes. Redeploy the env:
+#    trigger its GitHub workflow (cloud-v2-<env>.yml) or
+#    `porter apply -f porter.<env>.yaml` from cloud-v2/.
 
 # 7. Verify UDP reachability from outside the cluster (UDP packet → NLB → pod).
-#    The test-client's smoke script is the easiest way.
+#    The test-client's smoke script is the easiest way. If packets vanish,
+#    check target-group health first (see Gotchas).
 ```
 
 ## Getting kubectl write access
@@ -190,18 +221,18 @@ For dev cluster we can skip DNS and use the raw NLB hostname directly in
 
 ### Selector mismatch → 0 healthy targets
 
-If the selector labels don't exactly match what Porter puts on the audio
+If the selector labels don't exactly match what Porter puts on the runtime
 pods, the NLB has no targets and packets get dropped. Check:
 
 ```bash
-porter kubectl describe svc cloud-v2-audio-udp | grep -E "Selector|Endpoints"
+kubectl describe svc cloud-<env>-audio-udp | grep -E "Selector|Endpoints"
 ```
 
-`Endpoints` should list the audio pod IPs. If it's empty, the selector is
+`Endpoints` should list the runtime pod IPs. If it's empty, the selector is
 wrong. Compare the labels you used against what Porter actually attaches:
 
 ```bash
-porter kubectl get pods -l porter.run/app-name=cloud-v2 --show-labels
+kubectl get pods -l porter.run/app-name=cloud-<env> --show-labels
 ```
 
 (In v1 the porter.run labels were stable; in cloud-v2 we use the same
@@ -209,7 +240,7 @@ ones — see the v1 reference manifest at `cloud/udp-service.yaml`.)
 
 ### NLB hostname is unstable on re-create
 
-If you `kubectl delete svc cloud-v2-audio-udp` and re-apply, AWS gives you
+If you `kubectl delete svc cloud-<env>-audio-udp` and re-apply, AWS gives you
 a NEW hostname. The old one is gone. Anything that hardcoded the old
 hostname (DNS records, Doppler `AUDIO_UDP_ADVERTISED_HOST`) breaks.
 
@@ -228,7 +259,7 @@ becomes available once provisioning completes:
 
 ```bash
 # poll until hostname appears
-while ! porter kubectl get svc cloud-v2-audio-udp \
+while ! kubectl get svc cloud-<env>-audio-udp \
     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null | \
     grep -q elb; do
   echo "waiting..."
@@ -245,7 +276,7 @@ controller's service-account role is missing
 cluster's IAM policy — not Porter's problem.
 
 ```bash
-porter kubectl describe svc cloud-v2-audio-udp | grep -E "Warning|Event"
+kubectl describe svc cloud-<env>-audio-udp | grep -E "Warning|Event"
 ```
 
 ### Cross-zone load balancing turn-OFF causes uneven routing
