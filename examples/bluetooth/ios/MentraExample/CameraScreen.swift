@@ -198,6 +198,7 @@ struct CameraScreen: View {
             )
         ) {
             Button("OK", action: model.confirmHotspotJoin)
+            Button("Not now", role: .cancel, action: model.dismissHotspotJoin)
         } message: {
             Text("When prompted, tap Join to connect to \"\(model.hotspotJoinPromptSsid ?? "the glasses hotspot")\".")
         }

@@ -319,9 +319,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val cloudUrlPrefs =
         appContext.getSharedPreferences("mentra_example_cloud_urls", Context.MODE_PRIVATE)
     private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
-    private val glassesHotspotConnector = GlassesHotspotConnector(appContext)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
+    private val glassesHotspotConnector = GlassesHotspotConnector(appContext) {
+        scope.launch { handleGlassesHotspotConnectionLost() }
+    }
     private val photoUploadServer = LocalPhotoUploadServer(
         appContext,
         onLog = { message -> scope.launch { addEvent("HTTP", message) } },
@@ -334,6 +336,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var galleryConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection? = null
     private var hotspotJoinExplanationShown = false
+    private var photoDestinationBeforeGlasses = PhotoDestination.THIS_PHONE
     private var videoPollGeneration = 0
     private var directPhotoTimeoutJob: Job? = null
     private var gStreamerWhipReceiver: GStreamerWhipReceiver? = null
@@ -366,6 +369,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var photoCaptureDefaultsSyncGeneration = 0
     private var otaDisplayProgressSessionKey: String? = null
     private var otaDisplayOverallPercent: Int? = null
+    private var otaStartingAppIdentity: String? = null
     private var postOtaCheckInProgress = false
     private var postOtaCheckedSessionKey: String? = null
 
@@ -559,11 +563,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         savePersistedCloudUrls()
     }
 
-    fun setPhotoDestination(destination: PhotoDestination) {
+    fun setPhotoDestination(requestedDestination: PhotoDestination) {
+        val destination = if (
+            state.photoDestination == PhotoDestination.GLASSES_STORAGE &&
+            requestedDestination == PhotoDestination.THIS_PHONE
+        ) {
+            photoDestinationBeforeGlasses
+        } else {
+            requestedDestination
+        }
         if (state.photoDestination == destination) {
             return
         }
         val wasGlassesStorage = state.photoDestination == PhotoDestination.GLASSES_STORAGE
+        if (destination == PhotoDestination.GLASSES_STORAGE && !wasGlassesStorage) {
+            photoDestinationBeforeGlasses = state.photoDestination
+        } else if (destination != PhotoDestination.GLASSES_STORAGE) {
+            photoDestinationBeforeGlasses = destination
+        }
         stopPhonePhotoServer()
         state = state.copy(
             cameraStatus = when (destination) {
@@ -598,6 +615,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun prepareGlassesPhotoPreview() = runAction("Connect to glasses hotspot") {
+        galleryConnectionGeneration += 1
+        glassesHotspotConnector.disconnect()
         prepareGlassesPhotoPreviewConnection()
     }
 
@@ -639,7 +658,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             baseUrl = "http://${hotspot.localIp}:8089",
         )
         pendingHotspotConnection = pending
-        if (waitForGalleryServer(pending.baseUrl, attempts = 3, delayMs = 400)) {
+        val alreadyReady = waitForGalleryServer(pending.baseUrl, attempts = 3, delayMs = 400)
+        if (generation != galleryConnectionGeneration) return
+        if (alreadyReady) {
             markGalleryServerReady(pending.baseUrl)
             return
         }
@@ -671,7 +692,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 glassesHotspotConnector.connect(pending.ssid, pending.password)
             }
             if (generation != galleryConnectionGeneration) return
-            if (!waitForGalleryServer(pending.baseUrl, attempts = 20, delayMs = 500)) {
+            val ready = waitForGalleryServer(pending.baseUrl, attempts = 20, delayMs = 500)
+            if (generation != galleryConnectionGeneration) return
+            if (!ready) {
                 throw IOException("Could not reach the glasses gallery after connecting.")
             }
             markGalleryServerReady(pending.baseUrl)
@@ -702,6 +725,18 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             hotspotJoinPromptSsid = null,
         )
         addEvent("LIVE", "gallery server ready $baseUrl")
+    }
+
+    private fun handleGlassesHotspotConnectionLost() {
+        galleryConnectionGeneration += 1
+        pendingHotspotConnection = null
+        if (state.photoDestination != PhotoDestination.GLASSES_STORAGE) return
+        state = state.copy(
+            cameraStatus = "Camera: reconnect to the glasses hotspot to enable capture",
+            galleryServerReachable = false,
+            galleryServerStatus = "Gallery server: hotspot connection lost",
+        )
+        addEvent("LIVE", "glasses hotspot connection lost")
     }
 
     fun setPhotoSize(size: String) {
@@ -1046,6 +1081,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             throw error
         }
         handlePhotoResponse(responseEvent)
+        if (responseEvent.response is PhotoResponse.Error) {
+            activePhotoRequestId = null
+            val error = responseEvent.response as PhotoResponse.Error
+            throw IOException(error.errorCode ?: error.errorMessage)
+        }
         state = state.copy(
             cameraStatus = "Camera: photo saved on glasses; loading preview",
             photoPreviewDetails = state.photoPreviewDetails?.copy(state = "saved"),
@@ -1097,8 +1137,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requestId: String,
         generation: Int,
     ) {
-        val baseUrl = pendingHotspotConnection?.baseUrl
-            ?: galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
+        val baseUrl = galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
+            ?: pendingHotspotConnection?.baseUrl
             ?: throw IllegalStateException("The glasses hotspot is not ready for preview downloads.")
         if (state.galleryServerReachable != true) {
             throw IllegalStateException("The glasses hotspot is not ready for preview downloads.")
@@ -1154,9 +1194,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             } catch (error: Throwable) {
                 if (attempt == 0 || attempt % 10 == 9) {
                     state = state.copy(
-                        cameraStatus = "Camera: join ${galleryHotspotSsidLabel(state.glassesStatus)} to load the saved photo",
-                        galleryServerReachable = false,
-                        galleryServerStatus = "Gallery server: not reachable. Join ${galleryHotspotSsidLabel(state.glassesStatus)}.",
+                        cameraStatus = "Camera: photo saved on glasses; waiting for preview",
+                        galleryServerStatus = "Gallery server: connected; waiting for $requestId",
                     )
                     addEvent("LIVE", "waiting for glasses photo $requestId: ${error.message}")
                 }
@@ -2398,6 +2437,26 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onVersionInfo(event: VersionInfoResult) {
         latestOtaVersionInfoSignature = event.otaVersionInfoSignature()
+        val installedIdentity = event.otaAppIdentity()
+        val currentOtaStatus = state.otaStatus
+        if (
+            installedIdentity != null &&
+            otaStartingAppIdentity != null &&
+            installedIdentity != otaStartingAppIdentity &&
+            currentOtaStatus?.status == "in_progress" &&
+            currentOtaStatus.phase == "install"
+        ) {
+            otaStartingAppIdentity = null
+            resetOtaDisplayProgress()
+            autoOtaCheckedConnectionKey = null
+            state = state.copy(
+                otaStatus = null,
+                otaDisplayPercent = null,
+                otaStatusMessage = "OTA installed; checking for additional updates",
+                otaUpdateAvailable = false,
+            )
+            addEvent("LIVE", "OTA install restarted ASG client as $installedIdentity")
+        }
         maybeAutoCheckOta()
     }
 
@@ -2406,6 +2465,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             addEvent("LIVE", "OTA check result ignored while update is in progress")
             return updateAvailable
         }
+        otaStartingAppIdentity = null
         if (updateAvailable) {
             resetOtaDisplayProgress()
             state = state.copy(
@@ -2531,6 +2591,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requireConnected("start OTA")
         requireGlassesWifi("start OTA updates")
         postOtaCheckedSessionKey = null
+        otaStartingAppIdentity = state.glassesStatus.otaAppIdentity()
         resetOtaDisplayProgress()
         state = state.copy(otaDisplayPercent = null)
         withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
@@ -2967,6 +3028,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         galleryConnectionGeneration += 1
         pendingHotspotConnection = null
         glassesHotspotConnector.disconnect()
+        otaStartingAppIdentity = null
         resetOtaDisplayProgress()
         if (hadPhotoRequest) {
             pollGeneration += 1
@@ -3017,6 +3079,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun applyOtaStatus(event: OtaStatusEvent) {
         if (!isDisplayableOtaStatus(event)) {
+            otaStartingAppIdentity = null
             resetOtaDisplayProgress()
             state = state.copy(
                 otaStatus = null,
@@ -3034,6 +3097,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             otaStatusMessage = null,
             otaUpdateAvailable = if (event.status == "complete" || event.status == "failed") false else state.otaUpdateAvailable,
         )
+        if (event.status == "complete" || event.status == "failed") {
+            otaStartingAppIdentity = null
+        }
         addEvent("LIVE", "OTA ${event.status.ifBlank { "status" }} ${event.overallPercent}%")
         schedulePostOtaCheck(event)
     }
@@ -3981,6 +4047,20 @@ fun VersionInfoResult.otaVersionInfoSignature(): String =
         firmwareVersion,
     ).filter { it.isNotBlank() }.joinToString("|").ifBlank { "version-unknown" }
 
+fun GlassesRuntimeState?.otaAppIdentity(): String? =
+    connectedGlassesInfo(this)?.let { device ->
+        listOfNotNull(device.buildNumber, device.appVersion)
+            .filter { it.isNotBlank() }
+            .joinToString("|")
+            .ifBlank { null }
+    }
+
+fun VersionInfoResult.otaAppIdentity(): String? =
+    listOf(buildNumber, appVersion)
+        .filter { it.isNotBlank() }
+        .joinToString("|")
+        .ifBlank { null }
+
 fun deviceLabel(status: GlassesRuntimeState?): String =
     connectedGlassesInfo(status)?.bluetoothName
         ?: connectedGlassesInfo(status)?.serialNumber
@@ -4113,7 +4193,7 @@ private fun PhotoPreviewDetails?.copyForAck(
     (this ?: PhotoPreviewDetails(source = source, state = "acknowledged")).copy(
         requestId = requestId,
         source = source,
-        state = if (this?.state == "preview") "preview" else "acknowledged",
+        state = if (this?.state == "preview" || this?.state == "saved") this.state else "acknowledged",
         timestamp = timestamp,
         uploadUrl = uploadUrl,
     )

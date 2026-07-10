@@ -1783,7 +1783,7 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
           : details.state,
     },
   ];
-  if (details.source === 'Glasses gallery' && !details.previewUrl) {
+  if (details.source === 'Glasses gallery' && !details.previewUrl && details.error) {
     rows.push({
       label: 'Gallery mode',
       value: 'Photo stayed on the glasses and was not previewed on the phone.',

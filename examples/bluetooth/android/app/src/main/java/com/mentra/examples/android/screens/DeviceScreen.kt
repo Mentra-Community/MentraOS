@@ -13,12 +13,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -297,8 +297,12 @@ private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleStat
     state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
 
 private fun otaStatusLine(state: com.mentra.examples.android.MentraExampleState): String =
-    state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${otaDisplayPercent(state)}%" }
-        ?: if (state.otaUpdateAvailable) "Update required" else null
+    if (isOtaInstalling(state)) {
+        "installing update"
+    } else {
+        state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${otaDisplayPercent(state)}%" }
+    }
+        ?: if (state.otaUpdateAvailable) "Firmware update available" else null
         ?: state.otaStatusMessage
         ?: if (isGlassesConnected(state.glassesStatus)) "Check not run" else "Connect glasses"
 
@@ -308,21 +312,28 @@ private fun otaDisplayPercent(state: com.mentra.examples.android.MentraExampleSt
 private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState): String =
     when {
         state.otaStatus?.status == "failed" -> "Update failed"
+        isOtaInstalling(state) -> "Installing update"
         state.otaStatus != null && isOtaInProgress(state) -> "Updating ${state.otaStatus.stepType.ifBlank { "firmware" }}"
-        state.otaUpdateAvailable -> "Update required"
+        state.otaUpdateAvailable -> "Firmware update available"
         else -> "OTA status"
     }
 
 private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState): String {
     state.otaStatus?.errorMessage?.let { return it }
+    if (isOtaInstalling(state)) {
+        return "The glasses client may restart to finish installation."
+    }
     state.otaStatus?.let {
         return "${it.phase.ifBlank { "status" }} · step ${it.currentStep}/${it.totalSteps}"
     }
     if (state.otaUpdateAvailable) {
-        return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
+        return "A newer firmware version is available for these glasses."
     }
     return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }
+
+private fun isOtaInstalling(state: com.mentra.examples.android.MentraExampleState): Boolean =
+    state.otaStatus?.status == "in_progress" && state.otaStatus.phase == "install"
 
 @Composable
 private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Modifier) {
@@ -330,22 +341,18 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
     if (state.otaStatus == null && !state.otaUpdateAvailable) return
     val percent = otaDisplayPercent(state)
     val updateRequired = state.otaUpdateAvailable && state.otaStatus == null
+    val installing = isOtaInstalling(state)
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .then(if (updateRequired) Modifier.shadow(8.dp, RoundedCornerShape(16.dp)) else Modifier)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(
-                if (updateRequired) {
-                    Brush.verticalGradient(listOf(Color(0xFFFFF5DF), Color(0xFFFFE6E1)))
-                } else {
-                    Brush.verticalGradient(listOf(Color.White, Color.White))
-                }
+                if (updateRequired) Color(0xFFFFFCF5) else Color.White
             )
             .border(
                 1.dp,
-                if (updateRequired) AppColor.red.copy(alpha = 0.34f) else Color.White.copy(alpha = 0.7f),
-                RoundedCornerShape(16.dp)
+                if (updateRequired) AppColor.amber.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.08f),
+                RoundedCornerShape(12.dp)
             )
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -354,49 +361,55 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (updateRequired) {
                     Box(
-                        modifier = Modifier.size(34.dp).clip(CircleShape).background(AppColor.red),
+                        modifier = Modifier.size(30.dp).clip(RoundedCornerShape(7.dp)).background(AppColor.amber.copy(alpha = 0.10f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.Warning, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.Warning, null, tint = AppColor.amber, modifier = Modifier.size(16.dp))
                     }
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Eyebrow(if (updateRequired) "ACTION NEEDED" else "OTA", color = if (updateRequired) AppColor.red else AppColor.muted)
+                    Eyebrow(if (updateRequired) "OTA UPDATE" else "OTA", color = if (updateRequired) Color(0xFF9A5A00) else AppColor.muted)
                     Text(
                         otaCardTitle(state),
-                        color = AppColor.inkAlt,
-                        fontSize = if (updateRequired) 19.sp else 15.sp,
-                        fontWeight = if (updateRequired) FontWeight.ExtraBold else FontWeight.Bold,
+                        color = AppColor.ink,
+                        fontSize = if (updateRequired) 16.sp else 15.sp,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
             }
-            if (state.otaStatus != null) {
-                Text("$percent%", color = AppColor.greenInk, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            if (installing) {
+                CircularProgressIndicator(
+                    color = AppColor.greenPrimary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp),
+                )
+            } else if (state.otaStatus != null) {
+                Text("$percent%", color = AppColor.greenInk, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
-        if (state.otaStatus != null) {
-            Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)).background(AppColor.greenInk.copy(alpha = 0.08f))) {
+        if (state.otaStatus != null && !installing) {
+            Box(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(AppColor.greenInk.copy(alpha = 0.08f))) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth((percent.coerceIn(0, 100) / 100f))
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
                         .background(AppColor.greenPrimary)
                 )
             }
         }
         Text(
             otaCardDetail(state),
-            color = if (updateRequired) Color(0xFF5F201B) else AppColor.muted,
-            fontSize = if (updateRequired) 13.sp else 12.sp,
-            lineHeight = if (updateRequired) 18.sp else 16.sp,
-            fontWeight = if (updateRequired) FontWeight.Bold else FontWeight.Medium,
+            color = AppColor.muted,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            fontWeight = FontWeight.Medium,
         )
         if (updateRequired) {
             DarkBtn(
                 if (canStartOta(state)) "Start OTA" else "Connect Wi-Fi first",
                 Icons.Outlined.FileDownload,
-                AppColor.red,
+                AppColor.greenInk,
                 Modifier.fillMaxWidth(),
                 enabled = canStartOta(state),
                 onClick = controller::startOtaUpdate,

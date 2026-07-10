@@ -15,7 +15,10 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resumeWithException
 
-class GlassesHotspotConnector(context: Context) {
+class GlassesHotspotConnector(
+    context: Context,
+    private val onConnectionLost: () -> Unit,
+) {
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var callback: ConnectivityManager.NetworkCallback? = null
@@ -62,7 +65,9 @@ class GlassesHotspotConnector(context: Context) {
                     }
 
                     override fun onLost(network: Network) {
-                        connectivityManager.bindProcessToNetwork(null)
+                        if (callback !== this) return
+                        releaseNetwork()
+                        onConnectionLost()
                     }
                 }
                 callback = networkCallback
@@ -81,9 +86,10 @@ class GlassesHotspotConnector(context: Context) {
 
     private fun releaseNetwork() {
         connectivityManager.bindProcessToNetwork(null)
-        callback?.let { current ->
+        val current = callback
+        callback = null
+        current?.let {
             runCatching { connectivityManager.unregisterNetworkCallback(current) }
         }
-        callback = null
     }
 }

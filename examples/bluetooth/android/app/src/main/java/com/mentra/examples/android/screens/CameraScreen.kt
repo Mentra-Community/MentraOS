@@ -152,12 +152,17 @@ fun CameraScreen(controller: MentraExampleController) {
     }
     state.hotspotJoinPromptSsid?.let { ssid ->
         AlertDialog(
-            onDismissRequest = {},
+            onDismissRequest = controller::dismissHotspotJoin,
             title = { Text("Connect to Glasses") },
             text = { Text("When prompted, tap Connect to connect to \"$ssid\".") },
             confirmButton = {
                 TextButton(onClick = controller::confirmHotspotJoin) {
                     Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = controller::dismissHotspotJoin) {
+                    Text("Not now")
                 }
             },
         )
