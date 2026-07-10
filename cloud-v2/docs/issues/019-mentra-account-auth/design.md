@@ -98,8 +98,8 @@ app                core                        Supabase/provider
 
 ### Deployment prerequisites (Supabase configuration)
 
-Two requirements discovered the hard way after the merge (PR #3382); neither
-is enforced by code, both fail at runtime if missed:
+Three requirements discovered the hard way after the merge (PR #3382); none
+is enforced by code, all fail at runtime if missed:
 
 - **`SUPABASE_URL` (section 2) must point at the project's ACTIVE custom
   domain, `https://auth.mentra.glass`.** The old `https://auth.augmentos.org`
@@ -120,6 +120,17 @@ is enforced by code, both fail at runtime if missed:
   string). Prod is NOT matched by that pattern (no environment label in
   `core.us-west-2.mentraglass.com` / `core.mentraglass.com`) and needs its
   own entry for whichever host its `CORE_PUBLIC_URL` uses.
+- **`CORE_PUBLIC_URL` must be set (with `https://`) in every environment
+  running the flow.** When it is unset, `publicOrigin()` falls back to the
+  request URL's origin, and TLS terminates at the Porter nginx ingress, so
+  the pod sees `http://...`: GoTrue then rejects the `redirect_to` against
+  the https-only allowlist, with the same silent Site-URL fallback as above.
+  Debug tip for all of this: GoTrue's `GET /auth/v1/verify?token=bogus&
+  type=signup&redirect_to=<url>` runs the same allowlist check and 303s to
+  `<url>` on match or to the Site URL on mismatch, so allowlist entries can
+  be probed with curl without completing an OAuth login; the `redirect_to`
+  core actually emits is visible in the Location header of
+  `GET /api/account/oauth/google/start?state=x&code_challenge=y`.
 
 ## 5. Mobile changes
 
