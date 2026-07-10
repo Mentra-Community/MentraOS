@@ -149,14 +149,15 @@ export function App() {
 }
 
 // Deep link used by report Slack notifications: /?report=rep_… lands on the
-// Incident system page with that report open. Read once at load; the param is
-// cleared from the address bar after it is consumed.
-const deepLinkReportId = new URLSearchParams(window.location.search).get("report");
+// Incident system page with that report open. Consumed exactly once by the
+// first ReportsPage mount, which also clears the param from the address bar,
+// so navigating away and back starts unselected.
+let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(deepLinkReportId ? "incidents" : "home");
+  const [page, setPage] = useState<AdminPageKey>(pendingDeepLinkReportId ? "incidents" : "home");
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -362,7 +363,7 @@ function AdminPage() {
 
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
-      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {page === "incidents" ? <ReportsPage /> : null}
 
       {detailRelease ? (
         <SubmissionDetail
@@ -824,16 +825,19 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
   );
 }
 
-function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
+function ReportsPage() {
   const [kind, setKind] = useState<"all" | ReportKind>("all");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
-  const [detailId, setDetailId] = useState<string | null>(initialReportId);
+  const [detailId, setDetailId] = useState<string | null>(pendingDeepLinkReportId);
 
   useEffect(() => {
-    // Consume the deep link so refreshes and later visits to this page do not
-    // keep reopening the same report.
-    if (initialReportId) window.history.replaceState(null, "", window.location.pathname);
-  }, [initialReportId]);
+    // Consume the deep link: later mounts of this page start unselected and
+    // the address bar loses the parameter.
+    if (pendingDeepLinkReportId) {
+      pendingDeepLinkReportId = null;
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
 
   const reports = useQuery({
     queryKey: ["admin-reports", kind, status],
