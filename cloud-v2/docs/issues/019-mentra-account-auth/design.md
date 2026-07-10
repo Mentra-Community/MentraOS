@@ -90,7 +90,11 @@ app                core                        Supabase/provider
 ```
 
 - The public callback URL is built from `x-mentra-public-origin` when proxied
-  (same pattern as the console Pages proxy) or `CORE_PUBLIC_URL` otherwise.
+  (same pattern as the console Pages proxy); otherwise it is derived from the
+  request as `x-forwarded-proto` + Host. TLS terminates at the ingress (the
+  pod sees plain http), but ingress-nginx sets `x-forwarded-proto` itself —
+  overwriting any client-supplied value — and preserves Host, so this yields
+  the public https origin with zero per-environment config.
 - Browser: Android Custom Tabs / iOS ASWebAuthenticationSession via
   `expo-web-browser` (already an Expo app); scheme `com.mentra` is registered.
 - Apple provider is the same route pair; Supabase handles the Apple client
