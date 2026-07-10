@@ -100,6 +100,48 @@ app                core                        Supabase/provider
 - Apple provider is the same route pair; Supabase handles the Apple client
   secret; required by App Store review because Google login is offered.
 
+### Deployment prerequisites (Supabase configuration)
+
+Two requirements discovered the hard way after the merge (PR #3382); neither
+is enforced by code, both fail at runtime if missed — plus a note on how core
+builds the redirect URL:
+
+- **`SUPABASE_URL` (section 2) must point at the project's ACTIVE custom
+  domain, `https://auth.mentra.glass`.** The old `https://auth.augmentos.org`
+  returns Cloudflare error 1014 "CNAME Cross-User Banned": Supabase allows one
+  custom domain per project, and that hostname is no longer registered as it.
+- **The core OAuth callback must be in the Supabase Auth redirect allowlist**
+  (dashboard -> Authentication -> URL Configuration -> Redirect URLs):
+  `https://<core public host>/api/account/oauth/callback` plus a `?*` glob
+  variant, for every environment/origin that runs the flow. If an entry is
+  missing, GoTrue silently falls back to the Site URL (an old "Email
+  verified!" landing page) and the flow dead-ends before the core `/callback`
+  leg. Per-developer Porter deployments (e.g. `porter.isaiah.yaml` ->
+  `core.isaiah.us-west-2.mentraglass.com`) need covering too; the dashboard
+  caps the number of entries, so use its glob support instead of one pair per
+  origin: `https://core.*.us-west-2.mentraglass.com/api/account/oauth/callback**`
+  covers debug/dev/staging and all per-developer deployments in one entry
+  (`*` matches a single label, `**` matches the empty string or any query
+  string). Prod is NOT matched by that pattern (no environment label in
+  `core.us-west-2.mentraglass.com` / `core.mentraglass.com`) and needs its
+  own entry for whichever public host serves core.
+- **No public-origin env var is needed.** `publicOrigin()` derives the origin
+  from the request (PR #3401): the `x-mentra-public-origin` header when
+  proxied, otherwise `x-forwarded-proto` + Host. TLS terminates at the Porter
+  nginx ingress (the pod sees plain http), but ingress-nginx sets
+  `x-forwarded-proto` itself — overwriting any client-supplied value — and
+  preserves Host, so the derived origin is the correct public https one in
+  every environment with zero config. (An earlier `CORE_PUBLIC_URL` env
+  fallback was never set anywhere, so the request-URL fallback emitted
+  `http://` origins that GoTrue rejected against the https-only allowlist,
+  with the same silent Site-URL fallback as above.)
+  Debug tip for all of this: GoTrue's `GET /auth/v1/verify?token=bogus&
+  type=signup&redirect_to=<url>` runs the same allowlist check and 303s to
+  `<url>` on match or to the Site URL on mismatch, so allowlist entries can
+  be probed with curl without completing an OAuth login; the `redirect_to`
+  core actually emits is visible in the Location header of
+  `GET /api/account/oauth/google/start?state=x&code_challenge=y`.
+
 ## 5. Mobile changes
 
 - New `CoreAccountAuthProvider` implementing the existing `authClient.ts`
