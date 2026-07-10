@@ -1022,6 +1022,17 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
   );
 }
 
+// Mirrors the admin API's INLINE_CONTENT_TYPES: anything outside this set is
+// served as an opaque attachment, so an <img> preview would render broken —
+// HEIC/HEIF iOS screenshots being the common case. Those fall through to the
+// download link instead.
+const PREVIEWABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+function isPreviewableImage(contentType: string | null | undefined): boolean {
+  if (!contentType) return false;
+  return PREVIEWABLE_IMAGE_TYPES.has(contentType.split(";")[0].trim().toLowerCase());
+}
+
 function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
   const url = `/api/admin/reports/${reportId}/artifacts/${artifact.artifactId}`;
   const header = (
@@ -1033,7 +1044,7 @@ function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact
     </div>
   );
 
-  if (artifact.type === "screenshot" && artifact.contentType?.startsWith("image/")) {
+  if (artifact.type === "screenshot" && isPreviewableImage(artifact.contentType)) {
     return (
       <div className="rounded-[14px] bg-[#f5f7f4] p-3">
         {header}
