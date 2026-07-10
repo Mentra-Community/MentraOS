@@ -5,7 +5,7 @@
     "": {
       "name": "mentra-bluetooth-sdk-rn-example",
       "dependencies": {
-        "@mentra/bluetooth-sdk": "0.1.18",
+        "@mentra/bluetooth-sdk": "0.1.19",
         "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
         "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
         "expo": "~55.0.24",
@@ -21,6 +21,7 @@
         "react-native-safe-area-context": "~5.6.2",
         "react-native-svg": "15.15.3",
         "react-native-webview": "13.16.0",
+        "react-native-wifi-reborn": "^4.13.6",
       },
       "devDependencies": {
         "@types/react": "^19.1.0",
@@ -300,7 +301,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.18", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-GT7+X/6u7+G2oJHqjc0thKBwAUVQL1CyixPn7bJSkhzowrRx18AqIRZuCIJisNL1zU9YBcpX3ryK4eqdMoOZvw=="],
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.19", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-7OdPVWmtUqZcDu4tM71jDPO8jM3283TrsWmY+vwSjPACeamxJLwgcYgAXAq/A1imvI8aO9snVcLQQjaTzpuswg=="],
 
     "@mentra/react-native-barcode-scanner": ["@mentra/react-native-barcode-scanner@file:modules/mentra-barcode-scanner", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
 
@@ -891,6 +892,8 @@
     "react-native-svg": ["react-native-svg@15.15.3", "", { "dependencies": { "css-select": "^5.1.0", "css-tree": "^1.1.3", "warn-once": "0.1.1" }, "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-/k4KYwPBLGcx2f5d4FjE+vCScK7QOX14cl2lIASJ28u4slHHtIhL0SZKU7u9qmRBHxTCKPoPBtN6haT1NENJNA=="],
 
     "react-native-webview": ["react-native-webview@13.16.0", "", { "dependencies": { "escape-string-regexp": "^4.0.0", "invariant": "2.2.4" }, "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-Nh13xKZWW35C0dbOskD7OX01nQQavOzHbCw9XoZmar4eXCo7AvrYJ0jlUfRVVIJzqINxHlpECYLdmAdFsl9xDA=="],
+
+    "react-native-wifi-reborn": ["react-native-wifi-reborn@4.13.6", "", { "peerDependencies": { "react-native": ">=0.13" } }, "sha512-vlZYgRnFapVVeJ8z0G0k7k6wUi9mUPhW6ji008mp5BBKMbZNL0AxdyHUOW3uP1emKYK7eRIvfx6AuECpG2mAsg=="],
 
     "react-refresh": ["react-refresh@0.14.2", "", {}, "sha512-jCvmsr+1IUSMUyzOkRcvnVbX3ZYC6g9TDrDbFuFmRDq7PD4yaGbLKNQL6k2jnArV8hjYxh7hVhAZB6s9HDGpZA=="],
 

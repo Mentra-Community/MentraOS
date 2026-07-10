@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
             }
         }.toTypedArray()
         ActivityCompat.requestPermissions(this, permissions, 100)

@@ -23,7 +23,7 @@ settings:
 packages:
   MentraBluetoothSDK:
     url: https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
-    exactVersion: 0.1.18
+    exactVersion: 0.1.19
 
 targets:
   MentraExample:
@@ -38,6 +38,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mentra.bluetoothsdk.example.ios
         PRODUCT_NAME: MentraSdkIosExample
+        CODE_SIGN_ENTITLEMENTS: MentraExample/MentraExample.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: Mentra SDK iOS
         SWIFT_OBJC_BRIDGING_HEADER: MentraExample/MentraExample-Bridging-Header.h
         GSTREAMER_ROOT_IOS: "$(HOME)/Library/Developer/GStreamer/iPhone.sdk"

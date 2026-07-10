@@ -23,6 +23,7 @@ private func cameraSdkCall(
     mode: CameraCaptureMode,
     size: String,
     compression: String,
+    photoDestination: PhotoDestination,
     aeExposureDivisor: Int?,
     isoCap: Int?,
     noiseReduction: Bool?,
@@ -81,12 +82,14 @@ private func cameraSdkCall(
         print("Video stopped: \\(stopped.status)")
         """
     }
+    let webhookUrl = photoDestination == .glassesStorage ? "nil" : "uploadUrl"
+    let saveLine = photoDestination == .glassesStorage ? "\n          save: true," : ""
     return """
     \(prefix)
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           size: .\(size),
-          webhookUrl: uploadUrl,
+          webhookUrl: \(webhookUrl),\(saveLine)
           compress: .\(compression),
           sound: true,
     \(exposureLine)
@@ -108,12 +111,16 @@ struct CameraScreen: View {
         model.photoDestination == .macBookServer
     }
 
+    private var glassesStorageEnabled: Bool {
+        model.photoDestination == .glassesStorage
+    }
+
     private var directPhone: Bool {
-        !cloudServerEnabled
+        model.photoDestination == .thisPhone
     }
 
     private var wifiRequired: Bool {
-        model.glassesConnected && !model.glassesWifiConnected
+        model.glassesConnected && !model.glassesWifiConnected && !glassesStorageEnabled
     }
 
     private var cameraStatusFailed: Bool {
@@ -128,8 +135,27 @@ struct CameraScreen: View {
         model.glassesConnected && model.glassesWifiConnected && !videoActionBusy
     }
 
+    private var waitingForGlassesPreview: Bool {
+        glassesStorageEnabled &&
+            model.photoPreviewUrl == nil &&
+            model.photoPreviewImage == nil &&
+            model.photoPreviewDetails?.state == "saved"
+    }
+
+    private var needsGlassesHotspotSetup: Bool {
+        model.glassesConnected && glassesStorageEnabled && model.galleryServerReachable != true
+    }
+
+    private var photoControlsEnabled: Bool {
+        model.glassesConnected &&
+            (glassesStorageEnabled || model.glassesWifiConnected) &&
+            !needsGlassesHotspotSetup &&
+            model.activeAction != "Capture & upload" &&
+            model.activeAction != "Capture scan photo"
+    }
+
     private var setupHint: String? {
-        guard captureMode == .video || !directPhone else { return nil }
+        guard captureMode == .video || cloudServerEnabled else { return nil }
         return localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
     }
 
@@ -164,6 +190,17 @@ struct CameraScreen: View {
         }
         .background(AppColor.bg)
         .scrollDismissesKeyboard(.interactively)
+        .alert(
+            "Connect to Glasses",
+            isPresented: Binding(
+                get: { model.hotspotJoinPromptSsid != nil },
+                set: { _ in }
+            )
+        ) {
+            Button("OK", action: model.confirmHotspotJoin)
+        } message: {
+            Text("When prompted, tap Join to connect to \"\(model.hotspotJoinPromptSsid ?? "the glasses hotspot")\".")
+        }
         .onChange(of: model.activeAction) { action in
             if action == "Capture & upload" || action == "Capture scan photo" {
                 captureMode = .photo
@@ -213,7 +250,27 @@ struct CameraScreen: View {
                     .frame(height: 160)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
-                if model.photoPreviewUrl == nil && model.photoPreviewImage == nil {
+                if waitingForGlassesPreview {
+                    VStack(spacing: 3) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 42, height: 42)
+                            .background(Color.white.opacity(0.18))
+                            .overlay(Circle().stroke(Color.white.opacity(0.28), lineWidth: 1))
+                            .clipShape(Circle())
+                        Text("Photo saved on glasses")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.top, 7)
+                        Text("Downloading the saved photo preview.")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.82))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                } else if model.photoPreviewUrl == nil && model.photoPreviewImage == nil {
                     Circle().fill(Color.white.opacity(0.55)).frame(width: 80, height: 80).blur(radius: 6).offset(x: 200, y: -30)
                     LinearGradient(colors: [.clear, .black.opacity(0.3)], startPoint: .top, endPoint: .bottom)
                         .frame(height: 90).clipShape(RoundedRectangle(cornerRadius: 22)).offset(y: 70)
@@ -234,19 +291,25 @@ struct CameraScreen: View {
                 }
             }
 
+            if needsGlassesHotspotSetup {
+                savedPhotoHotspotPanel
+                    .padding(.horizontal, 6)
+                    .padding(.top, 10)
+            }
+
             Button {
                 model.captureAndUpload()
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : (model.activeAction == "Capture & upload" || model.activeAction == "Capture scan photo") ? "Capturing..." : model.scanMode ? "Capture scan photo" : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(captureButtonTitle).foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
-            .disabled(!model.glassesConnected || !model.glassesWifiConnected)
-            .opacity(model.glassesConnected && model.glassesWifiConnected ? 1 : 0.55)
+            .disabled(!photoControlsEnabled)
+            .opacity(photoControlsEnabled ? 1 : 0.55)
             .padding(.horizontal, 6).padding(.top, 14)
 
             ScanModeSettingsCard(model: model)
@@ -254,6 +317,56 @@ struct CameraScreen: View {
                 .padding(.horizontal, 6)
                 .padding(.top, 12)
         }
+    }
+
+    private var savedPhotoHotspotPanel: some View {
+        let password = galleryHotspotPasswordLabel(model.glassesValues)
+        let statusColor = model.galleryServerReachable == true
+            ? AppColor.greenAccent
+            : model.galleryServerReachable == false ? AppColor.red : AppColor.muted
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Glasses hotspot")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(AppColor.ink)
+                    Text("Join \(galleryHotspotSsidLabel(model.glassesValues))")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(AppColor.muted)
+                    Text("Password \(password)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(AppColor.muted)
+                }
+                Spacer(minLength: 6)
+                VStack(alignment: .trailing, spacing: 5) {
+                    HotspotActionChip(title: "Retry", enabled: true, action: model.prepareGlassesPhotoPreview)
+                    HotspotActionChip(title: "Manual setup", enabled: true, action: model.openWifiSettings)
+                    HotspotActionChip(title: "Copy password", enabled: true, action: model.copyGalleryHotspotPassword)
+                }
+            }
+            Text(model.galleryServerStatus)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(statusColor)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(AppColor.ink.opacity(0.04))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(AppColor.ink.opacity(0.08), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var captureButtonTitle: String {
+        if !model.glassesConnected { return "Connect glasses first" }
+        if !model.glassesWifiConnected && !glassesStorageEnabled { return "Connect glasses to Wi-Fi" }
+        if needsGlassesHotspotSetup {
+            return model.galleryServerReachable == nil ? "Preparing hotspot..." : "Connect glasses hotspot"
+        }
+        if model.activeAction == "Capture & upload" || model.activeAction == "Capture scan photo" {
+            return "Capturing..."
+        }
+        return model.scanMode ? "Capture scan photo" : "Capture photo"
     }
 
     private var videoCard: some View {
@@ -393,6 +506,7 @@ struct CameraScreen: View {
             mode: captureMode,
             size: model.photoSize.rawValue,
             compression: model.photoCompression.rawValue,
+            photoDestination: model.photoDestination,
             aeExposureDivisor: model.photoAeExposureDivisor,
             isoCap: model.photoIsoCap,
             noiseReduction: model.photoNoiseReduction,
@@ -457,7 +571,8 @@ struct CameraScreen: View {
     private var uploadCard: some View {
         GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18)) {
             HStack {
-                Text("UPLOAD TO").font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
+                Text(captureMode == .photo ? "PHOTO DESTINATION" : "UPLOAD TO")
+                    .font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
                 Spacer()
                 if captureMode == .video || cloudServerEnabled {
                     Button {
@@ -511,6 +626,22 @@ struct CameraScreen: View {
                 .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.bottom, 12)
 
+                Toggle(isOn: Binding(
+                    get: { glassesStorageEnabled },
+                    set: { enabled in
+                        model.setPhotoDestination(enabled ? .glassesStorage : .thisPhone)
+                    }
+                )) {
+                    Text("Save and preview from glasses")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                }
+                .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 12)
+
                 if cloudServerEnabled {
                     Text("Cloud server receives photo uploads.")
                         .font(.system(size: 12, weight: .medium))
@@ -533,6 +664,12 @@ struct CameraScreen: View {
                     .padding(.horizontal, 14).padding(.vertical, 12)
                     .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
                     .padding(.bottom, 12)
+                } else if glassesStorageEnabled {
+                    Text("Photos stay on the glasses. Capture unlocks when the gallery connection is ready.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppColor.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 12)
                 } else {
                     HStack(spacing: 10) {
                         Circle()
@@ -659,6 +796,7 @@ struct CameraScreen: View {
     private var photoStateLabel: String {
         if model.photoPreviewUrl != nil || model.photoPreviewImage != nil { return "preview ready" }
         if model.photoPreviewDetails?.state == "error" { return "error" }
+        if model.photoPreviewDetails?.state == "saved" { return "saved" }
         if model.photoPreviewDetails?.state == "acknowledged" { return "acknowledged" }
         return "ready"
     }
@@ -677,7 +815,9 @@ struct CameraScreen: View {
             return "MP4 uploads to the media server after recording stops"
         }
         if model.photoPreviewUrl != nil || model.photoPreviewImage != nil {
-            return directPhone ? "Photo preview loaded from phone receiver" : "Photo preview loaded from cloud server"
+            if directPhone { return "Photo preview loaded from phone receiver" }
+            if glassesStorageEnabled { return "Photo preview downloaded from glasses" }
+            return "Photo preview loaded from cloud server"
         }
         return "Waiting for camera capture"
     }
@@ -1204,7 +1344,9 @@ private func photoDetailsSummary(_ details: PhotoPreviewDetails?) -> String {
         details.source,
         details.byteCount.map(formatBytes),
         dimensionsLabel(width: details.width, height: details.height),
-        details.state == "acknowledged" ? "acknowledged" : "preview ready",
+        details.state == "acknowledged"
+            ? "acknowledged"
+            : details.state == "saved" ? "saved on glasses" : "preview ready",
     ].compactMap { $0 }.joined(separator: " · ")
 }
 
@@ -1214,9 +1356,13 @@ private func photoDetailsRows(_ details: PhotoPreviewDetails?) -> [PhotoDetailsR
     }
     var rows = [
         PhotoDetailsRow(label: "Source", value: details.source),
-        PhotoDetailsRow(label: "State", value: details.state),
+        PhotoDetailsRow(
+            label: "State",
+            value: details.state == "saved" ? "saved on glasses" : details.state
+        ),
     ]
     if let requestId = details.requestId { rows.append(PhotoDetailsRow(label: "Request ID", value: requestId)) }
+    if let fileName = details.fileName { rows.append(PhotoDetailsRow(label: "Glasses filename", value: fileName)) }
     if let byteCount = details.byteCount { rows.append(PhotoDetailsRow(label: "Size", value: formatBytes(byteCount))) }
     if let dimensions = dimensionsLabel(width: details.width, height: details.height) { rows.append(PhotoDetailsRow(label: "Dimensions", value: dimensions)) }
     if let contentType = details.contentType { rows.append(PhotoDetailsRow(label: "Content type", value: contentType)) }

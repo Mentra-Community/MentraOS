@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MentraBluetoothSDK
+import NetworkExtension
 import UIKit
 
 struct ExampleEvent: Identifiable {
@@ -27,6 +28,45 @@ private struct GalleryServerCheck {
 private struct WebhookReachability {
     let healthUrl: URL
     let host: String
+}
+
+private struct GalleryPhoto {
+    let name: String
+    let mimeType: String?
+    let size: Int?
+    let url: String?
+}
+
+private struct PendingHotspotConnection {
+    let ssid: String
+    let password: String
+    let baseUrl: String
+}
+
+private final class GlassesHotspotConnector {
+    func connect(ssid: String, password: String) async throws {
+        let configuration = NEHotspotConfiguration(ssid: ssid, passphrase: password, isWEP: false)
+        configuration.joinOnce = false
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            NEHotspotConfigurationManager.shared.apply(configuration) { error in
+                if let error {
+                    let nsError = error as NSError
+                    if nsError.domain == NEHotspotConfigurationErrorDomain,
+                       nsError.code == NEHotspotConfigurationError.alreadyAssociated.rawValue {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: error)
+                    }
+                    return
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    func disconnect(ssid: String) {
+        NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+    }
 }
 
 private struct PersistedCloudUrls {
@@ -71,17 +111,20 @@ let photoAeExposureDivisorOptions = [2, 3, 5]
 let photoIsoCapOptions = [400, 800, 1600]
 let photoIspDigitalGainOptions = [0, 1, 2, 4]
 let photoIspAnalogGainOptions = ["low"]
+let glassesPhotoPollAttempts = 120
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
     case macBookServer
     case thisPhone
+    case glassesStorage
 }
 
 struct PhotoPreviewDetails {
     let byteCount: Int?
     let contentType: String?
     let error: String?
+    let fileName: String?
     let height: Int?
     let previewUrl: String?
     let requestId: String?
@@ -92,11 +135,36 @@ struct PhotoPreviewDetails {
     let uploadedAt: String?
     let width: Int?
 
-    func acknowledged(requestId: String, source: String, timestamp: Int, uploadUrl: String) -> PhotoPreviewDetails {
+    func withState(_ nextState: String) -> PhotoPreviewDetails {
         PhotoPreviewDetails(
             byteCount: byteCount,
             contentType: contentType,
             error: error,
+            fileName: fileName,
+            height: height,
+            previewUrl: previewUrl,
+            requestId: requestId,
+            source: source,
+            state: nextState,
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt,
+            width: width
+        )
+    }
+
+    func acknowledged(
+        requestId: String,
+        source: String,
+        timestamp: Int,
+        uploadUrl: String,
+        fileName: String? = nil
+    ) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount,
+            contentType: contentType,
+            error: error,
+            fileName: fileName ?? self.fileName,
             height: height,
             previewUrl: previewUrl,
             requestId: requestId,
@@ -112,6 +180,7 @@ struct PhotoPreviewDetails {
     func uploaded(
         byteCount: Int?,
         contentType: String? = nil,
+        fileName: String? = nil,
         height: Int? = nil,
         previewUrl: String,
         requestId: String?,
@@ -123,6 +192,7 @@ struct PhotoPreviewDetails {
             byteCount: byteCount ?? self.byteCount,
             contentType: contentType ?? self.contentType,
             error: error,
+            fileName: fileName ?? self.fileName,
             height: height ?? self.height,
             previewUrl: previewUrl,
             requestId: requestId ?? self.requestId,
@@ -136,11 +206,11 @@ struct PhotoPreviewDetails {
     }
 
     static func waiting(source: String) -> PhotoPreviewDetails {
-        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: nil, height: nil, previewUrl: nil, requestId: nil, source: source, state: "acknowledged", timestamp: nil, uploadUrl: nil, uploadedAt: nil, width: nil)
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: nil, fileName: nil, height: nil, previewUrl: nil, requestId: nil, source: source, state: "acknowledged", timestamp: nil, uploadUrl: nil, uploadedAt: nil, width: nil)
     }
 
     static func failed(requestId: String, source: String, error: String, timestamp: Int) -> PhotoPreviewDetails {
-        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: error, height: nil, previewUrl: nil, requestId: requestId, source: source, state: "error", timestamp: timestamp, uploadUrl: nil, uploadedAt: nil, width: nil)
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: error, fileName: nil, height: nil, previewUrl: nil, requestId: requestId, source: source, state: "error", timestamp: timestamp, uploadUrl: nil, uploadedAt: nil, width: nil)
     }
 }
 
@@ -276,6 +346,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var actionSequence = 0
     private var activeActions: [Int: String] = [:]
     private var activeActionOrder: [Int] = []
+    private let glassesHotspotConnector = GlassesHotspotConnector()
+    private var galleryConnectionGeneration = 0
+    private var pendingHotspotConnection: PendingHotspotConnection?
+    private var hotspotJoinExplanationShown = false
     private var streamConfigurationChangeInProgress = false
     private var photoCaptureDefaultsSyncGeneration = 0
     private var photoCaptureDefaultsSyncTask: Task<Void, Never>?
@@ -341,6 +415,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
+    @Published private(set) var hotspotJoinPromptSsid: String?
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
     @Published private(set) var micElapsedSeconds = 0
@@ -642,13 +717,133 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func setPhotoDestination(_ destination: PhotoDestination) {
         guard photoDestination != destination else { return }
-        if destination == .macBookServer {
-            stopPhonePhotoServer()
-            cameraStatus = "Camera: enter a media upload URL"
-        } else {
-            cameraStatus = "Camera: phone receiver will start before capture"
-        }
+        let wasGlassesStorage = photoDestination == .glassesStorage
+        stopPhonePhotoServer()
         photoDestination = destination
+        switch destination {
+        case .macBookServer:
+            cameraStatus = "Camera: enter a media upload URL"
+        case .thisPhone:
+            cameraStatus = "Camera: phone receiver will start before capture"
+        case .glassesStorage:
+            cameraStatus = "Camera: preparing glasses hotspot"
+            if glassesConnected {
+                prepareGlassesPhotoPreview()
+            }
+            return
+        }
+        guard wasGlassesStorage else { return }
+        galleryConnectionGeneration += 1
+        pendingHotspotConnection = nil
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: hotspot off"
+        hotspotJoinPromptSsid = nil
+        runAsyncAction("Disable glasses photo hotspot") { [self] in
+            glassesHotspotConnector.disconnect(ssid: galleryHotspotSsidLabel(glassesValues))
+            if hotspotEnabled && glassesConnected {
+                _ = try await mentraBluetoothSdk.setHotspotState(enabled: false)
+            }
+        }
+    }
+
+    func prepareGlassesPhotoPreview() {
+        runAsyncAction("Connect to glasses hotspot") { [self] in
+            try await prepareGlassesPhotoPreviewConnection()
+        }
+    }
+
+    func confirmHotspotJoin() {
+        hotspotJoinExplanationShown = true
+        hotspotJoinPromptSsid = nil
+        runAsyncAction("Join glasses hotspot") { [self] in
+            try await connectPendingGlassesHotspot()
+        }
+    }
+
+    private func prepareGlassesPhotoPreviewConnection() async throws {
+        try requireConnected("prepare saved-photo previews")
+        galleryConnectionGeneration += 1
+        let generation = galleryConnectionGeneration
+        cameraStatus = "Camera: preparing glasses hotspot"
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: starting glasses hotspot"
+        hotspotJoinPromptSsid = nil
+
+        let hotspot: (ssid: String, password: String, localIp: String)
+        if let current = enabledHotspotStatus(glassesValues) {
+            hotspot = current
+        } else {
+            let status = try await mentraBluetoothSdk.setHotspotState(enabled: true)
+            guard case let .enabled(ssid, password, localIp) = status.status else {
+                throw ExampleActionError(message: "The glasses hotspot did not turn on.")
+            }
+            hotspot = (ssid, password, localIp)
+        }
+        guard generation == galleryConnectionGeneration else { return }
+
+        let pending = PendingHotspotConnection(
+            ssid: hotspot.ssid,
+            password: hotspot.password,
+            baseUrl: "http://\(hotspot.localIp):8089"
+        )
+        pendingHotspotConnection = pending
+        if await waitForGalleryServer(pending.baseUrl, attempts: 3, delayMs: 400) {
+            markGalleryServerReady(pending.baseUrl)
+            return
+        }
+        if !hotspotJoinExplanationShown {
+            cameraStatus = "Camera: approve the glasses hotspot connection"
+            galleryServerReachable = false
+            galleryServerStatus = "Gallery server: approval required for \(pending.ssid)"
+            hotspotJoinPromptSsid = pending.ssid
+            return
+        }
+        try await connectPendingGlassesHotspot()
+    }
+
+    private func connectPendingGlassesHotspot() async throws {
+        guard let pending = pendingHotspotConnection else {
+            try await prepareGlassesPhotoPreviewConnection()
+            return
+        }
+        let generation = galleryConnectionGeneration
+        cameraStatus = "Camera: connecting to \(pending.ssid)"
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: connecting to \(pending.ssid)"
+        do {
+            try await glassesHotspotConnector.connect(ssid: pending.ssid, password: pending.password)
+            guard generation == galleryConnectionGeneration else { return }
+            guard await waitForGalleryServer(pending.baseUrl, attempts: 20, delayMs: 500) else {
+                throw ExampleActionError(message: "Could not reach the glasses gallery after connecting.")
+            }
+            markGalleryServerReady(pending.baseUrl)
+        } catch {
+            guard generation == galleryConnectionGeneration else { return }
+            cameraStatus = "Camera: connect to the glasses hotspot to enable capture"
+            galleryServerReachable = false
+            galleryServerStatus = "Gallery server: \(error.localizedDescription)"
+            throw error
+        }
+    }
+
+    private func waitForGalleryServer(_ baseUrl: String, attempts: Int, delayMs: UInt64) async -> Bool {
+        for attempt in 0 ..< attempts {
+            if await checkGalleryServerReachability(baseUrl).reachable {
+                return true
+            }
+            if attempt < attempts - 1 {
+                try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+            }
+        }
+        return false
+    }
+
+    private func markGalleryServerReady(_ baseUrl: String) {
+        cameraStatus = "Camera: ready to save and preview from glasses"
+        galleryServerReachable = true
+        galleryServerStatus = "Gallery server: ready at \(baseUrl)"
+        hotspotJoinPromptSsid = nil
+        append(tag: "LIVE", text: "gallery server ready \(baseUrl)")
     }
 
     func setPhotoSize(_ size: PhotoSize) {
@@ -871,6 +1066,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func captureAndUpload() {
         runAsyncAction(scanMode ? "Capture scan photo" : "Capture & upload") { [self] in
             try requireConnected("capture photos")
+            if photoDestination == .glassesStorage {
+                guard galleryServerReachable == true else {
+                    throw ExampleActionError(message: "Connect to the glasses hotspot before capturing.")
+                }
+                try await captureToGlassesStorage()
+                return
+            }
             try requireGlassesWifi("capture photos")
             if photoDestination == .thisPhone {
                 try await captureAndUploadToPhone()
@@ -905,7 +1107,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 }
                 throw error
             }
-            handlePhotoResponse(responseEvent.response)
+            handlePhotoResponse(responseEvent)
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
         }
     }
@@ -942,16 +1144,76 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             throw error
         }
-        handlePhotoResponse(responseEvent.response)
+        handlePhotoResponse(responseEvent)
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
-    private func buildPhotoRequest(requestId: String, webhookUrl: String) -> PhotoRequest {
+    private func captureToGlassesStorage() async throws {
+        let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        let generation = pollGeneration
+        photoPreviewDetails = .waiting(source: "Glasses gallery")
+        photoPreviewUrl = nil
+        photoPreviewImage = nil
+        cameraStatus = "Camera: saving photo on glasses (\(requestId))"
+
+        let responseEvent: PhotoResponseEvent
+        do {
+            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                buildPhotoRequest(requestId: requestId, webhookUrl: nil, save: true)
+            )
+        } catch {
+            activePhotoRequestId = nil
+            throw error
+        }
+        handlePhotoResponse(responseEvent)
+        cameraStatus = "Camera: photo saved on glasses; loading preview"
+        photoPreviewDetails = photoPreviewDetails.map { $0.withState("saved") }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await downloadGlassesPhotoPreview(
+                    requestId: requestId,
+                    generation: generation
+                )
+            } catch {
+                guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+                activePhotoRequestId = nil
+                let message = error.localizedDescription
+                cameraStatus = "Camera: \(message)"
+                photoPreviewDetails = photoPreviewDetails.map {
+                    PhotoPreviewDetails(
+                        byteCount: $0.byteCount,
+                        contentType: $0.contentType,
+                        error: message,
+                        fileName: $0.fileName,
+                        height: $0.height,
+                        previewUrl: $0.previewUrl,
+                        requestId: requestId,
+                        source: "Glasses gallery",
+                        state: "saved",
+                        timestamp: $0.timestamp,
+                        uploadUrl: $0.uploadUrl,
+                        uploadedAt: $0.uploadedAt,
+                        width: $0.width
+                    )
+                }
+            }
+        }
+    }
+
+    private func buildPhotoRequest(
+        requestId: String,
+        webhookUrl: String?,
+        save: Bool = false
+    ) -> PhotoRequest {
         return PhotoRequest(
             requestId: requestId,
             size: photoSize,
             webhookUrl: webhookUrl,
             compress: photoCompression,
+            save: save,
             sound: true,
             exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
             iso: photoExposureManual ? photoIso : nil,
@@ -963,6 +1225,116 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             zsl: photoZsl,
             ispDigitalGain: photoIspDigitalGain,
             ispAnalogGain: photoIspAnalogGain
+        )
+    }
+
+    private func downloadGlassesPhotoPreview(
+        requestId: String,
+        generation: Int
+    ) async throws {
+        guard let baseUrl = pendingHotspotConnection?.baseUrl
+                ?? galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled),
+              galleryServerReachable == true else {
+            throw ExampleActionError(message: "The glasses hotspot is not ready for preview downloads.")
+        }
+
+        galleryServerStatus = "Gallery server: finding \(requestId)"
+        for attempt in 0 ..< glassesPhotoPollAttempts {
+            guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+            do {
+                let photo = try await findGalleryPhoto(baseUrl: baseUrl, requestId: requestId)
+                galleryServerReachable = true
+                galleryServerStatus = "Gallery server: connected; finding \(requestId)"
+                guard let photo else {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+                let remoteUrl: URL
+                if let path = photo.url, let url = URL(string: path, relativeTo: URL(string: baseUrl)) {
+                    remoteUrl = url.absoluteURL
+                } else {
+                    var components = URLComponents(string: "\(baseUrl)/api/photo")!
+                    components.queryItems = [URLQueryItem(name: "file", value: photo.name)]
+                    guard let url = components.url else {
+                        throw ExampleActionError(message: "The glasses photo URL is invalid.")
+                    }
+                    remoteUrl = url
+                }
+                var request = URLRequest(url: remoteUrl)
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 30
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
+                }
+                guard let image = UIImage(data: data) else {
+                    throw ExampleActionError(message: "The downloaded glasses photo is not a JPEG image.")
+                }
+                let localUrl = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("mentra-gallery-\(requestId).jpg")
+                try data.write(to: localUrl, options: .atomic)
+                activePhotoRequestId = nil
+                photoPreviewUrl = localUrl
+                photoPreviewImage = image
+                photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Glasses gallery")).uploaded(
+                    byteCount: photo.size ?? data.count,
+                    contentType: photo.mimeType ?? http.value(forHTTPHeaderField: "Content-Type") ?? "image/jpeg",
+                    fileName: photo.name,
+                    height: Int(image.size.height * image.scale),
+                    previewUrl: remoteUrl.absoluteString,
+                    requestId: requestId,
+                    source: "Glasses gallery",
+                    width: Int(image.size.width * image.scale)
+                )
+                galleryServerReachable = true
+                galleryServerStatus = "Gallery server: downloaded \(photo.name)"
+                cameraStatus = "Camera: loaded photo preview from glasses"
+                append(tag: "LIVE", text: "glasses photo downloaded \(photo.name)")
+                return
+            } catch {
+                if attempt == 0 || attempt % 10 == 9 {
+                    galleryServerReachable = false
+                    galleryServerStatus = "Gallery server: not reachable. Join \(galleryHotspotSsidLabel(glassesValues))."
+                    cameraStatus = "Camera: join \(galleryHotspotSsidLabel(glassesValues)) to load the saved photo"
+                    append(tag: "LIVE", text: "waiting for glasses photo \(requestId): \(error.localizedDescription)")
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        throw ExampleActionError(
+            message: "Photo was saved on the glasses, but the preview could not be downloaded from \(baseUrl)."
+        )
+    }
+
+    private func findGalleryPhoto(baseUrl: String, requestId: String) async throws -> GalleryPhoto? {
+        guard var components = URLComponents(string: "\(baseUrl)/api/gallery") else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "poll", value: String(Int(Date().timeIntervalSince1970 * 1000))),
+        ]
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 5
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = root["data"] as? [String: Any],
+              let photos = payload["photos"] as? [[String: Any]],
+              let photo = photos.first(where: { stringValue($0, "request_id") == requestId }),
+              let name = stringValue(photo, "name")
+        else {
+            return nil
+        }
+        return GalleryPhoto(
+            name: name,
+            mimeType: stringValue(photo, "mime_type"),
+            size: intValue(photo, "size"),
+            url: stringValue(photo, "url")
         )
     }
 
@@ -1642,7 +2014,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let ssid = galleryHotspotSsidLabel(glassesValues)
             let password = galleryHotspotPasswordLabel(glassesValues)
             UIPasteboard.general.string = password
-            let message = "Password copied. Open iOS Settings > Wi-Fi, join \(ssid) with password \(password), then return and tap Open."
+            let message = "Password copied. Open iOS Settings > Wi-Fi, join \(ssid) with password \(password), then return and tap Retry."
             galleryServerStatus = message
             append(tag: "LIVE", text: message)
         }
@@ -1740,6 +2112,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             // Re-apply scan preset on reconnect so button captures stay in sync.
             if scanMode {
                 pushScanButtonPreset()
+            }
+            if photoDestination == .glassesStorage {
+                prepareGlassesPhotoPreview()
             }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
@@ -2111,7 +2486,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func refreshGalleryServerStatusForCurrentHotspot(defaultStatus: String) {
-        galleryServerReachable = nil
+        if galleryServerReachable == true,
+           galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) != nil {
+            return
+        }
+        galleryServerReachable = !hotspotEnabled && photoDestination == .glassesStorage ? false : nil
         if let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) {
             galleryServerStatus = "Gallery server: \(baseUrl)"
         } else {
@@ -2296,8 +2675,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicElapsedTimer()
         stopMicPlayback()
         hotspotEnabled = false
+        galleryConnectionGeneration += 1
+        if let pendingHotspotConnection {
+            glassesHotspotConnector.disconnect(ssid: pendingHotspotConnection.ssid)
+        }
+        pendingHotspotConnection = nil
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
+        hotspotJoinPromptSsid = nil
         resetOtaDisplayProgress()
         otaStatus = nil
         otaDisplayPercent = nil
@@ -2582,14 +2967,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: "stream \(summary)")
     }
 
-    private func handlePhotoResponse(_ response: PhotoResponse) {
+    private func handlePhotoResponse(_ event: PhotoResponseEvent) {
+        let response = event.response
         let requestId = response.requestId
         if let activePhotoRequestId, requestId != activePhotoRequestId {
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
             return
         }
-        let uploadTarget = photoDestination == .thisPhone ? "phone receiver" : "cloud webhook"
-        let source = photoDestination == .thisPhone ? "Phone receiver" : "Cloud server"
+        let uploadTarget: String
+        let source: String
+        switch photoDestination {
+        case .thisPhone:
+            uploadTarget = "phone receiver"
+            source = "Phone receiver"
+        case .macBookServer:
+            uploadTarget = "cloud webhook"
+            source = "Cloud server"
+        case .glassesStorage:
+            uploadTarget = "glasses storage"
+            source = "Glasses gallery"
+        }
         switch response {
         case let .success(requestId, uploadUrl, _, _, _, _, timestamp):
             photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(

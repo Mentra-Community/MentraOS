@@ -13,8 +13,10 @@ import {expoDeviceName, resolveAndroidPhoneTarget} from "./resolve-android-phone
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(scriptDir, "..")
-const mobileSdkRoot = path.resolve(projectRoot, "../../../mobile/modules/bluetooth-sdk")
 const modulesSdkPath = path.join(projectRoot, "modules/bluetooth-sdk")
+const localSdkOverride = process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH?.trim()
+  ? path.resolve(process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH)
+  : null
 
 const args = process.argv.slice(2)
 
@@ -29,6 +31,8 @@ Skips Mentra Live glasses and emulators unless ANDROID_SERIAL is set.
 Environment:
   ANDROID_SERIAL        Force a specific phone serial when multiple phones are connected
   ALLOW_MENTRA_LIVE=1   Allow targeting Mentra Live (not recommended for this example)
+  MENTRA_BLUETOOTH_SDK_PACKAGE_PATH
+                        Explicitly use a local SDK source checkout instead of npm
 `)
   process.exit(0)
 }
@@ -54,125 +58,18 @@ function run(command, commandArgs) {
   }
 }
 
-/**
- * Expo autolinking prefers `modules/bluetooth-sdk` over node_modules when present.
- * A stale copied tree there ignores package.json `file:` — symlink to mobile SDK instead.
- */
-function ensureBluetoothSdkSymlink() {
-  if (!fs.existsSync(mobileSdkRoot)) {
-    console.warn(`Mobile SDK not found at ${mobileSdkRoot} — skipping modules/ symlink fix`)
-    return
-  }
-
-  const expected = fs.realpathSync(mobileSdkRoot)
-
-  // Broken symlinks: existsSync is false but lstat still finds the link (EEXIST if we skip rm).
-  let hasModulesEntry = false
+function removeStaleBluetoothSdkModuleEntry() {
   try {
-    fs.lstatSync(modulesSdkPath)
-    hasModulesEntry = true
-  } catch {
-    /* path absent */
-  }
-
-  if (hasModulesEntry) {
-    try {
-      if (fs.realpathSync(modulesSdkPath) === expected) {
-        console.log(`modules/bluetooth-sdk -> ${expected}`)
-        return
-      }
-      console.log(`Replacing modules/bluetooth-sdk (was not ${expected})`)
-    } catch {
-      console.warn("Removing broken modules/bluetooth-sdk symlink")
-    }
     const stat = fs.lstatSync(modulesSdkPath)
     if (stat.isSymbolicLink()) {
       fs.unlinkSync(modulesSdkPath)
     } else {
       fs.rmSync(modulesSdkPath, {recursive: true, force: true})
     }
+    console.log("Removed modules/bluetooth-sdk so Expo autolinks the npm dependency")
+  } catch {
+    /* path absent */
   }
-
-  // Use absolute target — relative ../../../ paths break from modules/ (ENOENT on realpath).
-  fs.symlinkSync(expected, modulesSdkPath, "dir")
-  console.log(`Linked modules/bluetooth-sdk -> ${expected}`)
-}
-
-/**
- * bluetooth-sdk depends on :lc3Lib and :silero. Published npm tarballs may omit silero;
- * local dev uses modules/bluetooth-sdk -> MentraOS/mobile/modules/bluetooth-sdk.
- */
-function ensureSettingsGradleNativeModules() {
-  const settingsPath = path.join(projectRoot, "android/settings.gradle")
-  if (!fs.existsSync(settingsPath)) {
-    console.warn("android/settings.gradle missing — run: bunx expo prebuild --platform android")
-    return
-  }
-
-  if (!fs.existsSync(mobileSdkRoot)) {
-    return
-  }
-
-  const sdkRoot = fs.realpathSync(mobileSdkRoot)
-  const sdkRootLiteral = JSON.stringify(sdkRoot)
-
-  let contents = fs.readFileSync(settingsPath, "utf8")
-
-  const rootBlock = `def mentraBluetoothSdkRoot = new File(${sdkRootLiteral})`
-
-  contents = contents.replace(
-    /def mentraBluetoothSdkPackageJson[\s\S]*?def mentraBluetoothSdkRoot = new File\(mentraBluetoothSdkPackageJson\)\.getParentFile\(\)\s*\n?/,
-    `${rootBlock}\n`,
-  )
-
-  if (!contents.includes("def mentraBluetoothSdkRoot")) {
-    contents += `\n${rootBlock}\n`
-  }
-
-  if (!contents.includes("include ':lc3Lib'")) {
-    contents += `
-include ':lc3Lib'
-project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
-`
-  }
-
-  if (!contents.includes("include ':silero'")) {
-    contents += `
-include ':silero'
-project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
-`
-  }
-
-  fs.writeFileSync(settingsPath, contents)
-  console.log(`android/settings.gradle uses bluetooth-sdk at ${sdkRoot}`)
-}
-
-/** Root project must see bluetooth-sdk's on-disk Maven repo (AAR downloaded in SDK build.gradle). */
-function ensureSherpaOnnxMavenRepo() {
-  const buildGradlePath = path.join(projectRoot, "android/build.gradle")
-  if (!fs.existsSync(buildGradlePath) || !fs.existsSync(mobileSdkRoot)) {
-    return
-  }
-
-  const marker = "// bluetooth-sdk: sherpa-onnx local maven repo"
-  let contents = fs.readFileSync(buildGradlePath, "utf8")
-  if (contents.includes(marker)) {
-    return
-  }
-
-  const repoDir = path.join(fs.realpathSync(mobileSdkRoot), "android/libs/maven")
-  const repoBlock = `    maven {\n      ${marker}\n      url = uri(${JSON.stringify(repoDir)})\n    }`
-
-  const match = contents.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
-  if (!match) {
-    console.warn("android/build.gradle: no allprojects.repositories block — add Sherpa maven repo manually")
-    return
-  }
-
-  const insertIdx = match.index + match[0].length
-  contents = contents.slice(0, insertIdx) + "\n" + repoBlock + contents.slice(insertIdx)
-  fs.writeFileSync(buildGradlePath, contents)
-  console.log(`android/build.gradle: Sherpa-ONNX maven -> ${repoDir}`)
 }
 
 /** Fix CMake/codegen after a failed `gradlew clean` (AGP bug 255965912 / missing webview jni). */
@@ -188,32 +85,34 @@ function recoverAndroidNativeBuild() {
   ])
 }
 
-// Metro and native must use the same SDK tree (local mobile has silero + photo-receiver).
-if (fs.existsSync(mobileSdkRoot)) {
-  process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH = fs.realpathSync(mobileSdkRoot)
-}
-
 const target = resolveAndroidPhoneTarget()
 const expoDevice = expoDeviceName(target)
 
-const sdkPkg = output("node", [
+removeStaleBluetoothSdkModuleEntry()
+
+console.log("Installing the package.json dependencies from npm...")
+run("bun", ["install"])
+
+const sdkPackageJson = output("node", [
   "--print",
   "require.resolve('@mentra/bluetooth-sdk/package.json')",
-])
-console.log(`@mentra/bluetooth-sdk resolves to: ${sdkPkg}`)
-console.log(
-  "Local SDK: run `bun install` after adding new .java files (file: deps use per-file symlinks).",
-)
+]).trim()
+if (localSdkOverride && !fs.existsSync(localSdkOverride)) {
+  throw new Error(`Local SDK override not found at ${localSdkOverride}`)
+}
+const sdkRoot = localSdkOverride
+  ? fs.realpathSync(localSdkOverride)
+  : path.dirname(fs.realpathSync(sdkPackageJson))
+const sdkPackage = JSON.parse(fs.readFileSync(path.join(sdkRoot, "package.json"), "utf8"))
+console.log(`@mentra/bluetooth-sdk resolves to: ${sdkRoot} (version ${sdkPackage.version})`)
+console.log(localSdkOverride ? "SDK source: explicit local override" : "SDK source: npm dependency")
 console.log(`Using Android phone: ${expoDevice} (serial ${target.serial})`)
 console.log("Skipping Mentra Live / emulator targets.")
 
-ensureBluetoothSdkSymlink()
-ensureSettingsGradleNativeModules()
-ensureSherpaOnnxMavenRepo()
-
-// Refresh file: symlinks so new SDK sources are visible to Gradle.
-console.log("Refreshing @mentra/bluetooth-sdk symlinks (bun install)...")
-run("bun", ["install"])
+if (!fs.existsSync(path.join(projectRoot, "android/settings.gradle"))) {
+  console.log("Generating the Android project...")
+  run("bunx", ["expo", "prebuild", "--platform", "android"])
+}
 
 const skipClean = process.env.SDK_CLEAN === "0"
 if (!skipClean) {

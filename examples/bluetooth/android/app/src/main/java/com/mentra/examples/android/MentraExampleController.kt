@@ -93,6 +93,7 @@ import java.net.URI
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
@@ -114,6 +115,7 @@ fun streamProtocolLabel(protocol: String): String = if (protocol == "webrtc") "W
 enum class PhotoDestination {
     MACBOOK_SERVER,
     THIS_PHONE,
+    GLASSES_STORAGE,
 }
 
 data class ExampleEvent(
@@ -126,6 +128,7 @@ data class PhotoPreviewDetails(
     val byteCount: Int? = null,
     val contentType: String? = null,
     val error: String? = null,
+    val fileName: String? = null,
     val height: Int? = null,
     val previewUrl: String? = null,
     val requestId: String? = null,
@@ -173,6 +176,19 @@ private data class GalleryServerCheck(
     val eventText: String,
 )
 
+private data class GalleryPhoto(
+    val name: String,
+    val mimeType: String?,
+    val size: Int?,
+    val url: String?,
+)
+
+private data class PendingHotspotConnection(
+    val ssid: String,
+    val password: String,
+    val baseUrl: String,
+)
+
 private data class WebhookReachability(
     val healthUrl: String,
     val host: String,
@@ -199,6 +215,7 @@ const val CAMERA_FOV_DEFAULT = 102
 const val CAMERA_WARM_UP_DURATION_MS = 30_000
 const val CAMERA_WARM_UP_REFRESH_MS = 20_000L
 const val CAMERA_WARM_UP_DISCONNECTED_RETRY_MS = 2_000L
+const val GLASSES_PHOTO_POLL_ATTEMPTS = 120
 val photoAeExposureDivisorOptions = listOf(2, 3, 5)
 val photoIsoCapOptions = listOf(400, 800, 1600)
 val photoIspDigitalGainOptions = listOf(0, 1, 2, 4)
@@ -216,6 +233,7 @@ data class MentraExampleState(
     val galleryModeEnabled: Boolean = false,
     val galleryServerReachable: Boolean? = null,
     val galleryServerStatus: String = "Gallery server: enable hotspot to check",
+    val hotspotJoinPromptSsid: String? = null,
     val glassesStatus: GlassesRuntimeState? = null,
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
@@ -301,6 +319,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val cloudUrlPrefs =
         appContext.getSharedPreferences("mentra_example_cloud_urls", Context.MODE_PRIVATE)
     private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
+    private val glassesHotspotConnector = GlassesHotspotConnector(appContext)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
     private val photoUploadServer = LocalPhotoUploadServer(
@@ -312,6 +331,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var activeVideoRequestId: String? = null
     private var activeStreamId: String? = null
     private var pollGeneration = 0
+    private var galleryConnectionGeneration = 0
+    private var pendingHotspotConnection: PendingHotspotConnection? = null
+    private var hotspotJoinExplanationShown = false
     private var videoPollGeneration = 0
     private var directPhotoTimeoutJob: Job? = null
     private var gStreamerWhipReceiver: GStreamerWhipReceiver? = null
@@ -541,13 +563,145 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.photoDestination == destination) {
             return
         }
-        if (destination == PhotoDestination.MACBOOK_SERVER) {
-            stopPhonePhotoServer()
-            state = state.copy(cameraStatus = "Camera: enter a media upload URL")
-        } else {
-            state = state.copy(cameraStatus = "Camera: phone receiver will start before capture")
+        val wasGlassesStorage = state.photoDestination == PhotoDestination.GLASSES_STORAGE
+        stopPhonePhotoServer()
+        state = state.copy(
+            cameraStatus = when (destination) {
+                PhotoDestination.MACBOOK_SERVER -> "Camera: enter a media upload URL"
+                PhotoDestination.THIS_PHONE -> "Camera: phone receiver will start before capture"
+                PhotoDestination.GLASSES_STORAGE -> "Camera: preparing glasses hotspot"
+            },
+            photoDestination = destination,
+        )
+        if (destination == PhotoDestination.GLASSES_STORAGE) {
+            if (isGlassesConnected()) {
+                prepareGlassesPhotoPreview()
+            }
+            return
         }
-        state = state.copy(photoDestination = destination)
+        if (!wasGlassesStorage) {
+            return
+        }
+        galleryConnectionGeneration += 1
+        pendingHotspotConnection = null
+        state = state.copy(
+            galleryServerReachable = null,
+            galleryServerStatus = "Gallery server: hotspot off",
+            hotspotJoinPromptSsid = null,
+        )
+        runAction("Disable glasses photo hotspot") {
+            glassesHotspotConnector.disconnect()
+            if (state.hotspotEnabled && isGlassesConnected()) {
+                withContext(Dispatchers.IO) { mentraBluetoothSdk.setHotspotState(false) }
+            }
+        }
+    }
+
+    fun prepareGlassesPhotoPreview() = runAction("Connect to glasses hotspot") {
+        prepareGlassesPhotoPreviewConnection()
+    }
+
+    fun confirmHotspotJoin() {
+        hotspotJoinExplanationShown = true
+        state = state.copy(hotspotJoinPromptSsid = null)
+        runAction("Join glasses hotspot") {
+            connectPendingGlassesHotspot()
+        }
+    }
+
+    fun dismissHotspotJoin() {
+        state = state.copy(
+            galleryServerReachable = false,
+            galleryServerStatus = "Gallery server: connection required",
+            hotspotJoinPromptSsid = null,
+            cameraStatus = "Camera: connect to the glasses hotspot to enable capture",
+        )
+    }
+
+    private suspend fun prepareGlassesPhotoPreviewConnection() {
+        requireConnected("prepare saved-photo previews")
+        val generation = ++galleryConnectionGeneration
+        state = state.copy(
+            cameraStatus = "Camera: preparing glasses hotspot",
+            galleryServerReachable = null,
+            galleryServerStatus = "Gallery server: starting glasses hotspot",
+            hotspotJoinPromptSsid = null,
+        )
+        val existing = enabledHotspotStatus(state.glassesStatus)
+        val hotspot = existing ?: withContext(Dispatchers.IO) {
+            mentraBluetoothSdk.setHotspotState(true).status as? HotspotStatus.Enabled
+        } ?: throw IllegalStateException("The glasses hotspot did not turn on.")
+        if (generation != galleryConnectionGeneration) return
+
+        val pending = PendingHotspotConnection(
+            ssid = hotspot.ssid,
+            password = hotspot.password,
+            baseUrl = "http://${hotspot.localIp}:8089",
+        )
+        pendingHotspotConnection = pending
+        if (waitForGalleryServer(pending.baseUrl, attempts = 3, delayMs = 400)) {
+            markGalleryServerReady(pending.baseUrl)
+            return
+        }
+        if (!hotspotJoinExplanationShown) {
+            state = state.copy(
+                cameraStatus = "Camera: approve the glasses hotspot connection",
+                galleryServerReachable = false,
+                galleryServerStatus = "Gallery server: approval required for ${pending.ssid}",
+                hotspotJoinPromptSsid = pending.ssid,
+            )
+            return
+        }
+        connectPendingGlassesHotspot()
+    }
+
+    private suspend fun connectPendingGlassesHotspot() {
+        val pending = pendingHotspotConnection ?: run {
+            prepareGlassesPhotoPreviewConnection()
+            return
+        }
+        val generation = galleryConnectionGeneration
+        state = state.copy(
+            cameraStatus = "Camera: connecting to ${pending.ssid}",
+            galleryServerReachable = null,
+            galleryServerStatus = "Gallery server: connecting to ${pending.ssid}",
+        )
+        try {
+            withContext(Dispatchers.IO) {
+                glassesHotspotConnector.connect(pending.ssid, pending.password)
+            }
+            if (generation != galleryConnectionGeneration) return
+            if (!waitForGalleryServer(pending.baseUrl, attempts = 20, delayMs = 500)) {
+                throw IOException("Could not reach the glasses gallery after connecting.")
+            }
+            markGalleryServerReady(pending.baseUrl)
+        } catch (error: Throwable) {
+            if (generation != galleryConnectionGeneration) return
+            state = state.copy(
+                cameraStatus = "Camera: connect to the glasses hotspot to enable capture",
+                galleryServerReachable = false,
+                galleryServerStatus = "Gallery server: ${error.message ?: "connection failed"}",
+            )
+            throw error
+        }
+    }
+
+    private suspend fun waitForGalleryServer(baseUrl: String, attempts: Int, delayMs: Long): Boolean {
+        repeat(attempts) { attempt ->
+            if (checkGalleryServerReachability(baseUrl).reachable) return true
+            if (attempt < attempts - 1) delay(delayMs)
+        }
+        return false
+    }
+
+    private fun markGalleryServerReady(baseUrl: String) {
+        state = state.copy(
+            cameraStatus = "Camera: ready to save and preview from glasses",
+            galleryServerReachable = true,
+            galleryServerStatus = "Gallery server: ready at $baseUrl",
+            hotspotJoinPromptSsid = null,
+        )
+        addEvent("LIVE", "gallery server ready $baseUrl")
     }
 
     fun setPhotoSize(size: String) {
@@ -776,6 +930,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun captureAndUpload() = runAction(if (state.scanMode) "Capture scan photo" else "Capture & upload") {
         requireConnected("capture photos")
+        if (state.photoDestination == PhotoDestination.GLASSES_STORAGE) {
+            if (state.galleryServerReachable != true) {
+                throw IllegalStateException("Connect to the glasses hotspot before capturing.")
+            }
+            captureToGlassesStorage()
+            return@runAction
+        }
         requireGlassesWifi("capture photos")
         if (state.photoDestination == PhotoDestination.THIS_PHONE) {
             captureAndUploadToPhone()
@@ -860,12 +1021,64 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
     }
 
-    private fun buildPhotoRequest(requestId: String, webhookUrl: String): PhotoRequest {
+    private suspend fun captureToGlassesStorage() {
+        val requestId = "photo-${System.currentTimeMillis()}"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        val generation = pollGeneration
+        state = state.copy(
+            cameraStatus = "Camera: saving photo on glasses ($requestId)",
+            photoPreviewDetails = PhotoPreviewDetails(
+                requestId = requestId,
+                source = "Glasses gallery",
+                state = "acknowledged",
+            ),
+            photoPreviewUrl = null,
+        )
+        val responseEvent = try {
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.requestPhoto(
+                    buildPhotoRequest(requestId = requestId, webhookUrl = "", save = true)
+                )
+            }
+        } catch (error: Throwable) {
+            activePhotoRequestId = null
+            throw error
+        }
+        handlePhotoResponse(responseEvent)
+        state = state.copy(
+            cameraStatus = "Camera: photo saved on glasses; loading preview",
+            photoPreviewDetails = state.photoPreviewDetails?.copy(state = "saved"),
+        )
+        scope.launch {
+            try {
+                downloadGlassesPhotoPreview(requestId, generation)
+            } catch (error: Throwable) {
+                if (activePhotoRequestId != requestId || pollGeneration != generation) return@launch
+                activePhotoRequestId = null
+                val message = error.message ?: "Saved photo preview download failed."
+                state = state.copy(
+                    cameraStatus = "Camera: $message",
+                    photoPreviewDetails = state.photoPreviewDetails?.copy(
+                        error = message,
+                        state = "saved",
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun buildPhotoRequest(
+        requestId: String,
+        webhookUrl: String,
+        save: Boolean = false,
+    ): PhotoRequest {
         return PhotoRequest(
             requestId = requestId,
             size = photoSizeToSdk(state.photoSize),
             webhookUrl = webhookUrl,
             compress = PhotoCompression.fromValue(state.photoCompression),
+            save = save,
             sound = true,
             exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
             iso = if (state.photoExposureManual) state.photoIso else null,
@@ -878,6 +1091,130 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             ispDigitalGain = state.photoIspDigitalGain,
             ispAnalogGain = state.photoIspAnalogGain,
         )
+    }
+
+    private suspend fun downloadGlassesPhotoPreview(
+        requestId: String,
+        generation: Int,
+    ) {
+        val baseUrl = pendingHotspotConnection?.baseUrl
+            ?: galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
+            ?: throw IllegalStateException("The glasses hotspot is not ready for preview downloads.")
+        if (state.galleryServerReachable != true) {
+            throw IllegalStateException("The glasses hotspot is not ready for preview downloads.")
+        }
+
+        val localFile = File(appContext.cacheDir, "mentra-gallery-$requestId.jpg")
+        state = state.copy(galleryServerStatus = "Gallery server: finding $requestId")
+
+        repeat(GLASSES_PHOTO_POLL_ATTEMPTS) { attempt ->
+            if (activePhotoRequestId != requestId || pollGeneration != generation) {
+                return
+            }
+            try {
+                val photo = withContext(Dispatchers.IO) {
+                    findGalleryPhoto(baseUrl, requestId)
+                }
+                state = state.copy(
+                    galleryServerReachable = true,
+                    galleryServerStatus = "Gallery server: connected; finding $requestId",
+                )
+                if (photo == null) {
+                    delay(1_000)
+                    return@repeat
+                }
+                val encodedFileName = URLEncoder.encode(photo.name, StandardCharsets.UTF_8.name())
+                val remoteUrl = photo.url?.let {
+                    if (it.startsWith("http://") || it.startsWith("https://")) it else "$baseUrl$it"
+                } ?: "$baseUrl/api/photo?file=$encodedFileName"
+                val contentType = withContext(Dispatchers.IO) {
+                    downloadGalleryFile(remoteUrl, localFile)
+                }
+                val dimensions = imageDimensions(localFile)
+                val previewUri = Uri.fromFile(localFile).toString()
+                activePhotoRequestId = null
+                state = state.copy(
+                    cameraStatus = "Camera: loaded photo preview from glasses",
+                    galleryServerReachable = true,
+                    galleryServerStatus = "Gallery server: downloaded ${photo.name}",
+                    photoPreviewDetails = state.photoPreviewDetails.copyForUpload(
+                        byteCount = photo.size ?: localFile.length().toInt(),
+                        contentType = photo.mimeType ?: contentType,
+                        fileName = photo.name,
+                        height = dimensions?.second,
+                        previewUrl = remoteUrl,
+                        requestId = requestId,
+                        source = "Glasses gallery",
+                        width = dimensions?.first,
+                    ),
+                    photoPreviewUrl = previewUri,
+                )
+                addEvent("LIVE", "glasses photo downloaded ${photo.name}")
+                return
+            } catch (error: Throwable) {
+                if (attempt == 0 || attempt % 10 == 9) {
+                    state = state.copy(
+                        cameraStatus = "Camera: join ${galleryHotspotSsidLabel(state.glassesStatus)} to load the saved photo",
+                        galleryServerReachable = false,
+                        galleryServerStatus = "Gallery server: not reachable. Join ${galleryHotspotSsidLabel(state.glassesStatus)}.",
+                    )
+                    addEvent("LIVE", "waiting for glasses photo $requestId: ${error.message}")
+                }
+            }
+            delay(1_000)
+        }
+        throw IOException(
+            "Photo was saved on the glasses, but the preview could not be downloaded from $baseUrl."
+        )
+    }
+
+    private fun downloadGalleryFile(remoteUrl: String, destination: File): String {
+        val connection = URL(remoteUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 2_000
+        connection.readTimeout = 30_000
+        connection.useCaches = false
+        connection.setRequestProperty("Cache-Control", "no-cache")
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                throw IOException("Gallery server returned HTTP $code.")
+            }
+            destination.outputStream().buffered().use { output ->
+                connection.inputStream.buffered().use { input -> input.copyTo(output) }
+            }
+            return connection.contentType?.substringBefore(';') ?: "image/jpeg"
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun findGalleryPhoto(baseUrl: String, requestId: String): GalleryPhoto? {
+        val connection = URL("$baseUrl/api/gallery?limit=100&poll=${System.currentTimeMillis()}")
+            .openConnection() as HttpURLConnection
+        connection.connectTimeout = 2_000
+        connection.readTimeout = 5_000
+        connection.useCaches = false
+        return try {
+            if (connection.responseCode !in 200..299) {
+                throw IOException("Gallery server returned HTTP ${connection.responseCode}.")
+            }
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val photos = JSONObject(body).optJSONObject("data")?.optJSONArray("photos") ?: return null
+            for (index in 0 until photos.length()) {
+                val photo = photos.optJSONObject(index) ?: continue
+                if (photo.optString("request_id") != requestId) continue
+                val name = photo.optString("name").takeIf { it.isNotBlank() } ?: continue
+                return GalleryPhoto(
+                    name = name,
+                    mimeType = photo.optString("mime_type").takeIf { it.isNotBlank() },
+                    size = photo.optInt("size", -1).takeIf { it >= 0 },
+                    url = photo.optString("url").takeIf { it.isNotBlank() },
+                )
+            }
+            null
+        } finally {
+            connection.disconnect()
+        }
     }
 
     fun toggleVideoRecording() {
@@ -1771,6 +2108,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             if (state.scanMode) {
                 pushScanButtonPreset()
             }
+            if (state.photoDestination == PhotoDestination.GLASSES_STORAGE) {
+                prepareGlassesPhotoPreview()
+            }
         }
         maybeAutoCheckOta()
         addEvent("STORE", summarize(glasses))
@@ -1843,8 +2183,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val nextGlassesStatus = (state.glassesStatus as? GlassesRuntimeState.Connected)?.copy(hotspot = status)
         state = state.copy(
             hotspotEnabled = enabled,
-            galleryServerReachable = null,
-            galleryServerStatus = if (enabled) {
+            galleryServerReachable = if (enabled) {
+                state.galleryServerReachable
+            } else if (state.photoDestination == PhotoDestination.GLASSES_STORAGE) {
+                false
+            } else {
+                null
+            },
+            galleryServerStatus = if (enabled && state.galleryServerReachable == true) {
+                state.galleryServerStatus
+            } else if (enabled) {
                 "Gallery server: ${galleryServerUrl(nextGlassesStatus, enabled)}"
             } else {
                 "Gallery server: hotspot off"
@@ -1872,18 +2220,27 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             addEvent("LIVE", "ignoring stale photo $requestId")
             return
         }
-        val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone receiver" else "cloud webhook"
+        val uploadTarget = when (state.photoDestination) {
+            PhotoDestination.THIS_PHONE -> "phone receiver"
+            PhotoDestination.MACBOOK_SERVER -> "cloud webhook"
+            PhotoDestination.GLASSES_STORAGE -> "glasses storage"
+        }
+        val source = when (state.photoDestination) {
+            PhotoDestination.THIS_PHONE -> "Phone receiver"
+            PhotoDestination.MACBOOK_SERVER -> "Cloud server"
+            PhotoDestination.GLASSES_STORAGE -> "Glasses gallery"
+        }
         val nextDetails = when (response) {
             is PhotoResponse.Error -> PhotoPreviewDetails(
                 error = response.errorCode ?: response.errorMessage,
                 requestId = requestId,
-                source = if (state.photoDestination == PhotoDestination.THIS_PHONE) "Phone receiver" else "Cloud server",
+                source = source,
                 state = "error",
                 timestamp = response.timestamp,
             )
             is PhotoResponse.Success -> state.photoPreviewDetails.copyForAck(
                 requestId = requestId,
-                source = if (state.photoDestination == PhotoDestination.THIS_PHONE) "Phone receiver" else "Cloud server",
+                source = source,
                 timestamp = response.timestamp,
                 uploadUrl = response.uploadUrl,
             )
@@ -2275,6 +2632,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         stopMicElapsedTimer()
         stopMicPlayback()
         unregisterAudioStateObservers()
+        glassesHotspotConnector.disconnect()
         volumeRefreshJob?.cancel()
         controllerJob.cancel()
         mentraBluetoothSdk.close()
@@ -2606,6 +2964,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         directPhotoTimeoutJob?.cancel()
         directPhotoTimeoutJob = null
         photoUploadServer.stop()
+        galleryConnectionGeneration += 1
+        pendingHotspotConnection = null
+        glassesHotspotConnector.disconnect()
         resetOtaDisplayProgress()
         if (hadPhotoRequest) {
             pollGeneration += 1
@@ -2619,6 +2980,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesVolumeStatus = "Glasses volume: not connected",
             galleryServerReachable = null,
             galleryServerStatus = "Gallery server: connect glasses first",
+            hotspotJoinPromptSsid = null,
             streamRequested = false,
             streamPreviewReady = false,
             streamStartedAt = null,
@@ -3195,6 +3557,7 @@ fun cameraSdkCall(
     mode: String,
     size: String,
     compression: String,
+    photoDestination: PhotoDestination,
     aeExposureDivisor: Int?,
     isoCap: Int?,
     noiseReduction: Boolean?,
@@ -3246,12 +3609,14 @@ println("Video stopped: ${'$'}{stopped.status}")
         ispAnalogGain?.let { "      ispAnalogGain = \"$it\"," },
     ).joinToString("\n")
     val optionalTuningLines = if (tuningLines.isBlank()) "" else "\n$tuningLines"
+    val webhookLine = if (photoDestination == PhotoDestination.GLASSES_STORAGE) "\"\"" else "uploadUrl"
+    val saveLine = if (photoDestination == PhotoDestination.GLASSES_STORAGE) "\n      save = true," else ""
     return """
 $prefix
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
-      webhookUrl = uploadUrl,
+      webhookUrl = $webhookLine,$saveLine
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,
       exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
@@ -3756,6 +4121,7 @@ private fun PhotoPreviewDetails?.copyForAck(
 private fun PhotoPreviewDetails?.copyForUpload(
     byteCount: Int? = null,
     contentType: String? = null,
+    fileName: String? = null,
     height: Int? = null,
     previewUrl: String,
     requestId: String?,
@@ -3766,6 +4132,7 @@ private fun PhotoPreviewDetails?.copyForUpload(
     (this ?: PhotoPreviewDetails(source = source, state = "preview")).copy(
         byteCount = byteCount ?: this?.byteCount,
         contentType = contentType ?: this?.contentType,
+        fileName = fileName ?: this?.fileName,
         height = height ?: this?.height,
         previewUrl = previewUrl,
         requestId = requestId ?: this?.requestId,
