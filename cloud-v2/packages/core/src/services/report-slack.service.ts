@@ -362,16 +362,44 @@ function formatSystemLine(context: Record<string, unknown> | null | undefined): 
   push("Platform", phone?.platform);
   push("Device", phone?.deviceName);
   push("OS", phone?.osVersion);
-  if (typeof glasses?.connected === "boolean") {
-    const model =
-      typeof glasses.modelName === "string" && glasses.modelName.trim()
-        ? ` (${truncate(glasses.modelName.trim(), 80)})`
-        : "";
-    parts.push(`Glasses: ${glasses.connected ? "Connected" : "Disconnected"}${model}`);
+  if (glasses) {
+    const connection = glassesConnectionLabel(glasses);
+    const model = firstNonEmptyString(glasses.deviceModel, glasses.modelName);
+    if (connection || model) {
+      const suffix = model ? ` (${truncate(model, 80)})` : "";
+      parts.push(`Glasses: ${connection ?? "Unknown"}${suffix}`);
+    }
   }
   push("Wearable", settings?.defaultWearable);
 
   return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+/**
+ * Human label for the glasses link state. The mobile toolkit sends the raw
+ * glasses store state, where `connection` is a `{ state: "connected" | ... }`
+ * object (btsdk GlassesConnectionStatus); a plain string or a normalized
+ * `connected` boolean are accepted for robustness against client versions.
+ */
+function glassesConnectionLabel(glasses: Record<string, unknown>): string | null {
+  if (typeof glasses.connected === "boolean") {
+    return glasses.connected ? "Connected" : "Disconnected";
+  }
+  const connection = glasses.connection;
+  const state =
+    typeof connection === "string" ? connection : asRecord(connection)?.state;
+  if (typeof state === "string" && state.trim()) {
+    const label = truncate(state.trim(), 40);
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
+  return null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

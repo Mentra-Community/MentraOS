@@ -149,15 +149,17 @@ export function App() {
 }
 
 // Deep link used by report Slack notifications: /?report=rep_… lands on the
-// Incident system page with that report open. Consumed exactly once by the
-// first ReportsPage mount, which also clears the param from the address bar,
-// so navigating away and back starts unselected.
+// Incident system page with that report open. AdminPage captures the id into
+// state and clears the URL only once the session is confirmed — while logged
+// out the param must stay in the address bar so LoginGate's return_to brings
+// it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(pendingDeepLinkReportId ? "incidents" : "home");
+  const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -178,6 +180,16 @@ function AdminPage() {
     queryFn: () => api<{ authenticated: true; admin: true; user: AdminUser | null }>("/api/admin/me"),
     retry: false,
   });
+
+  useEffect(() => {
+    // The deep link is safe in state now, so drop it from the address bar —
+    // but only once signed in; before that, LoginGate's return_to still needs
+    // the parameter to survive the auth round-trip. Idempotent on re-runs.
+    if (me.isSuccess && pendingDeepLinkReportId) {
+      pendingDeepLinkReportId = null;
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [me.isSuccess]);
   const submissions = useQuery({
     queryKey: ["admin-submissions"],
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
@@ -307,7 +319,12 @@ function AdminPage() {
       badge={<EnvBadge env={env} />}
       nav={ADMIN_NAV}
       activeKey={page}
-      onSelect={key => setPage(key as AdminPageKey)}
+      onSelect={key => {
+        setPage(key as AdminPageKey);
+        // Any navigation spends the deep link: coming back to the Incident
+        // system page starts unselected.
+        setDeepLinkReportId(null);
+      }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
       userEmail={me.data?.user?.email ?? "Admin"}
@@ -363,7 +380,7 @@ function AdminPage() {
 
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
-      {page === "incidents" ? <ReportsPage /> : null}
+      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
 
       {detailRelease ? (
         <SubmissionDetail
@@ -825,19 +842,10 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
   );
 }
 
-function ReportsPage() {
+function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
   const [kind, setKind] = useState<"all" | ReportKind>("all");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
-  const [detailId, setDetailId] = useState<string | null>(pendingDeepLinkReportId);
-
-  useEffect(() => {
-    // Consume the deep link: later mounts of this page start unselected and
-    // the address bar loses the parameter.
-    if (pendingDeepLinkReportId) {
-      pendingDeepLinkReportId = null;
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
+  const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
     queryKey: ["admin-reports", kind, status],
@@ -1228,7 +1236,9 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function LoginGate({ denied = false }: { denied?: boolean }) {
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(`${window.location.origin}/`)}`;
+  // The full URL (not just the origin) so a /?report=… deep link survives the
+  // login round-trip; safeReturnTo on Core validates the origin either way.
+  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
   async function signOutAndReload() {
     try {

@@ -146,16 +146,19 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).not.toContain("*System:*");
   });
 
-  test("renders a System line from the toolkit-collected context", async () => {
+  test("renders a System line from the raw mobile toolkit context", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
 
+    // Shape as the mobile island's collectDiagnosticContext actually sends it:
+    // the glasses store state with a GlassesConnectionStatus object and
+    // deviceModel, not a normalized connected/modelName pair.
     await notifyReportSlack(
       bugNotification({
         context: {
           app: { appVersion: "2.11.0" },
           phone: { platform: "android", deviceName: "SM-S948U", osVersion: "android 36" },
-          glasses: { connected: true, modelName: "Mentra Live" },
-          settings: { defaultWearable: "Mentra Live" },
+          glasses: { connection: { state: "connected" }, deviceModel: "Even Realities G2" },
+          settings: { defaultWearable: "Even Realities G2" },
         },
       }),
     );
@@ -163,8 +166,22 @@ describe("notifyReportSlack", () => {
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
     expect(blocksJson).toContain(
-      "*System:* App: 2.11.0 | Platform: android | Device: SM-S948U | OS: android 36 | Glasses: Connected (Mentra Live) | Wearable: Mentra Live",
+      "*System:* App: 2.11.0 | Platform: android | Device: SM-S948U | OS: android 36 | Glasses: Connected (Even Realities G2) | Wearable: Even Realities G2",
     );
+  });
+
+  test("accepts a normalized glasses shape in the System line", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack(
+      bugNotification({
+        context: { glasses: { connected: false, modelName: "Mentra Live" } },
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain("*System:* Glasses: Disconnected (Mentra Live)");
   });
 
   test("escapes client-sourced context values in the System line", async () => {
