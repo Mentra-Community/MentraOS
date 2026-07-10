@@ -389,6 +389,17 @@ public class K900NetworkManager extends BaseNetworkManager {
         // AP up (including hotspots enabled outside asg_client). That broadcast can precede
         // the AP interface holding its gateway IP, so route through the readiness watch —
         // listeners only hear "enabled" once clients can actually join.
+        synchronized (hotspotWatchLock) {
+            if (hotspotStopRequested) {
+                // Teardown echo: after a deliberate stop the framework AP can still look
+                // active for a beat, and this broadcast fires while xy_ssid and the gateway
+                // IP may linger. Restarting the watch here would clear the stop flag and
+                // re-announce "enabled" right after the user disabled the AP. Only a real
+                // startHotspot() re-arms the watch.
+                Log.d(TAG, "🔥 ⛔ Ignoring tethering-active echo after hotspot stop");
+                return;
+            }
+        }
         beginHotspotReadinessWatch();
     }
 
