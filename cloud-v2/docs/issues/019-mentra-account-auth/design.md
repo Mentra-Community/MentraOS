@@ -112,7 +112,14 @@ is enforced by code, both fail at runtime if missed:
   missing, GoTrue silently falls back to the Site URL (an old "Email
   verified!" landing page) and the flow dead-ends before the core `/callback`
   leg. Per-developer Porter deployments (e.g. `porter.isaiah.yaml` ->
-  `core.isaiah.us-west-2.mentraglass.com`) each need their own entry.
+  `core.isaiah.us-west-2.mentraglass.com`) need covering too; the dashboard
+  caps the number of entries, so use its glob support instead of one pair per
+  origin: `https://core.*.us-west-2.mentraglass.com/api/account/oauth/callback**`
+  covers debug/dev/staging and all per-developer deployments in one entry
+  (`*` matches a single label, `**` matches the empty string or any query
+  string). Prod is NOT matched by that pattern (no environment label in
+  `core.us-west-2.mentraglass.com` / `core.mentraglass.com`) and needs its
+  own entry for whichever host its `CORE_PUBLIC_URL` uses.
 
 ## 5. Mobile changes
 
