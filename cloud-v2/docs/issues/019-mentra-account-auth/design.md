@@ -98,8 +98,9 @@ app                core                        Supabase/provider
 
 ### Deployment prerequisites (Supabase configuration)
 
-Three requirements discovered the hard way after the merge (PR #3382); none
-is enforced by code, all fail at runtime if missed:
+Two requirements discovered the hard way after the merge (PR #3382); neither
+is enforced by code, both fail at runtime if missed — plus a note on how core
+builds the redirect URL:
 
 - **`SUPABASE_URL` (section 2) must point at the project's ACTIVE custom
   domain, `https://auth.mentra.glass`.** The old `https://auth.augmentos.org`
@@ -107,7 +108,7 @@ is enforced by code, all fail at runtime if missed:
   custom domain per project, and that hostname is no longer registered as it.
 - **The core OAuth callback must be in the Supabase Auth redirect allowlist**
   (dashboard -> Authentication -> URL Configuration -> Redirect URLs):
-  `https://<CORE_PUBLIC_URL host>/api/account/oauth/callback` plus a `?*` glob
+  `https://<core public host>/api/account/oauth/callback` plus a `?*` glob
   variant, for every environment/origin that runs the flow. If an entry is
   missing, GoTrue silently falls back to the Site URL (an old "Email
   verified!" landing page) and the flow dead-ends before the core `/callback`
@@ -119,12 +120,17 @@ is enforced by code, all fail at runtime if missed:
   (`*` matches a single label, `**` matches the empty string or any query
   string). Prod is NOT matched by that pattern (no environment label in
   `core.us-west-2.mentraglass.com` / `core.mentraglass.com`) and needs its
-  own entry for whichever host its `CORE_PUBLIC_URL` uses.
-- **`CORE_PUBLIC_URL` must be set (with `https://`) in every environment
-  running the flow.** When it is unset, `publicOrigin()` falls back to the
-  request URL's origin, and TLS terminates at the Porter nginx ingress, so
-  the pod sees `http://...`: GoTrue then rejects the `redirect_to` against
-  the https-only allowlist, with the same silent Site-URL fallback as above.
+  own entry for whichever public host serves core.
+- **No public-origin env var is needed.** `publicOrigin()` derives the origin
+  from the request (PR #3401): the `x-mentra-public-origin` header when
+  proxied, otherwise `x-forwarded-proto` + Host. TLS terminates at the Porter
+  nginx ingress (the pod sees plain http), but ingress-nginx sets
+  `x-forwarded-proto` itself — overwriting any client-supplied value — and
+  preserves Host, so the derived origin is the correct public https one in
+  every environment with zero config. (An earlier `CORE_PUBLIC_URL` env
+  fallback was never set anywhere, so the request-URL fallback emitted
+  `http://` origins that GoTrue rejected against the https-only allowlist,
+  with the same silent Site-URL fallback as above.)
   Debug tip for all of this: GoTrue's `GET /auth/v1/verify?token=bogus&
   type=signup&redirect_to=<url>` runs the same allowlist check and 303s to
   `<url>` on match or to the Site URL on mismatch, so allowlist entries can
