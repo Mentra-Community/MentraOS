@@ -1,6 +1,6 @@
 // Mock the in-island model managers (they pull native deps) so the real speech
 // facade's forwarding can be exercised under the mobile jest runner.
-jest.mock("../../modules/island/src/services/STTModelManager", () => ({
+jest.mock("../../modules/engine/src/services/STTModelManager", () => ({
   __esModule: true,
   default: {
     getCurrentLanguage: jest.fn(() => "en"),
@@ -12,7 +12,7 @@ jest.mock("../../modules/island/src/services/STTModelManager", () => ({
     deleteModel: jest.fn(() => Promise.resolve()),
   },
 }))
-jest.mock("../../modules/island/src/services/TTSModelManager", () => ({
+jest.mock("../../modules/engine/src/services/TTSModelManager", () => ({
   __esModule: true,
   default: {
     getCurrentLanguage: jest.fn(() => "en"),
@@ -24,14 +24,14 @@ jest.mock("../../modules/island/src/services/TTSModelManager", () => ({
     deleteModel: jest.fn(() => Promise.resolve()),
   },
 }))
-jest.mock("../../modules/island/src/services/OfflineSpeechModelService", () => ({
+jest.mock("../../modules/engine/src/services/OfflineSpeechModelService", () => ({
   __esModule: true,
   default: {getStatus: jest.fn(() => null), subscribe: jest.fn(() => () => {})},
 }))
 
-import sttModelManager from "../../modules/island/src/services/STTModelManager"
-import ttsModelManager from "../../modules/island/src/services/TTSModelManager"
-import {speech} from "../../modules/island/src/facades/speech"
+import sttModelManager from "../../modules/engine/src/services/STTModelManager"
+import ttsModelManager from "../../modules/engine/src/services/TTSModelManager"
+import {speech} from "../../modules/engine/src/facades/speech"
 
 describe("speech facade", () => {
   beforeEach(() => jest.clearAllMocks())

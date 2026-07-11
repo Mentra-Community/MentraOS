@@ -13,7 +13,7 @@
  *     bus via `mentra.send(channel, payload)`.
  *
  * The `mentra` global is injected into every UI WebView at mount time
- * by the host's `mentraUiShim` (see `@mentra/island/services/mentraUiShim`).
+ * by the host's `mentraUiShim` (see `@mentra/engine/services/mentraUiShim`).
  * This entry point exports its TypeScript declaration so authors get
  * autocomplete and compile-time errors on channel names + payloads.
  */

@@ -9,18 +9,18 @@
  * is unchanged — byte-identical output on G1/Z100 follows by construction.
  */
 
-import {diffScene, type DiffableElement} from "../../modules/island/src/utils/display/scene/differ"
-import {degradeScene} from "../../modules/island/src/utils/display/scene/degrade"
-import {processScene, profileLineHeightPx} from "../../modules/island/src/utils/display/scene/process"
-import {SceneStore} from "../../modules/island/src/utils/display/scene/store"
+import {diffScene, type DiffableElement} from "../../modules/engine/src/utils/display/scene/differ"
+import {degradeScene} from "../../modules/engine/src/utils/display/scene/degrade"
+import {processScene, profileLineHeightPx} from "../../modules/engine/src/utils/display/scene/process"
+import {SceneStore} from "../../modules/engine/src/utils/display/scene/store"
 import {
   elementContentHash,
   type FrameElement,
   type SceneDisplayCapabilities,
   type SceneElementInput,
-} from "../../modules/island/src/utils/display/scene/types"
-import {G1_PROFILE} from "../../modules/island/src/utils/display/profiles/g1"
-import {NEX_PROFILE} from "../../modules/island/src/utils/display/profiles/nex"
+} from "../../modules/engine/src/utils/display/scene/types"
+import {G1_PROFILE} from "../../modules/engine/src/utils/display/profiles/g1"
+import {NEX_PROFILE} from "../../modules/engine/src/utils/display/profiles/nex"
 
 // ── helpers ────────────────────────────────────────────────────────────
 

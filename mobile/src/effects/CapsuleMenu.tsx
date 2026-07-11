@@ -8,13 +8,13 @@ import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp, toolkit} from "@mentra/island"
+import {ClientApp, engine} from "@mentra/engine"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 
@@ -193,7 +193,7 @@ export async function captureScreenshot(
           format: ImageManipulator.SaveFormat.JPEG,
           compress: 0.1,
         })
-        await toolkit.miniapps.saveScreenshot(packageName, cropped.uri)
+        await engine.miniapps.saveScreenshot(packageName, cropped.uri)
       })
       .catch((e) => {
         console.warn("screenshot failed:", e)
@@ -207,7 +207,7 @@ export async function captureScreenshot(
     })
       .then(async (uri) => {
         // android is weird and the crop doesn't work properly:
-        toolkit.miniapps.saveScreenshot(packageName, uri)
+        engine.miniapps.saveScreenshot(packageName, uri)
       })
       .catch((e) => {
         console.warn("screenshot failed:", e)
@@ -232,7 +232,7 @@ export async function captureScreenshot(
 //     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
 //     useEffect(() => {
-//       const storeApp = toolkit.miniapps.list().find((a) => a.packageName === packageName)
+//       const storeApp = engine.miniapps.list().find((a) => a.packageName === packageName)
 //       if (storeApp) {
 //         setApp(storeApp)
 //       } else if (appNameOverride || iconUrlOverride) {
@@ -262,7 +262,7 @@ export async function captureScreenshot(
 //     )
 
 //     const handleAddRemoveFromHome = useCallback(() => {
-//       toolkit.miniapps.setHiddenStatus(packageName, !app?.hidden)
+//       engine.miniapps.setHiddenStatus(packageName, !app?.hidden)
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])

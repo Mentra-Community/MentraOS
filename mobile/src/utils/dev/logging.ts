@@ -1,5 +1,5 @@
-import {logBuffer} from "@mentra/island/internal"
+import {logBuffer} from "@mentra/engine/internal"
 
 export {logBuffer}
-export type {LogEntry} from "@mentra/island/internal"
+export type {LogEntry} from "@mentra/engine/internal"
 export default logBuffer

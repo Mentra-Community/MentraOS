@@ -6,7 +6,7 @@ This plan is retained as the reviewable work-package record. The migration was
 implemented as a series of focused commits on the glasses-status boundary branch.
 
 This is the PR-sized implementation plan for
-[`README.md`](./README.md). The architecture goal is stable: toolkit/island owns
+[`README.md`](./README.md). The architecture goal is stable: engine/island owns
 MentraOS runtime state and behavior; the host owns branded UI, navigation, copy,
 alerts, and user choices.
 
@@ -20,7 +20,7 @@ sub-packages because OTA failures are high risk.
 - Do not add a broad `GlassesStatus` replacement API.
 - Do not expose hotspot credentials or local IP through a public host/OEM
   facade.
-- Do not wrap the entire Bluetooth SDK in toolkit. Only add toolkit APIs where
+- Do not wrap the entire Bluetooth SDK in engine. Only add engine APIs where
   the behavior is MentraOS runtime policy.
 - Keep host UI visually unchanged while replacing raw store reads.
 - Keep tests allowed to import raw stores when they are testing island/store
@@ -34,7 +34,7 @@ Before starting implementation, capture current leak counts:
 rg -n "from [\"']@/stores/glasses|useGlassesStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady" mobile/src -g '*.ts' -g '*.tsx'
 rg -n "@/stores/gallerySync|useGallerySyncStore" mobile/src -g '*.ts' -g '*.tsx'
 rg -n "@mentra/bluetooth-sdk|@mentra/bluetooth-sdk-internal|BluetoothSdk" mobile/src -g '*.ts' -g '*.tsx'
-rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/island/src -g '*.ts' -g '*.tsx'
+rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/engine/src -g '*.ts' -g '*.tsx'
 ```
 
 Expected current hotspots:
@@ -56,9 +56,9 @@ guardrails make them noisy.
 
 Changes:
 
-- Add a toolkit devtools export surface, likely
-  `mobile/modules/island/src/devtools/index.ts`.
-- Move or wrap toolkit-owned devtools:
+- Add a engine devtools export surface, likely
+  `mobile/modules/engine/src/devtools/index.ts`.
+- Move or wrap engine-owned devtools:
   - `mobile/src/components/dev/CoreStatusBar.tsx`
   - `mobile/src/app/miniapps/settings/stress-test.tsx`
   - `mobile/src/effects/MemoryWarningMonitor.tsx`
@@ -84,7 +84,7 @@ cd mobile && npm run compile
 Exit criteria:
 
 - Product/OEM screens do not need devtool exceptions.
-- Any devtool that still reads raw stores lives behind a toolkit-owned devtools
+- Any devtool that still reads raw stores lives behind a engine-owned devtools
   export.
 - Host debug shell imports only devtools components or host-owned services.
 
@@ -99,13 +99,13 @@ Changes:
 - Have it fail on new production host imports of:
   - `@/stores/glasses`
   - `@/stores/gallerySync`
-  - direct `useGlassesStore` imports from `@mentra/island`
+  - direct `useGlassesStore` imports from `@mentra/engine`
 - Add an explicit temporary allowlist file, for example
   `mobile/boundary-allowlist.txt`, generated from the baseline inventory.
 - Make the script ignore:
-  - `mobile/modules/island/**`
+  - `mobile/modules/engine/**`
   - tests (`*.test.ts`, `*.test.tsx`, `__tests__/**`)
-  - toolkit devtools internals.
+  - engine devtools internals.
 
 Start with a manual/report-only command in this branch. Turn it into CI once
 the high-volume product UI and OTA paths are converted.
@@ -124,24 +124,24 @@ Exit criteria:
 
 ## Work Package 3: Missing Facade Deltas
 
-Goal: provide the host enough typed toolkit read models before converting UI.
+Goal: provide the host enough typed engine read models before converting UI.
 
 Current facade deltas:
 
 | Domain | Existing | Add |
 | --- | --- | --- |
-| `toolkit.glasses` | `status()`, `onStatus()`, `info()`, `requestVersionInfo()` | `onInfo(cb)` and any missing info fields needed by settings UI |
-| `toolkit.glasses.controller` | connect/disconnect/forget commands | `status()`, `onStatus(cb)` |
-| `toolkit.pairing` | scan/pair/setDefault/onPairFailure/onGlassesNotReady/waitForReady | `readiness()`, `onReadiness(cb)`, `waitForBluetoothClassic(options)` |
-| `toolkit.ota` | `updateAvailable()`, `status()`, `onUpdateAvailable()`, `onStatus()`, primitive `install()`/`retry()` | `snapshot()`, `onSnapshot(cb)`, later `checkForUpdates()`, `clear()` |
+| `engine.glasses` | `status()`, `onStatus()`, `info()`, `requestVersionInfo()` | `onInfo(cb)` and any missing info fields needed by settings UI |
+| `engine.glasses.controller` | connect/disconnect/forget commands | `status()`, `onStatus(cb)` |
+| `engine.pairing` | scan/pair/setDefault/onPairFailure/onGlassesNotReady/waitForReady | `readiness()`, `onReadiness(cb)`, `waitForBluetoothClassic(options)` |
+| `engine.ota` | `updateAvailable()`, `status()`, `onUpdateAvailable()`, `onStatus()`, primitive `install()`/`retry()` | `snapshot()`, `onSnapshot(cb)`, later `checkForUpdates()`, `clear()` |
 
 Likely files:
 
-- `mobile/modules/island/src/facades/glasses.ts`
-- `mobile/modules/island/src/facades/pairing.ts`
-- `mobile/modules/island/src/facades/ota.ts`
-- `mobile/modules/island/src/services/GlassesReadiness.ts`
-- optional host helper: `mobile/src/hooks/useToolkitSnapshot.ts`
+- `mobile/modules/engine/src/facades/glasses.ts`
+- `mobile/modules/engine/src/facades/pairing.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- `mobile/modules/engine/src/services/GlassesReadiness.ts`
+- optional host helper: `mobile/src/hooks/useEngineSnapshot.ts`
 
 Tests:
 
@@ -180,12 +180,12 @@ Convert first:
 
 Implementation notes:
 
-- Use `toolkit.glasses.status()` / `onStatus()` for connection, readiness,
+- Use `engine.glasses.status()` / `onStatus()` for connection, readiness,
   battery, case, signal, mic/VAD, and Bluetooth Classic.
-- Use `toolkit.glasses.info()` / `onInfo()` for device identity and versions.
-- Use `toolkit.glasses.controller.status()` / `onStatus()` for controller UI.
-- Use `toolkit.glasses.wifi.status()` / `onStatus()` for Wi-Fi UI.
-- Use `toolkit.gallery.status()` / `onStatus()` for gallery sync UI.
+- Use `engine.glasses.info()` / `onInfo()` for device identity and versions.
+- Use `engine.glasses.controller.status()` / `onStatus()` for controller UI.
+- Use `engine.glasses.wifi.status()` / `onStatus()` for Wi-Fi UI.
+- Use `engine.gallery.status()` / `onStatus()` for gallery sync UI.
 
 Tests:
 
@@ -214,8 +214,8 @@ Changes:
   - `isConnectedGlassesConnectionStatus`
   - `isReadyGlassesConnectionStatus`
   - `isBusyGlassesConnectionStatus`
-- Update `mobile/modules/island/src/services/GlassesReadiness.ts` to consume
-  those helpers and keep only toolkit-specific wait/reporting policy.
+- Update `mobile/modules/engine/src/services/GlassesReadiness.ts` to consume
+  those helpers and keep only engine-specific wait/reporting policy.
 - Update host type-only imports that are intentionally low-level.
 
 Tests:
@@ -229,11 +229,11 @@ Exit criteria:
 
 - The `./types` subpath is side-effect free.
 - No Expo/native module import is required for shared predicates.
-- Toolkit no longer duplicates low-level predicate logic.
+- Engine no longer duplicates low-level predicate logic.
 
 ## Work Package 6: Pairing And Reconnect Conversion
 
-Goal: host pairing UI renders toolkit state and calls toolkit commands; island
+Goal: host pairing UI renders engine state and calls engine commands; island
 owns readiness waits and timeout diagnostics.
 
 Convert:
@@ -248,9 +248,9 @@ Convert:
 
 Implementation notes:
 
-- Use `toolkit.pairing.readiness()` for route-level readiness display.
-- Use `toolkit.pairing.waitForReady()` for the boot wait and automatic report.
-- Use `toolkit.pairing.waitForBluetoothClassic()` instead of raw
+- Use `engine.pairing.readiness()` for route-level readiness display.
+- Use `engine.pairing.waitForReady()` for the boot wait and automatic report.
+- Use `engine.pairing.waitForBluetoothClassic()` instead of raw
   `waitForGlassesState("bluetoothClassicConnected", ...)`.
 - Keep host navigation, wording, and troubleshooting UI in host routes.
 
@@ -274,12 +274,12 @@ Goal: remove host handling of hotspot internals and ASG camera local IP.
 Changes:
 
 - Move the `NetworkMonitoring.tsx` behavior into island, near:
-  - `mobile/modules/island/src/services/DeviceEventRouter.ts`
-  - `mobile/modules/island/src/services/asg/gallerySyncService.ts`
-  - `mobile/modules/island/src/services/asg/asgCameraApi.ts`
+  - `mobile/modules/engine/src/services/DeviceEventRouter.ts`
+  - `mobile/modules/engine/src/services/asg/gallerySyncService.ts`
+  - `mobile/modules/engine/src/services/asg/asgCameraApi.ts`
 - Let island configure `asgCameraApi` from hotspot or gallery sync state.
-- Keep host gallery UI on `toolkit.gallery.status()` and
-  `toolkit.gallery.onNotice()`.
+- Keep host gallery UI on `engine.gallery.status()` and
+  `engine.gallery.onNotice()`.
 - If manual Wi-Fi join guidance is needed, emit a gallery notice with the
   smallest user-actionable payload. Do not expose a generic hotspot facade.
 
@@ -305,14 +305,14 @@ OTA should be implemented as four smaller packages. Do not delete
 
 ### 8A: OTA Snapshot And Check Orchestration
 
-Goal: `toolkit.ota` owns update checking and exposes one snapshot.
+Goal: `engine.ota` owns update checking and exposes one snapshot.
 
 Likely files:
 
-- `mobile/modules/island/src/facades/ota.ts`
-- new `mobile/modules/island/src/services/OtaCoordinator.ts`
-- existing `mobile/modules/island/src/services/OtaService.ts`
-- `mobile/modules/island/src/services/asgOtaVersionUrl.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- new `mobile/modules/engine/src/services/OtaCoordinator.ts`
+- existing `mobile/modules/engine/src/services/OtaService.ts`
+- `mobile/modules/engine/src/services/asgOtaVersionUrl.ts`
 - `mobile/src/effects/OtaUpdateChecker.tsx`
 - `mobile/src/app/ota/check-for-updates.tsx`
 
@@ -334,8 +334,8 @@ cd mobile && npm run compile
 
 Exit criteria:
 
-- Host check screen calls `toolkit.ota.checkForUpdates()`.
-- Host check screen renders `toolkit.ota.snapshot()`.
+- Host check screen calls `engine.ota.checkForUpdates()`.
+- Host check screen renders `engine.ota.snapshot()`.
 - No host code mutates `setOtaUpdateAvailable`.
 
 ### 8B: OTA Install State Machine
@@ -376,7 +376,7 @@ Exit criteria:
 
 - Host progress screen no longer calls `BluetoothSdk.sendOtaQueryStatus()`,
   `BluetoothSdk.ping()`, or raw `setMtkUpdatedThisSession`.
-- Host progress screen only renders snapshot state and calls toolkit commands.
+- Host progress screen only renders snapshot state and calls engine commands.
 
 ### 8C: Old-Build Compatibility In Unified Model
 
@@ -389,7 +389,7 @@ Preserve and test:
   absent;
 - manifest URL fallback for ASG builds that ignore
   `ota_start.ota_version_url`;
-- any empirically required longer watchdog durations, represented as toolkit
+- any empirically required longer watchdog durations, represented as engine
   policy;
 - BES restart/continue lockout.
 
@@ -402,7 +402,7 @@ cd mobile && npm run compile
 
 Exit criteria:
 
-- Build `< 37` behavior is covered by toolkit/island tests.
+- Build `< 37` behavior is covered by engine/island tests.
 - The unified host progress route renders old-build progress from the snapshot.
 
 ### 8D: Delete Legacy Route
@@ -426,7 +426,7 @@ cd mobile && npm run compile
 
 Exit criteria:
 
-- `rg -n "progress-legacy|MINIMUM_OTA_STATUS_BUILD" mobile/src mobile/modules/island/src`
+- `rg -n "progress-legacy|MINIMUM_OTA_STATUS_BUILD" mobile/src mobile/modules/engine/src`
   has no production route reference. If the constant remains, it must be only a
   compatibility-policy test fixture or renamed to its real meaning.
 - `mobile/src/app/ota/progress.tsx` is presentation only.
@@ -444,7 +444,7 @@ Audit every call path in:
 - `mobile/src/services/MantleManager.ts`
 - `mobile/src/services/SocketComms.ts`
 - `mobile/src/services/WebSocketManager.ts`
-- `mobile/modules/island/src/services/RestComms.ts`
+- `mobile/modules/engine/src/services/RestComms.ts`
 
 Table columns:
 
@@ -455,13 +455,13 @@ Allowed dispositions:
 
 - delete now;
 - keep until named Cloud V2 port;
-- move into toolkit/local runtime;
+- move into engine/local runtime;
 - intentionally low-level host/devtool.
 
 Tests:
 
 ```bash
-rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/island/src -g '*.ts' -g '*.tsx'
+rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/engine/src -g '*.ts' -g '*.tsx'
 cd mobile && npm run compile
 ```
 
@@ -505,9 +505,9 @@ Changes:
 
 - Delete `mobile/src/stores/glasses.ts` after production host imports are gone.
 - Delete `mobile/src/stores/gallerySync.ts` after gallery host imports are gone.
-- Remove or narrow `toolkit.stores.glasses` and related raw store exports from
-  `mobile/modules/island/src/island.ts`.
-- Remove flat raw-store exports from `mobile/modules/island/src/index.ts` unless
+- Remove or narrow `engine.stores.glasses` and related raw store exports from
+  `mobile/modules/engine/src/engine.ts`.
+- Remove flat raw-store exports from `mobile/modules/engine/src/index.ts` unless
   still needed for tests/internal migration only.
 - Turn the boundary script from allowlist/report mode into failing mode.
 
@@ -525,7 +525,7 @@ cd mobile && npm run compile
 Exit criteria:
 
 - Production host code has no raw glasses/gallery store imports.
-- Toolkit-owned devtools are inside toolkit/devtools.
+- Engine-owned devtools are inside engine/devtools.
 - Remaining Bluetooth SDK imports are classified and intentional.
 - Cloud V1 device-state sync is deleted or isolated as explicitly temporary
   legacy with a tracked blocker.

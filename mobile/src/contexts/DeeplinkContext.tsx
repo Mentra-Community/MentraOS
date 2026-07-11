@@ -5,7 +5,7 @@ import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 import { useNavigationStore } from "@/stores/navigation"
 
 /** Returns immediately if the app is already active, otherwise waits for it. */

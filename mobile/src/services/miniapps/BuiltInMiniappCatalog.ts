@@ -5,18 +5,18 @@ import {
   decideDevLaunchRoute,
   HardwareRequirementLevel,
   HardwareType,
-  toolkit,
+  engine,
   type ClientApp,
   type StartOptions,
-} from "@mentra/island"
-import {appRegistry, installAppStoreHooks} from "@mentra/island/internal"
+} from "@mentra/engine"
+import {appRegistry, installAppStoreHooks} from "@mentra/engine/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS} from "@mentra/island"
+import {SETTINGS} from "@mentra/engine"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
@@ -69,7 +69,7 @@ class BuiltInMiniappCatalog {
       },
     })
 
-    toolkit.miniapps.onChanged(() => {
+    engine.miniapps.onChanged(() => {
       void this.syncGlassesMenuApps()
     })
 
@@ -106,7 +106,7 @@ class BuiltInMiniappCatalog {
 
     if (app.offlineRoute) {
       if (isOfflineHosted(app.packageName)) {
-        toolkit.miniapps.setForeground(app.packageName)
+        engine.miniapps.setForeground(app.packageName)
         return
       }
       nav.push(app.offlineRoute, {transition: appOpenTransition})
@@ -120,7 +120,7 @@ class BuiltInMiniappCatalog {
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
           markMiniappDevMode()
-          toolkit.miniapps.setForeground(packageName)
+          engine.miniapps.setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
         }
@@ -129,7 +129,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (app.local) {
-      toolkit.miniapps.setForeground(app.packageName)
+      engine.miniapps.setForeground(app.packageName)
     }
   }
 
@@ -140,8 +140,8 @@ class BuiltInMiniappCatalog {
     }
     this.syncInFlight = true
     try {
-      const apps = toolkit.miniapps.list()
-      let menuItems = toolkit.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
+      const apps = engine.miniapps.list()
+      let menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
       if (!menuItems) {
         menuItems = await getDefaultMenuApps(apps)
       }
@@ -159,7 +159,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        toolkit.settings.set(SETTINGS.menu_apps.key, itemsForNative)
+        engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false
@@ -187,10 +187,10 @@ class BuiltInMiniappCatalog {
         healthy: true,
         hidden: false,
         onStart: () => {
-          toolkit.settings.set(SETTINGS.offline_camera_running.key, true)
+          engine.settings.set(SETTINGS.offline_camera_running.key, true)
         },
         onStop: () => {
-          toolkit.settings.set(SETTINGS.offline_camera_running.key, false)
+          engine.settings.set(SETTINGS.offline_camera_running.key, false)
         },
         hardwareRequirements: [
           {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
@@ -273,7 +273,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (
-      toolkit.settings.get(SETTINGS.miniapp_dev_mode.key)
+      engine.settings.get(SETTINGS.miniapp_dev_mode.key)
     ) {
       apps.push({
         packageName: "com.mentra.miniappdev",

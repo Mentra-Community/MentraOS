@@ -7,7 +7,7 @@ import {Screen, Text, Header, Switch} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {notifyPackageName} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 interface InstalledApp {

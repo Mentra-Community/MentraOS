@@ -13,9 +13,9 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {toolkit, BgTimer} from "@mentra/island"
-import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/island/internal"
-import {SETTINGS} from "@mentra/island"
+import {engine, BgTimer} from "@mentra/engine"
+import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/engine/internal"
+import {SETTINGS} from "@mentra/engine"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
@@ -122,14 +122,14 @@ class MantleManager {
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
-    toolkit.configure({
+    engine.configure({
       auth: {
         getSubjectToken: async () => {
           // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
           // token which cloud-client exchanges at /api/client/auth/exchange.
           const res = await mentraAuth.getSubjectToken()
           if (res.is_error() || !res.value.token) {
-            throw new Error("toolkit.configure: no subject token available")
+            throw new Error("engine.configure: no subject token available")
           }
           return {token: res.value.token, type: res.value.type}
         },
@@ -146,7 +146,7 @@ class MantleManager {
         },
       },
     })
-    await toolkit.start()
+    await engine.start()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -189,7 +189,7 @@ class MantleManager {
       delete loadedSettings["controller_device_name"]
       delete loadedSettings["controller_address"]
 
-      await toolkit.settings.setManyLocal(loadedSettings) // write settings to local storage
+      await engine.settings.setManyLocal(loadedSettings) // write settings to local storage
     } else {
       console.error("MANTLE: No settings received from server")
     }
@@ -204,7 +204,7 @@ class MantleManager {
 
     offlineSpeechModelService.startBackgroundDownloads()
 
-    // Spacing only, not a correctness barrier: toolkit.start() already awaited
+    // Spacing only, not a correctness barrier: engine.start() already awaited
     // the device-store hydration (the persisted-settings seed to native), so the
     // reconnect decision's hasDefaultDevice read is trustworthy whenever this
     // fires. The delay just keeps auto-connect off the critical boot path.
@@ -212,7 +212,7 @@ class MantleManager {
       attemptReconnectToDefaultWearable()
     }, 1000)
     // (Initial notification-config push now happens in island's
-    // PhoneNotificationsSync, started by toolkit.start().)
+    // PhoneNotificationsSync, started by engine.start().)
 
     this.initServices()
     this.initMiniapps()
@@ -221,7 +221,7 @@ class MantleManager {
   }
 
   private async syncTimezone() {
-    const timezone = toolkit.settings.get(SETTINGS.time_zone.key)
+    const timezone = engine.settings.get(SETTINGS.time_zone.key)
     const result = await restComms.writeUserSettings({time_zone: timezone})
     if (result.is_error()) {
       console.error("MANTLE: Failed to sync timezone:", result.error)
@@ -332,7 +332,7 @@ class MantleManager {
           continue
         }
 
-        let superMode = await toolkit.settings.get(SETTINGS.super_mode.key)
+        let superMode = await engine.settings.get(SETTINGS.super_mode.key)
         if (!superMode && packageName === "com.mentra.example") {
           // skip installing the example miniapp if super mode is not enabled
           continue
@@ -368,7 +368,7 @@ class MantleManager {
       // the island PhoneLocationService owns the background task + accuracy at the saved tier.
       const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
       if (hasLocation) {
-        const savedTier = await toolkit.settings.get<string>(SETTINGS.location_tier.key)
+        const savedTier = await engine.settings.get<string>(SETTINGS.location_tier.key)
         await phoneLocationService.setLocationTier(savedTier as string)
       }
     } catch (error) {
@@ -376,7 +376,7 @@ class MantleManager {
     }
 
     // check for requirements immediately, but only if we've passed through onboarding:
-    // const onboardingCompleted = await toolkit.settings.get(SETTINGS.onboarding_completed.key)
+    // const onboardingCompleted = await engine.settings.get(SETTINGS.onboarding_completed.key)
     // if (onboardingCompleted) {
     //   try {
     //     const requirementsCheck = await checkConnectivityRequirementsUI()
@@ -397,8 +397,8 @@ class MantleManager {
   private async setupSubscriptions() {
     // (Device-settings -> glasses BLE sync AND phone-notification config -> the
     // native listener now live in island's GlassesSettingsSync / PhoneNotificationsSync,
-    // started by toolkit.start(), so toolkit.glasses.settings.set() /
-    // toolkit.phoneNotifications.* reach the device for any host. Removed here to
+    // started by engine.start(), so engine.glasses.settings.set() /
+    // engine.phoneNotifications.* reach the device for any host. Removed here to
     // avoid a double-sync.)
 
     // Remove old event subscriptions
@@ -407,7 +407,7 @@ class MantleManager {
 
     // (The device-status projection — onBluetoothStatus -> core store and
     // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
-    // started by toolkit.start(), so the device->store feed reaches ANY host. Removed
+    // started by engine.start(), so the device->store feed reaches ANY host. Removed
     // here to avoid a double-projection.)
 
     // Subscribe to individual Bluetooth SDK events.
@@ -420,13 +420,13 @@ class MantleManager {
       )
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
-      // moved to island DeviceEventRouter (started by toolkit.start())
+      // moved to island DeviceEventRouter (started by engine.start())
 
-      // hotspot_error: moved to island DeviceEventRouter (started by toolkit.start())
+      // hotspot_error: moved to island DeviceEventRouter (started by engine.start())
 
-      // gallery_status: moved to island DeviceEventRouter (started by toolkit.start())
+      // gallery_status: moved to island DeviceEventRouter (started by engine.start())
 
-      // photo_response: moved to island DeviceEventRouter (started by toolkit.start())
+      // photo_response: moved to island DeviceEventRouter (started by engine.start())
 
       this.subs.push(
         BluetoothSdk.addListener("heartbeat_sent", (event) => {
@@ -469,7 +469,7 @@ class MantleManager {
       )
 
       // button_press / touch_event / accel_event: local-miniapp forwarding lives in
-      // island DeviceEventRouter (started by toolkit.start()). The Cloud V1 relays
+      // island DeviceEventRouter (started by engine.start()). The Cloud V1 relays
       // (button/touch/swipe/switch/rgb-led-response) were removed with Cloud V1 app
       // end-of-life.
 
@@ -563,7 +563,7 @@ class MantleManager {
         }),
       )
 
-      // save_setting: moved to island DeviceEventRouter (started by toolkit.start())
+      // save_setting: moved to island DeviceEventRouter (started by engine.start())
 
       this.subs.push(
         BluetoothSdk.addListener("head_up", (event) => {
@@ -579,9 +579,9 @@ class MantleManager {
       //   }),
       // )
 
-      // miniapp_selected: moved to island DeviceEventRouter (started by toolkit.start())
+      // miniapp_selected: moved to island DeviceEventRouter (started by engine.start())
 
-      // local_transcription: moved to island DeviceEventRouter (started by toolkit.start());
+      // local_transcription: moved to island DeviceEventRouter (started by engine.start());
       // its offline-captions display path was removed with the pseudo captions renderer.
 
       // ws_text: was a raw relay onto the Cloud V1 socket — removed with Cloud V1
@@ -593,7 +593,7 @@ class MantleManager {
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
 
-          // Cloud upload moved to island's AudioCloudUplink (started by toolkit.start()).
+          // Cloud upload moved to island's AudioCloudUplink (started by engine.start()).
           // This host-side listener only keeps the debug mic-activity flag current.
         }),
       )
@@ -628,11 +628,11 @@ class MantleManager {
       // path; update discovery now comes from the phone-side manifest check. The
       // remaining OTA BLE handlers (mtk_update_complete / ota_start_ack /
       // ota_status -> island stores + clock-skew auto-fix) moved into island's
-      // OtaService, started by toolkit.start(), behind the toolkit.ota read surface.
+      // OtaService, started by engine.start(), behind the engine.ota read surface.
     }
 
     // One-time core/glasses status hydration moved into island's
-    // GlassesStatusProjection, started by toolkit.start().
+    // GlassesStatusProjection, started by engine.start().
   }
 
   private async sendCalendarEvents() {
@@ -719,12 +719,12 @@ class MantleManager {
   public async handle_head_up(isUp: boolean) {
     // Only switch to dashboard view if contextual dashboard is enabled
     // Otherwise, always show main view regardless of head position
-    const contextualDashboardEnabled = await toolkit.settings.get(SETTINGS.contextual_dashboard.key)
+    const contextualDashboardEnabled = await engine.settings.get(SETTINGS.contextual_dashboard.key)
 
     if (isUp && contextualDashboardEnabled) {
-      toolkit.display.mirror.setView("dashboard")
+      engine.display.mirror.setView("dashboard")
     } else {
-      toolkit.display.mirror.setView("main")
+      engine.display.mirror.setView("main")
     }
   }
 }

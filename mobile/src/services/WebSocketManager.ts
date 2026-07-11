@@ -1,10 +1,10 @@
 import {EventEmitter} from "events"
 
 import {WebSocketStatus} from "@/services/ws-types"
-import {useConnectionStore} from "@mentra/island/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
-import {useSettingsStore} from "@mentra/island/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
+import {useConnectionStore} from "@mentra/engine/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
+import {useSettingsStore} from "@mentra/engine/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {BgTimer, SETTINGS} from "@mentra/island"
+import {BgTimer, SETTINGS} from "@mentra/engine"
 
 export {WebSocketStatus}
 

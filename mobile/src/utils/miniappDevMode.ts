@@ -1,4 +1,4 @@
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, engine} from "@mentra/engine"
 
 /**
  * Flip the latent per-account "this user is a developer" signal.
@@ -10,6 +10,6 @@ import {SETTINGS, toolkit} from "@mentra/island"
  * cheap: once set, it skips the write (and the server push) entirely.
  */
 export function markMiniappDevMode(): void {
-  if (toolkit.settings.get(SETTINGS.miniapp_dev_mode.key)) return
-  void toolkit.settings.set(SETTINGS.miniapp_dev_mode.key, true)
+  if (engine.settings.get(SETTINGS.miniapp_dev_mode.key)) return
+  void engine.settings.set(SETTINGS.miniapp_dev_mode.key, true)
 }

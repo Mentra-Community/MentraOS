@@ -12,7 +12,7 @@ import {
   useActiveBackgroundApps,
   useActiveForegroundApp,
   type ClientApp,
-} from "@mentra/island"
+} from "@mentra/engine"
 import {RefObject, useEffect, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
@@ -21,7 +21,7 @@ import MaskedView from "@react-native-masked-view/masked-view"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {hapticBuzz} from "@/utils/utils"
 import showAlert from "@/contexts/ModalContext"
 

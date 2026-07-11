@@ -43,8 +43,8 @@ Today the envelope carries `{type, channel, payload, seq}`. We add:
 Locations to update (~8 small edits, all inside `mobile/`):
 
 1. `mobile/modules/miniapp/src/modules/ui.ts` — extend `UISendEnvelope`, `UIInboundEnvelope` with optional `requestId`; add `UI_CANCEL` to the inbound union.
-2. `mobile/modules/island/src/services/mentraUiShim.ts` — include `requestId` in outbound `msg` frames; preserve it on `recv`; handle `cancel` frame.
-3. `mobile/modules/island/src/services/MentraUIRouter.ts` — pass `requestId` through `routeFromWebView` + `routeFromBackground`; route `cancel` frames in both directions.
+2. `mobile/modules/engine/src/services/mentraUiShim.ts` — include `requestId` in outbound `msg` frames; preserve it on `recv`; handle `cancel` frame.
+3. `mobile/modules/engine/src/services/MentraUIRouter.ts` — pass `requestId` through `routeFromWebView` + `routeFromBackground`; route `cancel` frames in both directions.
 
 The change is invisible to mini app authors. Non-RPC traffic continues unchanged.
 

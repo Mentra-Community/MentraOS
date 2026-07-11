@@ -52,7 +52,7 @@ export interface ReportSlackNotification {
     contactEmail?: string;
   } | null;
   feedback?: Record<string, unknown> | null;
-  /** Toolkit-collected diagnostic context (Mixed in Mongo, read defensively);
+  /** Engine-collected diagnostic context (Mixed in Mongo, read defensively);
    * feeds the compact System line. */
   context?: Record<string, unknown> | null;
   /** Set on ready-time notifications: how many artifacts were attached. */
@@ -340,7 +340,7 @@ function adminConsoleReportUrl(reportId: string): string | null {
 }
 
 /**
- * Compact V1-style system summary built from the toolkit-collected context
+ * Compact V1-style system summary built from the engine-collected context
  * (see mobile island diagnosticContext). Context is client-sourced Mixed
  * data, so every field is read defensively and value lengths are capped;
  * the assembled line is escaped by the caller via slackText.
@@ -376,7 +376,7 @@ function formatSystemLine(context: Record<string, unknown> | null | undefined): 
 }
 
 /**
- * Human label for the glasses link state. The mobile toolkit sends the raw
+ * Human label for the glasses link state. The mobile engine sends the raw
  * glasses store state, where `connection` is a `{ state: "connected" | ... }`
  * object (btsdk GlassesConnectionStatus); a plain string or a normalized
  * `connected` boolean are accepted for robustness against client versions.

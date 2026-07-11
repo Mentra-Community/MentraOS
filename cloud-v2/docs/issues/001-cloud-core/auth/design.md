@@ -54,7 +54,7 @@ App/MiniApp Store website. Today all three use **one** identity system: Supabase
 sign-in plus a core-token exchange (not three separate systems). v2 keeps them on a
 single identity system and unifies them on the Core-backed auth path.
 
-Architecturally Mentra's app is just the first consumer of the OEM Toolkit (Mentra
+Architecturally Mentra's app is just the first consumer of the Mentra Engine (Mentra
 is "OEM zero"), so Mentra issues its users' tokens as its own **reserved OEM**
 (`tenantId = "mentra"`): a Mentra-side issuer presents the user's Supabase identity to
 the same exchange. For Mentra-direct users the `tenantUserId` is the Supabase `sub`

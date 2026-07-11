@@ -1,10 +1,10 @@
 /**
  * @fileoverview Thin host wrapper over island's cloud client (keystone #5).
  *
- * The CloudClient singleton lives in `@mentra/island` (`cloudClientService`):
+ * The CloudClient singleton lives in `@mentra/engine` (`cloudClientService`):
  * island constructs it from island-owned transports (UDP, MMKV secure store,
  * status store) + the host-injected `auth` seam + the resolved endpoints the
- * host passes via `toolkit.configure({config})`, then exposes the cloud runtime
+ * host passes via `engine.configure({config})`, then exposes the cloud runtime
  * surface directly through island services.
  *
  * What stays here is host-side endpoint resolution: the rebuild-free Dev
@@ -12,9 +12,9 @@
  * host. Existing `@/services/cloudClient` consumers keep working through this
  * delegating shim while construction and runtime wiring live in island.
  */
-import {cloudClientService} from "@mentra/island/internal"
+import {cloudClientService} from "@mentra/engine/internal"
 
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
@@ -43,7 +43,7 @@ function metroUrl(port: number): string | undefined {
  *   3. Cloud Dev: the default shared backend for team testing.
  */
 function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
-  const override = toolkit.settings.get(settingKey)
+  const override = engine.settings.get(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
     const trimmed = override.trim()
     if (trimmed !== METRO_AUTO) return trimmed
@@ -83,12 +83,12 @@ export function resolvedEndpoints(): {core: string; runtime: string} {
 
 /** The LC3 frame size (bytes) the phone's encoder currently emits. */
 export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
-  const frameSize = toolkit.settings.get(SETTINGS.lc3_frame_size.key)
+  const frameSize = engine.settings.get(SETTINGS.lc3_frame_size.key)
   return frameSize === 20 || frameSize === 40 || frameSize === 60 ? frameSize : 20
 }
 
 /**
- * The cloud config the host hands island at `toolkit.configure({config})`:
+ * The cloud config the host hands island at `engine.configure({config})`:
  * resolved endpoints + the live LC3 frame size.
  */
 export function cloudConfigValues(): {

@@ -1,10 +1,10 @@
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, engine} from "@mentra/engine"
 
 let analyticsModule: typeof import("@react-native-firebase/analytics") | null = null
 let initialized = false
 
 function isChina(): boolean {
-  return toolkit.settings.get(SETTINGS.china_deployment.key) === true
+  return engine.settings.get(SETTINGS.china_deployment.key) === true
 }
 
 async function getAnalytics() {

@@ -6,7 +6,7 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 interface SimulatedGlassesControlsProps {}
 
@@ -14,7 +14,7 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
   const {themed} = useAppTheme()
   const insets = useSaferAreaInsets()
   const [showDashboard, setShowDashboard] = useState(false)
-  const {setView} = toolkit.display.mirror
+  const {setView} = engine.display.mirror
 
   // when this is unmounted, set the dashboard position to down:
   useFocusEffect(

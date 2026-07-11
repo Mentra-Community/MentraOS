@@ -1,9 +1,9 @@
 import {waitFor} from "@testing-library/react-native"
 
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {useConnectionStore} from "@mentra/island/internal"
-import {SETTINGS} from "@mentra/island"
-import {useSettingsStore} from "@mentra/island/internal"
+import {useConnectionStore} from "@mentra/engine/internal"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {WebSocketStatus} from "@/services/ws-types"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {

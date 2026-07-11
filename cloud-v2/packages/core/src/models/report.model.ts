@@ -3,7 +3,7 @@
  *
  * Cloud V2 reports are the single durable record for manual bug reports,
  * automatic runtime reports, and feature/general feedback. The root record
- * captures the report kind, user/system-authored payload, toolkit-collected
+ * captures the report kind, user/system-authored payload, engine-collected
  * runtime context, and typed evidence artifacts.
  *
  * Artifact entries hold metadata only. Payloads (screenshot bytes, serialized

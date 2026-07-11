@@ -1,9 +1,9 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {TouchableOpacity, View} from "react-native"
 import Svg, {ClipPath, Defs, G, Path, Rect} from "react-native-svg"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 interface MicIconProps {
@@ -15,7 +15,7 @@ interface MicIconProps {
 
 const MicIcon = ({color, width = 17, height = 16, withBackground = false}: MicIconProps) => {
   const {theme} = useAppTheme()
-  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, toolkit.glasses.onStatus)
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, engine.glasses.onStatus)
   const glassesConnected = glassesStatus.state === "connected"
   const glassesMicEnabled = glassesStatus.micEnabled
 
