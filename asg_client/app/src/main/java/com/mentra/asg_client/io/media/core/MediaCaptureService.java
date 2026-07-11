@@ -9,6 +9,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
@@ -1621,9 +1622,14 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoError(String errorMessage) {
-                        Log.e(TAG, "Failed to capture offline photo: " + errorMessage);
+                        onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                    }
+
+                    @Override
+                    public void onPhotoError(CameraOperationError error) {
+                        Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(
-                                requestId, "failed", null, "CAMERA_CAPTURE_FAILED", errorMessage);
+                                requestId, "failed", null, error.code(), error.message());
 
                         // LED is now managed by CameraNeoService and will turn off when camera
                         // closes
@@ -1631,7 +1637,7 @@ public class MediaCaptureService {
                         if (mMediaCaptureListener != null) {
                             mMediaCaptureListener.onMediaError(
                                     requestId,
-                                    errorMessage,
+                                    error.message(),
                                     MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                         }
                     }
@@ -1773,14 +1779,18 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(String errorMessage) {
-                            Log.e(TAG, "Failed to capture local-save photo: " + errorMessage);
-                            sendPhotoErrorResponse(
-                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
+                        public void onPhotoError(CameraOperationError error) {
+                            Log.e(TAG, "Failed to capture local-save photo: " + error.message());
+                            sendPhotoErrorResponse(requestId, error.code(), error.message());
 
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onMediaError(
                                         requestId,
-                                        errorMessage,
+                                        error.message(),
                                         MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                             }
                         }
@@ -2080,11 +2090,15 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
+                        public void onPhotoError(CameraOperationError error) {
                             releasePhotoJob(requestId);
 
-                            Log.e(TAG, "Failed to capture photo: " + errorMessage);
-                            sendPhotoErrorResponse(
-                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
+                            Log.e(TAG, "Failed to capture photo: " + error.message());
+                            sendPhotoErrorResponse(requestId, error.code(), error.message());
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
@@ -2093,9 +2107,9 @@ public class MediaCaptureService {
 
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onMediaError(
-                                        requestId,
-                                        errorMessage,
-                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                    requestId,
+                                    error.message(),
+                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                             }
                         }
                     });
@@ -3862,22 +3876,26 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
+                        public void onPhotoError(CameraOperationError error) {
                             releasePhotoJob(requestId);
 
-                            Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
+                            Log.e(TAG, "Failed to capture photo for BLE: " + error.message());
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
 
                             dumpTimings(requestId);
-                            sendPhotoErrorResponse(
-                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
+                            sendPhotoErrorResponse(requestId, error.code(), error.message());
 
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onMediaError(
-                                        requestId,
-                                        errorMessage,
-                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                    requestId,
+                                    error.message(),
+                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                             }
                         }
                     });
@@ -4388,14 +4406,16 @@ public class MediaCaptureService {
 
                     @Override
                     public void onCameraError(String errorMessage) {
+                        onCameraError(CameraOperationError.warmUpFailed(errorMessage));
+                    }
+
+                    @Override
+                    public void onCameraError(CameraOperationError error) {
                         if (warmUpDispatching.get()) {
                             rejectedSynchronously.set(true);
                         }
                         sendCameraStatus(
-                                requestId,
-                                "error",
-                                cameraWarmUpErrorCode(errorMessage),
-                                errorMessage);
+                                requestId, "error", error.code(), error.message());
                     }
 
                     @Override
@@ -4455,13 +4475,6 @@ public class MediaCaptureService {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating camera status", e);
         }
-    }
-
-    private static String cameraWarmUpErrorCode(String errorMessage) {
-        if ("camera_busy".equals(errorMessage)) {
-            return "camera_busy";
-        }
-        return "camera_warm_up_failed";
     }
 
     private void sendPhotoStatus(String requestId, String status) {

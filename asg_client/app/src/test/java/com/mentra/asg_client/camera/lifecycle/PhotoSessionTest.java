@@ -16,17 +16,20 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
 import android.os.Handler;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
+import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.json.JSONObject;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
@@ -170,6 +173,40 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void notifyHostPhotoError_preservesStructuredPhotoError() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/failed.jpg", "large", false, true, null, callback);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+        CameraOperationError error =
+                CameraOperationError.fromCameraDeviceError(
+                        CameraDevice.StateCallback.ERROR_CAMERA_DEVICE);
+
+        session.notifyHostPhotoError(error);
+
+        verify(callback).onPhotoError(error);
+    }
+
+    @Test
+    public void notifyHostPhotoError_stringDuringWarmUp_usesWarmUpFailureCode() {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
+        PhotoSession session = new PhotoSession(hooks);
+        AtomicReference<CameraOperationError> receivedError = new AtomicReference<>();
+        session.setupWarmUp(
+                "large", null, PhotoCaptureSettings.EMPTY, 30_000, () -> {}, receivedError::set);
+
+        session.notifyHostPhotoError("Camera disconnected");
+
+        assertThat(receivedError.get().code())
+                .isEqualTo(CameraOperationError.CAMERA_WARM_UP_FAILED);
+        assertThat(receivedError.get().message()).isEqualTo("Camera disconnected");
+    }
+
+    @Test
     public void notifyPhotoCaptured_duplicateWhileMetadataPending_keepsTimeoutCompletingQueue()
             throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
@@ -276,7 +313,8 @@ public class PhotoSessionTest {
         load.invoke(session, request);
     }
 
-    private static void notifyPhotoCaptured(PhotoSession session, String filePath) throws Exception {
+    private static void notifyPhotoCaptured(PhotoSession session, String filePath)
+            throws Exception {
         Method notify = PhotoSession.class.getDeclaredMethod("notifyPhotoCaptured", String.class);
         notify.setAccessible(true);
         notify.invoke(session, filePath);
