@@ -1,10 +1,10 @@
-import {toolkit, useApps, useStart, useStop} from "@mentra/island"
-import {miniappRunningRegistry} from "@mentra/island/devtools"
+import {toolkit, useApps, useStart, useStop} from "@mentra/engine"
+import {miniappRunningRegistry} from "@mentra/engine/devtools"
 import {StatusBar} from "expo-status-bar"
 import {useCallback, useEffect, useState} from "react"
 import {SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View} from "react-native"
 
-import {startIslandRuntime} from "./src/islandRuntime"
+import {startEngineRuntime} from "./src/engineRuntime"
 import {ActionButton, Section, StatusRow} from "./src/ui"
 import {useLog} from "./src/useLog"
 
@@ -29,17 +29,17 @@ export default function App() {
   const [devices, setDevices] = useState<ScanResult[]>([])
   const [devUrl, setDevUrl] = useState("")
 
-  // Configure + start the island runtime once (the OEM bootstrap contract);
+  // Configure + start the engine runtime once (the OEM bootstrap contract);
   // demo listeners feed the console below.
   useEffect(() => {
     let cleanup: (() => void) | undefined
     let unmounted = false
-    startIslandRuntime(log)
+    startEngineRuntime(log)
       .then((unsubscribe) => {
         if (unmounted) unsubscribe()
         else cleanup = unsubscribe
       })
-      .catch((error) => logger.logError(`island start failed: ${String(error)}`))
+      .catch((error) => logger.logError(`engine start failed: ${String(error)}`))
     return () => {
       unmounted = true
       cleanup?.()
@@ -126,9 +126,9 @@ export default function App() {
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>Example OEM App</Text>
-        <Text style={styles.subtitle}>Mentra Island SDK — pair glasses & run a miniapp</Text>
+        <Text style={styles.subtitle}>Mentra Engine SDK — pair glasses & run a miniapp</Text>
 
-        <Section title="State" subtitle="From @mentra/island">
+        <Section title="State" subtitle="From @mentra/engine">
           <StatusRow label="Glasses" value={glassesState} busy={scanning} />
           <StatusRow label="Registered miniapps" value={String(apps.length)} />
           <StatusRow label="Running miniapps" value={String(running.length)} />

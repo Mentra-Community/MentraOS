@@ -4,12 +4,12 @@ import {Platform} from "react-native"
 
 import {useRoute} from "@react-navigation/native"
 
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS} from "@mentra/island"
-import {useSettingsStore} from "@mentra/island/internal"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
   ControllerTypes: {

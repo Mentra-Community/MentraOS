@@ -8,9 +8,9 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {toolkit, useRefresh} from "@mentra/island"
+import {toolkit, useRefresh} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
 export default function CloudConnection() {
   const connectionStatus = useToolkitSnapshot(toolkit.session.legacyWebsocketStatus, (onChange) =>

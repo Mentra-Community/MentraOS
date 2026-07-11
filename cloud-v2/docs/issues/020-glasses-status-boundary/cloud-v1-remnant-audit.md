@@ -2,7 +2,7 @@
 
 Date: 2026-07-02
 Scope: `mobile/src/services/{MantleManager,SocketComms,WebSocketManager}.ts`,
-`mobile/modules/island/src/services/RestComms.ts` — every remaining call path,
+`mobile/modules/engine/src/services/RestComms.ts` — every remaining call path,
 classified per the work-package-9 dispositions: **delete-now**,
 **keep-until-named-V2-port**, **move-into-toolkit**, or **host-owned-fine**.
 

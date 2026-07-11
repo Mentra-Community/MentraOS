@@ -1,6 +1,6 @@
 import type * as ImagePicker from "expo-image-picker"
 
-import {toolkit, type ReportDetails, type ReportTrigger} from "@mentra/island"
+import {toolkit, type ReportDetails, type ReportTrigger} from "@mentra/engine"
 
 export interface SubmitBugReportInput {
   trigger: ReportTrigger

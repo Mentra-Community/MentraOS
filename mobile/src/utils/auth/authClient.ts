@@ -1,7 +1,7 @@
 import {AppState} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
 import {AccountAuthProvider} from "@/utils/auth/provider/accountClient"

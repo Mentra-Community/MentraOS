@@ -206,7 +206,7 @@ jest.mock("react-native-nitro-bg-timer", () => ({
   },
 }))
 
-// Mock react-native-zip-archive — pulled in transitively by @mentra/island
+// Mock react-native-zip-archive — pulled in transitively by @mentra/engine
 jest.mock("react-native-zip-archive", () => ({
   unzip: jest.fn(() => Promise.resolve("")),
   zip: jest.fn(() => Promise.resolve("")),
@@ -241,12 +241,12 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
 // LocalMiniappRuntime pulls heavy native modules (react-native-share, expo-*).
 // requireActual'd island services that import it (e.g. GlassesStatusProjection)
 // only need its forwardEvent side-effect, so stub it light here.
-jest.mock("./modules/island/src/services/LocalMiniappRuntime", () => ({
+jest.mock("./modules/engine/src/services/LocalMiniappRuntime", () => ({
   __esModule: true,
   default: {forwardEvent: jest.fn()},
 }))
 
-// Mock the three @mentra/island entry points (main, /internal, /devtools) —
+// Mock the three @mentra/engine entry points (main, /internal, /devtools) —
 // the package pulls in many native modules (react-native-share,
 // expo-battery/clipboard/location, etc.). Tests that only need a handful of
 // exports get stubs here; specific tests can override. The builder runs
@@ -260,42 +260,42 @@ const mockIslandEntries = () => {
   // The glasses store moved into island; tests + the @/stores/glasses shim need its
   // REAL behavior (setState/getState/subscribe), so pull the actual store in. It's
   // pure (zustand + type-only btsdk imports), so it loads cleanly under the mock.
-  const realGlasses = jest.requireActual("./modules/island/src/stores/glasses")
-  const realDisplay = jest.requireActual("./modules/island/src/stores/display")
-  const realCore = jest.requireActual("./modules/island/src/stores/core")
-  const realConnection = jest.requireActual("./modules/island/src/stores/connection")
-  const realGallerySync = jest.requireActual("./modules/island/src/stores/gallerySync")
-  const realCloudStatus = jest.requireActual("./modules/island/src/stores/cloudClientStatus")
+  const realGlasses = jest.requireActual("./modules/engine/src/stores/glasses")
+  const realDisplay = jest.requireActual("./modules/engine/src/stores/display")
+  const realCore = jest.requireActual("./modules/engine/src/stores/core")
+  const realConnection = jest.requireActual("./modules/engine/src/stores/connection")
+  const realGallerySync = jest.requireActual("./modules/engine/src/stores/gallerySync")
+  const realCloudStatus = jest.requireActual("./modules/engine/src/stores/cloudClientStatus")
   // Settings store + RestComms moved into island; tests used the real host store
   // before the move, so requireActual preserves that exact behavior.
-  const realSettings = jest.requireActual("./modules/island/src/stores/settings")
-  const realBtSettingKeys = jest.requireActual("./modules/island/src/stores/bluetoothSettingKeys")
-  const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
+  const realSettings = jest.requireActual("./modules/engine/src/stores/settings")
+  const realBtSettingKeys = jest.requireActual("./modules/engine/src/stores/bluetoothSettingKeys")
+  const realRestComms = jest.requireActual("./modules/engine/src/services/RestComms")
   // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
-  const realGlassesSettingsSync = jest.requireActual("./modules/island/src/services/GlassesSettingsSync")
-  const realGlassesStatusProjection = jest.requireActual("./modules/island/src/services/GlassesStatusProjection")
-  const realOtaService = jest.requireActual("./modules/island/src/services/OtaService")
-  const realAudioCloudUplink = jest.requireActual("./modules/island/src/services/AudioCloudUplink")
-  const realDeviceEventRouter = jest.requireActual("./modules/island/src/services/DeviceEventRouter")
+  const realGlassesSettingsSync = jest.requireActual("./modules/engine/src/services/GlassesSettingsSync")
+  const realGlassesStatusProjection = jest.requireActual("./modules/engine/src/services/GlassesStatusProjection")
+  const realOtaService = jest.requireActual("./modules/engine/src/services/OtaService")
+  const realAudioCloudUplink = jest.requireActual("./modules/engine/src/services/AudioCloudUplink")
+  const realDeviceEventRouter = jest.requireActual("./modules/engine/src/services/DeviceEventRouter")
   // Pairing-identity lifecycle (projection + the JS-owned identity writes) — real
   // implementation (pure: settings store + types only) so host screens/tests
   // exercise the actual three-state read-model, not a parallel stub.
-  const realPairingIdentity = jest.requireActual("./modules/island/src/services/PairingIdentity")
+  const realPairingIdentity = jest.requireActual("./modules/engine/src/services/PairingIdentity")
   // Clock-skew utils moved into island; the host gallery sync + OTA checker import them
-  // from @mentra/island, so expose the real (pure) implementations through the mock.
-  const realGlassesClockSync = jest.requireActual("./modules/island/src/services/glassesClockSync")
-  const realGallerySyncClock = jest.requireActual("./modules/island/src/services/gallerySyncClock")
-  const realAsgOtaVersionUrl = jest.requireActual("./modules/island/src/services/asgOtaVersionUrl")
-  const realOtaUpdateCheck = jest.requireActual("./modules/island/src/services/OtaUpdateCheckService")
+  // from @mentra/engine, so expose the real (pure) implementations through the mock.
+  const realGlassesClockSync = jest.requireActual("./modules/engine/src/services/glassesClockSync")
+  const realGallerySyncClock = jest.requireActual("./modules/engine/src/services/gallerySyncClock")
+  const realAsgOtaVersionUrl = jest.requireActual("./modules/engine/src/services/asgOtaVersionUrl")
+  const realOtaUpdateCheck = jest.requireActual("./modules/engine/src/services/OtaUpdateCheckService")
   // OTA install policy constants + display-state derivation + the install state
   // machine (WP 8B) — real implementations so the host shim
   // (@/app/ota/otaProgressTimeouts), the OTA screens and their tests exercise the
   // moved behavior where it now lives.
-  const realOtaInstallPolicy = jest.requireActual("./modules/island/src/services/otaInstallPolicy")
-  const realOtaDisplayState = jest.requireActual("./modules/island/src/services/otaDisplayState")
-  const realOtaInstallCoordinator = jest.requireActual("./modules/island/src/services/OtaInstallCoordinator")
-  const realPhoneNotificationsSync = jest.requireActual("./modules/island/src/services/PhoneNotificationsSync")
+  const realOtaInstallPolicy = jest.requireActual("./modules/engine/src/services/otaInstallPolicy")
+  const realOtaDisplayState = jest.requireActual("./modules/engine/src/services/otaDisplayState")
+  const realOtaInstallCoordinator = jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator")
+  const realPhoneNotificationsSync = jest.requireActual("./modules/engine/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
   // addListener wrappers in the real toolkit, so the mock delegates to the shared
   // bluetoothSdkMock — emitBluetoothSdkEvent() + listener-leak counts keep working.
@@ -340,7 +340,7 @@ const mockIslandEntries = () => {
     }
   }
 
-  // --- "@mentra/island" (main): toolkit + the pure helper/constant surface ---
+  // --- "@mentra/engine" (main): toolkit + the pure helper/constant surface ---
   const main = {
     __esModule: true,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
@@ -738,7 +738,7 @@ const mockIslandEntries = () => {
     ISLAND_SETTINGS_KEYS: {},
   }
 
-  // --- "@mentra/island/internal": raw stores + service singletons ---
+  // --- "@mentra/engine/internal": raw stores + service singletons ---
   const internal = {
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
@@ -776,9 +776,9 @@ const mockIslandEntries = () => {
     // Shared process-wide event bus (moved into island) — the REAL island
     // instance (not a fresh one) so the instance RestComms emits on is the same
     // one tests listen on across the boundary.
-    GlobalEventEmitter: jest.requireActual("./modules/island/src/utils/GlobalEventEmitter").default,
+    GlobalEventEmitter: jest.requireActual("./modules/engine/src/utils/GlobalEventEmitter").default,
     // Gallery cluster moved into island; host consumers (GalleryScreen, gallery-settings,
-    // NetworkMonitoring, MantleManager) import these from @mentra/island/internal. Stub
+    // NetworkMonitoring, MantleManager) import these from @mentra/engine/internal. Stub
     // them here so those screens/services load under the mock without native deps. The
     // gallery service's own jest test imports the REAL implementations by relative path.
     gallerySyncService: {
@@ -920,7 +920,7 @@ const mockIslandEntries = () => {
     saveLocalAppRunningState: jest.fn(),
   }
 
-  // --- "@mentra/island/devtools": debug-only singletons ---
+  // --- "@mentra/engine/devtools": debug-only singletons ---
   const devtools = {
     __esModule: true,
     miniappRunningRegistry: {
@@ -933,9 +933,9 @@ const mockIslandEntries = () => {
   return mockIslandEntriesCache
 }
 
-jest.mock("@mentra/island", () => mockIslandEntries().main)
-jest.mock("@mentra/island/internal", () => mockIslandEntries().internal)
-jest.mock("@mentra/island/devtools", () => mockIslandEntries().devtools)
+jest.mock("@mentra/engine", () => mockIslandEntries().main)
+jest.mock("@mentra/engine/internal", () => mockIslandEntries().internal)
+jest.mock("@mentra/engine/devtools", () => mockIslandEntries().devtools)
 
 // Mock SocketComms to avoid complex dependency chains
 jest.mock("@/services/SocketComms", () => ({
@@ -996,19 +996,19 @@ jest.mock("@mentra/crust", () => ({
 // Silence the warning: Animated: `useNativeDriver` is not supported
 global.__reanimatedWorkletInit = jest.fn()
 
-// The @mentra/island mock above delegates toolkit.ota.installSession to the REAL
+// The @mentra/engine mock above delegates toolkit.ota.installSession to the REAL
 // OtaInstallCoordinator singleton. attach() is idempotent (`if (this.attached)
 // return`), so a test that leaves it attached would leak its timers, store
 // subscription, and session state into the next test in the same file. detach()
 // after every test (a no-op when not attached) so each test starts clean.
 afterEach(() => {
-  jest.requireActual("./modules/island/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
+  jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator.detach()
   // The pairing mocks above delegate identity reads/writes to the REAL
   // PairingIdentity over the shared settings store; scrub the identity keys so
   // a test that marked a pending selection can't leak a stale identity into
   // the next test's identity()/onIdentity() reads.
   const {useSettingsStore: realSettingsStore, PAIRING_IDENTITY_KEYS: realIdentityKeys} = jest.requireActual(
-    "./modules/island/src/stores/settings",
+    "./modules/engine/src/stores/settings",
   )
   const currentSettings = realSettingsStore.getState().settings
   if (realIdentityKeys.some((key) => currentSettings[key])) {

@@ -22,7 +22,7 @@
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
         "@mentra/crust": "workspace:*",
-        "@mentra/island": "workspace:*",
+        "@mentra/engine": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
@@ -262,8 +262,8 @@
         "react-native": "*",
       },
     },
-    "modules/island": {
-      "name": "@mentra/island",
+    "modules/engine": {
+      "name": "@mentra/engine",
       "version": "0.1.0",
       "dependencies": {
         "@types/semver": "^7.7.1",
@@ -970,7 +970,7 @@
 
     "@mentra/crust": ["@mentra/crust@workspace:modules/crust"],
 
-    "@mentra/island": ["@mentra/island@workspace:modules/island"],
+    "@mentra/engine": ["@mentra/engine@workspace:modules/engine"],
 
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 

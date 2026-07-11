@@ -1,6 +1,6 @@
 # Miniapp SDK Branch — Engineering Handover
 
-This is the design + handover doc for the work landing on `mentra-miniapp-sdk-aryan`. It walks the system end-to-end: the native bridge (crust), the JS-side host services (HeadingService, LocationManager, NavigationService), the runtime that brokers requests from miniapps to the host (LocalMiniappRuntime in `@mentra/island`), the developer-facing SDK (`@mentra/miniapp`), the WebView host that mounts miniapps inside the manager (MiniappHost), and the new dev-loop screens (scanner, dev-URL, dev-offline, local mount).
+This is the design + handover doc for the work landing on `mentra-miniapp-sdk-aryan`. It walks the system end-to-end: the native bridge (crust), the JS-side host services (HeadingService, LocationManager, NavigationService), the runtime that brokers requests from miniapps to the host (LocalMiniappRuntime in `@mentra/engine`), the developer-facing SDK (`@mentra/miniapp`), the WebView host that mounts miniapps inside the manager (MiniappHost), and the new dev-loop screens (scanner, dev-URL, dev-offline, local mount).
 
 It is written so a fresh engineer can pick up any layer without having to reverse-engineer the others. Numbers in the diff: **49 mobile files changed, +7701 / −555**.
 
@@ -32,7 +32,7 @@ Everything else on the branch is plumbing in service of those three: app config 
                                │ envelope (JSON over postMessage / local socket)
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ LocalMiniappRuntime (in @mentra/island)                                     │
+│ LocalMiniappRuntime (in @mentra/engine)                                     │
 │   - Owns the session-per-app map                                            │
 │   - Receives MiniappRequest envelopes, dispatches by type                   │
 │   - Owns ref-counted host-side subscriptions (heading, location, nav)       │
@@ -179,13 +179,13 @@ configureRuntime({
 })
 ```
 
-This indirection is what keeps `@mentra/island` portable: the runtime never imports concrete services, it only consumes the hook shape. OEM hosts implement the same shape with their own backing.
+This indirection is what keeps `@mentra/engine` portable: the runtime never imports concrete services, it only consumes the hook shape. OEM hosts implement the same shape with their own backing.
 
 ---
 
-## Layer 3 — `LocalMiniappRuntime` (in `@mentra/island`)
+## Layer 3 — `LocalMiniappRuntime` (in `@mentra/engine`)
 
-`mobile/modules/island/src/services/LocalMiniappRuntime.ts` is the broker between miniapp WebViews and host services. One singleton handles every running miniapp.
+`mobile/modules/engine/src/services/LocalMiniappRuntime.ts` is the broker between miniapp WebViews and host services. One singleton handles every running miniapp.
 
 Responsibilities:
 - Track a session per registered package: send function, manifest, subscriptions, foreground/background state.
@@ -195,7 +195,7 @@ Responsibilities:
 
 ### Navigation flow inside the runtime
 
-When a miniapp sends `NAVIGATION_START`, [`handleNavigationStart`](../modules/island/src/services/LocalMiniappRuntime.ts#L1121) does roughly this:
+When a miniapp sends `NAVIGATION_START`, [`handleNavigationStart`](../modules/engine/src/services/LocalMiniappRuntime.ts#L1121) does roughly this:
 
 1. Validate stops; coerce `{lat, lng}` from v1 wire shape.
 2. Resolve `getRuntimeHooks().navigation` — bail if the host hasn't wired the adapter.
@@ -210,7 +210,7 @@ When a miniapp sends `NAVIGATION_START`, [`handleNavigationStart`](../modules/is
 
 ### Heading flow
 
-Heading is purely a sensor stream — there's no `start` request, just SUBSCRIBE/UNSUBSCRIBE. [`recomputeHeadingSubscription`](../modules/island/src/services/LocalMiniappRuntime.ts#L1104-L1118) is called whenever the global stream-subscriber map changes; it lazily attaches/detaches from `headingService` based on whether any session is subscribed to `HEADING_UPDATE`.
+Heading is purely a sensor stream — there's no `start` request, just SUBSCRIBE/UNSUBSCRIBE. [`recomputeHeadingSubscription`](../modules/engine/src/services/LocalMiniappRuntime.ts#L1104-L1118) is called whenever the global stream-subscriber map changes; it lazily attaches/detaches from `headingService` based on whether any session is subscribed to `HEADING_UPDATE`.
 
 The same pattern is used for any other sensor-style stream the runtime gates centrally.
 

@@ -1,10 +1,10 @@
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
-import {useCoreStore} from "@mentra/island/internal"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS} from "@mentra/island"
-import {useSettingsStore} from "@mentra/island/internal"
+import {useCoreStore} from "@mentra/engine/internal"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@/utils/PermissionsUtils", () => ({

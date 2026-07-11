@@ -3,7 +3,7 @@ import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/Onboardin
 import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {useMemo} from "react"
 import {Platform} from "react-native"

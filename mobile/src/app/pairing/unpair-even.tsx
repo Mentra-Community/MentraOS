@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
 import {View} from "react-native"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"

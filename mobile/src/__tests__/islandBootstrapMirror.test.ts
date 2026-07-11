@@ -1,8 +1,8 @@
-// Imports the real bootstrap + displayMirror by path (not via "@mentra/island",
+// Imports the real bootstrap + displayMirror by path (not via "@mentra/engine",
 // which jest mocks) so the actual logic runs under the mobile jest CI runner.
-import * as bootstrap from "../../modules/island/src/runtime/bootstrap"
-import {displayMirror} from "../../modules/island/src/facades/displayMirror"
-import {useDisplayStore, flushDisplayCoalesceForTests} from "../../modules/island/src/stores/display"
+import * as bootstrap from "../../modules/engine/src/runtime/bootstrap"
+import {displayMirror} from "../../modules/engine/src/facades/displayMirror"
+import {useDisplayStore, flushDisplayCoalesceForTests} from "../../modules/engine/src/stores/display"
 
 describe("island bootstrap front door", () => {
   beforeEach(async () => {

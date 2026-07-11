@@ -6,7 +6,7 @@ import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {ThemedStyle} from "@/theme"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 // Native glasses display resolution. Canvas (positioned_text / bitmap) layouts
 // give coordinates in this space; the mirror scales them to its rendered size.

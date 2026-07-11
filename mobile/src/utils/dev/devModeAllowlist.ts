@@ -1,8 +1,8 @@
 import restComms from "@/services/RestComms"
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 // In-memory forced write below has no facade equivalent by design (it exists
 // for the storage-failure fallback) — allowlisted raw store access.
-import {useSettingsStore} from "@mentra/island/internal"
+import {useSettingsStore} from "@mentra/engine/internal"
 
 function getAllowlistedEmails(): Set<string> {
   const raw = process.env.EXPO_PUBLIC_DEV_MODE_EMAILS ?? ""

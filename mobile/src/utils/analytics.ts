@@ -1,4 +1,4 @@
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 
 let analyticsModule: typeof import("@react-native-firebase/analytics") | null = null
 let initialized = false

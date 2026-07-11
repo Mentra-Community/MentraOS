@@ -32,7 +32,7 @@ end of this doc.
 
 | WP | Goal | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | Devtools boundary | **Mostly done** | CoreStatusBar renders `toolkit.dev.runtimeStatus()`; stress-test/super still call `bluetooth-sdk-internal` debug hooks host-side; no `@mentra/island/devtools` export exists; dead debug links remain |
+| 1 | Devtools boundary | **Mostly done** | CoreStatusBar renders `toolkit.dev.runtimeStatus()`; stress-test/super still call `bluetooth-sdk-internal` debug hooks host-side; no `@mentra/engine/devtools` export exists; dead debug links remain |
 | 2 | Guardrail | **Done (narrow)** | `check-mobile-runtime-boundary.sh` passes, allowlist empty — but it only patterns glasses/gallery stores |
 | 3 | Facade deltas | **Done** | glasses/controller/pairing/ota/gallery/dev facades + `useToolkitSnapshot` |
 | 4 | Product UI conversion | **Done** | home/settings/status components read facades |
@@ -78,7 +78,7 @@ Consequences visible elsewhere:
 - `toolkit.ota` grew host-facing plumbing to serve these screens:
   `queryStatus()`, `ping()`, `markMtkUpdatedThisSession()`,
   `clearBuildNumberForNextCheck()`, `replacePendingUpdateSequence()`, and
-  `legacyProgress` inside the public snapshot ([ota.ts:33,59,61,77,90,95](../../../../mobile/modules/island/src/facades/ota.ts)).
+  `legacyProgress` inside the public snapshot ([ota.ts:33,59,61,77,90,95](../../../../mobile/modules/engine/src/facades/ota.ts)).
   An OEM could call any of these out of order.
 - Host OTA UI types come from the SDK's internal surface
   (`OtaProgress`/`OtaStatus` from `@mentra/bluetooth-sdk-internal` in
@@ -113,10 +113,10 @@ calls so `check-for-updates.tsx` can drop its generation-ref machinery.
 
 Same bug class the bots caught on `glasses.info().wifi` (already fixed):
 
-- `glassesWifi.status()` returns the live `wifi` object — [glassesWifi.ts:44](../../../../mobile/modules/island/src/facades/glassesWifi.ts)
+- `glassesWifi.status()` returns the live `wifi` object — [glassesWifi.ts:44](../../../../mobile/modules/engine/src/facades/glassesWifi.ts)
 - `gallery` projection returns live `queue` and `processedFiles` (note
-  `processingFiles` IS copied one line above) — [gallery.ts:23,27](../../../../mobile/modules/island/src/facades/gallery.ts)
-- `pairing.searchResults()` returns the live array — [pairing.ts:185](../../../../mobile/modules/island/src/facades/pairing.ts)
+  `processingFiles` IS copied one line above) — [gallery.ts:23,27](../../../../mobile/modules/engine/src/facades/gallery.ts)
+- `pairing.searchResults()` returns the live array — [pairing.ts:185](../../../../mobile/modules/engine/src/facades/pairing.ts)
 
 One-line copies each. Consider a `freezeInDev()` helper or a facade unit test
 that asserts snapshot mutation never reaches the store, so the class dies.
@@ -126,12 +126,12 @@ that asserts snapshot mutation never reaches the store, so the class dies.
 > **Status (2026-07-03):** ✅ **Phase 4 (entry-point split) is done** on
 > `codex/island-entrypoint-split`:
 >
-> - [x] `@mentra/island` main = `toolkit` + contract/read-model types + pure
+> - [x] `@mentra/engine` main = `toolkit` + contract/read-model types + pure
 >       helpers host UI renders with (judgment rule: read models, commands,
 >       pure functions, types = main; store/service-shaped = not main)
-> - [x] `@mentra/island/internal` = raw stores + service singletons; all
+> - [x] `@mentra/engine/internal` = raw stores + service singletons; all
 >       `@/stores/*` / `@/utils/*` shims and host services repointed
-> - [x] `@mentra/island/devtools` = `miniappRunningRegistry`, `devServerBridge`
+> - [x] `@mentra/engine/devtools` = `miniappRunningRegistry`, `devServerBridge`
 > - [x] `toolkit.stores.*` deleted (its 2 remaining mentions were shim comments)
 > - [x] guardrail counts `/internal` (39 files) + `/devtools` (2 files)
 >       imports report-only; raw-store count unchanged at 41 files
@@ -148,8 +148,8 @@ state. Present at review time (phase-4 disposition in brackets):
   `asgCameraApi`, `localStorageService`, `mediaProcessingQueue`,
   `miniappRunningRegistry`, `localMiniappRuntime`, `miniappLauncher`,
   OTA check helpers, clock-fix helpers…). [**Moved off the main entry** in
-  phase 4: stores + services on `@mentra/island/internal`, debug singletons on
-  `@mentra/island/devtools`; the main barrel keeps toolkit + types + pure
+  phase 4: stores + services on `@mentra/engine/internal`, debug singletons on
+  `@mentra/engine/devtools`; the main barrel keeps toolkit + types + pure
   helpers.]
 - Host shim files `@/stores/{core, connection, display, settings,
   cloudClientStatus}` re-exporting island stores; ~36 host files /
@@ -160,9 +160,9 @@ state. Present at review time (phase-4 disposition in brackets):
 Not a regression — these predate the PR and plan 020 scoped them out — but they
 are the reason the host still can't be handed to an OEM. Recommended shape:
 
-1. Split island entry points: `@mentra/island` (toolkit + types only),
-   `@mentra/island/internal` (stores + service singletons, for the host's own
-   runtime-adjacent services during migration), `@mentra/island/devtools`
+1. Split island entry points: `@mentra/engine` (toolkit + types only),
+   `@mentra/engine/internal` (stores + service singletons, for the host's own
+   runtime-adjacent services during migration), `@mentra/engine/devtools`
    (stress-test store, running registry, debug BLE hooks).
 2. Point the existing shims at `/internal`, freeze new uses via the guardrail,
    then burn down per store: `useCoreStore` reads → `toolkit.pairing`
@@ -202,7 +202,7 @@ Actions, all behavior-safe:
   `../../../bluetooth-sdk/build/_internal` path. Standardize on the package
   subpath (this was an explicit babysitting decision).
 - **Guardrail growth:** extend `check-mobile-runtime-boundary.sh` with
-  (report-only at first): the remaining store hooks, `@mentra/island/internal`
+  (report-only at first): the remaining store hooks, `@mentra/engine/internal`
   (once split), `bluetooth-sdk-internal` in `mobile/src` outside an allowlisted
   devtools set, and the flat OTA helpers.
 - **Dead debug routes:** `/test/switcher`, `/miniapps/settings/buffer-debug`
@@ -244,7 +244,7 @@ as superseded by this section.
 Done or superseded by the landed work:
 
 - **`toolkit.stores.*` escape hatch** — deleted by the entry-point split
-  (#3342): explicit `@mentra/island/internal` + `/devtools` entries replaced the
+  (#3342): explicit `@mentra/engine/internal` + `/devtools` entries replaced the
   documented escape hatch; the guardrail keeps `toolkit.stores` at zero.
 - **`REQUEST_WIFI_SETUP_TYPE` literal** — replaced with the
   `MiniappRequestType` enum.

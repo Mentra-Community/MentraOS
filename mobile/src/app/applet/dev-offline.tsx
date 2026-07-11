@@ -5,7 +5,7 @@ import {View} from "react-native"
 
 import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {decideDevLaunchRoute, toolkit, useApps} from "@mentra/island"
+import {decideDevLaunchRoute, toolkit, useApps} from "@mentra/engine"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useRef} from "react"

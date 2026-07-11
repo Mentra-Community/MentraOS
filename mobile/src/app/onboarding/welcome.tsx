@@ -8,7 +8,7 @@ import {Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import GlassView from "@/components/ui/GlassView"
 

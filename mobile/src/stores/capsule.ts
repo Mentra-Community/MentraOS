@@ -9,7 +9,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import {BgTimer, toolkit} from "@mentra/island"
+import {BgTimer, toolkit} from "@mentra/engine"
 
 export interface CapsuleRegistration {
   packageName: string

@@ -4,10 +4,10 @@ import {useRef, useEffect, useState} from "react"
 import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDebugStore} from "@/stores/debug"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {TouchEvent} from "@mentra/bluetooth-sdk"
-import {BgTimer, toolkit} from "@mentra/island"
+import {BgTimer, toolkit} from "@mentra/engine"
 
 function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   const {theme} = useAppTheme()

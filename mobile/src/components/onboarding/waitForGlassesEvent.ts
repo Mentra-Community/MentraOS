@@ -1,5 +1,5 @@
 import {TouchEvent} from "@mentra/bluetooth-sdk"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 // Helpers for onboarding steps that wait for a glasses interaction. Each takes
 // an AbortSignal and removes its listener both when it fires AND when the step

@@ -6,9 +6,9 @@ import {Header, Screen} from "@/components/ignite"
 import SliderSetting from "@/components/settings/SliderSetting"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useKonamiCode} from "@/utils/dev/konami"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 export default function ScreenSettingsScreen() {
   const {goBack} = useNavigationStore.getState()

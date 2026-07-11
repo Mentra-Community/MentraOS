@@ -1,4 +1,4 @@
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 
 /**
  * Flip the latent per-account "this user is a developer" signal.

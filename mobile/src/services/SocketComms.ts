@@ -1,8 +1,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor} from "@mentra/island/internal"
+import {displayProcessor} from "@mentra/engine/internal"
 
 import ws from "@/services/WebSocketManager"
-import {useDisplayStore, useSettingsStore} from "@mentra/island/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
+import {useDisplayStore, useSettingsStore} from "@mentra/engine/internal" // Cloud V1 remnant (tier 5): raw store access allowlisted until the websocket path is retired.
 import {logE2EMetric} from "@/utils/e2eMetrics"
 
 class SocketComms {
@@ -153,7 +153,7 @@ class SocketComms {
       case "data_stream":
         // Local island miniapps are powered ONLY by the cloud client and
         // device-sourced events, never by the v1 cloud socket. The cloud client
-        // (the `@mentra/island` runtime + cloudClient adapter) owns transcript/
+        // (the `@mentra/engine` runtime + cloudClient adapter) owns transcript/
         // translation delivery to them, with on-device STT as the cloud-down
         // fallback. v1 cloud `data_stream` messages must NOT reach local
         // miniapps, so there is no forward here.

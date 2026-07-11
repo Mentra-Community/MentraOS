@@ -1,4 +1,4 @@
-import {toolkit, type WifiSearchResult} from "@mentra/island"
+import {toolkit, type WifiSearchResult} from "@mentra/engine"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"

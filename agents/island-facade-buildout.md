@@ -1,7 +1,7 @@
 # Island facade buildout — tracking spec
 
 Goal: build the OEM-facing `toolkit.*` typed facades by moving the backing logic
-into `@mentra/island`, domain by domain, on branch `aisraelov/island-namespace-wifi`
+into `@mentra/engine`, domain by domain, on branch `aisraelov/island-namespace-wifi`
 (PR #3167). One branch, one commit per domain, green at every commit.
 
 ## Two move-patterns
@@ -24,13 +24,13 @@ contract. OEMs use the typed facade functions.
 ## cloud-v2 mobile-CI integration (was fully broken on dev)
 The cloud-v2 merge left the mobile CI red on dev (install died on a 404, so the
 typecheck never even ran). Three fixes, all on this branch (they un-red dev too):
-1. **Spurious dep** — `mobile/modules/island/package.json` declared
+1. **Spurious dep** — `mobile/modules/engine/package.json` declared
    `"@mentra/cloud-client": "*"`; cloud-client is resolved via metro+tsconfig path
    aliases, not npm, so the `*` 404'd. Removed it.
 2. **island standalone build** — `postinstall` builds island via `expo-module`
    (`build:module`), whose isolated tsconfig lacks the cloud-v2 aliases → fails on
    cloud-v2 imports. But island's `build/` is unused (metro + tsconfig resolve
-   `@mentra/island` → src). Made it non-fatal in `mobile/scripts/postinstall.mjs`.
+   `@mentra/engine` → src). Made it non-fatal in `mobile/scripts/postinstall.mjs`.
 3. **cloud-v2 deps** — the mobile typecheck follows the aliases into cloud-v2
    SOURCE (`../cloud-v2/packages/*`), which import `zod`/`tweetnacl`; resolution is
    file-relative so they must be in `cloud-v2/node_modules`, never installed (cloud-v2
@@ -59,7 +59,7 @@ API, so publishing to the live OEM site is gated until release (one-line nav add
 greenlit).
 
 ## Verification per commit
-`npx tsc --noEmit -p .` (resolves `@mentra/island`→src, validates the real code) +
+`npx tsc --noEmit -p .` (resolves `@mentra/engine`→src, validates the real code) +
 `bun run test`. The island standalone build can't run locally (cloud-v2 `zod` not
 installed in this checkout) — CI confirms it; use the proven relative-`_internal`
 pattern for btsdk types.

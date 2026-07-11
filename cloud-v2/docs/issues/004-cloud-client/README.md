@@ -2,7 +2,7 @@
 
 `@mentra/cloud-client` is the phone's connection to Cloud V2: a TypeScript library
 (just code, no UI) that opens the connection, sends requests up, and receives events
-back. The on-device Mentra Runtime (`@mentra/island`) plugs into it; OEM hosts embed
+back. The on-device Mentra Runtime (`@mentra/engine`) plugs into it; OEM hosts embed
 the same library; and the backend test harness runs the **same** library on a server,
 so the tests drive the exact client the phone uses. It's a dependency the mobile app
 uses, not the app itself.
@@ -58,7 +58,7 @@ and exposes three areas (full API in [`spec.md`](./spec.md)):
 
 ## Consumers
 
-- **On device:** `@mentra/island`, wired in at the host's `configureRuntime` hook.
+- **On device:** `@mentra/engine`, wired in at the host's `configureRuntime` hook.
 - **Backend test harness:** the same library on a server (Node/Bun), so tests run the
   real connection and auth flow (this answers the 003-audio "test client deployment"
   open question).

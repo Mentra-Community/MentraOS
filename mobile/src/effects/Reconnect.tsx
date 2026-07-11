@@ -3,7 +3,7 @@ import {AppState} from "react-native"
 
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import {decideReconnect, toolkit, SETTINGS, useSetting} from "@mentra/island"
+import {decideReconnect, toolkit, SETTINGS, useSetting} from "@mentra/engine"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {

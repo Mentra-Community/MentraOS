@@ -3,8 +3,8 @@ import {waitFor} from "@testing-library/react-native"
 import {
   startCaptionsTesterReportService,
   stopCaptionsTesterReportService,
-} from "../../../modules/island/src/services/CaptionsTesterReportService"
-import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
+} from "../../../modules/engine/src/services/CaptionsTesterReportService"
+import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 import {emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 
 jest.mock("@mentra/crust", () => {
@@ -15,7 +15,7 @@ jest.mock("@mentra/crust", () => {
   }
 })
 
-jest.mock("../../../modules/island/src/facades/reports", () => ({
+jest.mock("../../../modules/engine/src/facades/reports", () => ({
   submitAutomaticReport: jest.fn(),
 }))
 

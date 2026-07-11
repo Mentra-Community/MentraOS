@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"

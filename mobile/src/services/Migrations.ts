@@ -1,7 +1,7 @@
 import {AsyncResult, result as Res} from "typesafe-ts"
 
 import {storage} from "@/utils/storage"
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 
 interface Migration {
   version: number // the version this migration brings you TO

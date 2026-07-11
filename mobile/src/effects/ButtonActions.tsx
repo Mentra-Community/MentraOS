@@ -2,7 +2,7 @@ import {useEffect} from "react"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useApps, useStart, toolkit, SETTINGS, useSetting} from "@mentra/island"
+import {useApps, useStart, toolkit, SETTINGS, useSetting} from "@mentra/engine"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 

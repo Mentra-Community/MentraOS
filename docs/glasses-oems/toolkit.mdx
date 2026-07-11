@@ -13,11 +13,11 @@ reach out to [help@mentra.glass](mailto:help@mentra.glass) to integrate today.
 ## What it is
 
 The **Mentra OEM Integration Toolkit** is the API an OEM host app (the phone-side app
-that talks to your glasses) calls to run MentraOS. It ships as the `@mentra/island` module and
+that talks to your glasses) calls to run MentraOS. It ships as the `@mentra/engine` module and
 exposes a single namespaced object, **`toolkit`**:
 
 ```ts
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 ```
 
 The dividing line:
@@ -35,7 +35,7 @@ across glasses models.
 The host hands the toolkit its auth + config once, then starts it.
 
 ```ts
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 toolkit.configure({
   // REQUIRED — the host owns login; the toolkit owns the rest.
@@ -223,8 +223,8 @@ const off   = toolkit.display.mirror.onMirror((e) => { … }) // subscribe; retu
 
 ## `toolkit.session`
 
-The cloud (cloud-v2) live-session surface. island owns the cloud client — it
-constructs it from island-owned transports + the `auth` you passed to
+The cloud (cloud-v2) live-session surface. engine owns the cloud client — it
+constructs it from engine-owned transports + the `auth` you passed to
 `configure()` — so this reads the session it manages.
 
 ```ts
@@ -243,7 +243,7 @@ await toolkit.session.account.confirmDelete(requestId, code) // confirm the dele
 
 ## `toolkit.settings`
 
-Typed keyed user settings over the island-owned settings store.
+Typed keyed user settings over the engine-owned settings store.
 
 ```ts
 toolkit.settings.get(key)               // current value (or default)
@@ -256,7 +256,7 @@ toolkit.settings.keys()                 // all known keys
 ## `toolkit.reports`
 
 Bug report and feedback submission. The OEM writes its own report screen,
-trigger labels, rating controls, and screenshot picker UX; island owns runtime
+trigger labels, rating controls, and screenshot picker UX; engine owns runtime
 context collection, recent phone logs, Cloud V2 submission, artifact upload,
 dedupe, and glasses notification.
 
@@ -322,7 +322,7 @@ await toolkit.phoneNotifications.requestListenerPermission()
 
 ## `toolkit.notifications`
 
-Inbound alerts island→host — conditions island detects, your UI renders.
+Inbound alerts engine→host — conditions engine detects, your UI renders.
 
 ```ts
 const off = toolkit.notifications.onNotification((n) => {
@@ -333,9 +333,9 @@ const off = toolkit.notifications.onNotification((n) => {
 
 ## `toolkit.miniapps`
 
-Miniapp lifecycle. The miniapp **WebView is a host component** — island ships the
+Miniapp lifecycle. The miniapp **WebView is a host component** — engine ships the
 bridge primitives (`buildMiniappGlobalsScript`, `buildMentraUiShim`, the MentraJS
-router), exported from `@mentra/island` directly; your app mounts the `<WebView>` and
+router), exported from `@mentra/engine` directly; your app mounts the `<WebView>` and
 wires it to those. This facade is the lifecycle half.
 
 ```ts
@@ -366,14 +366,14 @@ prefer a facade wherever one exists.
 ## What the host provides
 
 The boundary is small and explicit: the host provides its **UI**, its **login**, and
-optional **config** — island owns the entire runtime. The only required seam is
-`auth.getSubjectToken` (passed to `configure()`); island owns token exchange, refresh,
+optional **config** — engine owns the entire runtime. The only required seam is
+`auth.getSubjectToken` (passed to `configure()`); engine owns token exchange, refresh,
 storage, the cloud client, glasses/BLE, settings, speech, display, and the miniapp
 runtime from there.
 
 <Note>
 You may see internal `configureRuntime(...)` wiring in the first-party Mentra App —
 that's **transitional** scaffolding for migrating Mentra's own screens, not part of
-the OEM contract. It deletes itself as each domain lands in island. An OEM only ever
+the OEM contract. It deletes itself as each domain lands in engine. An OEM only ever
 calls `configure({auth, config?})` + `start()`.
 </Note>

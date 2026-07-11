@@ -1,7 +1,7 @@
 /**
  * @fileoverview Thin host wrapper over island's cloud client (keystone #5).
  *
- * The CloudClient singleton lives in `@mentra/island` (`cloudClientService`):
+ * The CloudClient singleton lives in `@mentra/engine` (`cloudClientService`):
  * island constructs it from island-owned transports (UDP, MMKV secure store,
  * status store) + the host-injected `auth` seam + the resolved endpoints the
  * host passes via `toolkit.configure({config})`, then exposes the cloud runtime
@@ -12,9 +12,9 @@
  * host. Existing `@/services/cloudClient` consumers keep working through this
  * delegating shim while construction and runtime wiring live in island.
  */
-import {cloudClientService} from "@mentra/island/internal"
+import {cloudClientService} from "@mentra/engine/internal"
 
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60

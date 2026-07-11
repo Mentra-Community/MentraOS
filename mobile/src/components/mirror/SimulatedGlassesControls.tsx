@@ -6,7 +6,7 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 interface SimulatedGlassesControlsProps {}
 

@@ -9,7 +9,7 @@ Top PR: https://github.com/Mentra-Community/MentraOS/pull/3276
 ## What Is The Toolkit?
 
 The toolkit is the MentraOS runtime API that the host app should use. In this
-stack it is implemented by the island package under `mobile/modules/island` and
+stack it is implemented by the island package under `mobile/modules/engine` and
 exported to `mobile/src` through typed facades.
 
 The toolkit owns MentraOS behavior:
@@ -49,7 +49,7 @@ The important shape is:
 
 ```text
 mobile/src UI
-  -> toolkit facades exported by mobile/modules/island
+  -> toolkit facades exported by mobile/modules/engine
       -> island services, stores, Bluetooth SDK, native modules, cloud-client
 ```
 
@@ -149,11 +149,11 @@ avoid needing one.
 
 The top branch added toolkit facades and moved host callers onto them:
 
-- `mobile/modules/island/src/facades/glasses.ts`
-- `mobile/modules/island/src/facades/pairing.ts`
-- `mobile/modules/island/src/facades/ota.ts`
-- `mobile/modules/island/src/facades/gallery.ts`
-- `mobile/modules/island/src/facades/dev.ts`
+- `mobile/modules/engine/src/facades/glasses.ts`
+- `mobile/modules/engine/src/facades/pairing.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- `mobile/modules/engine/src/facades/gallery.ts`
+- `mobile/modules/engine/src/facades/dev.ts`
 
 It added runtime services/projections inside island:
 
@@ -235,8 +235,8 @@ Read these docs in order:
 
 Then inspect these code areas:
 
-- `mobile/modules/island/src/facades/`
-- `mobile/modules/island/src/services/`
+- `mobile/modules/engine/src/facades/`
+- `mobile/modules/engine/src/services/`
 - `mobile/src/services/core/`
 - `mobile/src/app/`
 - `mobile/src/components/`

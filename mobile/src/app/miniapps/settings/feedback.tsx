@@ -11,11 +11,11 @@ import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
 import {buildReportDetails, submitBugReport} from "@/services/bugReport/bugReportSubmission"
 import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {useRegisterCapsule} from "@/stores/capsule"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{

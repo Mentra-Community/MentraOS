@@ -2,13 +2,13 @@ import {useEffect, useRef} from "react"
 import {Platform} from "react-native"
 
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {usePathname} from "expo-router"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 export function BtClassicPairing() {
   const readiness = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) => toolkit.pairing.onReadiness(onChange))

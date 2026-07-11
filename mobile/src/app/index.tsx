@@ -13,10 +13,10 @@ import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {SETTINGS, toolkit, useSetting} from "@mentra/island"
+import {SETTINGS, toolkit, useSetting} from "@mentra/engine"
 import {SplashVideo} from "@/components/splash/SplashVideo"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
 // Types
 type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"

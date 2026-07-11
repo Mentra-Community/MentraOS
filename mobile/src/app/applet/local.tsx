@@ -6,7 +6,7 @@ import {Text} from "@/components/ignite"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {toolkit, useSetForeground} from "@mentra/island"
+import {toolkit, useSetForeground} from "@mentra/engine"
 
 /**
  * Transient handoff route for launching a DEV local miniapp from the scanner,

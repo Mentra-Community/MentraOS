@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
-import {toolkit} from "@mentra/island"
-import type {PairFailureEvent} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
+import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 

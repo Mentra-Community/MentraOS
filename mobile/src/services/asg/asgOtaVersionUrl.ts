@@ -1,5 +1,5 @@
 import {OTA_VERSION_URL_LEGACY_PROD, OTA_VERSION_URL_PROD} from "@/config/ota"
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)

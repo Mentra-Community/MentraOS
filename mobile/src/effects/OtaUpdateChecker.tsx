@@ -3,11 +3,11 @@ import {useEffect, useRef} from "react"
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import {BgTimer, toolkit, type VersionInfo} from "@mentra/island"
+import {BgTimer, toolkit, type VersionInfo} from "@mentra/engine"
 
 export {
   fetchVersionInfo,
@@ -16,7 +16,7 @@ export {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkForOtaUpdate,
-} from "@mentra/island/internal"
+} from "@mentra/engine/internal"
 
 function areGlassesConnectedNow(): boolean {
   return toolkit.ota.snapshot().connected

@@ -26,7 +26,7 @@
  * internal stack change (effects keyed on depth) — the host always wins.
  */
 
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {StyleSheet, View} from "react-native"
 import {Screen as NativeScreen, ScreenStack} from "react-native-screens"

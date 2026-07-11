@@ -4,7 +4,7 @@ import Svg, {Path} from "react-native-svg"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import mentraAuth from "@/utils/auth/authClient"
 

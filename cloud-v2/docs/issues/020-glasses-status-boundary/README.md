@@ -54,7 +54,7 @@ export {
   getGlassesSystemTimeMs,
   useGlassesStore,
   waitForGlassesState,
-} from "@mentra/island"
+} from "@mentra/engine"
 ```
 
 That shim was useful while moving ownership into island, but it is now the main
@@ -450,7 +450,7 @@ Use the devtools inventory below as the first cleanup pass.
   - product/OEM UI that should use normal toolkit facades;
   - dead route/link to delete.
 - Move toolkit-owned devtools behind a dev-only toolkit export such as
-  `@mentra/island/devtools`, then have the host mount those exported screens or
+  `@mentra/engine/devtools`, then have the host mount those exported screens or
   components.
 - Start with the devtools that currently reach into raw runtime internals:
   `CoreStatusBar`, `stress-test.tsx` plus `MemoryWarningMonitor`, and
@@ -470,7 +470,7 @@ different form.
 ### 2. Add Guardrails
 
 - Add a lint/import restriction or CI grep that blocks new host imports from
-  `@/stores/glasses` and direct `useGlassesStore` imports from `@mentra/island`.
+  `@/stores/glasses` and direct `useGlassesStore` imports from `@mentra/engine`.
 - Start in report-only mode or with a short temporary allowlist while migration
   is active.
 - Permanent exceptions should be narrow: tests, island internals, and toolkit
@@ -658,7 +658,7 @@ Policy:
   not build equivalent screens in `mobile/src` by importing `useGlassesStore`.
 - Do not create broad public OEM APIs only because a devtool needs internal
   visibility. Prefer a dev-only/internal export such as
-  `@mentra/island/devtools`.
+  `@mentra/engine/devtools`.
 - If a screen is product UI, branded settings UI, or OEM-customizable UI, it
   should use the normal typed toolkit facades instead of raw stores.
 

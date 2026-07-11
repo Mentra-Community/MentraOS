@@ -1,9 +1,9 @@
 import {
   startGlassesStatusProjection,
   stopGlassesStatusProjection,
-} from "../../modules/island/src/services/GlassesStatusProjection"
-import {useCoreStore} from "../../modules/island/src/stores/core"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
+} from "../../modules/engine/src/services/GlassesStatusProjection"
+import {useCoreStore} from "../../modules/engine/src/stores/core"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {bluetoothSdkMock, emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("GlassesStatusProjection", () => {

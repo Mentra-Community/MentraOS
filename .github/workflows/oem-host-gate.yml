@@ -1,7 +1,7 @@
 name: OEM Host Boundary Gate
 
 # Proves the toolkit/host boundary from the CONSUMER side: the example OEM app
-# must typecheck against @mentra/island's BUILT public types (build/*.d.ts via
+# must typecheck against @mentra/engine's BUILT public types (build/*.d.ts via
 # the exports map) with zero access to the /internal migration surface. The
 # in-repo Mentra app enforces the boundary on itself with
 # scripts/check-mobile-runtime-boundary.sh; this gate is the half that check
@@ -15,7 +15,7 @@ name: OEM Host Boundary Gate
 on:
   pull_request:
     paths:
-      - "mobile/modules/island/**"
+      - "mobile/modules/engine/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
@@ -28,7 +28,7 @@ on:
       - main
       - dev
     paths:
-      - "mobile/modules/island/**"
+      - "mobile/modules/engine/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
@@ -63,24 +63,24 @@ jobs:
 
       - name: Install SDK workspace
         working-directory: sdk
-        # The sdk postinstall builds @mentra/miniapp, whose types island's
+        # The sdk postinstall builds @mentra/miniapp, whose types engine's
         # build imports — let it run.
         run: bun install --frozen-lockfile
 
       - name: Build bluetooth-sdk types
-        # island's public entry re-exports event types from
+        # engine's public entry re-exports event types from
         # @mentra/bluetooth-sdk, so its build/*.d.ts must exist first.
         working-directory: mobile/modules/bluetooth-sdk
         run: bun run build
 
       - name: Build crust types
-        # island's services import @mentra/crust, whose types point at its
+        # engine's services import @mentra/crust, whose types point at its
         # build output.
         working-directory: mobile/modules/crust
         run: bun run build
 
-      - name: Build island public types
-        working-directory: mobile/modules/island
+      - name: Build engine public types
+        working-directory: mobile/modules/engine
         run: bun run build
 
       - name: Typecheck example OEM app against the built public entry
@@ -96,7 +96,7 @@ jobs:
           set -euo pipefail
           violations=$(grep -RIn --include='*.ts' --include='*.tsx' \
             --exclude-dir=node_modules \
-            -e '@mentra/island/internal' \
+            -e '@mentra/engine/internal' \
             -e '@mentra/bluetooth-sdk/internal' \
             -e '@mentra/bluetooth-sdk-internal' \
             sdk/example-oem-app || true)

@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {useCallback, useEffect} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -10,7 +10,7 @@ import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 /**
  * Pure renderer over the island OTA install state machine

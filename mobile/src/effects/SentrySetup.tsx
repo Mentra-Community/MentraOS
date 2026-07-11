@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/react-native"
 
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, toolkit} from "@mentra/engine"
 
 export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
   enableTimeToInitialDisplay: true,

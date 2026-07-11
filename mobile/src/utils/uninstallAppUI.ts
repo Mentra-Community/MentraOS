@@ -1,4 +1,4 @@
-import {toolkit, type ClientApp} from "@mentra/island"
+import {toolkit, type ClientApp} from "@mentra/engine"
 
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"

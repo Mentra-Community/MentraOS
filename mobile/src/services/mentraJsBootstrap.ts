@@ -11,11 +11,11 @@
  * a singleton and the host attach runs once.
  */
 
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine} from "@mentra/island/internal"
+import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine/internal"
 
 import showAlert from "@/utils/AlertUtils"
 

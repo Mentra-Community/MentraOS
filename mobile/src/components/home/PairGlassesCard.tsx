@@ -4,7 +4,7 @@ import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import GlassView from "@/components/ui/GlassView"
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {useState} from "react"
 
 export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {

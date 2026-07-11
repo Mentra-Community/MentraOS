@@ -34,7 +34,7 @@ Before starting implementation, capture current leak counts:
 rg -n "from [\"']@/stores/glasses|useGlassesStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady" mobile/src -g '*.ts' -g '*.tsx'
 rg -n "@/stores/gallerySync|useGallerySyncStore" mobile/src -g '*.ts' -g '*.tsx'
 rg -n "@mentra/bluetooth-sdk|@mentra/bluetooth-sdk-internal|BluetoothSdk" mobile/src -g '*.ts' -g '*.tsx'
-rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/island/src -g '*.ts' -g '*.tsx'
+rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/engine/src -g '*.ts' -g '*.tsx'
 ```
 
 Expected current hotspots:
@@ -57,7 +57,7 @@ guardrails make them noisy.
 Changes:
 
 - Add a toolkit devtools export surface, likely
-  `mobile/modules/island/src/devtools/index.ts`.
+  `mobile/modules/engine/src/devtools/index.ts`.
 - Move or wrap toolkit-owned devtools:
   - `mobile/src/components/dev/CoreStatusBar.tsx`
   - `mobile/src/app/miniapps/settings/stress-test.tsx`
@@ -99,11 +99,11 @@ Changes:
 - Have it fail on new production host imports of:
   - `@/stores/glasses`
   - `@/stores/gallerySync`
-  - direct `useGlassesStore` imports from `@mentra/island`
+  - direct `useGlassesStore` imports from `@mentra/engine`
 - Add an explicit temporary allowlist file, for example
   `mobile/boundary-allowlist.txt`, generated from the baseline inventory.
 - Make the script ignore:
-  - `mobile/modules/island/**`
+  - `mobile/modules/engine/**`
   - tests (`*.test.ts`, `*.test.tsx`, `__tests__/**`)
   - toolkit devtools internals.
 
@@ -137,10 +137,10 @@ Current facade deltas:
 
 Likely files:
 
-- `mobile/modules/island/src/facades/glasses.ts`
-- `mobile/modules/island/src/facades/pairing.ts`
-- `mobile/modules/island/src/facades/ota.ts`
-- `mobile/modules/island/src/services/GlassesReadiness.ts`
+- `mobile/modules/engine/src/facades/glasses.ts`
+- `mobile/modules/engine/src/facades/pairing.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- `mobile/modules/engine/src/services/GlassesReadiness.ts`
 - optional host helper: `mobile/src/hooks/useToolkitSnapshot.ts`
 
 Tests:
@@ -214,7 +214,7 @@ Changes:
   - `isConnectedGlassesConnectionStatus`
   - `isReadyGlassesConnectionStatus`
   - `isBusyGlassesConnectionStatus`
-- Update `mobile/modules/island/src/services/GlassesReadiness.ts` to consume
+- Update `mobile/modules/engine/src/services/GlassesReadiness.ts` to consume
   those helpers and keep only toolkit-specific wait/reporting policy.
 - Update host type-only imports that are intentionally low-level.
 
@@ -274,9 +274,9 @@ Goal: remove host handling of hotspot internals and ASG camera local IP.
 Changes:
 
 - Move the `NetworkMonitoring.tsx` behavior into island, near:
-  - `mobile/modules/island/src/services/DeviceEventRouter.ts`
-  - `mobile/modules/island/src/services/asg/gallerySyncService.ts`
-  - `mobile/modules/island/src/services/asg/asgCameraApi.ts`
+  - `mobile/modules/engine/src/services/DeviceEventRouter.ts`
+  - `mobile/modules/engine/src/services/asg/gallerySyncService.ts`
+  - `mobile/modules/engine/src/services/asg/asgCameraApi.ts`
 - Let island configure `asgCameraApi` from hotspot or gallery sync state.
 - Keep host gallery UI on `toolkit.gallery.status()` and
   `toolkit.gallery.onNotice()`.
@@ -309,10 +309,10 @@ Goal: `toolkit.ota` owns update checking and exposes one snapshot.
 
 Likely files:
 
-- `mobile/modules/island/src/facades/ota.ts`
-- new `mobile/modules/island/src/services/OtaCoordinator.ts`
-- existing `mobile/modules/island/src/services/OtaService.ts`
-- `mobile/modules/island/src/services/asgOtaVersionUrl.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- new `mobile/modules/engine/src/services/OtaCoordinator.ts`
+- existing `mobile/modules/engine/src/services/OtaService.ts`
+- `mobile/modules/engine/src/services/asgOtaVersionUrl.ts`
 - `mobile/src/effects/OtaUpdateChecker.tsx`
 - `mobile/src/app/ota/check-for-updates.tsx`
 
@@ -426,7 +426,7 @@ cd mobile && npm run compile
 
 Exit criteria:
 
-- `rg -n "progress-legacy|MINIMUM_OTA_STATUS_BUILD" mobile/src mobile/modules/island/src`
+- `rg -n "progress-legacy|MINIMUM_OTA_STATUS_BUILD" mobile/src mobile/modules/engine/src`
   has no production route reference. If the constant remains, it must be only a
   compatibility-policy test fixture or renamed to its real meaning.
 - `mobile/src/app/ota/progress.tsx` is presentation only.
@@ -444,7 +444,7 @@ Audit every call path in:
 - `mobile/src/services/MantleManager.ts`
 - `mobile/src/services/SocketComms.ts`
 - `mobile/src/services/WebSocketManager.ts`
-- `mobile/modules/island/src/services/RestComms.ts`
+- `mobile/modules/engine/src/services/RestComms.ts`
 
 Table columns:
 
@@ -461,7 +461,7 @@ Allowed dispositions:
 Tests:
 
 ```bash
-rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/island/src -g '*.ts' -g '*.tsx'
+rg -n "updateGlassesState|sendGlassesConnectionState|glasses_battery_update|/api/client/device/state" mobile/src mobile/modules/engine/src -g '*.ts' -g '*.tsx'
 cd mobile && npm run compile
 ```
 
@@ -506,8 +506,8 @@ Changes:
 - Delete `mobile/src/stores/glasses.ts` after production host imports are gone.
 - Delete `mobile/src/stores/gallerySync.ts` after gallery host imports are gone.
 - Remove or narrow `toolkit.stores.glasses` and related raw store exports from
-  `mobile/modules/island/src/island.ts`.
-- Remove flat raw-store exports from `mobile/modules/island/src/index.ts` unless
+  `mobile/modules/engine/src/engine.ts`.
+- Remove flat raw-store exports from `mobile/modules/engine/src/index.ts` unless
   still needed for tests/internal migration only.
 - Turn the boundary script from allowlist/report mode into failing mode.
 

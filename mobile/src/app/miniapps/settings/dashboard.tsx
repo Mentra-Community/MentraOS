@@ -10,8 +10,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {SETTINGS, useSetting} from "@mentra/island"
-import {toolkit} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {toolkit} from "@mentra/engine"
 
 export default function DashboardSettingsScreen() {
   const {theme} = useAppTheme()

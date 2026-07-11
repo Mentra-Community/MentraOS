@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {Session} from "@supabase/supabase-js"
 
 import mantle from "@/services/MantleManager"

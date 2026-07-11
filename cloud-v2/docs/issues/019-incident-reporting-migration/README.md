@@ -82,7 +82,7 @@ MentraJS crashloop:
 - Trigger: `miniapp_crashloop` / `mentrajs_crashloop_disabled`.
 - Detection: `MentraJSRouter` emits an island notification when the crash
   controller disables a miniapp.
-- Submission: `mobile/modules/island/src/services/MentraJSCrashloopReportService.ts`.
+- Submission: `mobile/modules/engine/src/services/MentraJSCrashloopReportService.ts`.
 - Host remains responsible for Sentry and user-facing alert copy in
   `mobile/src/services/mentraJsBootstrap.ts`.
 
@@ -96,14 +96,14 @@ Pairing boot timeout:
 
 - Trigger: `pairing_loading` / `glasses_connect_timeout`.
 - Detection/submission:
-  `mobile/modules/island/src/facades/pairing.ts`.
+  `mobile/modules/engine/src/facades/pairing.ts`.
 - Host loading screen keeps UI/navigation and calls `toolkit.pairing.waitForReady(...)`.
 
 Gallery media integrity:
 
 - Trigger: `gallery_media_integrity` / `invalid_downloaded_media`.
 - Submission:
-  `mobile/modules/island/src/services/asg/GalleryMediaIntegrityReportService.ts`.
+  `mobile/modules/engine/src/services/asg/GalleryMediaIntegrityReportService.ts`.
 - Current checks cover download/storage integrity: missing files, zero-byte
   files, expected-size mismatches, and cheap photo/video container signatures.
 - Host video playback errors are UI-local. A native decoder-level probe
@@ -114,10 +114,10 @@ Captions tester laptop report:
 
 - Trigger: Android internal Crust event `captions_tester_incident`.
 - Submission:
-  `mobile/modules/island/src/services/CaptionsTesterReportService.ts`.
+  `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`.
 - The service emits the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat marker.
 - Cloud V2 transcript test logging is emitted from island via
-  `mobile/modules/island/src/services/CloudTranscriptE2EMetrics.ts`, and the
+  `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in
   `mobile/e2e-tests/scripts/live_word_monitor.py`.
 
@@ -160,13 +160,13 @@ Cloud V2:
 
 Island/toolkit:
 
-- `mobile/modules/island/src/facades/reports.ts`
-- `mobile/modules/island/src/utils/diagnosticContext.ts`
-- `mobile/modules/island/src/services/MentraJSCrashloopReportService.ts`
-- `mobile/modules/island/src/facades/pairing.ts`
-- `mobile/modules/island/src/services/asg/GalleryMediaIntegrityReportService.ts`
-- `mobile/modules/island/src/services/CaptionsTesterReportService.ts`
-- `mobile/modules/island/src/services/CloudTranscriptE2EMetrics.ts`
+- `mobile/modules/engine/src/facades/reports.ts`
+- `mobile/modules/engine/src/utils/diagnosticContext.ts`
+- `mobile/modules/engine/src/services/MentraJSCrashloopReportService.ts`
+- `mobile/modules/engine/src/facades/pairing.ts`
+- `mobile/modules/engine/src/services/asg/GalleryMediaIntegrityReportService.ts`
+- `mobile/modules/engine/src/services/CaptionsTesterReportService.ts`
+- `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`
 
 Host UI:
 
@@ -268,7 +268,7 @@ Validation:
 - Unit/type checks:
   - `cd cloud-v2 && bun run typecheck`
   - `cd mobile && bun compile`
-  - `cd mobile/modules/island && bun run build`
+  - `cd mobile/modules/engine && bun run build`
 - Android compile check after ASG edits:
   - `./scripts/check-android-compile.sh asg`
 - Manual/log validation:

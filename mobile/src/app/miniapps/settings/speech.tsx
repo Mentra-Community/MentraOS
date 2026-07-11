@@ -8,14 +8,14 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {toolkit, useStopAll} from "@mentra/island"
+import {toolkit, useStopAll} from "@mentra/engine"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
   ttsModelManager as TTSModelManager,
   type OfflineModelDownloadStatus as DownloadStatus,
-} from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@mentra/island"
+} from "@mentra/engine/internal"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 
 export default function SpeechSettingsScreen() {

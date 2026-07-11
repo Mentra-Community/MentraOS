@@ -2,11 +2,11 @@ import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
-import {useCoreStore} from "@mentra/island/internal"
-import {useDisplayStore} from "@mentra/island/internal"
-import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS} from "@mentra/island"
-import {useSettingsStore} from "@mentra/island/internal"
+import {useCoreStore} from "@mentra/engine/internal"
+import {useDisplayStore} from "@mentra/engine/internal"
+import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -75,7 +75,7 @@ jest.mock("@/services/SocketComms", () => ({
   },
 }))
 
-// gallerySyncService moved into @mentra/island; the global @mentra/island jest mock
+// gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
 
 jest.mock("@/services/Migrations", () => ({

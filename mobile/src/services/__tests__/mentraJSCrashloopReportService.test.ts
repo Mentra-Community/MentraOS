@@ -4,24 +4,24 @@ import {
   startMentraJSCrashloopReportService,
   stopMentraJSCrashloopReportService,
   submitMentraJSCrashloopReport,
-} from "../../../modules/island/src/services/MentraJSCrashloopReportService"
-import {islandNotifications} from "../../../modules/island/src/services/NotificationsEmitter"
-import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
+} from "../../../modules/engine/src/services/MentraJSCrashloopReportService"
+import {islandNotifications} from "../../../modules/engine/src/services/NotificationsEmitter"
+import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 
 let mockApps: Array<{packageName: string; name: string}> = []
 let mockEngine: {router: {logRing: {snapshot: jest.Mock}}} | null = null
 
-jest.mock("../../../modules/island/src/facades/reports", () => ({
+jest.mock("../../../modules/engine/src/facades/reports", () => ({
   submitAutomaticReport: jest.fn(),
 }))
 
-jest.mock("../../../modules/island/src/stores/apps", () => ({
+jest.mock("../../../modules/engine/src/stores/apps", () => ({
   useAppStatusStore: {
     getState: jest.fn(() => ({apps: mockApps})),
   },
 }))
 
-jest.mock("../../../modules/island/src/services/MiniappEngine", () => ({
+jest.mock("../../../modules/engine/src/services/MiniappEngine", () => ({
   getMiniappEngine: jest.fn(() => mockEngine),
 }))
 

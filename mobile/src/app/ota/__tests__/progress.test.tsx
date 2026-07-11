@@ -1,21 +1,21 @@
 import React from "react"
 import {render, act, fireEvent} from "@testing-library/react-native"
 
-import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
+import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
-import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/island"
+import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 
 const mockReplace = jest.fn()
 
 // super_mode is controlled through the REAL settings store — the screen's
-// useSetting comes from the global @mentra/island mock, which passes the real
+// useSetting comes from the global @mentra/engine mock, which passes the real
 // store-backed hook through.
-import {useSettingsStore} from "../../../../modules/island/src/stores/settings"
+import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({

@@ -259,8 +259,8 @@ Context: few users, dwindling over time — don't over-optimize, but nothing may
 | Concern | Files |
 |---|---|
 | SDK display surface | `mobile/modules/miniapp/src/modules/display.ts`, `canvas.ts`, `dashboard.ts`, `protocol.ts` |
-| Host runtime + arbitration | `mobile/modules/island/src/services/LocalMiniappRuntime.ts`, `LocalDisplayManager.ts` |
-| Text adaptation | `mobile/modules/island/src/services/DisplayProcessor.ts`, `mobile/modules/island/src/utils/display/` (mirrors `cloud/packages/display-utils/`) |
+| Host runtime + arbitration | `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`, `LocalDisplayManager.ts` |
+| Text adaptation | `mobile/modules/engine/src/services/DisplayProcessor.ts`, `mobile/modules/engine/src/utils/display/` (mirrors `cloud/packages/display-utils/`) |
 | Native dispatch | `mobile/modules/bluetooth-sdk/ios/Source/DeviceManager.swift`, `.../android/.../DeviceManager.kt` |
 | SGC verb protocol | `mobile/modules/bluetooth-sdk/ios/Source/sgcs/SGCManager.swift` (+ `.kt`) |
 | Per-device drivers | `sgcs/G1.swift`, `G2.swift`, `MentraNex.swift`, `Nimo.swift`, `Mach1.swift`, `MentraLive.swift` (+ Android `.kt` mirrors) |

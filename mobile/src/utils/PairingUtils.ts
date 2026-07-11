@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 
 import {useNavigationStore} from "@/stores/navigation"
 

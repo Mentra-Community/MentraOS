@@ -1,12 +1,12 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {decideConnectButtonAction, toolkit} from "@mentra/island"
+import {decideConnectButtonAction, toolkit} from "@mentra/engine"
 import {ActivityIndicator, View} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 

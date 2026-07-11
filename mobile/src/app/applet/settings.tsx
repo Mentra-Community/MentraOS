@@ -14,7 +14,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {toolkit, useApps, useRefresh} from "@mentra/island"
+import {toolkit, useApps, useRefresh} from "@mentra/engine"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"

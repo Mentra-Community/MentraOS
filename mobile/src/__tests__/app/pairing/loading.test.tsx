@@ -1,11 +1,11 @@
 import {act, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
-import {toolkit} from "@mentra/island"
+import {toolkit} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
-import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
+import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {

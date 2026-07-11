@@ -8,15 +8,15 @@ import {
   toolkit,
   type ClientApp,
   type StartOptions,
-} from "@mentra/island"
-import {appRegistry, installAppStoreHooks} from "@mentra/island/internal"
+} from "@mentra/engine"
+import {appRegistry, installAppStoreHooks} from "@mentra/engine/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS} from "@mentra/island"
+import {SETTINGS} from "@mentra/engine"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 

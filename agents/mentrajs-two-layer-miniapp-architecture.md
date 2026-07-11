@@ -1106,11 +1106,11 @@ These files have no DOM dependency and no WebView assumption:
 | `mobile/modules/miniapp/src/modules/pivots/engine.ts` | 554 | Pure-TS pivot engine; consumes route + position events, emits synthetic `CROSS_STREET` maneuvers. Background-only (WebView never sees it). |
 | `mobile/modules/miniapp/src/modules/pivots/geometry.ts` | 409 | Pure-TS polyline geometry (haversine, bearing, RDP, pivot extraction, crosswalk detection) |
 | `mobile/modules/miniapp/src/transport/types.ts` | 26 | Transport interface fits `__dispatch` |
-| `mobile/modules/island/src/services/MicStateCoordinator.ts` | 113 | No WebView |
-| `mobile/modules/island/src/services/LocalSttFallbackCoordinator.ts` | 98 | No WebView |
-| `mobile/modules/island/src/services/LocalDisplayManager.ts` | 538 | Per-app display arbitration keyed on `packageName` |
-| `mobile/modules/island/src/services/DisplayProcessor.ts` | 714 | Pure compute |
-| `mobile/modules/island/src/services/MiniappRunningRegistry.ts` | 63 | Just update writers |
+| `mobile/modules/engine/src/services/MicStateCoordinator.ts` | 113 | No WebView |
+| `mobile/modules/engine/src/services/LocalSttFallbackCoordinator.ts` | 98 | No WebView |
+| `mobile/modules/engine/src/services/LocalDisplayManager.ts` | 538 | Per-app display arbitration keyed on `packageName` |
+| `mobile/modules/engine/src/services/DisplayProcessor.ts` | 714 | Pure compute |
+| `mobile/modules/engine/src/services/MiniappRunningRegistry.ts` | 63 | Just update writers |
 | `mobile/src/services/HeadingService.ts` | 98 | Singleton with ref-counted native compass subs + late-subscriber replay |
 | `mobile/src/services/LocationManager.ts` | 177 | Foreground GPS wrapper (`expo-location`) — separate from background-task path in MantleManager |
 | `mobile/src/services/NavigationService.ts` | 548 | Singleton wrapping `crust`'s Google Nav SDK; ref-counted listeners, route/maneuver/location event fan-out, Routes API REST path |
@@ -1131,7 +1131,7 @@ lift verbatim since they're pure TS over `__dispatch`-shaped calls.)
 | `mobile/modules/miniapp/src/transport/local-socket.ts` | 93 | Same. |
 | `mobile/modules/miniapp/src/transport/auto.ts` | 125 | Add 4th branch: if `__dispatch` global → return `DispatchTransport`. |
 | `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Keep for WebView; add sibling for JSContext respawn. |
-| `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
+| `mobile/modules/engine/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
 | `mobile/src/services/MantleManager.ts` | ~1,060 | Runtime-hook adapter that wires `NavigationService`/`HeadingService`/`setLocationTier` into the island runtime. Adapter shape carries forward — point it at the new `MentraJSRouter` instead of `LocalMiniappRuntime`. |
 | `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object) schema fields. (Signature schema deferred to store-ship spec.) |
 | `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background/index.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Today's `dev.ts` spawns a single dev server fronting the WebView; new flow orchestrates two bundlers (background + UI) plus the dev-server WebSocket. |
@@ -1141,8 +1141,8 @@ lift verbatim since they're pure TS over `__dispatch`-shaped calls.)
 
 | File | LoC | What survives, what changes |
 |---|---|---|
-| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 2,217 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **33 dispatch arms in `handleRawMessage`'s switch + 3 arms in `handleCloudMessage`'s switch**. Eight of the main arms are NAVIGATION_* added in the 2026-05 nav SDK merge (START, STOP, DEVIATE, SET_WRONG_SIDEWALK, SET_SKIP_CROSSINGS, GET_STATE, COMPUTE_ROUTE, REQUEST_PERMISSION); each routes through the host's `NavigationService` singleton via the `RuntimeHooks.navigation` adapter — the JSC port keeps that adapter shape unchanged. The runtime also owns: `location_stream` rate aggregation (strictest across all connected apps, with downgrade-to-`off` on unregister), `recomputeHeadingSubscription` (ref-counted compass sub), and a per-app nav event forwarder that survives mini-app UI close so active trips keep running. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. `gracefullyUnregisterApp`'s 50 ms `WILL_DISCONNECT` window also goes away — JSC kill doesn't need a transport-flush grace; replace with synchronous teardown. |
-| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
+| `mobile/modules/engine/src/services/LocalMiniappRuntime.ts` | 2,217 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **33 dispatch arms in `handleRawMessage`'s switch + 3 arms in `handleCloudMessage`'s switch**. Eight of the main arms are NAVIGATION_* added in the 2026-05 nav SDK merge (START, STOP, DEVIATE, SET_WRONG_SIDEWALK, SET_SKIP_CROSSINGS, GET_STATE, COMPUTE_ROUTE, REQUEST_PERMISSION); each routes through the host's `NavigationService` singleton via the `RuntimeHooks.navigation` adapter — the JSC port keeps that adapter shape unchanged. The runtime also owns: `location_stream` rate aggregation (strictest across all connected apps, with downgrade-to-`off` on unregister), `recomputeHeadingSubscription` (ref-counted compass sub), and a per-app nav event forwarder that survives mini-app UI close so active trips keep running. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. `gracefullyUnregisterApp`'s 50 ms `WILL_DISCONNECT` window also goes away — JSC kill doesn't need a transport-flush grace; replace with synchronous teardown. |
+| `mobile/modules/engine/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 | `mobile/src/components/miniapp/MiniappHost.tsx` | 627 | **Skeleton survives:** the `mount/unmount/setForeground/setBackground` public API stays the same shape — callers don't change. **Semantics invert in Phase 3:** today mounts a persistent off-screen `<WebView>` at `-left-[10000px]` and toggles classes; new world spawns a fresh WebView when the user navigates to a miniapp's UI route and tears it down on exit. Phase 0's LRU eviction branch in `setBackground` becomes dead code and gets removed (the policy tests survive into Phase 3 as policy-only unit tests). The 50 ms `gracefullyUnregisterApp` wait added by the 2026-05 nav merge also goes away — no transport handshake to flush in the JSC world. |
 
@@ -1151,7 +1151,7 @@ lift verbatim since they're pure TS over `__dispatch`-shaped calls.)
 | File | LoC | Why |
 |---|---|---|
 | `mobile/modules/miniapp/src/transport/postmessage.ts` | 95 | Hard-coded to `window.ReactNativeWebView`. Repurpose as `WebViewToJsContextTransport` for the settings WebView. |
-| `mobile/modules/island/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) + `MentraUIRouter` (settings WebView ↔ bound JSContext). |
+| `mobile/modules/engine/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) + `MentraUIRouter` (settings WebView ↔ bound JSContext). |
 | `mobile/modules/miniapp/src/globals.ts` | 62 | `window.MentraOS` is WebView-presentational. Keep file for WebView; JSContext gets a different injected globals object. |
 | `mobile/modules/miniapp/src/index.ts` | 108 | Replaced by two sub-path entry points via `package.json` `exports`: `@mentra/miniapp/background` (session API for the JSContext layer) and `@mentra/miniapp/ui` (WebView-side `mentra` global + React hooks). No bare `@mentra/miniapp` import — sub-paths only. |
 | `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer with **symmetric folders**: logic into `src/background/` (entry `background/index.ts` + `background/controllers/`), UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. See Appendix A for the file-by-file map. |
@@ -1218,7 +1218,7 @@ React Native UI (cross-platform TS/TSX, in `mobile/src/components/miniapp/`):
   bootstrap-shim divergence above is the only platform-conditional
   branch in this layer; everything downstream is one code path.
 
-JS (host RN runtime, in `mobile/modules/island/src/services/`):
+JS (host RN runtime, in `mobile/modules/engine/src/services/`):
 - **`MentraJSRouter.ts`** — host-side router that subscribes to
   `Crust.addListener("mentrajs_message", ...)`, looks up the
   packageName, and dispatches to existing handler bodies lifted
@@ -1515,7 +1515,7 @@ Snapchat all do this; canonical pattern.
 
 ### Permission set
 
-The existing `AppPermissionType` union (string-literal type, not a TS `enum`) in `mobile/modules/island/src/types/applet.ts`:
+The existing `AppPermissionType` union (string-literal type, not a TS `enum`) in `mobile/modules/engine/src/types/applet.ts`:
 
 ```typescript
 type AppPermissionType =
@@ -2524,7 +2524,7 @@ Tasks:
   from "create persistent off-screen WebView" to "create transient
   WebView when user navigates to its UI route." Keep the public
   `mount/unmount` API; change semantics underneath.
-- New `MentraUIRouter` (in `mobile/modules/island/src/services/`,
+- New `MentraUIRouter` (in `mobile/modules/engine/src/services/`,
   replacing `WebviewBridge.ts`): given a WebView and a
   `packageName`, routes `postMessage` from JS to the JSContext's
   `session.ui.on()` handlers, and routes `session.ui.send()`
@@ -2597,7 +2597,7 @@ LAN HTTP + QR code (already implemented).
 - Update `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` (~480 LoC):
   bundle both layers; add `{type:"respawn-bg"}` message alongside
   existing `{type:"reload"}`.
-- Update `mobile/modules/island/src/services/AppRegistry.ts`
+- Update `mobile/modules/engine/src/services/AppRegistry.ts`
   (675 LoC): recognize new manifest fields; sdkVersion/
   minHostVersion gating; `background/index.js` discovery alongside
   `index.html`.
