@@ -458,7 +458,7 @@ export default function PairingPrepScreen() {
           />
           <Text
             className="text-lg text-secondary-foreground mb-2"
-            text="3. Keep the glasses nearby and wait for an AR99 or AR99_Pro device to appear."
+            text="3. Keep the glasses nearby and wait for an AR99 device to appear."
           />
         </ScrollView>
       </View>

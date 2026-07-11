@@ -24,8 +24,8 @@ export default function SelectGlassesModelScreen() {
 
   // (This screen used to forget any paired glasses on focus. With two-phase
   // identity there is no eager default to clean up before a fresh pairing, and
-  // the forget wiped REAL pairings whenever the screen was entered â€” or backed
-  // into â€” while glasses were paired. Attempt cleanup now lives on the specific
+  // the forget wiped REAL pairings whenever the screen was entered â€?or backed
+  // into â€?while glasses were paired. Attempt cleanup now lives on the specific
   // abandon paths: scan back-out, pairing failure, and unpair-even retry.)
 
   // Get logo component for manufacturer
@@ -43,9 +43,18 @@ export default function SelectGlassesModelScreen() {
       case DeviceTypes.NIMO:
         return <NimoLogo />
       case DeviceTypes.AR99:
-        return <Text text="AR99" className="text-foreground font-semibold text-lg" />
+        return <Text text="Xingyi Intelligent" className="text-foreground font-semibold text-lg" />
       default:
         return null
+    }
+  }
+
+  const getDisplayName = (deviceModel: string) => {
+    switch (deviceModel) {
+      case DeviceTypes.AR99:
+        return "Xingyi AR99"
+      default:
+        return deviceModel
     }
   }
 
@@ -110,7 +119,7 @@ export default function SelectGlassesModelScreen() {
                         className="text-2xl text-foreground font-medium"
                         numberOfLines={1}
                         adjustsFontSizeToFit
-                        text={glasses.deviceModel}
+                        text={getDisplayName(glasses.deviceModel)}
                       />
                     </View>
                     <Image
@@ -127,3 +136,4 @@ export default function SelectGlassesModelScreen() {
     </Screen>
   )
 }
+
