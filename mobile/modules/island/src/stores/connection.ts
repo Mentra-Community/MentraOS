@@ -1,8 +1,9 @@
 import {create} from "zustand"
 
 // Relocated from the host @/services/ws-types so this store is self-contained
-// inside island. The host @/services/ws-types now re-exports this (a shim), so its
-// other importers are unchanged.
+// inside island. Its writer (the host WebSocketManager) was deleted in the
+// Cloud V1 ripout; the store survives only for the island-side legacy-surface
+// removal (issue #3392).
 export enum WebSocketStatus {
   DISCONNECTED = "disconnected",
   CONNECTING = "connecting",

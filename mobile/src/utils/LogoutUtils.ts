@@ -187,7 +187,8 @@ export class LogoutUtils {
     // The device only holds V2 account tokens now (issue 019); logged out
     // means the MMKV token pair is gone.
     const access = storage.load<string>("mentra.account.accessToken")
-    const isLoggedOut = access.is_error() || !access.value
+    const refresh = storage.load<string>("mentra.account.refreshToken")
+    const isLoggedOut = (access.is_error() || !access.value) && (refresh.is_error() || !refresh.value)
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut

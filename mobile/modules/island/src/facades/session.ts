@@ -35,10 +35,11 @@ export const session = {
   isConnected: (): boolean => cloudClientService.isConnected(),
 
   /**
-   * Legacy Cloud-V1 websocket status (the cloud-SDK-app bridge socket, fed by the
-   * host WebSocketManager into the island-owned connection store). This is a
-   * different socket than `status()` (the cloud-v2 runtime); the host connection
-   * banners render this one.
+   * Legacy Cloud-V1 websocket status. The socket's writer (the host
+   * WebSocketManager) was deleted in the Cloud V1 ripout, so this now always
+   * reports the store's initial DISCONNECTED; the host connection banners
+   * render `status()` (the cloud-v2 runtime) instead. Kept, with the backing
+   * connection store, for the island-side legacy-surface removal (issue #3392).
    */
   legacyWebsocketStatus: (): WebSocketStatus => useConnectionStore.getState().status,
   /** Subscribe to legacy websocket status changes; fires only when it changes. Returns an unsubscribe. */
