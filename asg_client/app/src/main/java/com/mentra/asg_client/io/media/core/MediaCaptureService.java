@@ -149,10 +149,17 @@ public class MediaCaptureService {
     public static final int bleImageAvifQuality = 40;
 
     // Flip to false to fall back to the legacy full-color BLE pipeline (full-res ARGB decode +
-    // createScaledBitmap + RGB BleImageSharpener). BLE photos exist to be read (documents/signs/
-    // screens), not viewed, so grayscale is the default - true here also cuts the per-photo peak
-    // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
+    // createScaledBitmap + RGB BleImageSharpener + YUV420 AVIF). BLE photos exist to be read
+    // (documents/signs/screens), not viewed, so grayscale is the default - true here also cuts
+    // the per-photo peak transient memory from ~36MB down to ~4MB (see GrayscaleBleProcessor)
+    // and encodes a true monochrome (YUV400) AVIF with no chroma planes.
     private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = true;
+
+    // AOM cpu-used for the mono BLE encode (0..9, higher = faster; -1 = plugin default). The
+    // MTK8766 has no hardware AV1 encoder, so software encode time dominates the BLE photo
+    // pipeline (4-5.5s of ~7.4s end-to-end at plugin default). Benchmarked at 1920x1440: speed 8
+    // encodes ~2.6x faster than the default with comparable output size.
+    private static final int BLE_AVIF_ENCODE_SPEED = 8;
 
     private static class BleParams {
         final int targetWidth;
@@ -3985,22 +3992,43 @@ public class MediaCaptureService {
 
                                 BleParams bleParams = resolveBleParams(requestedSize);
 
-                                android.graphics.Bitmap resized;
+                                byte[] compressedData;
                                 if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
-                                    // 2. Decode straight to a grayscale luma pipeline (crop +
-                                    // contrast + unsharp all happen on 1-byte/pixel buffers) and
-                                    // only rehydrate to a full RGBA bitmap at the end for the AVIF
-                                    // encoder. BLE photos exist to be read (documents/signs/
-                                    // screens), not viewed, so color is dead weight - this also
-                                    // avoids ever materializing the ~30MB full-res ARGB bitmap the
-                                    // old decode+resize+sharpen chain used. ROI is null (full
-                                    // frame) until a real text-region detector is wired in.
-                                    resized =
-                                            GrayscaleBleProcessor.process(
+                                    // 2. Grayscale luma pipeline: decode subsampled, then crop +
+                                    // contrast + unsharp on 1-byte/pixel buffers, then hand the
+                                    // luma plane straight to the monochrome (YUV400) AVIF encoder
+                                    // - no Bitmap/RGBA round-trip anywhere. BLE photos exist to be
+                                    // read (documents/signs/screens), not viewed, so color is dead
+                                    // weight; this path never materializes the ~30MB full-res ARGB
+                                    // bitmap the old decode+resize+sharpen chain used. ROI is null
+                                    // (full frame) until a real text-region detector is wired in.
+                                    GrayscaleBleProcessor.LumaImage lumaImage =
+                                            GrayscaleBleProcessor.processToLuma(
                                                     originalPath,
                                                     null,
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
+
+                                    Log.d(
+                                            TAG,
+                                            "📐 BLE image ready for encode: "
+                                                    + lumaImage.width
+                                                    + "x"
+                                                    + lumaImage.height
+                                                    + " grayscale=true (mono AVIF, speed="
+                                                    + BLE_AVIF_ENCODE_SPEED
+                                                    + ")");
+
+                                    // 3. Encode as monochrome AVIF only (no JPEG fallback over
+                                    // BLE)
+                                    compressedData =
+                                            PhotoExifMetadataWriter.encodeAvifForBleMono(
+                                                    lumaImage.luma,
+                                                    lumaImage.width,
+                                                    lumaImage.height,
+                                                    bleParams.avifQuality,
+                                                    BLE_AVIF_ENCODE_SPEED,
+                                                    originalPath);
                                 } else {
                                     // Legacy full-color path.
                                     android.graphics.Bitmap original =
@@ -4035,36 +4063,37 @@ public class MediaCaptureService {
                                     if (scaled != original) {
                                         original.recycle();
                                     }
-                                    resized = BleImageSharpener.sharpen(mContext, scaled);
+                                    android.graphics.Bitmap resized =
+                                            BleImageSharpener.sharpen(mContext, scaled);
                                     if (resized != scaled) {
                                         scaled.recycle();
                                     }
-                                }
 
-                                Log.d(
-                                        TAG,
-                                        "📐 BLE image ready for encode: "
-                                                + resized.getWidth()
-                                                + "x"
-                                                + resized.getHeight()
-                                                + " grayscale="
-                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
+                                    Log.d(
+                                            TAG,
+                                            "📐 BLE image ready for encode: "
+                                                    + resized.getWidth()
+                                                    + "x"
+                                                    + resized.getHeight()
+                                                    + " grayscale=false");
 
-                                // 3. Encode as AVIF only (no JPEG fallback over BLE)
-                                Log.d(
-                                        TAG,
-                                        "BLE AVIF encode: originalPath="
-                                                + originalPath
-                                                + " hasImuMetadata="
-                                                + PhotoExifMetadataWriter.hasImuMetadata(
-                                                        originalPath));
-                                byte[] compressedData;
-                                try {
-                                    compressedData =
-                                            PhotoExifMetadataWriter.encodeAvifForBle(
-                                                    resized, bleParams.avifQuality, originalPath);
-                                } finally {
-                                    resized.recycle();
+                                    // 3. Encode as AVIF only (no JPEG fallback over BLE)
+                                    Log.d(
+                                            TAG,
+                                            "BLE AVIF encode: originalPath="
+                                                    + originalPath
+                                                    + " hasImuMetadata="
+                                                    + PhotoExifMetadataWriter.hasImuMetadata(
+                                                            originalPath));
+                                    try {
+                                        compressedData =
+                                                PhotoExifMetadataWriter.encodeAvifForBle(
+                                                        resized,
+                                                        bleParams.avifQuality,
+                                                        originalPath);
+                                    } finally {
+                                        resized.recycle();
+                                    }
                                 }
                                 Log.d(TAG, "Successfully encoded as AVIF for BLE");
 

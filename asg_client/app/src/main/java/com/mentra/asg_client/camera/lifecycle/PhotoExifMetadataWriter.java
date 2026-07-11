@@ -213,6 +213,64 @@ public final class PhotoExifMetadataWriter {
         return plain;
     }
 
+    /**
+     * Encode a raw 8-bit luma plane as a monochrome (YUV400) AVIF for BLE, embedding IMU EXIF via
+     * BMFF injection when the source JPEG has it.
+     *
+     * <p>Compared to {@link #encodeAvifForBle(Bitmap, int, String)} this skips the Bitmap/RGBA
+     * round-trip entirely (the encoder consumes the 1-byte/pixel buffer directly) and emits a
+     * bitstream with no chroma planes. {@code speed} maps to AOM cpu-used (0..9, higher = faster;
+     * -1 = encoder default) - on the MTK8766's software AV1 encoder this is the dominant
+     * encode-time knob.
+     */
+    public static byte[] encodeAvifForBleMono(
+            byte[] luma, int width, int height, int quality, int speed, String sourceJpegPath)
+            throws Exception {
+        boolean hasImu = hasImuMetadata(sourceJpegPath);
+        Log.d(
+                TAG,
+                "encodeAvifForBleMono: source="
+                        + sourceJpegPath
+                        + " hasImuMetadata="
+                        + hasImu
+                        + " quality="
+                        + quality
+                        + " speed="
+                        + speed);
+        HeifCoder heifCoder = new HeifCoder();
+        byte[] avif = heifCoder.encodeAvifMono(luma, width, height, width, quality, speed);
+        if (hasImu) {
+            String json = readImuJsonFromJpeg(sourceJpegPath);
+            if (json == null) {
+                Log.w(
+                        TAG,
+                        "encodeAvifForBleMono: hasImuMetadata true but readImuJsonFromJpeg"
+                                + " returned null");
+            } else {
+                try {
+                    JSONObject payload = new JSONObject(json);
+                    byte[] exifSegment = buildExifApp1Segment(payload);
+                    byte[] exifTiff = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
+                    byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
+                    Log.d(
+                            TAG,
+                            "encodeAvifForBleMono: mono AVIF+EXIF, "
+                                    + withExif.length
+                                    + " bytes, rawHasExifMarker="
+                                    + containsExifMarker(withExif));
+                    return withExif;
+                } catch (Exception injectError) {
+                    Log.w(
+                            TAG,
+                            "encodeAvifForBleMono: EXIF path failed, sending plain mono AVIF: "
+                                    + injectError.getMessage());
+                }
+            }
+        }
+        Log.d(TAG, "encodeAvifForBleMono: mono AVIF (no EXIF), " + avif.length + " bytes");
+        return avif;
+    }
+
     /** True when the device exposes an AV1 encoder for {@link AvifWriter}. */
     static boolean isAv1EncoderAvailable() {
         MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
