@@ -161,6 +161,12 @@ public class MediaCaptureService {
     // encodes ~2.6x faster than the default with comparable output size.
     private static final int BLE_AVIF_ENCODE_SPEED = 8;
 
+    // Crop BLE photos to the detected text/document region before encode (grayscale path only).
+    // The crop keeps native resolution on the region OCR actually reads instead of downscaling
+    // the whole frame; detection is conservative and falls back to full frame on weak signal
+    // (see TextRegionDetector). Kill switch for on-device tuning.
+    private static final boolean ENABLE_BLE_TEXT_ROI_CROP = true;
+
     private static class BleParams {
         final int targetWidth;
         final int targetHeight;
@@ -3994,18 +4000,24 @@ public class MediaCaptureService {
 
                                 byte[] compressedData;
                                 if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
-                                    // 2. Grayscale luma pipeline: decode subsampled, then crop +
-                                    // contrast + unsharp on 1-byte/pixel buffers, then hand the
-                                    // luma plane straight to the monochrome (YUV400) AVIF encoder
-                                    // - no Bitmap/RGBA round-trip anywhere. BLE photos exist to be
-                                    // read (documents/signs/screens), not viewed, so color is dead
-                                    // weight; this path never materializes the ~30MB full-res ARGB
-                                    // bitmap the old decode+resize+sharpen chain used. ROI is null
-                                    // (full frame) until a real text-region detector is wired in.
+                                    // 2. Grayscale luma pipeline: detect the text region, then
+                                    // decode subsampled, crop + contrast + unsharp on
+                                    // 1-byte/pixel buffers, then hand the luma plane straight to
+                                    // the monochrome (YUV400) AVIF encoder - no Bitmap/RGBA
+                                    // round-trip anywhere. BLE photos exist to be read
+                                    // (documents/signs/screens), not viewed, so color is dead
+                                    // weight; this path never materializes the ~30MB full-res
+                                    // ARGB bitmap the old decode+resize+sharpen chain used. The
+                                    // ROI crop keeps native resolution on the region OCR reads;
+                                    // null ROI (weak/spread signal) means full frame.
+                                    android.graphics.Rect textRoi =
+                                            ENABLE_BLE_TEXT_ROI_CROP
+                                                    ? TextRegionDetector.detect(originalPath)
+                                                    : null;
                                     GrayscaleBleProcessor.LumaImage lumaImage =
                                             GrayscaleBleProcessor.processToLuma(
                                                     originalPath,
-                                                    null,
+                                                    textRoi,
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
 
