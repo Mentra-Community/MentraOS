@@ -7,14 +7,14 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {showAlert} from "@/contexts/ModalContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
@@ -28,7 +28,7 @@ const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/
  * wiring in one place.
  */
 export function useHasDeviceInfo(): boolean {
-  const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
+  const glassesInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
   const wifiLocalIp = glassesInfo.wifi.state === "connected" ? glassesInfo.wifi.localIp : undefined
   const bluetoothName = glassesInfo.bluetoothName
   const buildNumber = glassesInfo.buildNumber
@@ -60,8 +60,8 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
-  const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
+  const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
   const glassesConnected = glassesStatus.state === "connected"
 
   const {push} = useNavigationStore.getState()
@@ -77,7 +77,7 @@ export function DeviceSettingsSection() {
       options: {allowDismiss: false},
     })
     if (result === 1) {
-      toolkit.glasses.forget()
+      engine.glasses.forget()
     }
   }
 
@@ -90,7 +90,7 @@ export function DeviceSettingsSection() {
     })
 
     if (result === 1) {
-      toolkit.glasses.disconnect()
+      engine.glasses.disconnect()
     }
   }
 

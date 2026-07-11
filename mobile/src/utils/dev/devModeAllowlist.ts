@@ -1,7 +1,7 @@
-import {SETTINGS, toolkit} from "@mentra/island"
+import {SETTINGS, engine} from "@mentra/engine"
 // In-memory forced write below has no facade equivalent by design (it exists
 // for the storage-failure fallback) — allowlisted raw store access.
-import {useSettingsStore} from "@mentra/island/internal"
+import {useSettingsStore} from "@mentra/engine/internal"
 
 function getAllowlistedEmails(): Set<string> {
   const raw = process.env.EXPO_PUBLIC_DEV_MODE_EMAILS ?? ""
@@ -22,11 +22,11 @@ export function isDevModeAllowlisted(email: string | null | undefined): boolean 
 export async function ensureDevModeForUser(email: string | null | undefined): Promise<void> {
   if (!isDevModeAllowlisted(email)) return
 
-  const current = toolkit.settings.get(SETTINGS.debug_mode.key)
+  const current = engine.settings.get(SETTINGS.debug_mode.key)
   if (current === true) return
 
   console.log("DEV: Auto-enabling debug_mode for allowlisted user")
-  const result = await toolkit.settings.set(SETTINGS.debug_mode.key, true)
+  const result = await engine.settings.set(SETTINGS.debug_mode.key, true)
   if (result.is_error()) {
     console.warn("DEV: Failed to persist debug_mode:", result.error)
     // Still enable locally so Developer settings is reachable this session.

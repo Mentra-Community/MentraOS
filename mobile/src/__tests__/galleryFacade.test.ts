@@ -1,5 +1,5 @@
-import {gallery} from "../../modules/island/src/facades/gallery"
-import {useGallerySyncStore} from "../../modules/island/src/stores/gallerySync"
+import {gallery} from "../../modules/engine/src/facades/gallery"
+import {useGallerySyncStore} from "../../modules/engine/src/stores/gallerySync"
 
 describe("gallery facade", () => {
   beforeEach(() => {

@@ -17,7 +17,7 @@ await $({ stdio: 'inherit', cwd: '../cloud-v2' })`bun install --frozen-lockfile 
 // island depends on bluetooth-sdk + miniapp build outputs, so its prepare
 // (renamed to build:module) runs here instead of being auto-triggered by bun
 // install in parallel with its workspace deps.
-await $({ stdio: 'inherit', cwd: 'modules/island' })`bun run build:module`;
+await $({ stdio: 'inherit', cwd: 'modules/engine' })`bun run build:module`;
 
 // ignore scripts to avoid infinite loop:
 // await $({ stdio: 'inherit' })`bun install --ignore-scripts`;

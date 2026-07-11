@@ -7,13 +7,13 @@ import {OptionList} from "@/components/ui/Options"
 import {ThemedSlider} from "@/components/settings/ThemedSlider"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import Toast from "react-native-toast-message"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {spacing, ThemedStyle} from "@/theme"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 type PhotoSize = "low" | "medium" | "high" | "max"
 // The Mentra Live sensor only records 1080p/720p — 1440p/4K wedge the camera.
@@ -95,7 +95,7 @@ export default function CameraSettingsScreen() {
   const [postProcessing, setPostProcessing] = useSetting(SETTINGS.media_post_processing.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesConnected =
-    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
 
   const currentFov: number =
     typeof cameraFovSetting?.fov === "number" &&

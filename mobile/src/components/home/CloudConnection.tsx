@@ -5,21 +5,21 @@ import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {toolkit, useRefresh} from "@mentra/island"
+import {engine, useRefresh} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
-// Mirrors island's CloudClientConnectionStatus (not exported from the public
-// toolkit surface). The banner now renders the cloud-v2 runtime connection,
+// Mirrors engine's CloudClientConnectionStatus (not exported from the public
+// engine surface). The banner now renders the cloud-v2 runtime connection,
 // not the retired Cloud V1 websocket.
 type CloudStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
 
 export default function CloudConnection() {
-  const connectionStatus = useToolkitSnapshot(
-    () => toolkit.session.status().status as CloudStatus,
-    (onChange) => toolkit.session.onStatus(() => onChange()),
+  const connectionStatus = useEngineSnapshot(
+    () => engine.session.status().status as CloudStatus,
+    (onChange) => engine.session.onStatus(() => onChange()),
   )
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)

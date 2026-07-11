@@ -2,12 +2,12 @@ import {useEffect, useRef, useState} from "react"
 import {TouchableOpacity, View} from "react-native"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {toolkit, useRefresh} from "@mentra/island"
-import {BgTimer} from "@mentra/island"
+import {engine, useRefresh} from "@mentra/engine"
+import {BgTimer} from "@mentra/engine"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
@@ -36,9 +36,9 @@ const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string
 export default function WebsocketStatus() {
   // Cloud-v2 runtime connection (the Cloud V1 websocket this pill used to
   // render is retired).
-  const connectionStatus = useToolkitSnapshot(
-    () => toolkit.session.status().status,
-    (onChange) => toolkit.session.onStatus(() => onChange()),
+  const connectionStatus = useEngineSnapshot(
+    () => engine.session.status().status,
+    (onChange) => engine.session.onStatus(() => onChange()),
   )
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)

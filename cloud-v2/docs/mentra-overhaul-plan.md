@@ -7,7 +7,7 @@ How the overhaul's related efforts fit together. They overlap heavily but do not
 
 - **Local SDK**: a new way for developers to build mini apps. Shipping first, even on today's Cloud 1: we are back-porting what it needs so the next major app update can ship Local SDK versions of Mentra AI, Captions, and Maps while still on Cloud 1.
 - **Cloud V2**: a new cloud backend that scales. Replaces Cloud 1 once it is ready; the Local SDK does not wait on it.
-- **Mentra OEM Integration Toolkit**: all of MentraOS's mobile logic as a library OEMs embed in their own phone app.
+- **Mentra Engine**: all of MentraOS's mobile logic as a library OEMs embed in their own phone app.
 - **Self-hostable Mentra Runtime Services**: the cloud services that back the on-device runtime (STT, TTS, translation, streaming, photo). OEMs can run their own or use Mentra's.
 - **Cloud Proxy**: a way for OEMs to proxy their app's requests through their own cloud to ours.
 
@@ -20,7 +20,7 @@ Faster mini apps (no cloud round-trip for most features). Mini apps work offline
 A new SDK (`@mentra/miniapp`) and CLI (`@mentra/miniapp-cli`). Write a static web app, build a bundle, publish through the Dev Console. No more running your own server.
 
 **What changes for OEMs**
-OEMs can ship MentraOS inside their own phone app instead of sending users to the Mentra app. The OEM Integration Toolkit packages all of MentraOS's mobile logic into a library they embed; OEM Auth signs their users in through the OEM's own identity; and Cloud Proxy lets them choose how much of the cloud to run themselves while still reaching our central Cloud Core.
+OEMs can ship MentraOS inside their own phone app instead of sending users to the Mentra app. The Mentra Engine packages all of MentraOS's mobile logic into a library they embed; OEM Auth signs their users in through the OEM's own identity; and Cloud Proxy lets them choose how much of the cloud to run themselves while still reaching our central Cloud Core.
 
 **What changes for us**
 Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more scalable. OEM auth becomes a first-class flow. The mobile app talks to the same cloud regardless of v1 or v2 (wire-shape parity at the seam).
@@ -48,7 +48,7 @@ Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more s
 
 - [Cloud V2](https://linear.app/mentralabs/project/cloud-v2-3bd87f2acfdc)
 - [Local SDK](https://linear.app/mentralabs/project/local-sdk-b55345e6ccda)
-- [Mentra OEM Integration Toolkit](https://linear.app/mentralabs/project/mentra-runtime-364331bdf761) (Linear project: "Mentra Runtime")
+- [Mentra Engine](https://linear.app/mentralabs/project/mentra-runtime-364331bdf761) (Linear project: "Mentra Runtime")
 
 **External docs**
 
@@ -58,20 +58,20 @@ Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more s
 
 Naming has been inconsistent across docs. This is the canonical set.
 
-**Mentra OEM Integration Toolkit**
-All of MentraOS's mobile logic packaged as a library OEMs embed in their own phone app ("OEM Integration Toolkit" for short): BLE transport, glasses management, display, audio routing, and the **Mentra Runtime** (the small internal piece that runs mini-app bundles). The Mentra Local SDK and Mentra Bluetooth SDK live inside it. Was called "Mentra Core Engine."
+**Mentra Engine**
+All of MentraOS's mobile logic packaged as a library OEMs embed in their own phone app ("Mentra Engine" for short): BLE transport, glasses management, display, audio routing, and the **Mentra Runtime** (the small internal piece that runs mini-app bundles). The Mentra Local SDK and Mentra Bluetooth SDK live inside it. Was called "Mentra Core Engine."
 
 **Mentra Runtime**
-A small, internal part of the OEM Integration Toolkit: the bundle executor that runs a mini app's JS (a WebView plus JavaScriptCore on iOS / QuickJS on Android). Not public-facing.
+A small, internal part of the Mentra Engine: the bundle executor that runs a mini app's JS (a WebView plus JavaScriptCore on iOS / QuickJS on Android). Not public-facing.
 
 **Mentra Local SDK**
-The developer-facing API (`@mentra/miniapp`) mini-app developers write against. Apps built with it run in the Mentra Runtime, the bundle executor inside the OEM Integration Toolkit.
+The developer-facing API (`@mentra/miniapp`) mini-app developers write against. Apps built with it run in the Mentra Runtime, the bundle executor inside the Mentra Engine.
 
 **Mentra CLI**
 The developer-facing build and publish tool (`@mentra/miniapp-cli`).
 
 **Mentra OEM UI Toolkit**
-The shared UI layer (components, screens, design system) the Mobile App is built from. Sits alongside the OEM Integration Toolkit inside the Mobile App. On hold for now (no current OEM uses React Native); documented but deferred.
+The shared UI layer (components, screens, design system) the Mobile App is built from. Sits alongside the Mentra Engine inside the Mobile App. On hold for now (no current OEM uses React Native); documented but deferred.
 
 **Cloud V2**
 The next generation of Mentra Cloud Core plus Mentra Runtime Services. Replaces v1 in production. Defined by the absence of cloud-mini-app infrastructure.
@@ -80,7 +80,7 @@ The next generation of Mentra Cloud Core plus Mentra Runtime Services. Replaces 
 The proprietary cloud product (Hono on Bun). Hosts Mentra's central services: the App Store, Developer Console, OEM APIs and Portal, plus User Auth, OEM Auth, and bundle storage. "Cloud Core" for short. Mentra runs one central Cloud Core for the whole ecosystem; OEMs reach it through Cloud Proxy and never host their own.
 
 **Mentra Runtime Services**
-The self-hostable cloud product (`@mentra/cloud-runtime`). The cloud half of the on-device Mentra OEM Integration Toolkit: STT, TTS, translation, streaming, photo capture and storage, and the phone-facing session coordination that carries runtime events back to the phone. Audio is one subset of it. An OEM can run their own or proxy to Mentra's.
+The self-hostable cloud product (`@mentra/cloud-runtime`). The cloud half of the on-device Mentra Engine: STT, TTS, translation, streaming, photo capture and storage, and the phone-facing session coordination that carries runtime events back to the phone. Audio is one subset of it. An OEM can run their own or proxy to Mentra's.
 
 **Local JS SDK**
 Older name for Mentra Local SDK. Same thing.
@@ -92,10 +92,10 @@ We organize everything as **products** (things we build, like the Mobile App or 
 The cloud is **three products, not one**, and they are hosted differently:
 
 - **Cloud Core is always ours.** The proprietary product: the shared app store and developer ecosystem (App Store, Dev Console, OEM APIs and Portal, User Auth, OEM Auth, bundle storage). Every OEM's users and developers live in the same Cloud Core, which is what makes being part of the ecosystem worth it. OEMs do not host it.
-- **Mentra Runtime Services can be theirs.** The self-hostable product: the per-user runtime services (STT, TTS, translation, streaming, photo) that back the on-device Mentra OEM Integration Toolkit. An OEM that needs to (data residency, cost, sovereignty) can run its own instead of using ours.
+- **Mentra Runtime Services can be theirs.** The self-hostable product: the per-user runtime services (STT, TTS, translation, streaming, photo) that back the on-device Mentra Engine. An OEM that needs to (data residency, cost, sovereignty) can run its own instead of using ours.
 - **Cloud Proxy is the OEM-side connector.** It is the piece an OEM deploys in their own infrastructure. Their apps reach our central Cloud Core through it (with OEM-scoped auth), and if the OEM runs its own Mentra Runtime Services, the proxy routes those requests there instead of to ours.
 
-Together, Cloud Core and Mentra Runtime Services back every product that needs the cloud: the Mobile App, the Mentra OEM Integration Toolkit, the OEM APIs and Portal, the App Store, the Dev Console, and the CLI.
+Together, Cloud Core and Mentra Runtime Services back every product that needs the cloud: the Mobile App, the Mentra Engine, the OEM APIs and Portal, the App Store, the Dev Console, and the CLI.
 
 ```mermaid
 flowchart LR
@@ -105,7 +105,7 @@ flowchart LR
   end
 
   subgraph MobileClient["Mobile Client"]
-    subgraph IntegrationToolkit["OEM Integration Toolkit"]
+    subgraph IntegrationEngine["Mentra Engine"]
       Runtime["Mentra Runtime (bundle executor)"]
       InstallAuth["Install + OEM-auth APIs"]
       BluetoothSDK["Mentra Bluetooth SDK"]
@@ -166,7 +166,7 @@ Provides the end-to-end developer journey. Write code with the Local SDK. Build 
 - Dev Console (the publish UI)
 - App Store mini-apps collection (the discovery UI)
 - On-phone install flow
-- The Mentra Runtime (bundle executor, inside the OEM Integration Toolkit)
+- The Mentra Runtime (bundle executor, inside the Mentra Engine)
 
 **Status**
 SDK and CLI mostly feature-complete. Runtime landed on phone. STT bridge running on v1 today. Bundle distribution loop not built (Dev Console, store collection, bundle storage). Internal-only for now.
@@ -204,12 +204,12 @@ Services here are named for what they do, not who provides them: "Cloud Storage"
 **Service tiers for OEM hosting** (emerging; still being refined)
 Every cloud capability falls into one of two tiers, and the tier decides how an OEM can use it:
 
-- **Mentra Runtime Services** (proxyable and self-hostable): STT, TTS, translation, streaming, photo requests. The per-user runtime capabilities that back the on-device Mentra OEM Integration Toolkit. An OEM can run their own or proxy to Mentra's.
+- **Mentra Runtime Services** (proxyable and self-hostable): STT, TTS, translation, streaming, photo requests. The per-user runtime capabilities that back the on-device Mentra Engine. An OEM can run their own or proxy to Mentra's.
 - **Mentra Cloud Core Services** (proxyable only): incident reporting, the App Store, the Developer Console, mini-app-server auth, and OEM Auth / APIs / Portal. Mentra's central, proprietary services. OEMs always reach Mentra's through Cloud Proxy and cannot self-host them.
 
 These two tiers map onto two products. The runtime tier lives in **Mentra Runtime Services** (`@mentra/cloud-runtime`): audio (STT, TTS, translation), streaming, and photo. The proprietary tier lives in **Mentra Cloud Core Services** (Cloud Core for short). Cloud Proxy fronts both for OEMs.
 
-The naming is deliberately symmetric: **Mentra Runtime Services** is the cloud half of the on-device **Mentra OEM Integration Toolkit**, which makes "an OEM hosts their own Mentra Runtime Services" easy to reason about. (The exact tier membership is still being refined; the product sections below reflect this split.)
+The naming is deliberately symmetric: **Mentra Runtime Services** is the cloud half of the on-device **Mentra Engine**, which makes "an OEM hosts their own Mentra Runtime Services" easy to reason about. (The exact tier membership is still being refined; the product sections below reflect this split.)
 
 ### Mentra Cloud Core Services (v2)
 
@@ -276,7 +276,7 @@ Implemented in v2 Cloud Core. End-to-end verified with a `test-oem` test issuer.
 
 ### Mentra Runtime Services (v2)
 
-The self-hostable product that backs the on-device Mentra OEM Integration Toolkit: the per-user runtime services an OEM can run themselves or proxy to Mentra's. Audio is one subset of it.
+The self-hostable product that backs the on-device Mentra Engine: the per-user runtime services an OEM can run themselves or proxy to Mentra's. Audio is one subset of it.
 
 **Why it exists**
 The on-device runtime needs cloud-side capabilities it can't do alone: the best STT, TTS, and translation models live in the cloud; live streams need provisioning; photos need durable storage and signed URLs; and transcripts and events have to flow back to the phone. Bundling these into one product (rather than scattering them under Cloud Core) is what makes them self-hostable: an OEM that needs data residency, lower cost, or sovereignty can run their own Mentra Runtime Services and reach Mentra's central Cloud Core through Cloud Proxy.
@@ -364,28 +364,28 @@ Stub. The detailed design (transport, auth flow, per-service mode configuration,
 How the client pieces group (shown in the at-a-glance diagram above):
 
 - **Dev Toolkit** (developer-facing): the Mentra Local SDK and the Mentra CLI.
-- **OEM Toolkit** (what an OEM embeds): the **OEM Integration Toolkit**, which wraps the Bluetooth SDK and contains the Mentra Runtime plus the install / OEM-auth APIs, and the **OEM UI Toolkit**.
-- **Mobile Client** (Mentra's consumer app): built on the OEM Toolkit.
+- **OEM stack** (what an OEM embeds): the **Mentra Engine**, which wraps the Bluetooth SDK and contains the Mentra Runtime plus the install / OEM-auth APIs, and the **OEM UI Toolkit**.
+- **Mobile Client** (Mentra's consumer app): built on the OEM stack.
 
 The Bluetooth SDK is what talks to the glasses clients (ASG / Zephyr).
 
 ### Mobile App
 
 **What it is**
-Mentra's consumer app: Mentra's own screens built with the Mentra OEM UI Toolkit on top of the OEM Integration Toolkit. Cloud URL is runtime-configurable so the same build talks to v1 or v2 by setting.
+Mentra's consumer app: Mentra's own screens built with the Mentra OEM UI Toolkit on top of the Mentra Engine. Cloud URL is runtime-configurable so the same build talks to v1 or v2 by setting.
 
 **Status**
-Built on the OEM Integration Toolkit. No cloud-v2-aware code, by design; routing is parity-based.
+Built on the Mentra Engine. No cloud-v2-aware code, by design; routing is parity-based.
 
 ### Mentra OEM UI Toolkit
 
 **What it is**
-The shared UI layer the Mobile App is built from (components, screens, design system). It sits alongside the OEM Integration Toolkit inside the Mobile App. An OEM building their own app can use it to match the Mentra experience, or bring their own UI on top of the OEM Integration Toolkit.
+The shared UI layer the Mobile App is built from (components, screens, design system). It sits alongside the Mentra Engine inside the Mobile App. An OEM building their own app can use it to match the Mentra experience, or bring their own UI on top of the Mentra Engine.
 
 **Status**
 On hold, documented but not being built yet. None of the OEMs we are currently talking to use React Native, so this is deferred to a later date. Detail owned by the client team when it resumes.
 
-### Mentra OEM Integration Toolkit
+### Mentra Engine
 
 **What it is**
 A React Native library containing all of MentraOS's mobile logic. The Mentra app is built on it, and OEMs embed it in their own phone app. It connects to Mentra's cloud to download mini apps, carries the client/cloud data flow, hosts the **Mentra Runtime** (the small internal bundle executor: a WebView plus JavaScriptCore on iOS and QuickJS via dokar3/quickjs-kt on Android), manages subscriptions, and drives the glasses through the Mentra Bluetooth SDK. The Local SDK and Bluetooth SDK live inside it. This is the OEM-integration product. (Was called "Mentra Core Engine.")
@@ -399,7 +399,7 @@ Linear: [Mentra Runtime project](https://linear.app/mentralabs/project/mentra-ru
 ### Mentra Local SDK
 
 **What it is**
-The developer-facing API (`@mentra/miniapp`) mini-app developers write against: typed `session.camera`, `session.transcription`, `session.stream`, and so on. Apps built with it run in the Mentra Runtime inside the OEM Integration Toolkit (a no-DOM background layer handles glasses and cloud access; a static-web-app UI layer spawns on demand).
+The developer-facing API (`@mentra/miniapp`) mini-app developers write against: typed `session.camera`, `session.transcription`, `session.stream`, and so on. Apps built with it run in the Mentra Runtime inside the Mentra Engine (a no-DOM background layer handles glasses and cloud access; a static-web-app UI layer spawns on demand).
 
 **Status**
 All hardware modules implemented. Photo, transcription, translation, and streams bridged through the cloud (the phone session channel for runtime events, plus REST routes for photo and managed streams).
@@ -418,7 +418,7 @@ Feature-complete for dev. Publish-to-cloud flow waits on Dev Console backend.
 ### Mentra Bluetooth SDK
 
 **What it is**
-A native library that handles the direct connection to the glasses. The OEM Integration Toolkit uses it; enterprise partners who only need to talk to the glasses directly can use it on its own.
+A native library that handles the direct connection to the glasses. The Mentra Engine uses it; enterprise partners who only need to talk to the glasses directly can use it on its own.
 
 ### Glasses clients
 
@@ -427,4 +427,3 @@ Two families of glasses, two clients. Neither is "firmware" by itself.
 
 - **ASG_Client** (Android Smart Glasses Client): the Android code that runs on Android-based smart glasses. Today that means Mentra Live. These glasses pair an Android SOC with a separate microcontroller; the microcontroller runs its own firmware (not the ASG_Client) and handles the BLE link to the phone.
 - **Zephyr_Client**: the client for display glasses, which are not Android and run their own firmware built on the Zephyr RTOS. For the third-party display glasses we support today that firmware is not ours; for the Mentra display glasses we are building, it is.
-

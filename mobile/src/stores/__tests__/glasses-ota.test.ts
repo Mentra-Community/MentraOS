@@ -1,4 +1,4 @@
-import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 
 const mockOtaStatus = {
   sessionId: "test-session-123",

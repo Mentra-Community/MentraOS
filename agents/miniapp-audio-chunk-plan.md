@@ -119,7 +119,7 @@ BluetoothSdk.addListener("mic_pcm", (event: MicPcmEvent) => {
 
 - Stream name is `"audio_chunk"` (matches `MiniappStreamType.AUDIO_CHUNK`;
   `normalizeStreamType` leaves it unchanged).
-- `localMiniappRuntime` is already imported in MantleManager (`@mentra/island`,
+- `localMiniappRuntime` is already imported in MantleManager (`@mentra/engine`,
   ~ln 33) and used for other `forwardEvent` calls (button_press, head_up, …) —
   this follows the established template exactly.
 - Delete the stale commented `"audio_chunk"` block (~ln 927–931) to avoid
@@ -172,7 +172,7 @@ event is actually emitted (the commented block at ~ln 920 assumed one — verify
 ## Files
 
 - Edit: `mobile/src/services/MantleManager.ts` (mic_pcm listener; remove stale block)
-- (No change) `mobile/modules/island/src/services/LocalMiniappRuntime.ts` — `forwardEvent` + mic-requirement recompute already handle the rest
+- (No change) `mobile/modules/engine/src/services/LocalMiniappRuntime.ts` — `forwardEvent` + mic-requirement recompute already handle the rest
 - (No change) native BT SDK, `MicStateCoordinator`, SDK `mic.ts`/`events.ts`
-- Tests: `mobile/modules/island/src/services/__tests__/` (audio_chunk forwarding + gating)
+- Tests: `mobile/modules/engine/src/services/__tests__/` (audio_chunk forwarding + gating)
 ```

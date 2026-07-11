@@ -1,7 +1,7 @@
 /**
  * Type definitions for the ASG package.
  *
- * These moved into `@mentra/island` (with the gallerySync store + asgCameraApi that own
+ * These moved into `@mentra/engine` (with the gallerySync store + asgCameraApi that own
  * them); this host module re-exports them so existing `@/types/asg` importers stay
  * unchanged.
  */
@@ -13,4 +13,4 @@ export type {
   ServerStatus,
   HealthResponse,
   GalleryEvent,
-} from "@mentra/island"
+} from "@mentra/engine"

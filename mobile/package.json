@@ -70,7 +70,7 @@
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/crust": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
-    "@mentra/island": "workspace:*",
+    "@mentra/engine": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",

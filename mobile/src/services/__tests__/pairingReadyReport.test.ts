@@ -1,8 +1,8 @@
 import {act, waitFor} from "@testing-library/react-native"
 
-import {pairing, submitPairingBootTimeoutReport} from "../../../modules/island/src/facades/pairing"
-import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
-import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
+import {pairing, submitPairingBootTimeoutReport} from "../../../modules/engine/src/facades/pairing"
+import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -14,7 +14,7 @@ jest.mock("@mentra/bluetooth-sdk", () => {
   }
 })
 
-jest.mock("../../../modules/island/src/facades/reports", () => ({
+jest.mock("../../../modules/engine/src/facades/reports", () => ({
   submitAutomaticReport: jest.fn(),
 }))
 

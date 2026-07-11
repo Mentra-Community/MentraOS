@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -49,7 +49,7 @@ export class LogoutUtils {
 
     try {
       // First try to disconnect any connected glasses
-      await toolkit.glasses.disconnect()
+      await engine.glasses.disconnect()
       console.log(`${this.TAG}: Disconnected glasses`)
     } catch (error) {
       console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
@@ -57,7 +57,7 @@ export class LogoutUtils {
 
     try {
       // Then forget the glasses completely
-      await toolkit.glasses.forget()
+      await engine.glasses.forget()
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
@@ -65,11 +65,11 @@ export class LogoutUtils {
   }
 
   /**
-   * Stop island runtime services that were started by toolkit.start().
+   * Stop island runtime services that were started by engine.start().
    *
    * MantleManager.cleanup() runs first: it tears down the host-side wiring from
    * the previous session AND resets its `initialized` guard, so the next login in
-   * the same process re-runs mantle.init() → toolkit.configure()/start() instead
+   * the same process re-runs mantle.init() → engine.configure()/start() instead
    * of leaving the stopped runtime dead until an app restart.
    */
   private static async stopToolkitRuntime(): Promise<void> {
@@ -83,7 +83,7 @@ export class LogoutUtils {
     }
 
     try {
-      await toolkit.stop()
+      await engine.stop()
       console.log(`${this.TAG}: Stopped island runtime`)
     } catch (error) {
       console.warn(`${this.TAG}: Error stopping island runtime:`, error)
@@ -130,7 +130,7 @@ export class LogoutUtils {
 
     // burn it all:
     try {
-      toolkit.settings.resetAllLocal()
+      engine.settings.resetAllLocal()
       storage.clearAll()
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)

@@ -123,6 +123,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
       mentraUserId: input.mentraUserId,
       kind: input.kind,
       feedback,
+      context: input.context,
     }).catch(() => {});
   }
 
@@ -189,6 +190,7 @@ export async function markReportReady(input: {
       trigger: before.trigger,
       report: before.report,
       feedback: before.feedback,
+      context: before.context,
       artifactCount: before.artifacts?.length ?? 0,
     }).catch(() => {});
   }

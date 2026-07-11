@@ -34,7 +34,7 @@ drives Supabase server side and mints V2 sessions directly).
 
 ## 2. The V1 dependency ledger (everything mobile uses V1 for)
 
-Verified against `mobile/modules/island/src/services/RestComms.ts` (the real
+Verified against `mobile/modules/engine/src/services/RestComms.ts` (the real
 implementation; `mobile/src/services/RestComms.ts` is a re-export shim) and
 `mobile/src/services/{SocketComms,WebSocketManager}.ts`.
 
