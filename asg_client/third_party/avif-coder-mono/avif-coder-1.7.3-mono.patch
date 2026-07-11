@@ -1,0 +1,312 @@
+diff --git a/avif-coder/build.gradle.kts b/avif-coder/build.gradle.kts
+index 09f731e..2343493 100644
+--- a/avif-coder/build.gradle.kts
++++ b/avif-coder/build.gradle.kts
+@@ -40,9 +40,9 @@ afterEvaluate {
+     publishing {
+         publications {
+             create<MavenPublication>("mavenJava") {
+-                groupId = "com.github.awxkee"
+-                artifactId = "avif-coder"
+-                version = "1.6.4"
++                groupId = "com.mentra"
++                artifactId = "avif-coder-mono"
++                version = "1.7.3-mono1"
+                 from(components["release"])
+ //                artifact("androidSourcesJar")
+             }
+@@ -72,7 +72,8 @@ android {
+                         "-std=c++20",
+                     )
+                 )
+-                abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64", "x86")
++                // Mentra fork: asg_client (Mentra Live glasses) ships arm only.
++                abiFilters += setOf("armeabi-v7a", "arm64-v8a")
+             }
+         }
+ 
+diff --git a/avif-coder/src/main/cpp/CMakeLists.txt b/avif-coder/src/main/cpp/CMakeLists.txt
+index ba949b1..8cfa8b2 100644
+--- a/avif-coder/src/main/cpp/CMakeLists.txt
++++ b/avif-coder/src/main/cpp/CMakeLists.txt
+@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.22.1)
+ 
+ project("coder")
+ 
+-add_library(coder SHARED JniEncoder.cpp JniException.cpp SizeScaler.cpp
++add_library(coder SHARED JniEncoder.cpp JniMonoEncoder.cpp JniException.cpp SizeScaler.cpp
+         icc/cmsalpha.c icc/cmscam02.c
+         icc/cmscgats.c icc/cmscnvrt.c icc/cmserr.c icc/cmsgamma.c
+         icc/cmsgmt.c icc/cmshalf.c icc/cmsintrp.c icc/cmsio0.c
+diff --git a/avif-coder/src/main/cpp/JniMonoEncoder.cpp b/avif-coder/src/main/cpp/JniMonoEncoder.cpp
+new file mode 100644
+index 0000000..14c7502
+--- /dev/null
++++ b/avif-coder/src/main/cpp/JniMonoEncoder.cpp
+@@ -0,0 +1,200 @@
++/*
++ * MIT License
++ *
++ * Mentra fork addition: monochrome (YUV400) AVIF encoding from a raw luma
++ * plane, plus an AOM speed knob. Additive only - nothing upstream is modified.
++ *
++ * Rationale: the upstream encodeAvif() only accepts an Android Bitmap and
++ * always encodes chroma 4:2:0. For grayscale document/text photos (smart
++ * glasses BLE-to-phone OCR pipeline) that forces a 4-byte/pixel RGBA
++ * round-trip and wastes encoder time on empty chroma planes. This entry point
++ * takes the 1-byte/pixel luma buffer directly and emits a true monochrome
++ * AV1 bitstream.
++ */
++
++#include <jni.h>
++#include <string>
++#include <vector>
++#include "libheif/heif.h"
++#include "JniException.h"
++
++namespace {
++
++struct MonoMemEncoder {
++    std::vector<uint8_t> buffer;
++};
++
++struct heif_error writeMonoHeifData(struct heif_context *ctx,
++                                    const void *data,
++                                    size_t size,
++                                    void *userdata) {
++    auto *p = (MonoMemEncoder *) userdata;
++    p->buffer.insert(p->buffer.end(),
++                     reinterpret_cast<const uint8_t *>(data),
++                     reinterpret_cast<const uint8_t *>(data) + size);
++
++    struct heif_error errorOk;
++    errorOk.code = heif_error_Ok;
++    errorOk.subcode = heif_suberror_Unspecified;
++    errorOk.message = "ok";
++    return errorOk;
++}
++
++} // namespace
++
++extern "C"
++JNIEXPORT jbyteArray JNICALL
++Java_com_radzivon_bartoshyk_avif_coder_HeifCoder_encodeAvifMonoImpl(JNIEnv *env, jobject thiz,
++                                                                    jbyteArray luma,
++                                                                    jint width, jint height,
++                                                                    jint stride, jint quality,
++                                                                    jint speed) {
++    try {
++        if (width <= 0 || height <= 0) {
++            std::string msg = "Invalid mono image dimensions";
++            throwException(env, msg);
++            return nullptr;
++        }
++        if (stride < width) {
++            std::string msg = "Mono stride must be >= width";
++            throwException(env, msg);
++            return nullptr;
++        }
++        jsize lumaLength = env->GetArrayLength(luma);
++        if ((jlong) lumaLength < (jlong) stride * (height - 1) + width) {
++            std::string msg = "Luma buffer too small for given dimensions/stride";
++            throwException(env, msg);
++            return nullptr;
++        }
++
++        std::shared_ptr<heif_context> ctx(heif_context_alloc(),
++                                          [](heif_context *c) { heif_context_free(c); });
++        if (!ctx) {
++            std::string exception = "Can't create HEIF/AVIF encoder due to unknown reason";
++            throwException(env, exception);
++            return nullptr;
++        }
++
++        heif_encoder *mEncoder;
++        auto result = heif_context_get_encoder_for_format(ctx.get(), heif_compression_AV1,
++                                                          &mEncoder);
++        if (result.code != heif_error_Ok) {
++            std::string choke(result.message);
++            std::string str = "Can't create encoder with exception: " + choke;
++            throwException(env, str);
++            return nullptr;
++        }
++        std::shared_ptr<heif_encoder> encoder(mEncoder,
++                                              [](heif_encoder *he) { heif_encoder_release(he); });
++
++        if (quality > 0 && quality <= 100) {
++            result = heif_encoder_set_lossy_quality(encoder.get(), quality);
++            if (result.code != heif_error_Ok) {
++                std::string choke(result.message);
++                std::string str = "Can't set encoder quality: " + choke;
++                throwException(env, str);
++                return nullptr;
++            }
++        }
++
++        // AOM cpu-used. 0-9 in libheif's aom plugin; higher = faster/larger.
++        // Negative means "leave the plugin default" so callers can opt out.
++        if (speed >= 0) {
++            result = heif_encoder_set_parameter_integer(encoder.get(), "speed", speed);
++            if (result.code != heif_error_Ok) {
++                std::string choke(result.message);
++                std::string str = "Can't set encoder speed: " + choke;
++                throwException(env, str);
++                return nullptr;
++            }
++        }
++
++        heif_image *imagePtr;
++        result = heif_image_create(width, height,
++                                   heif_colorspace_monochrome, heif_chroma_monochrome,
++                                   &imagePtr);
++        if (result.code != heif_error_Ok) {
++            std::string choke(result.message);
++            std::string str = "Can't create monochrome image with exception: " + choke;
++            throwException(env, str);
++            return nullptr;
++        }
++        std::shared_ptr<heif_image> image(imagePtr, [](auto ptr) { heif_image_release(ptr); });
++
++        result = heif_image_add_plane(image.get(), heif_channel_Y, width, height, 8);
++        if (result.code != heif_error_Ok) {
++            std::string choke(result.message);
++            std::string str = "Can't add Y plane to monochrome image: " + choke;
++            throwException(env, str);
++            return nullptr;
++        }
++
++        int planeStride;
++        uint8_t *planeData = heif_image_get_plane(image.get(), heif_channel_Y, &planeStride);
++        if (!planeData) {
++            std::string msg = "Monochrome Y plane allocation failed";
++            throwException(env, msg);
++            return nullptr;
++        }
++
++        // Copy row by row: the caller's stride and libheif's internal stride differ.
++        jbyte *lumaData = env->GetByteArrayElements(luma, nullptr);
++        if (!lumaData) {
++            std::string msg = "Can't access luma buffer";
++            throwException(env, msg);
++            return nullptr;
++        }
++        for (int y = 0; y < height; ++y) {
++            memcpy(planeData + (size_t) y * planeStride,
++                   reinterpret_cast<uint8_t *>(lumaData) + (size_t) y * stride,
++                   width);
++        }
++        env->ReleaseByteArrayElements(luma, lumaData, JNI_ABORT);
++
++        heif_image_handle *handle = nullptr;
++        std::shared_ptr<heif_encoding_options> options(heif_encoding_options_alloc(),
++                                                       [](heif_encoding_options *o) {
++                                                           heif_encoding_options_free(o);
++                                                       });
++        options->image_orientation = heif_orientation_normal;
++
++        result = heif_context_encode_image(ctx.get(), image.get(), encoder.get(), options.get(),
++                                           &handle);
++        options.reset();
++        if (handle && result.code == heif_error_Ok) {
++            heif_context_set_primary_image(ctx.get(), handle);
++            heif_image_handle_release(handle);
++        }
++        image.reset();
++        if (result.code != heif_error_Ok) {
++            std::string choke(result.message);
++            std::string str = "Encoding a monochrome image failed with exception: " + choke;
++            throwException(env, str);
++            return nullptr;
++        }
++
++        encoder.reset();
++
++        heif_writer writer = {};
++        writer.writer_api_version = 1;
++        writer.write = writeMonoHeifData;
++        MonoMemEncoder memEncoder;
++        result = heif_context_write(ctx.get(), &writer, &memEncoder);
++        if (result.code != heif_error_Ok) {
++            std::string choke(result.message);
++            std::string str = "Writing encoded monochrome image has failed with exception: "
++                              + choke;
++            throwException(env, str);
++            return nullptr;
++        }
++
++        jbyteArray byteArray = env->NewByteArray((jsize) memEncoder.buffer.size());
++        env->SetByteArrayRegion(byteArray, 0, (jint) memEncoder.buffer.size(),
++                                reinterpret_cast<const jbyte *>(memEncoder.buffer.data()));
++        return byteArray;
++    } catch (std::bad_alloc &err) {
++        std::string exception = "Not enough memory to encode this image";
++        throwException(env, exception);
++        return nullptr;
++    }
++}
+diff --git a/avif-coder/src/main/java/com/radzivon/bartoshyk/avif/coder/HeifCoder.kt b/avif-coder/src/main/java/com/radzivon/bartoshyk/avif/coder/HeifCoder.kt
+index d72b3f9..c7b2f2e 100644
+--- a/avif-coder/src/main/java/com/radzivon/bartoshyk/avif/coder/HeifCoder.kt
++++ b/avif-coder/src/main/java/com/radzivon/bartoshyk/avif/coder/HeifCoder.kt
+@@ -127,6 +127,46 @@ class HeifCoder(
+         }
+     }
+ 
++    /**
++     * Mentra fork addition: encode a raw 8-bit luma plane as a monochrome (YUV400) AVIF.
++     *
++     * Skips the Bitmap/RGBA round-trip entirely - the encoder consumes the single-channel
++     * buffer directly and emits a bitstream with no chroma planes.
++     *
++     * @param luma single-channel 8-bit buffer, row-major
++     * @param width image width in pixels
++     * @param height image height in pixels
++     * @param stride row stride in bytes (>= width); pass width for tightly packed buffers
++     * @param quality lossy quality 1..100
++     * @param speed AOM cpu-used 0..9 (higher = faster, slightly larger output);
++     *              -1 keeps the encoder plugin default
++     */
++    fun encodeAvifMono(
++        luma: ByteArray,
++        width: Int,
++        height: Int,
++        stride: Int = width,
++        quality: Int = 80,
++        speed: Int = -1
++    ): ByteArray {
++        require(quality in 1..100) {
++            throw IllegalStateException("Quality should be in 1..100 range")
++        }
++        require(speed in -1..9) {
++            throw IllegalStateException("Speed should be in -1..9 range")
++        }
++        require(width > 0 && height > 0) {
++            throw IllegalStateException("Invalid image dimensions")
++        }
++        require(stride >= width) {
++            throw IllegalStateException("Stride must be >= width")
++        }
++        require(luma.size >= stride * (height - 1) + width) {
++            throw IllegalStateException("Luma buffer too small for given dimensions")
++        }
++        return encodeAvifMonoImpl(luma, width, height, stride, quality, speed)
++    }
++
+     fun encodeHeic(bitmap: Bitmap, quality: Int = 80, preciseMode: PreciseMode = PreciseMode.LOSSY): ByteArray {
+         require(quality in 0..100) {
+             throw IllegalStateException("Quality should be in 0..100 range")
+@@ -164,6 +204,14 @@ class HeifCoder(
+     ): Bitmap
+ 
+     private external fun encodeAvifImpl(bitmap: Bitmap, quality: Int, dataSpace: Int, qualityMode: Int): ByteArray
++    private external fun encodeAvifMonoImpl(
++        luma: ByteArray,
++        width: Int,
++        height: Int,
++        stride: Int,
++        quality: Int,
++        speed: Int
++    ): ByteArray
+     private external fun encodeHeicImpl(bitmap: Bitmap, quality: Int, dataSpace: Int, qualityMode: Int): ByteArray
+ 
+     @SuppressLint("ObsoleteSdkInt")
