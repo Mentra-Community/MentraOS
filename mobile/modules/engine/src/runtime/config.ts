@@ -2,7 +2,7 @@
  * Runtime-shared constants and DTOs.
  *
  * The old host-injected runtime adapter surface has moved behind engine-owned
- * services and `toolkit.configure({auth, config, analytics})`. Keep this file
+ * services and `engine.configure({auth, config, analytics})`. Keep this file
  * limited to stable types that are shared across those services.
  */
 

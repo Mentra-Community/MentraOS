@@ -1,7 +1,7 @@
 /**
  * Glasses settings sync — engine-owned. Keeps the connected glasses in sync with
  * the phone's device settings (`BLUETOOTH_SETTING_KEYS`) over the bluetooth-sdk, so
- * `toolkit.glasses.settings.set()` (and any other settings-store write) reaches the
+ * `engine.glasses.settings.set()` (and any other settings-store write) reaches the
  * device for ANY host — not just the first-party Mentra app, where this used to live
  * in MantleManager.
  *
@@ -10,7 +10,7 @@
  *   2. on (re)connect — push the FULL set, so a freshly-connected device gets the
  *      phone's current settings (not just future changes).
  *
- * Started by `toolkit.start()`. Idempotent.
+ * Started by `engine.start()`. Idempotent.
  */
 import {shallow} from "zustand/shallow"
 

@@ -1,5 +1,5 @@
 /**
- * permissions facade — `toolkit.permissions`: the raw OS-permission ops the runtime
+ * permissions facade — `engine.permissions`: the raw OS-permission ops the runtime
  * needs, mapped from feature keys to react-native-permissions. This is the LEAN
  * surface (check/request/openSettings/requirementsForMiniapp) — the host keeps its
  * own UI helpers (rationale dialogs, denied-warnings) on top; engine stays free of

@@ -1,10 +1,10 @@
 /**
- * ota facade — `toolkit.ota`: the OEM-facing OTA read/observe surface. Engine's
+ * ota facade — `engine.ota`: the OEM-facing OTA read/observe surface. Engine's
  * OtaService projects the glasses' OTA BLE events into the engine store; this facade
  * exposes the snapshot + change subscriptions the host renders its update prompt and
  * progress UI from. No host-injected UI — the host owns all alerts/navigation/i18n.
  *
- * Availability checks live in toolkit. Install orchestration lives in engine too:
+ * Availability checks live in engine. Install orchestration lives in engine too:
  * `installSession` fronts the OtaInstallCoordinator state machine (WP 8B) — the host
  * progress screen is a pure renderer over its snapshot + attach/detach/retry/finish.
  */
@@ -57,7 +57,7 @@ export const ota = {
    * resilience layer on top of this command.)
    */
   install: (...args: Parameters<typeof BluetoothSdk.startOtaUpdate>) => BluetoothSdk.startOtaUpdate(...args),
-  // Deferred: this facade entry was intended to become the toolkit-owned retry/check
+  // Deferred: this facade entry was intended to become the engine-owned retry/check
   // action, but BluetoothSdk.checkForOtaUpdate() only returns a boolean. Exposing it
   // here would make callers think the rich otaUpdateAvailable read model is refreshed,
   // while the original view still depends on the host-side manifest compare to build

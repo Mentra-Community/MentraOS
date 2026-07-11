@@ -1,5 +1,5 @@
 /**
- * dev facade — `toolkit.dev`: developer/debug surface over engine-owned state.
+ * dev facade — `engine.dev`: developer/debug surface over engine-owned state.
  * Backend/cloud URL overrides read+write the engine settings store; the cloud
  * URL setters reconnect the engine-owned cloud client onto the new endpoints;
  * `minimumClientVersion` hits the engine RestComms.
@@ -36,7 +36,7 @@ function applyCloudUrlReconnect(urls: CloudUrlOverrides = currentCloudUrlOverrid
   } else if (resolved) {
     cloudClientService.reconnect(resolved)
   } else {
-    console.warn("toolkit.dev.setCloudUrls: partial cloud override missing boot-resolved sibling endpoint")
+    console.warn("engine.dev.setCloudUrls: partial cloud override missing boot-resolved sibling endpoint")
   }
 }
 
@@ -104,7 +104,7 @@ export const dev = {
     const next = {...currentCloudUrlOverrides(), ...urls}
     const resolved = resolveCloudUrlReconnectTarget(next)
     if (resolved === null) {
-      console.warn("toolkit.dev.setCloudUrls: ignoring partial cloud override without a resolvable sibling endpoint")
+      console.warn("engine.dev.setCloudUrls: ignoring partial cloud override without a resolvable sibling endpoint")
       return
     }
 
@@ -138,7 +138,7 @@ export const dev = {
   /**
    * Side-load a miniapp being served from a dev machine (the `mentra dev` / CLI
    * flow) by its URL: probes `<url>/miniapp.json`, and on a reachable manifest
-   * registers it into the single dev slot so it appears in `toolkit.miniapps`
+   * registers it into the single dev slot so it appears in `engine.miniapps`
    * and can be started. This is the OEM-host equivalent of the first-party
    * developer-URL screen — the registration itself is engine-internal, so a
    * host reaches it here rather than the internal registry. Rendering still
@@ -184,7 +184,7 @@ export const dev = {
     return {ok: true, packageName: DEV_APP_PACKAGE_NAME, name: appName}
   },
 
-  /** Current engine runtime status for toolkit-owned debug surfaces. */
+  /** Current engine runtime status for engine-owned debug surfaces. */
   runtimeStatus: (): DevRuntimeStatusSnapshot => projectRuntimeStatus(),
 
   /** Subscribe to the projected engine runtime status; returns an unsubscribe. */

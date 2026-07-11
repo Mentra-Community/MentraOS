@@ -1,5 +1,5 @@
 /**
- * miniapps facade — `toolkit.miniapps`: miniapp lifecycle over the engine-owned
+ * miniapps facade — `engine.miniapps`: miniapp lifecycle over the engine-owned
  * apps store. Thin forwarding (args via Parameters<>), so the facade never drifts
  * from the store's actions.
  *

@@ -1,6 +1,6 @@
 # Island facade buildout — tracking spec
 
-Goal: build the OEM-facing `toolkit.*` typed facades by moving the backing logic
+Goal: build the OEM-facing `engine.*` typed facades by moving the backing logic
 into `@mentra/engine`, domain by domain, on branch `aisraelov/island-namespace-wifi`
 (PR #3167). One branch, one commit per domain, green at every commit.
 
@@ -18,7 +18,7 @@ into `@mentra/engine`, domain by domain, on branch `aisraelov/island-namespace-w
    `configureRuntime` bridge is a temporary means, not the destination; aim
    adapter-free. The one permanent seam is `auth.getSubjectToken`.
 
-Rule: stores are the Mentra-app escape hatch (`toolkit.stores.*`), NOT the OEM
+Rule: stores are the Mentra-app escape hatch (`engine.stores.*`), NOT the OEM
 contract. OEMs use the typed facade functions.
 
 ## cloud-v2 mobile-CI integration (was fully broken on dev)
@@ -52,7 +52,7 @@ adapter-injection pattern (#2), not a trivial move:
 These are real per-domain efforts, each its own careful commit.
 
 ## Docs (keep current as we go)
-Each shipped domain is documented in the OEM docs at `docs/glasses-oems/toolkit.mdx`
+Each shipped domain is documented in the OEM docs at `docs/glasses-oems/engine.mdx`
 (Mintlify). When a facade lands, add its surface there in the same commit. The page is
 written but **not yet nav-linked in `docs/docs.json`** — it's an unreleased Phase-1
 API, so publishing to the live OEM site is gated until release (one-line nav add when
@@ -77,14 +77,14 @@ pattern for btsdk types.
 | dev | `utils/cloudClient/devHost.ts` + core store | 1 | todo |
 | miniapps | apps store + LocalMiniappRuntime (island) + MiniappCatalog | 1/hard (WebView) | todo |
 | pairing | pairing screens state machine (readiness primitive already island) | 1 (extract) | todo |
-| **settings** | `stores/settings.ts` (964 LOC) + `RestComms` + `storage` | keystone | **DONE (#3167)** — settings store moved into island, `toolkit.stores.settings`. Moved **together with RestComms** (mutually coupled: settings→RestComms cloud-sync, RestComms→settings backend URL). Storage uses island's MMKV (ported `loadSubKeys`). Unblocks glasses.settings + phoneNotifications. The typed `toolkit.settings` keyed facade (get/set/onChanged) is still TODO on top of the moved store. |
+| **settings** | `stores/settings.ts` (964 LOC) + `RestComms` + `storage` | keystone | **DONE (#3167)** — settings store moved into island, `engine.stores.settings`. Moved **together with RestComms** (mutually coupled: settings→RestComms cloud-sync, RestComms→settings backend URL). Storage uses island's MMKV (ported `loadSubKeys`). Unblocks glasses.settings + phoneNotifications. The typed `engine.settings` keyed facade (get/set/onChanged) is still TODO on top of the moved store. |
 | **RestComms** (v1 REST) | `services/RestComms.ts` (731 LOC) | move-with-settings | **DONE (#3167)** — moved into island with settings (the coupled pair). v1-transitional: deleted in place when v1 retires. Reads backend URL from the now-island settings store directly (no early-auth timing hack). Host `@/services/RestComms` is a shim. GlobalEventEmitter also moved in (one shared instance). |
 | glasses.settings | settings store + btsdk | 2 (after settings) | blocked on settings |
 | phoneNotifications | settings store + crust + permissions | 2 (after settings) | blocked on settings |
 | gallery | `services/asg/gallerySyncService.ts` (~1000 LOC, hotspot) | hard | todo |
 | notifications | scattered detectors → new event bus | hard (new) | todo |
-| session | `cloud-client` (cloud-v2) | keystone | **DONE (#3167)** — `CloudClientService` owns the CloudClient in island (built from island UDP + MMKV secure store + `getAuth()` + endpoints via `getConfigValues()`); self-wires the `cloud`/`cloudConnection` runtime hooks; `toolkit.session` exposes status. Account ops (delete/export) deferred (still host RestComms). Host `@/services/cloudClient` is a thin wrapper keeping dev/settings endpoint resolution. |
-| cloudClientStatus (store) | cloud-client types | — | **DONE (#3167)** — moved into island, `toolkit.stores.cloudClientStatus`. |
+| session | `cloud-client` (cloud-v2) | keystone | **DONE (#3167)** — `CloudClientService` owns the CloudClient in island (built from island UDP + MMKV secure store + `getAuth()` + endpoints via `getConfigValues()`); self-wires the `cloud`/`cloudConnection` runtime hooks; `engine.session` exposes status. Account ops (delete/export) deferred (still host RestComms). Host `@/services/cloudClient` is a thin wrapper keeping dev/settings endpoint resolution. |
+| cloudClientStatus (store) | cloud-client types | — | **DONE (#3167)** — moved into island, `engine.stores.cloudClientStatus`. |
 | cloud secure store (MMKV) | cloud-client KeyValueStore | — | **DONE (#3167)** — moved into island (react-native-mmkv already an island dep; adapter-free). |
 
 ## Sequence
@@ -102,5 +102,5 @@ glasses.settings + phoneNotifications) → pairing → gallery → miniapps WebV
 notifications. Last: `git merge dev`, then session + cloudClientStatus.
 
 This PR (#3167) is a clean, landable foundation at the cheap-tier boundary: the
-core `toolkit.*` facade surface + store escape hatches, green. Land it, then
+core `engine.*` facade surface + store escape hatches, green. Land it, then
 sequence the host-coupled tier deliberately.

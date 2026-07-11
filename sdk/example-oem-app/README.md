@@ -51,7 +51,7 @@ cd ../../mobile/modules/engine && bun run build
 ## Notes
 
 - The **Start** button launches the first registered app. In a real OEM
-  integration you configure the engine with `toolkit.configure()` and install
+  integration you configure the engine with `engine.configure()` and install
   miniapps; this demo simply drives whatever the
   registry already holds, so with no host wiring the registry starts empty and
   the buttons report "no miniapps registered."

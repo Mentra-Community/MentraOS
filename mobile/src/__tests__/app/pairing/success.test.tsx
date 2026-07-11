@@ -4,7 +4,7 @@ import {Platform} from "react-native"
 
 import {useRoute} from "@react-navigation/native"
 
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -105,7 +105,7 @@ describe("pairing success screen", () => {
   })
 
   it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -116,11 +116,11 @@ describe("pairing success screen", () => {
     expect(push).toHaveBeenCalledWith("/pairing/btclassic")
     expect(pushUnder).toHaveBeenCalledTimes(1)
     expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -130,7 +130,7 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
     expect(pushUnder).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {

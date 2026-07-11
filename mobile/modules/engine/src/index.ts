@@ -1,7 +1,7 @@
 /**
  * `@mentra/engine` — the OEM-facing main entry.
  *
- * The `toolkit` namespace (configure/start/stop + typed domain facades), the
+ * The `engine` namespace (configure/start/stop + typed domain facades), the
  * public contract/read-model types, and the pure helpers host UI legitimately
  * renders with (decision functions, sort/order helpers, policy constants,
  * capability tables, timers). Judgment rule: read models, commands, pure
@@ -11,8 +11,8 @@
  * See cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
  */
 
-// The namespaced OEM-facing toolkit API (the "(A) host API"). See ./engine.
-export {toolkit} from "./engine"
+// The namespaced OEM-facing engine API (the "(A) host API"). See ./engine.
+export {engine} from "./engine"
 export type {
   ReportAttachmentInput,
   ReportContext,
@@ -20,7 +20,7 @@ export type {
   ReportStatus,
   ReportTrigger,
   ReportSubmitResult,
-  ToolkitSubmitReportInput,
+  EngineSubmitReportInput,
 } from "./facades/reports"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
@@ -36,10 +36,10 @@ export type {
 } from "./runtime/bootstrap"
 
 // Settings contract: the typed key registry (schema descriptors — the same
-// surface toolkit.settings.descriptor()/keys() reads), the per-key React hook
+// surface engine.settings.descriptor()/keys() reads), the per-key React hook
 // (the hook layer, same precedent as the apps hooks below), and the pure
 // device-model key helpers. The raw useSettingsStore stays internal;
-// imperative access goes through toolkit.settings.
+// imperative access goes through engine.settings.
 export {SETTINGS, useSetting} from "./stores/settings"
 export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stores/bluetoothSettingKeys"
 
@@ -107,7 +107,7 @@ export type {
   OtaInstallSnapshot,
 } from "./facades/ota"
 
-// Gallery read models: toolkit.gallery.onNotice payload types, the media
+// Gallery read models: engine.gallery.onNotice payload types, the media
 // permission helper + display-name derivation host gallery UI uses, and the
 // glasses-camera DTO types (re-exported through the host @/types/asg shim).
 export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
@@ -115,7 +115,7 @@ export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissio
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
 export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
 
-// Bluetooth SDK event types host UI subscribes to via toolkit facades (the
+// Bluetooth SDK event types host UI subscribes to via engine facades (the
 // BluetoothSdk singleton passthrough itself is internal).
 export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
 

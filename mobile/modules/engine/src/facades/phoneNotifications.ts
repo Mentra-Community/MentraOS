@@ -1,5 +1,5 @@
 /**
- * phoneNotifications facade — `toolkit.phoneNotifications`: forward phone
+ * phoneNotifications facade — `engine.phoneNotifications`: forward phone
  * notifications to the glasses, with a per-app blocklist. Android-only (the
  * NotificationListenerService); the getters return sensible defaults on iOS.
  *

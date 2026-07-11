@@ -20,7 +20,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {useApps} from "@mentra/engine"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 
@@ -170,7 +170,7 @@ class DataExportService {
    */
   private static async collectSettingsData(): Promise<{[key: string]: any}> {
     console.log("DataExportService: Collecting settings data...")
-    const settings: Record<string, any> = toolkit.settings.getAll()
+    const settings: Record<string, any> = engine.settings.getAll()
     console.log(`DataExportService: Collected ${Object.keys(settings).length} settings`)
     return settings
   }
@@ -213,7 +213,7 @@ export default function DataExportPage() {
     setLoading(true)
 
     try {
-      const data = await DataExportService.collectUserData(user, session, toolkit.dev.bluetoothStatus(), appStatus)
+      const data = await DataExportService.collectUserData(user, session, engine.dev.bluetoothStatus(), appStatus)
       const formatted = DataExportService.formatAsJson(data)
 
       setExportData(data)

@@ -22,7 +22,7 @@ trap 'rm -f "$TMP_ACTUAL" "$TMP_ALLOWLIST" "$TMP_NEW"' EXIT
 cd "$ROOT_DIR"
 
 rg -l \
-  'from ["'\'']@/stores/glasses|@/stores/gallerySync|@/stores/settings|@/stores/bluetoothSettingKeys|@/stores/display|@/stores/core|@/stores/connection|@/stores/cloudClientStatus|useGlassesStore|useGallerySyncStore|useSettingsStore|useDisplayStore|useCoreStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady|toolkit\.stores\.glasses|toolkit\.stores\.gallerySync' \
+  'from ["'\'']@/stores/glasses|@/stores/gallerySync|@/stores/settings|@/stores/bluetoothSettingKeys|@/stores/display|@/stores/core|@/stores/connection|@/stores/cloudClientStatus|useGlassesStore|useGallerySyncStore|useSettingsStore|useDisplayStore|useCoreStore|useConnectionStore|useCloudClientStatusStore|useAppStatusStore|waitForGlassesState|getGlasesInfoPartial|selectGlassesConnected|selectGlassesReady|engine\.stores\.glasses|engine\.stores\.gallerySync' \
   mobile/src \
   mobile/assets \
   -g '*.ts' \
@@ -42,7 +42,7 @@ if [[ -s "$TMP_NEW" ]]; then
   echo "New host-side raw glasses/gallery store usage detected:" >&2
   cat "$TMP_NEW" >&2
   echo >&2
-  echo "Move the code onto a toolkit facade, or add a temporary allowlist entry with a migration plan." >&2
+  echo "Move the code onto a engine facade, or add a temporary allowlist entry with a migration plan." >&2
   exit 1
 fi
 
@@ -79,6 +79,6 @@ echo "boundary burn-down (informational):"
 # the only sanctioned users until tier 5 retires the former.
 report_count "@mentra/engine/internal importers" 'from "@mentra/engine/internal"'
 report_count "@mentra/engine/devtools importers" 'from "@mentra/engine/devtools"'
-report_count "toolkit.stores escape hatch (deleted; should stay 0)" 'toolkit\.stores\.'
+report_count "engine.stores escape hatch (deleted; should stay 0)" 'engine\.stores\.'
 report_count "bluetooth-sdk internal surface in host" '@mentra/bluetooth-sdk-internal|@mentra/bluetooth-sdk/internal'
 report_count "flat engine OTA helpers in host" 'checkBesUpdate|findMatchingMtkPatch|fetchVersionInfo|getAsgOtaVersionUrl'

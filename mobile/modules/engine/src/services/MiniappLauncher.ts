@@ -16,7 +16,7 @@
  * The launcher is **headless**: no React, no RN components. The engine-owned
  * MiniappEngine hands it the {@link MentraJSRouter} instance once during
  * engine construction. OEMs embedding the runtime drive miniapp lifecycle
- * through the toolkit facade and stores, not a separate launcher configure API.
+ * through the engine facade and stores, not a separate launcher configure API.
  *
  * Boundary: the launcher owns the **background** context. WebView *rendering*
  * (the UI layer) stays with the host — the launcher just hands back the

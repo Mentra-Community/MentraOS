@@ -4,9 +4,9 @@
  *
  * A facade wraps the raw `@mentra/bluetooth-sdk` surface into a small, typed,
  * device-agnostic API (the `doX()` action shape here; `getX()`/`onX()` read-models
- * come with domains that own their state). The host UI calls `toolkit.glasses.wifi.*`
+ * come with domains that own their state). The host UI calls `engine.glasses.wifi.*`
  * instead of importing bluetooth-sdk directly — that's the native-import boundary
- * the toolkit is built around.
+ * the engine is built around.
  *
  * `connect()` propagates bluetooth-sdk's coded errors unchanged so callers keep
  * their existing error mapping. The `status()`/`onStatus()` read-model reads the

@@ -12,7 +12,7 @@
  * The old v1 UDP/SocketComms upload legs were removed; MantleManager only keeps
  * host-side debug mic-activity tracking and on-device PCM fan-out.
  *
- * Started by `toolkit.start()`. Idempotent.
+ * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"

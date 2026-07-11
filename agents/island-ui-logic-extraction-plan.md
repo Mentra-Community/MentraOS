@@ -1,4 +1,4 @@
-# Island — the MentraOS OEM Integration Toolkit
+# Island — the MentraOS OEM Integration Engine
 
 > **Status:** design / build plan. **Base branch:** `dev`. The cloud-client move (#5)
 > sequences last, once `cloud-v2` has merged into `dev` (days out).
@@ -7,10 +7,10 @@
 
 ## Why
 
-We are turning `@mentra/engine` into the **MentraOS OEM Integration Toolkit**: a single
+We are turning `@mentra/engine` into the **MentraOS OEM Integration Engine**: a single
 library a glasses OEM drops into their app to get *all* of MentraOS — glasses connection,
 the miniapp runtime, backend services, OTA, pairing, settings, sensors — while writing
-their own UI. The Mentra app becomes the first consumer of that same toolkit: a thin UI
+their own UI. The Mentra app becomes the first consumer of that same engine: a thin UI
 layer over island, with no privileged backdoor.
 
 Today the logic is inverted — business logic lives in React screens and the app reaches
@@ -21,7 +21,7 @@ makes island the single boundary the UI talks to.
 Mentra's *own* glasses (the SGCs already in `@mentra/bluetooth-sdk`: G1/G2/Live/Nex/Mach1/
 Simulated) and the app becomes a UI layer. **Phase 2** (separate, later) makes the glasses
 layer *injectable* — an OEM registers its own SGC(s) at runtime instead of PRing them into
-`@mentra/bluetooth-sdk` — turning island into a true third-party toolkit. Phase 1 is the
+`@mentra/bluetooth-sdk` — turning island into a true third-party engine. Phase 1 is the
 prerequisite; Phase 2's adapter dynamics are TBD and out of scope here.
 
 ## What
@@ -35,7 +35,7 @@ prerequisite; Phase 2's adapter dynamics are TBD and out of scope here.
   the host needs, it *reads from* or *calls on* island.
 
 > **Governing principle — if the Mentra app's UI uses it, island exposes it.** The Mentra
-> app is OEM #1 and the reference consumer; the toolkit surface is the *union* of
+> app is OEM #1 and the reference consumer; the engine surface is the *union* of
 > everything the Mentra app needs. A third-party OEM consumes whatever subset it wants.
 
 The complete host→island injection:
@@ -388,7 +388,7 @@ The embedded RN runtime lives as long as its host **process** does:
   runtime: `connectedDevice`, `+microphone`/`+dataSync` while streaming), started/stopped from
   `DeviceManager` on connect/disconnect.
 
-The toolkit's Android packaging has **two layers that merge differently**: a library module's
+The engine's Android packaging has **two layers that merge differently**: a library module's
 AndroidManifest **auto-merges** into the consuming app; **Gradle build config does not.**
 `mobile/plugins/android.ts` is the *Mentra app's* Expo config plugin (runs only in Mentra's
 prebuild; an OEM never runs it), so anything an island module needs that currently lives there
@@ -435,7 +435,7 @@ app's `settings.gradle` must register `:lc3Lib`. Fix at the source — btsdk dep
 consumer `settings.gradle` entry exists.
 
 Mentra's app-only glue (signing, versionName, Sentry, deep-link scheme, heap/node-path) stays in
-`mobile/plugins/android.ts` and is not part of the toolkit.
+`mobile/plugins/android.ts` and is not part of the engine.
 
 ### OEM residual obligations (irreducible — policy / branding / keys)
 1. Apply `@mentra/engine/plugin` (Expo) or the documented Gradle steps (native).

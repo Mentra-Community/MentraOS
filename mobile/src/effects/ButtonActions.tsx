@@ -2,7 +2,7 @@ import {useEffect} from "react"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useApps, useStart, toolkit, SETTINGS, useSetting} from "@mentra/engine"
+import {useApps, useStart, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 
@@ -19,7 +19,7 @@ export function ButtonActions() {
     if (defaultWearable !== DeviceTypes.LIVE) return
 
     const validateAndSetDefaultApp = async () => {
-      const currentDefaultApp = await toolkit.settings.get(SETTINGS.default_button_action_app.key)
+      const currentDefaultApp = await engine.settings.get(SETTINGS.default_button_action_app.key)
 
       // 1. If camera app is available and compatible, ALWAYS prefer it
       // This ensures glasses with cameras always default to camera app
@@ -30,7 +30,7 @@ export function ButtonActions() {
       if (cameraApp) {
         if (currentDefaultApp !== cameraApp.packageName) {
           console.log("BUTTON_ACTION: Setting default button app to camera (glasses have camera)")
-          await toolkit.settings.set(SETTINGS.default_button_action_app.key, cameraApp.packageName)
+          await engine.settings.set(SETTINGS.default_button_action_app.key, cameraApp.packageName)
         }
         return
       }
@@ -51,7 +51,7 @@ export function ButtonActions() {
 
       if (firstCompatibleApp) {
         console.log("BUTTON_ACTION: Setting default button app to:", firstCompatibleApp.packageName)
-        await toolkit.settings.set(SETTINGS.default_button_action_app.key, firstCompatibleApp.packageName)
+        await engine.settings.set(SETTINGS.default_button_action_app.key, firstCompatibleApp.packageName)
       }
     }
 
@@ -73,7 +73,7 @@ export function ButtonActions() {
       // }
 
       // Check if default button action is enabled
-      const defaultButtonActionEnabled = await toolkit.settings.get(SETTINGS.default_button_action_enabled.key)
+      const defaultButtonActionEnabled = await engine.settings.get(SETTINGS.default_button_action_enabled.key)
 
       if (!defaultButtonActionEnabled) {
         console.log("BUTTON_ACTION: Default button action is disabled")
@@ -99,7 +99,7 @@ export function ButtonActions() {
       }
 
       // No foreground app running - start default app
-      const defaultAppPackageName = await toolkit.settings.get(SETTINGS.default_button_action_app.key)
+      const defaultAppPackageName = await engine.settings.get(SETTINGS.default_button_action_app.key)
 
       if (!defaultAppPackageName) {
         console.log("BUTTON_ACTION: No default app configured")
@@ -129,7 +129,7 @@ export function ButtonActions() {
       startApplet(targetApp, {skipNavigation: true})
     }
 
-    let unsub = toolkit.glasses.onButtonPress(onButtonPress)
+    let unsub = engine.glasses.onButtonPress(onButtonPress)
 
     return () => {
       unsub()

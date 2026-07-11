@@ -32,7 +32,7 @@ describe("island bootstrap front door", () => {
   })
 })
 
-describe("toolkit.display.mirror read facade over the display store", () => {
+describe("engine.display.mirror read facade over the display store", () => {
   it("current() returns the store's current display event", () => {
     const event = {view: "main", layout: {layoutType: "text_wall", text: "hi"}}
     useDisplayStore.getState().setDisplayEvent(JSON.stringify(event))

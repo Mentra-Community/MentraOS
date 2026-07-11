@@ -2,9 +2,9 @@
  * Phone-notifications sync — engine-owned. Pushes the notification-forwarding
  * config (`notifications_enabled` + `notifications_blocklist`) to the native
  * NotificationListener via `CrustModule.setNotificationConfig`, so
- * `toolkit.phoneNotifications.setEnabled()/setBlocklist()` actually reach the
+ * `engine.phoneNotifications.setEnabled()/setBlocklist()` actually reach the
  * listener for ANY host — not just the Mentra app, where this used to live in
- * MantleManager. Android-only; a no-op elsewhere. Started by `toolkit.start()`.
+ * MantleManager. Android-only; a no-op elsewhere. Started by `engine.start()`.
  */
 import {shallow} from "zustand/shallow"
 import CrustModule from "@mentra/crust"

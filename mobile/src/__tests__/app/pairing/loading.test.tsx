@@ -1,7 +1,7 @@
 import {act, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
@@ -121,7 +121,7 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       // Attempt cleanup preserves a pre-existing pairing (re-pair) instead of
       // an unconditional forget.
-      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalled()
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
       expect(replace).toHaveBeenCalledWith("/pairing/failure", {
         error: "pairing:failed",
         deviceModel: "Mentra Live",
@@ -142,7 +142,7 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
-    expect(toolkit.pairing.waitForReady).toHaveBeenCalledWith(
+    expect(engine.pairing.waitForReady).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",
@@ -162,7 +162,7 @@ describe("pairing loading screen", () => {
       jest.advanceTimersByTime(35_000)
     })
 
-    expect(toolkit.pairing.waitForReady).toHaveBeenCalledWith(
+    expect(engine.pairing.waitForReady).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceModel: "Mentra Live",
         deviceName: "MENTRA_LIVE_BLE_001",

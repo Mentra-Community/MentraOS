@@ -139,7 +139,7 @@ import {act, render, fireEvent, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -171,13 +171,13 @@ describe("pairing scan screen", () => {
     useSettingsStore.getState().resetAllSettingsLocally()
     // The screen reads scan results through the pairing facade now; delegate the
     // mocked facade to the real core store this test seeds via setState().
-    ;(toolkit.pairing.searchResults as jest.Mock).mockImplementation(() => [
+    ;(engine.pairing.searchResults as jest.Mock).mockImplementation(() => [
       ...useCoreStore.getState().searchResults,
     ])
-    ;(toolkit.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
+    ;(engine.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
       useCoreStore.subscribe((s) => s.searchResults, cb),
     )
-    ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+    ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
     // history models the stack after push("/pairing/loading") — only the
     // kickoff-failure guard reads it.
@@ -208,7 +208,7 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(toolkit.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
     })
 
     fireEvent.press(getByText("001"))
@@ -225,7 +225,7 @@ describe("pairing scan screen", () => {
 
     // Two-phase identity: picking a device must NOT write the default identity —
     // the scan marks the model pending and the native layer promotes on success.
-    expect(toolkit.pairing.setDefault).not.toHaveBeenCalled()
+    expect(engine.pairing.setDefault).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("")
     expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
   })
@@ -248,7 +248,7 @@ describe("pairing scan screen", () => {
     backHandler({actionType: "GO_BACK"})
 
     await waitFor(() => {
-      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith()
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith()
     })
     expect(goBack).toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
@@ -260,14 +260,14 @@ describe("pairing scan screen", () => {
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
     backHandler({actionType: "REPLACE"})
 
-    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
     expect(goBack).not.toHaveBeenCalled()
   })
 
   it("routes a pair kickoff rejection to the failure screen instead of leaving loading stuck", async () => {
     jest.useFakeTimers()
     setPlatformOS("android")
-    ;(toolkit.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
     useCoreStore.setState({
       searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
     })
@@ -297,7 +297,7 @@ describe("pairing scan screen", () => {
     })
     // Parity with loading.tsx's handlePairFailure: the failed attempt is
     // cleared before the failure screen shows.
-    expect(toolkit.pairing.abandonAttempt).toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
   })
 
   it("suppresses the kickoff-failure route when the user already left loading", async () => {
@@ -311,7 +311,7 @@ describe("pairing scan screen", () => {
       goBack,
       history: ["/pairing/scan"],
     })
-    ;(toolkit.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
     useCoreStore.setState({
       searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
     })
@@ -330,7 +330,7 @@ describe("pairing scan screen", () => {
     await act(async () => {})
 
     expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
-    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {

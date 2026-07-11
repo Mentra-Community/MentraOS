@@ -8,7 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute, toolkit} from "@mentra/engine"
+import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {appRegistry, registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
@@ -171,11 +171,11 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       clearHistoryAndGoHome()
-      await toolkit.miniapps.refresh()
+      await engine.miniapps.refresh()
       // Foreground the single dev slot, NOT the manifest's real package name —
       // the projected tile + JSContext are registered under DEV_APP_PACKAGE_NAME,
       // so setForeground(realName) would no-op (the store has no such app).
-      await toolkit.miniapps.setForeground(DEV_APP_PACKAGE_NAME)
+      await engine.miniapps.setForeground(DEV_APP_PACKAGE_NAME)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }

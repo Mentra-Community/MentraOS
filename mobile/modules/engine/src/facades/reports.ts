@@ -1,5 +1,5 @@
 /**
- * reports facade — `toolkit.reports`: user/system report submission over the
+ * reports facade — `engine.reports`: user/system report submission over the
  * Cloud V2 core client.
  *
  * Host/OEM code owns UI and wording. Engine owns MentraOS mechanics: context
@@ -27,7 +27,7 @@ export type {
   ReportTrigger,
 } from "@mentra/cloud-client"
 
-export type ToolkitSubmitReportInput =
+export type EngineSubmitReportInput =
   | (Omit<Extract<SubmitReportInput, {kind: "bug"}>, "context"> & {
       context?: Partial<ReportContext>
       screenshots?: ReportAttachmentInput[]
@@ -36,14 +36,14 @@ export type ToolkitSubmitReportInput =
       context?: Partial<ReportContext>
     })
 
-export type ToolkitSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
+export type EngineSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
   context?: Partial<ReportContext>
   screenshots?: ReportAttachmentInput[]
   throttleKey?: string
   throttleWindowMs?: number
 }
 
-type InternalSubmitReportInput = ToolkitSubmitReportInput | ToolkitSubmitAutomaticReportInput
+type InternalSubmitReportInput = EngineSubmitReportInput | EngineSubmitAutomaticReportInput
 
 export type ReportSubmitResult =
   | {status: "submitted"; reportId: string; reportStatus: ReportStatus}
@@ -175,11 +175,11 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
 }
 
 export const reports = {
-  submit(input: ToolkitSubmitReportInput): Promise<ReportSubmitResult> {
+  submit(input: EngineSubmitReportInput): Promise<ReportSubmitResult> {
     return submitReportInternal(input)
   },
 }
 
-export function submitAutomaticReport(input: ToolkitSubmitAutomaticReportInput): Promise<ReportSubmitResult> {
+export function submitAutomaticReport(input: EngineSubmitAutomaticReportInput): Promise<ReportSubmitResult> {
   return submitReportInternal(input)
 }

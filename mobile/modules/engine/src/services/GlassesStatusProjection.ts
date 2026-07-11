@@ -9,7 +9,7 @@
  * the rest of the engine runtime depends on (MicStateCoordinator, the settings-sync
  * on-connect trigger, the facade read-models all read these stores).
  *
- * Started by `toolkit.start()`. Idempotent.
+ * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useCoreStore} from "../stores/core"

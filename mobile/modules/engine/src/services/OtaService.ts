@@ -4,11 +4,11 @@
  * the OTA read surface works for ANY host — not just the first-party Mentra app, where
  * these handlers used to live in MantleManager.
  *
- * This is the inbound projection half of `toolkit.ota` (read/observe). The install
+ * This is the inbound projection half of `engine.ota` (read/observe). The install
  * ORCHESTRATION (startOtaUpdate/poll/ping) is host-side for now — Phase 2 moves it here
- * behind `toolkit.ota.{check,install,retry}` (bootloop-risk; needs on-device verification).
+ * behind `engine.ota.{check,install,retry}` (bootloop-risk; needs on-device verification).
  *
- * Started by `toolkit.start()`. Idempotent.
+ * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaStatus} from "@mentra/bluetooth-sdk/internal"

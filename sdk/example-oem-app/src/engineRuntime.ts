@@ -1,14 +1,14 @@
 /**
  * The OEM host's engine bootstrap — the complete front-door contract an OEM
  * app implements: hand engine the auth/config/analytics/UI seams via
- * `toolkit.configure`, then `toolkit.start()` (which resolves only after the
+ * `engine.configure`, then `engine.start()` (which resolves only after the
  * device-identity stores hydrate, so the facade reads below are trustworthy).
  *
  * This module doubles as the compile-time contract test for the public
  * `@mentra/engine` entry: the "OEM Host Boundary Gate" CI workflow typechecks
  * this app against engine's BUILT types, with no `/internal` access.
  */
-import {toolkit, type IslandConfigureOptions} from "@mentra/engine"
+import {engine, type IslandConfigureOptions} from "@mentra/engine"
 
 export type EngineLogger = (line: string) => void
 
@@ -29,33 +29,33 @@ export async function startEngineRuntime(log: EngineLogger): Promise<() => void>
       requestWifiSetup: (reason) => log(`wifi setup requested (${reason ?? "no reason"})`),
     },
   }
-  toolkit.configure(options)
-  await toolkit.start()
+  engine.configure(options)
+  await engine.start()
   log("engine runtime started (device identity hydrated)")
 
   // Representative read-model subscriptions an OEM home screen renders from.
   // Engine decides; this host only renders.
   const unsubs = [
-    toolkit.glasses.onStatus((status) => log(`glasses: ${status.state}${status.fullyBooted ? " (booted)" : ""}`)),
-    toolkit.pairing.onReadiness((readiness) => log(`pairing readiness: ${JSON.stringify(readiness)}`)),
-    toolkit.notifications.onNotification((notification) =>
+    engine.glasses.onStatus((status) => log(`glasses: ${status.state}${status.fullyBooted ? " (booted)" : ""}`)),
+    engine.pairing.onReadiness((readiness) => log(`pairing readiness: ${JSON.stringify(readiness)}`)),
+    engine.notifications.onNotification((notification) =>
       log(`engine notification: ${notification.kind} — ${notification.reason}`),
     ),
-    toolkit.gallery.onNotice((notice) => log(`gallery notice: ${notice.code}`)),
-    toolkit.ota.installSession.onSnapshot((snapshot) => log(`ota install: ${snapshot.displayState}`)),
+    engine.gallery.onNotice((notice) => log(`gallery notice: ${notice.code}`)),
+    engine.ota.installSession.onSnapshot((snapshot) => log(`ota install: ${snapshot.displayState}`)),
   ]
 
   // From here on we own live subscriptions and a started runtime — if a later
-  // bootstrap read fails, release the listeners AND stop the toolkit before
+  // bootstrap read fails, release the listeners AND stop the engine before
   // surfacing the error, so "start failed" is actually true and nothing keeps
   // running behind a failed bootstrap.
   try {
-    const hasDefault = await toolkit.glasses.hasDefaultDevice()
+    const hasDefault = await engine.glasses.hasDefaultDevice()
     log(`paired device on record: ${hasDefault ? "yes" : "no"}`)
-    log(`ota update available: ${toolkit.ota.updateAvailable()?.versionName ?? "none"}`)
+    log(`ota update available: ${engine.ota.updateAvailable()?.versionName ?? "none"}`)
   } catch (error) {
     unsubs.forEach((unsub) => unsub())
-    await toolkit.stop().catch(() => {})
+    await engine.stop().catch(() => {})
     throw error
   }
 

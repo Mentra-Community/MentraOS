@@ -1,6 +1,6 @@
 // Exercises the real island OtaService by path (not via "@mentra/engine", which jest
 // mocks): emitted OTA BLE events must project into the island glasses store, which is
-// the toolkit.ota read surface.
+// the engine.ota read surface.
 import {startOtaService, stopOtaService} from "../../modules/engine/src/services/OtaService"
 import {ota} from "../../modules/engine/src/facades/ota"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"

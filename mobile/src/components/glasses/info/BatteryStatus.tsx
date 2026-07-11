@@ -4,10 +4,10 @@ import {Text, Icon} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {StatusCard} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 interface BatteryStatusProps {
   compact?: boolean
@@ -16,7 +16,7 @@ interface BatteryStatusProps {
 export function BatteryStatus({compact}: BatteryStatusProps) {
   const {theme, themed} = useAppTheme()
 
-  const status = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const status = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const caseBatteryLevel = status.case.battery
   const caseCharging = status.case.charging
   const caseRemoved = status.case.removed

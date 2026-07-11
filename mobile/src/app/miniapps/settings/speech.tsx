@@ -8,7 +8,7 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {toolkit, useStopAll} from "@mentra/engine"
+import {engine, useStopAll} from "@mentra/engine"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
@@ -238,7 +238,7 @@ export default function SpeechSettingsScreen() {
           if (target == null) return
           try {
             await STTModelManager.activateLanguage(target)
-            await toolkit.speech.restartTranscriber()
+            await engine.speech.restartTranscriber()
           } catch (error: any) {
             console.error("STT activation failed:", error)
             showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
@@ -258,7 +258,7 @@ export default function SpeechSettingsScreen() {
       )
       await refreshLists()
       await STTModelManager.activateLanguage(code)
-      await toolkit.speech.restartTranscriber()
+      await engine.speech.restartTranscriber()
       setSttCurrent(code)
       STTModelManager.setCurrentLanguage(code)
       sttDesiredRef.current = code

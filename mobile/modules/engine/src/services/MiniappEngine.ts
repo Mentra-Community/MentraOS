@@ -3,13 +3,13 @@
  * UI router, JS router), binds them to the native Crust module + the launcher,
  * wires the dev-server background-respawn signal, and starts the message pump.
  *
- * Engine owns this so a bare OEM's `toolkit.start()` brings up the local-miniapp
+ * Engine owns this so a bare OEM's `engine.start()` brings up the local-miniapp
  * engine with no host construction step. Host-only concerns that remain outside
  * engine, such as Mentra-app crashloop telemetry, are attached by the host after
  * this returns via `router.onCrashloop` / `router.onRestartToast`.
  *
  * Idempotent — `ensureMiniappEngine()` returns the same singletons on every call,
- * so it's safe to call from both `toolkit.start()` and the host bootstrap.
+ * so it's safe to call from both `engine.start()` and the host bootstrap.
  */
 
 import CrustModule from "@mentra/crust"

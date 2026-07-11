@@ -1,7 +1,7 @@
 import {AsyncResult, result as Res} from "typesafe-ts"
 
 import {storage} from "@/utils/storage"
-import {SETTINGS, toolkit} from "@mentra/engine"
+import {SETTINGS, engine} from "@mentra/engine"
 
 interface Migration {
   version: number // the version this migration brings you TO
@@ -15,7 +15,7 @@ const migrations: Migration[] = [
     version: 1,
     run: async () => {
       // migrates from 0 → 1 turns on the new app switcher ui!
-      // toolkit.settings.set("app_switcher_ui", true)
+      // engine.settings.set("app_switcher_ui", true)
     },
   },
   {
@@ -27,7 +27,7 @@ const migrations: Migration[] = [
         return
       }
       if (Number(dashboardDepthRes.value) > 3) {
-        const res = await toolkit.settings.set(SETTINGS.dashboard_depth.key, 3, false)
+        const res = await engine.settings.set(SETTINGS.dashboard_depth.key, 3, false)
         if (res.is_error()) {
           throw res.error
         }

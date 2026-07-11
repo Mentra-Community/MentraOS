@@ -7,7 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {BgTimer, toolkit} from "@mentra/engine"
+import {BgTimer, engine} from "@mentra/engine"
 import {buildMentraUiShim, buildMiniappGlobalsScript, DEV_APP_PACKAGE_NAME, miniappLauncher} from "@mentra/engine/internal"
 import {devServerBridge} from "@mentra/engine/devtools"
 import {useNavigationStore} from "@/stores/navigation"
@@ -212,7 +212,7 @@ function LocalMiniappView({
       if (Platform.OS === "android") {
         // captureScreenshot(viewShotRef, packageName.toString(), insets.top)
         onShouldCapture()
-        toolkit.miniapps.clearForeground()
+        engine.miniapps.clearForeground()
       }
     }
   }, [webViewCanGoBack])
@@ -281,7 +281,7 @@ function LocalMiniappView({
       if (e.name === "AbortError") return // stale run — ignore entirely
       // if (devUrl) {
       //   // failed to load the dev url (we probably are connected to a different wifi network)
-      //   toolkit.miniapps.clearForeground()
+      //   engine.miniapps.clearForeground()
       //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
       //   return
       // }

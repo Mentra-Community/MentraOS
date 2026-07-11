@@ -1,5 +1,5 @@
 /**
- * notifications facade — `toolkit.notifications`: inbound alerts engine→host. The
+ * notifications facade — `engine.notifications`: inbound alerts engine→host. The
  * OEM subscribes and renders them however it likes (modal, toast, banner). Today:
  * miniapp crashloop; version-incompatible miniapp and persistent connection loss
  * land as their detectors are wired into the emitter.

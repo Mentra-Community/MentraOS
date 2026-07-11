@@ -15,7 +15,7 @@ import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -197,11 +197,11 @@ export default function PairingPrepScreen() {
     // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
     // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
     // before navigating to the scan screen, so don't block pairing on it.
-    void toolkit.miniapps.stopAll()
+    void engine.miniapps.stopAll()
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await toolkit.glasses.connectSimulated()
+      await engine.glasses.connectSimulated()
       clearHistoryAndGoHome()
       return
     }

@@ -1,10 +1,10 @@
 /**
  * glasses display mirror — the typed read facade over the (now engine-owned)
  * display store, for a phone-side preview of the glasses screen
- * (`toolkit.display.mirror`). The store is fed by the display paths
+ * (`engine.display.mirror`). The store is fed by the display paths
  * (LocalDisplayManager + the cloud path) via `setDisplayEvent`; this facade is the
  * read side: `current()` (snapshot) + `onMirror(cb)` (subscribe). The raw store is
- * also exposed as `toolkit.displayStore` (the Mentra-app escape hatch).
+ * also exposed as `engine.displayStore` (the Mentra-app escape hatch).
  */
 import {useDisplayStore} from "../stores/display"
 

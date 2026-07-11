@@ -1,5 +1,5 @@
 import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -12,7 +12,7 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
@@ -27,11 +27,11 @@ export default function SelectGlassesBluetoothScreen() {
   const {goBack, replace, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
-    toolkit.pairing.onReadiness(onChange),
+  const bluetoothClassicConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
-  const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
-    toolkit.pairing.onFound(onChange),
+  const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) =>
+    engine.pairing.onFound(onChange),
   )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
@@ -39,7 +39,7 @@ export default function SelectGlassesBluetoothScreen() {
     // Two-phase identity: reaching the scan screen marks the chosen model as the
     // PENDING selection. Promotion to `paired` only happens natively when pairing
     // succeeds; until then the home card renders a finish-pairing affordance.
-    toolkit.pairing.markPendingSelection(deviceModel)
+    engine.pairing.markPendingSelection(deviceModel)
   }, [deviceModel])
 
   // useFocusEffect(
@@ -62,7 +62,7 @@ export default function SelectGlassesBluetoothScreen() {
     // a pairing that PROMOTED while this flow was open (glasses can finish
     // pairing even when the user backs out of the UI). Only a genuinely
     // unpaired attempt forgets. The pending marker survives either way.
-    void toolkit.pairing.abandonAttempt().catch((error) => {
+    void engine.pairing.abandonAttempt().catch((error) => {
       console.warn("Pairing scan back-out cleanup failed:", error)
     })
     return true
@@ -98,7 +98,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await toolkit.pairing.scan(deviceModel)
+        await engine.pairing.scan(deviceModel)
       } catch (error) {
         console.error("Failed to start glasses scan:", error)
       }
@@ -143,7 +143,7 @@ export default function SelectGlassesBluetoothScreen() {
       !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
     ) {
       setTimeout(() => {
-        toolkit.pairing.pair(device).catch((error) => {
+        engine.pairing.pair(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
           routePairingKickoffFailure(device.model)
         })

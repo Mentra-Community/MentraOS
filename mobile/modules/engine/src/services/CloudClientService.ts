@@ -4,7 +4,7 @@
  *
  * engine constructs the client from engine-owned pieces (the native UDP socket,
  * the MMKV secure store, the cloud-status store) plus the two things the host
- * provides through the toolkit front door: `auth.getSubjectToken` (the one
+ * provides through the engine front door: `auth.getSubjectToken` (the one
  * permanent seam — the OEM owns login) and the resolved cloud endpoints
  * (`config.coreUrl/runtimeUrl`, computed host-side from dev/settings). On init it
  * exposes cloud runtime methods directly from this service, so the host no longer
@@ -35,7 +35,7 @@ type CloudCore = NonNullable<CloudClient["core"]>
 // Persistent cloud-disconnect detector: the cloud-client reconnect loop is infinite
 // and never surfaces a "giving up" signal, so "persistent failure" = the session has
 // been continuously NOT connected for this long. A quick reconnect cancels it; brief
-// flaps that recover don't fire. Raised as toolkit.notifications(connection_failed_persistent).
+// flaps that recover don't fire. Raised as engine.notifications(connection_failed_persistent).
 const CLOUD_PERSISTENT_FAILURE_MS = 60_000
 
 /** Cancel the pending persistent-failure alarm + re-arm for the next outage. */
@@ -51,7 +51,7 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 
 // Neutral last-ditch fallbacks (reachable under `adb reverse`) for when the host
 // passes no endpoints. The host normally resolves the real URLs (dev override /
-// Metro host / env) and hands them in via `toolkit.configure({config})`.
+// Metro host / env) and hands them in via `engine.configure({config})`.
 const FALLBACK_CORE_URL = "http://localhost:3000"
 const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 const LOCAL_AUTH_PORT = 3002
@@ -128,7 +128,7 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
 function frameSizeBytes(): Lc3FrameSizeBytes {
   // Read LIVE from the engine settings store (the source of truth) so a
   // reconnect after a glasses swap (G1=20 ↔ G2=40) picks up the new frame size,
-  // not the one-time toolkit.configure({config}) snapshot. Falls back to the
+  // not the one-time engine.configure({config}) snapshot. Falls back to the
   // config value (set at boot) then 20 when the setting is unset.
   const fromSettings = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
   const size = fromSettings ?? getConfigValues().audioFrameSizeBytes
@@ -137,7 +137,7 @@ function frameSizeBytes(): Lc3FrameSizeBytes {
 
 async function getSubjectToken(): Promise<{token: string; type: SubjectTokenType}> {
   const a = getAuth()
-  if (!a) throw new Error("cloudClient: toolkit.configure({auth}) not called")
+  if (!a) throw new Error("cloudClient: engine.configure({auth}) not called")
   const r = await a.getSubjectToken()
   // IslandAuth's SubjectTokenType is intentionally open (`string & {}`) so OEMs
   // can use other token kinds; cloud-client's is a closed union. The host's
@@ -457,7 +457,7 @@ export const cloudClientService = {
   /**
    * Construct (once) + connect the client. Idempotent. Best-effort connect — a
    * failure is logged and the app keeps running. Requires
-   * `toolkit.configure({auth, config})` first.
+   * `engine.configure({auth, config})` first.
    */
   init(): void {
     if (client) return
@@ -515,7 +515,7 @@ export const cloudClientService = {
     }
   },
 
-  /** Tear down the client + connection (the toolkit.stop() lifecycle). */
+  /** Tear down the client + connection (the engine.stop() lifecycle). */
   stop(): void {
     try {
       client?.runtime.close()

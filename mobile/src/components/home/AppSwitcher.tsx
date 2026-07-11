@@ -16,7 +16,7 @@ import Animated, {
 } from "react-native-reanimated"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
-import {BgTimer, saveLastOpenTime, sortAppsByLastOpenTime, toolkit, type ClientApp, useActiveApps, useSetForeground} from "@mentra/engine"
+import {BgTimer, saveLastOpenTime, sortAppsByLastOpenTime, engine, type ClientApp, useActiveApps, useSetForeground} from "@mentra/engine"
 import AppIcon from "@/components/home/AppIcon"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -587,7 +587,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         goToIndex(index)
       }
       // setTimeout(() => {
-      toolkit.miniapps.stop(packageName)
+      engine.miniapps.stop(packageName)
       // }, 100)
 
       // Auto-close is handled by the drained-list effect (near handleClose)

@@ -43,7 +43,7 @@ class LocalSttFallbackCoordinator {
 
   /**
    * Lazy-attach the engine cloud connection listener. The coordinator is
-   * constructed at module load, before toolkit.start() brings up the cloud
+   * constructed at module load, before engine.start() brings up the cloud
    * client, so we defer until the first reconcile.
    */
   private attachCloudAdapterIfReady(): void {

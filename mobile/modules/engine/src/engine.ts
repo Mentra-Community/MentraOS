@@ -1,12 +1,12 @@
 /**
- * `toolkit` — the namespaced OEM-facing toolkit API (the "(A) host API" from the
- * Phase-1 contract). Host UI calls `toolkit.<domain>.<method>()`; each domain is a
+ * `engine` — the namespaced OEM-facing engine API (the "(A) host API" from the
+ * Phase-1 contract). Host UI calls `engine.<domain>.<method>()`; each domain is a
  * typed facade over the runtime. (Exported from the `@mentra/engine` module, whose
- * name stays `engine` in code; the public API surface is `toolkit`.)
+ * name stays `engine` in code; the public API surface is `engine`.)
  *
  * It grows one facade at a time. The migration-era flat store/service exports
  * live on the `@mentra/engine/internal` entry (and the debug singletons on
- * `@mentra/engine/devtools`); they shrink as screens move onto `toolkit.*`.
+ * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
  */
 import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
@@ -42,7 +42,7 @@ import {permissions} from "./facades/permissions"
 import {notifications} from "./facades/notifications"
 import {logBuffer} from "./utils/devLogging"
 
-export const toolkit = {
+export const engine = {
   /** Front door — hand engine auth + config, then start/stop the runtime. */
   configure,
   /** Start the runtime: mark started + construct/connect the cloud client + begin
@@ -53,7 +53,7 @@ export const toolkit = {
     logBuffer.startConsoleInterception()
     await bootstrapStart()
     // Construct + connect the cloud client so the documented configure()+start()
-    // lifecycle yields a live toolkit.session for OEMs. Idempotent for repeated
+    // lifecycle yields a live engine.session for OEMs. Idempotent for repeated
     // start() calls.
     cloudClientService.init()
     // Project native device status -> the engine stores (the inbound feed the rest
@@ -81,9 +81,9 @@ export const toolkit = {
       // render finish-pairing instead of a connect that would throw.
       await demoteOrphanedDefaultWearable()
     } catch (error) {
-      console.warn("toolkit.start: device-store hydration failed:", error instanceof Error ? error.message : error)
+      console.warn("engine.start: device-store hydration failed:", error instanceof Error ? error.message : error)
     }
-    // Project the glasses' OTA events into the store for the toolkit.ota read surface.
+    // Project the glasses' OTA events into the store for the engine.ota read surface.
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
@@ -92,12 +92,12 @@ export const toolkit = {
       await cloudClientService.syncCoreTokenToBluetooth()
     } catch (error) {
       console.warn(
-        "toolkit.start: initial Cloud V2 core token sync failed:",
+        "engine.start: initial Cloud V2 core token sync failed:",
         error instanceof Error ? error.message : error,
       )
     }
     // Push device-setting changes to the glasses for ANY host, so
-    // toolkit.glasses.settings.set() reaches the device (not just the Mentra app).
+    // engine.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
     // Same for phone-notification config -> the native listener (Android).
     startPhoneNotificationsSync()
@@ -127,7 +127,7 @@ export const toolkit = {
       try {
         await step()
       } catch (error) {
-        console.warn(`toolkit.stop: ${label} failed:`, error)
+        console.warn(`engine.stop: ${label} failed:`, error)
       }
     }
     await safely("glasses settings sync", stopGlassesSettingsSync)

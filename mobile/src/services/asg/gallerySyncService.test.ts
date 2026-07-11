@@ -56,7 +56,7 @@ jest.mock("crust", () => ({
 // Feature permissions now flow through the island permissions facade (was
 // @/utils/PermissionsUtils.checkFeaturePermissions/requestFeaturePermissions). The
 // connectivity gate (checkConnectivityRequirementsUI) + alert/navigation seams moved
-// host-side (GalleryScreen renders them off toolkit.gallery.onNotice), so they're no
+// host-side (GalleryScreen renders them off engine.gallery.onNotice), so they're no
 // longer mocked here.
 jest.mock("../../../modules/engine/src/facades/permissions", () => ({
   permissions: {

@@ -18,12 +18,12 @@ This is a clean Cloud V2 implementation under `cloud-v2/`; Cloud V1 under
 
 Public OEM/host API:
 
-- Host UI calls `toolkit.reports.submit({ kind: "bug", ... })`.
-- Host UI calls `toolkit.reports.submit({ kind: "feedback", ... })`.
+- Host UI calls `engine.reports.submit({ kind: "bug", ... })`.
+- Host UI calls `engine.reports.submit({ kind: "feedback", ... })`.
 - Host UI owns screens, wording, navigation, rating controls, screenshot picker
   UX, alerts, and host-specific telemetry such as Sentry.
 
-Island/toolkit internals:
+Island/engine internals:
 
 - Island collects diagnostic context from runtime-owned stores.
 - Island reads recent phone logs and attaches artifacts.
@@ -33,13 +33,13 @@ Island/toolkit internals:
 - Island owns automatic report detection, classification, local throttling, and
   submission.
 
-Public `toolkit.reports` intentionally does **not** accept
+Public `engine.reports` intentionally does **not** accept
 `kind: "automatic"`. Automatic reports remain valid Cloud V2 records, but they
 are created through island-internal services.
 
 ## Cloud V2 Routes
 
-Primary mobile/toolkit API:
+Primary mobile/engine API:
 
 ```text
 POST /api/client/reports
@@ -56,7 +56,7 @@ logs and screenshots.
 Manual bug report:
 
 1. Host UI builds a manual trigger and user-authored report details.
-2. Host calls `toolkit.reports.submit({ kind: "bug", trigger, report,
+2. Host calls `engine.reports.submit({ kind: "bug", trigger, report,
    screenshots? })`.
 3. Island collects context, creates the report, attaches phone logs and optional
    screenshots, notifies glasses, and completes collection.
@@ -64,7 +64,7 @@ Manual bug report:
 Feedback:
 
 1. Host UI builds the feedback payload.
-2. Host calls `toolkit.reports.submit({ kind: "feedback", feedback })`.
+2. Host calls `engine.reports.submit({ kind: "feedback", feedback })`.
 3. Island collects context and creates the feedback report.
 
 Automatic report:
@@ -97,7 +97,7 @@ Pairing boot timeout:
 - Trigger: `pairing_loading` / `glasses_connect_timeout`.
 - Detection/submission:
   `mobile/modules/engine/src/facades/pairing.ts`.
-- Host loading screen keeps UI/navigation and calls `toolkit.pairing.waitForReady(...)`.
+- Host loading screen keeps UI/navigation and calls `engine.pairing.waitForReady(...)`.
 
 Gallery media integrity:
 
@@ -158,7 +158,7 @@ Cloud V2:
 - `cloud-v2/packages/core/src/models/report.model.ts`
 - `cloud-v2/packages/cloud-client/src/modules/core/reports.ts`
 
-Island/toolkit:
+Island/engine:
 
 - `mobile/modules/engine/src/facades/reports.ts`
 - `mobile/modules/engine/src/utils/diagnosticContext.ts`

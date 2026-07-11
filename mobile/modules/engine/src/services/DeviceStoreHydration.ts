@@ -13,7 +13,7 @@
  * This service makes that seed an explicit, awaited initialization step:
  *   1. load the persisted settings store (idempotent),
  *   2. push the full Bluetooth settings set (identity included) to native.
- * `toolkit.start()` awaits it, so every post-start `getDefaultDevice()` read is
+ * `engine.start()` awaits it, so every post-start `getDefaultDevice()` read is
  * a trustworthy two-state answer. `hasDefaultDevice()` also awaits it
  * internally (belt-and-suspenders for reads that race start()).
  *

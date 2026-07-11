@@ -1,6 +1,6 @@
 name: OEM Host Boundary Gate
 
-# Proves the toolkit/host boundary from the CONSUMER side: the example OEM app
+# Proves the engine/host boundary from the CONSUMER side: the example OEM app
 # must typecheck against @mentra/engine's BUILT public types (build/*.d.ts via
 # the exports map) with zero access to the /internal migration surface. The
 # in-repo Mentra app enforces the boundary on itself with

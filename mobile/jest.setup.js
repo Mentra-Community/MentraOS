@@ -252,7 +252,7 @@ jest.mock("./modules/engine/src/services/LocalMiniappRuntime", () => ({
 // exports get stubs here; specific tests can override. The builder runs
 // lazily on the first island require (so island sources only load for suites
 // that use them) and is cached so all three entries share one underlying
-// state (stores, appStatusState, toolkit). Key sets mirror the real
+// state (stores, appStatusState, engine). Key sets mirror the real
 // src/index.ts / src/internal.ts / src/devtools.ts partition.
 let mockIslandEntriesCache = null
 const mockIslandEntries = () => {
@@ -271,7 +271,7 @@ const mockIslandEntries = () => {
   const realSettings = jest.requireActual("./modules/engine/src/stores/settings")
   const realBtSettingKeys = jest.requireActual("./modules/engine/src/stores/bluetoothSettingKeys")
   const realRestComms = jest.requireActual("./modules/engine/src/services/RestComms")
-  // toolkit.start() starts the island-owned device-settings -> glasses BLE sync; use
+  // engine.start() starts the island-owned device-settings -> glasses BLE sync; use
   // the real one so its behavior is exercised where it now lives (not MantleManager).
   const realGlassesSettingsSync = jest.requireActual("./modules/engine/src/services/GlassesSettingsSync")
   const realGlassesStatusProjection = jest.requireActual("./modules/engine/src/services/GlassesStatusProjection")
@@ -297,7 +297,7 @@ const mockIslandEntries = () => {
   const realOtaInstallCoordinator = jest.requireActual("./modules/engine/src/services/OtaInstallCoordinator")
   const realPhoneNotificationsSync = jest.requireActual("./modules/engine/src/services/PhoneNotificationsSync")
   // The on* event facades (button/touch/pair_failure/glasses_not_ready) are thin
-  // addListener wrappers in the real toolkit, so the mock delegates to the shared
+  // addListener wrappers in the real engine, so the mock delegates to the shared
   // bluetoothSdkMock — emitBluetoothSdkEvent() + listener-leak counts keep working.
   const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
   const subscribeVia = (eventName) =>
@@ -340,7 +340,7 @@ const mockIslandEntries = () => {
     }
   }
 
-  // --- "@mentra/engine" (main): toolkit + the pure helper/constant surface ---
+  // --- "@mentra/engine" (main): engine + the pure helper/constant surface ---
   const main = {
     __esModule: true,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
@@ -353,9 +353,9 @@ const mockIslandEntries = () => {
     useSetting: realSettings.useSetting,
     MENTRA_LIVE_SETTING_KEYS: realBtSettingKeys.MENTRA_LIVE_SETTING_KEYS,
     getBluetoothSettingKeysForDevice: realBtSettingKeys.getBluetoothSettingKeysForDevice,
-    // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
+    // The namespaced (A) host API. Mirrors the real `engine` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
-    toolkit: {
+    engine: {
       configure: jest.fn(),
       start: jest.fn(() => {
         realGlassesStatusProjection.startGlassesStatusProjection()
@@ -445,7 +445,7 @@ const mockIslandEntries = () => {
       },
       display: {
         // Real store-backed (mirrors the facade), same rationale as settings:
-        // converted host services assert store-level behavior through toolkit.
+        // converted host services assert store-level behavior through engine.
         mirror: {
           current: jest.fn(() => ({...realDisplay.useDisplayStore.getState().currentEvent})),
           onMirror: jest.fn((cb) => realDisplay.useDisplayStore.subscribe((st) => st.currentEvent, cb)),
@@ -570,7 +570,7 @@ const mockIslandEntries = () => {
         },
       },
       settings: {
-        // Real store-backed (host services converted to toolkit.settings assert
+        // Real store-backed (host services converted to engine.settings assert
         // settings-driven behavior, not just delegation) — jest.fn-wrapped so
         // call assertions still work.
         get: jest.fn((key) => {
@@ -743,7 +743,7 @@ const mockIslandEntries = () => {
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
-    // — mock-side plumbing for the toolkit projections above; not part of the
+    // — mock-side plumbing for the engine projections above; not part of the
     // real entry's export surface.
     ...realGlasses,
     // Real display/mirror store (useDisplayStore) — consumers need its real behavior.
@@ -996,7 +996,7 @@ jest.mock("@mentra/crust", () => ({
 // Silence the warning: Animated: `useNativeDriver` is not supported
 global.__reanimatedWorkletInit = jest.fn()
 
-// The @mentra/engine mock above delegates toolkit.ota.installSession to the REAL
+// The @mentra/engine mock above delegates engine.ota.installSession to the REAL
 // OtaInstallCoordinator singleton. attach() is idempotent (`if (this.attached)
 // return`), so a test that leaves it attached would leak its timers, store
 // subscription, and session state into the next test in the same file. detach()

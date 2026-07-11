@@ -1,5 +1,5 @@
 /**
- * display facade — `toolkit.display`: the host/OEM display surface. `mirror`
+ * display facade — `engine.display`: the host/OEM display surface. `mirror`
  * exposes the mirrored-view read-model; `text`/`clear` are raw passthroughs to the
  * glasses display for dev tools and escape-hatch use (normal rendering goes through
  * the engine DisplayProcessor / layout system, not these).

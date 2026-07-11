@@ -38,7 +38,7 @@ import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
 import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import {toolkit, useForegroundApp} from "@mentra/engine"
+import {engine, useForegroundApp} from "@mentra/engine"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
@@ -129,7 +129,7 @@ export default function Compositor() {
 
   const handleBack = useCallback(() => {
     captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
-    toolkit.miniapps.clearForeground()
+    engine.miniapps.clearForeground()
   }, [foregroundApp?.packageName])
 
   const handleShouldCapture = useCallback(() => {
@@ -212,7 +212,7 @@ export default function Compositor() {
     if (getCurrentRoute() !== "/home") clearHistoryAndGoHome()
     // Not handleBack(): the overlay is already shrunk/faded, so capturing here
     // would overwrite the fresh screenshot taken at gesture begin.
-    toolkit.miniapps.clearForeground()
+    engine.miniapps.clearForeground()
   }, [])
 
   const hasBuzzed = useSharedValue(false)

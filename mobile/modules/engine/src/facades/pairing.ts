@@ -1,9 +1,9 @@
 /**
- * pairing facade — `toolkit.pairing`: scan for nearby glasses + pair. Scan state
+ * pairing facade — `engine.pairing`: scan for nearby glasses + pair. Scan state
  * (searching + results) comes from the engine core store; scan/connect go over the
  * bluetooth-sdk; pair-failure / not-ready are the bluetooth-sdk events.
  *
- * (Connect-the-already-paired-default is `toolkit.glasses.connectDefault()`; this
+ * (Connect-the-already-paired-default is `engine.glasses.connectDefault()`; this
  * facade is the first-time discovery + pair flow.)
  */
 // Internal btsdk surface — updateBluetoothSettings (the Bluetooth Classic

@@ -1,4 +1,4 @@
-import {toolkit, useApps, useStart, useStop} from "@mentra/engine"
+import {engine, useApps, useStart, useStop} from "@mentra/engine"
 import {miniappRunningRegistry} from "@mentra/engine/devtools"
 import {StatusBar} from "expo-status-bar"
 import {useCallback, useEffect, useState} from "react"
@@ -10,10 +10,10 @@ import {useLog} from "./src/useLog"
 
 // This example host targets Even Realities G2. A real OEM host would let the
 // user pick from the models it supports; DeviceModel is a plain string union,
-// so the literal is all the toolkit needs.
+// so the literal is all the engine needs.
 const GLASSES_MODEL = "Even Realities G2"
 
-type ScanResult = ReturnType<typeof toolkit.pairing.searchResults>[number]
+type ScanResult = ReturnType<typeof engine.pairing.searchResults>[number]
 
 export default function App() {
   const logger = useLog()
@@ -24,7 +24,7 @@ export default function App() {
   const stop = useStop()
   const [running, setRunning] = useState<string[]>(() => miniappRunningRegistry.getAll())
 
-  const [glassesState, setGlassesState] = useState<string>(() => toolkit.glasses.status().state)
+  const [glassesState, setGlassesState] = useState<string>(() => engine.glasses.status().state)
   const [scanning, setScanning] = useState(false)
   const [devices, setDevices] = useState<ScanResult[]>([])
   const [devUrl, setDevUrl] = useState("")
@@ -48,9 +48,9 @@ export default function App() {
   }, [])
 
   // Live read-models: glasses connection, scan progress, scan results, running set.
-  useEffect(() => toolkit.glasses.onStatus((s) => setGlassesState(s.state)), [])
-  useEffect(() => toolkit.pairing.onScanning(setScanning), [])
-  useEffect(() => toolkit.pairing.onFound(setDevices), [])
+  useEffect(() => engine.glasses.onStatus((s) => setGlassesState(s.state)), [])
+  useEffect(() => engine.pairing.onScanning(setScanning), [])
+  useEffect(() => engine.pairing.onFound(setDevices), [])
   useEffect(() => {
     setRunning(miniappRunningRegistry.getAll())
     return miniappRunningRegistry.subscribe(() => setRunning(miniappRunningRegistry.getAll()))
@@ -64,25 +64,25 @@ export default function App() {
     // Mark the model as the pending selection (the scan-entry write of the
     // two-phase identity contract), then start scanning. Results stream into
     // `devices` via onFound.
-    toolkit.pairing.markPendingSelection(GLASSES_MODEL)
-    await run(`scan(${GLASSES_MODEL})`, () => toolkit.pairing.scan(GLASSES_MODEL))
+    engine.pairing.markPendingSelection(GLASSES_MODEL)
+    await run(`scan(${GLASSES_MODEL})`, () => engine.pairing.scan(GLASSES_MODEL))
   }, [run])
 
   const pairDevice = useCallback(
     async (device: ScanResult) => {
       // pair() marks pending only; native promotes to default on pairing
       // success. Watch the glasses status row flip to "connected".
-      await run(`pair(${device.name})`, () => toolkit.pairing.pair(device))
+      await run(`pair(${device.name})`, () => engine.pairing.pair(device))
     },
     [run],
   )
 
   const reconnect = useCallback(async () => {
-    await run("glasses.connectDefault()", () => toolkit.glasses.connectDefault())
+    await run("glasses.connectDefault()", () => engine.glasses.connectDefault())
   }, [run])
 
   const disconnect = useCallback(async () => {
-    await run("glasses.disconnect()", () => toolkit.glasses.disconnect())
+    await run("glasses.disconnect()", () => engine.glasses.disconnect())
   }, [run])
 
   // --- Miniapps ---
@@ -95,7 +95,7 @@ export default function App() {
     // Called directly (not via run) to read the typed {ok} result.
     log(`▶ dev.loadDevMiniapp(${trimmed})`)
     try {
-      const result = await toolkit.dev.loadDevMiniapp(trimmed)
+      const result = await engine.dev.loadDevMiniapp(trimmed)
       if (result.ok) log(`✓ loaded ${result.name} (${result.packageName})`)
       else logger.logError(`✗ load failed: ${result.error}`)
     } catch (err) {
@@ -134,7 +134,7 @@ export default function App() {
           <StatusRow label="Running miniapps" value={String(running.length)} />
         </Section>
 
-        <Section title="Pair glasses" subtitle={`toolkit.pairing / toolkit.glasses — ${GLASSES_MODEL}`}>
+        <Section title="Pair glasses" subtitle={`engine.pairing / engine.glasses — ${GLASSES_MODEL}`}>
           {connected ? (
             <ActionButton label="Disconnect" onPress={disconnect} variant="danger" />
           ) : (

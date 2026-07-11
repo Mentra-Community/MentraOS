@@ -6,7 +6,7 @@
  * Why this exists: engine owns the stores, coordinators, miniapp runtime, and facades,
  * but it never *subscribed to the device* for most events — the host MantleManager was
  * still the event router the whole runtime secretly depended on. So a bare OEM that
- * imported engine + called toolkit.start() got a connected runtime with almost no device
+ * imported engine + called engine.start() got a connected runtime with almost no device
  * data flowing in (no miniapp input, dead gallery sync, starved coordinators). This
  * service moves those inbound bridges into engine so ANY host gets them.
  *
@@ -14,7 +14,7 @@
  * MantleManager (touch→cloud, the cloud-SDK stream/photo legs, etc.) were deleted with
  * Cloud V1 app end-of-life.
  *
- * Started by `toolkit.start()`. Idempotent.
+ * Started by `engine.start()`. Idempotent.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {shallow} from "zustand/shallow"

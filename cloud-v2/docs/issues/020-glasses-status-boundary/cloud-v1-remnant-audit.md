@@ -4,7 +4,7 @@ Date: 2026-07-02
 Scope: `mobile/src/services/{MantleManager,SocketComms,WebSocketManager}.ts`,
 `mobile/modules/engine/src/services/RestComms.ts` — every remaining call path,
 classified per the work-package-9 dispositions: **delete-now**,
-**keep-until-named-V2-port**, **move-into-toolkit**, or **host-owned-fine**.
+**keep-until-named-V2-port**, **move-into-engine**, or **host-owned-fine**.
 
 ## Headline conclusions
 
@@ -22,7 +22,7 @@ classified per the work-package-9 dispositions: **delete-now**,
 - The provably dead paths found by this audit were **deleted on the
   integration branch** (see "Deleted" below).
 
-## Deleted (was delete-now; done on `integration/toolkit-boundary`)
+## Deleted (was delete-now; done on `integration/engine-boundary`)
 
 | Path | Why it was safe |
 | --- | --- |
@@ -65,7 +65,7 @@ ordered delete list below.
 
 | Area | Disposition | Notes |
 | --- | --- | --- |
-| `init()` order: toolkit.configure/start, catalog init, settings load, reconnect kick | host-owned-fine | this is the host bootstrap seam the design allows |
+| `init()` order: engine.configure/start, catalog init, settings load, reconnect kick | host-owned-fine | this is the host bootstrap seam the design allows |
 | Legacy settings field scrub (core_token/device_*/controller_*) | delete-later | remove once no installed client rewrites them |
 | `syncTimezone`, `sendCalendarEvents` (+ BLE push), notification forwarding | keep-until-V2-port | REST targets are V1; BLE half is island-adjacent and fine |
 | BluetoothSdk event subscriptions that only relay to SocketComms (button/touch/swipe/switch/rgb/ws_text/stream-status/keep-alive) | **deleted (tier 3)** | the V1 relays are gone; island DeviceEventRouter owns inbound device events |
@@ -77,7 +77,7 @@ ordered delete list below.
 | Endpoint group | Disposition | Notes |
 | --- | --- | --- |
 | `/auth/exchange-token`, core_token storage | keep-until-V2-port | V1 session auth; V2 tokens live in island CloudClientService |
-| `/api/client/min-version` | keep-until-V2-port | app-launch gate (`toolkit.dev.minimumClientVersion`) |
+| `/api/client/min-version` | keep-until-V2-port | app-launch gate (`engine.dev.minimumClientVersion`) |
 | `/api/client/user/settings` GET/POST | keep-until-V2-port | settings sync; portable payload, endpoint will move |
 | `/api/client/calendar`, `/api/client/notifications(+dismissed)` | keep-until-V2-port | event forwarding for cloud-SDK app awareness |
 | `/api/client/photo/response` | **deleted (tier 3)** | V1 photo pipeline completion — gone with the `photo_request` handler |
@@ -86,7 +86,7 @@ ordered delete list below.
 | App catalog/lifecycle: `/api/client/apps`, start/stop, uninstall, `/appsettings/*`, health check | **deleted (tier 4)** | the cloud-SDK app UI it powered is unreachable (see reachability below); `applet/settings.tsx` was reworked island-only |
 | Webview auth: generate-webview-token(+signed), hash-with-api-key | **deleted (tier 4)** | the cloud-SDK webview flow is gone |
 | `/api/client/livekit/token` | **deleted (tier 1)** | dead code — only served the unimported `services/Livekit.ts` |
-| Account deletion request/confirm | keep-until-V2-port | already fronted by `toolkit.session.account` |
+| Account deletion request/confirm | keep-until-V2-port | already fronted by `engine.session.account` |
 | `/api/client/goodbye` | keep-until-V2-port | courtesy |
 
 ## Reachability analysis (2026-07-02): what "keep-until-V2-port" actually protects

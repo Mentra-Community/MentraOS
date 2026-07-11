@@ -287,14 +287,14 @@ export class DisplayProcessor {
     }
 
     // Initialize with default G1 profile
-    const toolkit = createDisplayToolkit(G1_PROFILE, {
+    const engine = createDisplayToolkit(G1_PROFILE, {
       breakMode: this.options.breakMode,
     })
 
-    this.measurer = toolkit.measurer
-    this.wrapper = toolkit.wrapper
-    this.composer = new ColumnComposer(toolkit.profile, this.options.breakMode)
-    this.profile = toolkit.profile
+    this.measurer = engine.measurer
+    this.wrapper = engine.wrapper
+    this.composer = new ColumnComposer(engine.profile, this.options.breakMode)
+    this.profile = engine.profile
 
     // Engine stores may not be hydrated yet at module-load time; attachToRuntime()
     // is called again by the host after app services start.
@@ -387,17 +387,17 @@ export class DisplayProcessor {
   }
 
   /**
-   * Update the display profile and recreate toolkit
+   * Update the display profile and recreate engine
    */
   private updateProfile(newProfile: DisplayProfile): void {
-    const toolkit = createDisplayToolkit(newProfile, {
+    const engine = createDisplayToolkit(newProfile, {
       breakMode: this.options.breakMode,
     })
 
-    this.measurer = toolkit.measurer
-    this.wrapper = toolkit.wrapper
+    this.measurer = engine.measurer
+    this.wrapper = engine.wrapper
     this.composer = new ColumnComposer(newProfile, this.options.breakMode)
-    this.profile = toolkit.profile
+    this.profile = engine.profile
 
     if (this.options.debug) {
       console.log(`[DisplayProcessor] Profile updated to: ${newProfile.id}`)

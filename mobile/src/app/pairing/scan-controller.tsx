@@ -1,5 +1,5 @@
 import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -11,7 +11,7 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {routePairingKickoffFailure} from "@/utils/PairingUtils"
@@ -25,8 +25,8 @@ export default function SelectGlassesBluetoothScreen() {
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const searchResults = useToolkitSnapshot(toolkit.pairing.searchResults, (onChange) =>
-    toolkit.pairing.onFound(onChange),
+  const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) =>
+    engine.pairing.onFound(onChange),
   )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
@@ -41,8 +41,8 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    toolkit.glasses.controller.disconnect()
-    toolkit.glasses.controller.forget()
+    engine.glasses.controller.disconnect()
+    engine.glasses.controller.forget()
     goBack()
   }, true)
 
@@ -57,7 +57,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await toolkit.pairing.scan(deviceModel)
+        await engine.pairing.scan(deviceModel)
       } catch (error) {
         console.error("Failed to start controller scan:", error)
       }
@@ -96,7 +96,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     setTimeout(() => {
-      toolkit.pairing.pair(device).catch((error) => {
+      engine.pairing.pair(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
         routePairingKickoffFailure(device.model)
       })

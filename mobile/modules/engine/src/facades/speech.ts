@@ -1,5 +1,5 @@
 /**
- * speech facade — `toolkit.speech.{stt,tts}`: on-device STT/TTS model management,
+ * speech facade — `engine.speech.{stt,tts}`: on-device STT/TTS model management,
  * wrapping the in-engine model managers. Thin passthrough (args forwarded with
  * exact types via Parameters<>), so the facade never drifts from the managers.
  * STT additionally exposes the auto-download status stream (the TTS path has none).

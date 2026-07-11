@@ -24,7 +24,7 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, toolkit, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
+import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
@@ -621,7 +621,7 @@ export function AppsGrid({
   const placeAppOnHome = useCallback(
     (app: ClientApp) => {
       const packageName = app.packageName
-      toolkit.miniapps.setHiddenStatus(packageName, false)
+      engine.miniapps.setHiddenStatus(packageName, false)
 
       const latestOrder = getAppsOrder()
       const currentOrder = latestOrder.is_ok() ? latestOrder.value : orderMap
@@ -687,8 +687,8 @@ export function AppsGrid({
           icon: "circle-minus",
           onPress: () => {
             if (liveSelectedApp) {
-              toolkit.miniapps.setHiddenStatus(liveSelectedApp.packageName, true)
-              // toolkit.miniapps.refresh()
+              engine.miniapps.setHiddenStatus(liveSelectedApp.packageName, true)
+              // engine.miniapps.refresh()
             }
           },
         },

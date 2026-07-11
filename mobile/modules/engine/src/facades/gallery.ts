@@ -1,5 +1,5 @@
 /**
- * gallery facade — `toolkit.gallery`: the OEM-facing gallery-sync surface. Engine's
+ * gallery facade — `engine.gallery`: the OEM-facing gallery-sync surface. Engine's
  * gallerySyncService orchestrates the sync (hotspot → wifi → HTTP fetch → process →
  * store); this facade exposes the projected status + the structured notices the host
  * renders its own UI from, plus the sync/cancel actions. No host-injected UI — the host

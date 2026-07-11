@@ -146,7 +146,7 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).not.toContain("*System:*");
   });
 
-  test("renders a System line from the raw mobile toolkit context", async () => {
+  test("renders a System line from the raw mobile engine context", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
 
     // Shape as the mobile island's collectDiagnosticContext actually sends it:

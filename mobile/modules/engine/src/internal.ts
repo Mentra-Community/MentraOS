@@ -3,10 +3,10 @@
  *
  * Raw zustand stores and service singletons that the Mentra app's host-side
  * services (and the `@/stores/*` / `@/utils/*` shims) still reach into while
- * the typed `toolkit` facades grow. Everything here either mutates runtime
+ * the typed `engine` facades grow. Everything here either mutates runtime
  * state or exposes a store/service directly, so none of it belongs on the
  * OEM-facing `@mentra/engine` main entry: new host code should read/act
- * through `toolkit.*` instead.
+ * through `engine.*` instead.
  *
  * Every `/internal` import in mobile/src is counted (report-only) by
  * scripts/check-mobile-runtime-boundary.sh; the burn-down plan is
@@ -95,7 +95,7 @@ export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./se
 // OTA manifest-URL resolution (dev-override/legacy-build/env/prod).
 export {getAsgOtaVersionUrl} from "./services/asgOtaVersionUrl"
 // Flat OTA check helpers (network + BLE state). Host usage is a tracked
-// burn-down surface (§F); the sanctioned path is toolkit.ota.checkForUpdates().
+// burn-down surface (§F); the sanctioned path is engine.ota.checkForUpdates().
 export {
   fetchVersionInfo,
   checkVersionUpdateAvailable,
@@ -108,7 +108,7 @@ export {
 
 // Gallery cluster — sync orchestrator, glasses-camera HTTP API, media/storage,
 // settings, validation and the service-to-service notice bus. Host gallery UI
-// renders toolkit.gallery; these are the underlying services.
+// renders engine.gallery; these are the underlying services.
 export {detectClockSkew, isSyncManifestEmpty, CLOCK_SKEW_TOLERANCE_MS} from "./services/gallerySyncClock"
 export {gallerySyncService} from "./services/asg/gallerySyncService"
 export {asgCameraApi} from "./services/asg/asgCameraApi"
@@ -127,7 +127,7 @@ export {phonePhotoCoordinator} from "./services/PhonePhotoCoordinator"
 export {phoneStreamCoordinator} from "./services/PhoneStreamCoordinator"
 
 // Raw runtime stores (re-exported via the host @/stores/* shims). Read models
-// live on the toolkit facades; these are the migration escape hatch.
+// live on the engine facades; these are the migration escape hatch.
 export {useDisplayStore, flushDisplayCoalesceForTests} from "./stores/display"
 export {useCoreStore} from "./stores/core"
 export {useConnectionStore} from "./stores/connection"

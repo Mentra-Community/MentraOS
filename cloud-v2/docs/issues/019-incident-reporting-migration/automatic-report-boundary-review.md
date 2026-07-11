@@ -4,12 +4,12 @@
 
 ## What We Are Doing
 
-We are separating the public OEM-facing toolkit API from MentraOS/runtime
+We are separating the public OEM-facing engine API from MentraOS/runtime
 automatic diagnostics.
 
-## Grounding: Toolkit vs Host
+## Grounding: Engine vs Host
 
-The toolkit is the reusable MentraOS runtime layer that an OEM host app embeds.
+The engine is the reusable MentraOS runtime layer that an OEM host app embeds.
 It should provide the smartglasses operating-system primitives: device
 connection, pairing state, miniapp runtime, gallery/device coordination, cloud
 session plumbing, settings sync, diagnostic context collection, log/artifact
@@ -19,24 +19,24 @@ The host is the OEM-branded app shell around that runtime. It should provide
 screens, navigation, wording, alerts, visual states, branded support flows,
 rating controls, screenshot picker UX, and host-specific telemetry sinks such
 as Sentry. A Mentra-branded host may have extra internal screens or test
-harnesses, but those are still not part of the public OEM toolkit contract.
+harnesses, but those are still not part of the public OEM engine contract.
 
 This separation matters because OEMs should not need to understand MentraOS
 internal state in order to brand or render the app. If the host pulls runtime
-state out of toolkit, constructs an internal diagnostic payload, then pushes it
-back into toolkit/cloud, the boundary has failed. The clean API should let the
+state out of engine, constructs an internal diagnostic payload, then pushes it
+back into engine/cloud, the boundary has failed. The clean API should let the
 host say "the user submitted this bug report" or "the user submitted this
-feedback"; toolkit should decide how to collect OS context, logs, glasses
+feedback"; engine should decide how to collect OS context, logs, glasses
 state, artifacts, local throttling keys, and Cloud V2 records.
 
 For automatic reports, the case is even clearer: there is no user-authored
 form. Automatic reports are created because the runtime observed an OS
 condition. That observation, classification, throttling, and submission should
-live inside the toolkit/runtime layer, not in OEM UI code calling a generic
+live inside the engine/runtime layer, not in OEM UI code calling a generic
 public `kind: "automatic"` report API.
 
 This document records the automatic-report call-site review that drove the
-implemented host/toolkit boundary.
+implemented host/engine boundary.
 
 The current branch has a single report model in Cloud V2, which is still the
 right backend shape:
@@ -47,20 +47,20 @@ right backend shape:
 
 The boundary question is not whether Cloud V2 can store automatic reports. It
 is whether OEM/host UI should be able to call a generic
-`toolkit.reports.submit({ kind: "automatic" })`.
+`engine.reports.submit({ kind: "automatic" })`.
 
 Proposed rule:
 
-- Public `toolkit.reports` should expose only user/OEM-authored submissions:
+- Public `engine.reports` should expose only user/OEM-authored submissions:
   manual bug reports and feedback.
-- Island/toolkit internals should own automatic report detection, diagnostic
+- Island/engine internals should own automatic report detection, diagnostic
   context, local throttling, log/screenshot/glasses-log collection, Cloud V2
   submission, and completion.
 - Host/OEM code should own UI, copy, navigation, branded alerts, prompts, and
   host-specific telemetry sinks such as Sentry.
 
 The five current automatic-report paths below are the places we need to review
-before changing the public toolkit surface.
+before changing the public engine surface.
 
 ## Original Inventory
 
@@ -70,7 +70,7 @@ before changing the public toolkit surface.
 | Miniapp start failure | `mobile/src/services/bugReport/miniappStartBugReport.ts` | `miniapp_launch` / `miniapp_start_failed` | A miniapp start request fails with an Axios/HTTP/runtime error. |
 | Pairing boot timeout | `mobile/src/app/pairing/loading.tsx` | `pairing_loading` / `glasses_connect_timeout` | Pairing screen waits 35s and glasses never report fully booted. |
 | Gallery video playback | `mobile/src/services/bugReport/galleryVideoPlaybackBugReport.ts` | `gallery_video` / `gallery_video_on_error` | Host gallery video player gets a playback error. |
-| Captions tester laptop report | `mobile/e2e-tests/scripts/live_word_monitor.py` -> internal Crust receiver -> island toolkit service | external monitor alert / `captions_tester_incident` | Laptop e2e harness decides a captions test failed and asks the app runtime to file a report. |
+| Captions tester laptop report | `mobile/e2e-tests/scripts/live_word_monitor.py` -> internal Crust receiver -> island engine service | external monitor alert / `captions_tester_incident` | Laptop e2e harness decides a captions test failed and asks the app runtime to file a report. |
 
 ## 1. MentraJS Crashloop
 
@@ -87,7 +87,7 @@ Original ownership:
   router, Crust binding, and log ring.
 - The host shim owns Sentry tags/breadcrumbs and alert copy.
 - The automatic report was filed from host code through the public
-  toolkit reporting surface.
+  engine reporting surface.
 
 Judgment:
 
@@ -142,7 +142,7 @@ Judgment:
 - For the island-namespace / miniapps v2 target, the Cloud V1 online miniapp
   start path is gone and the underlying problem no longer exists.
 - The helper should be deleted rather than moved.
-- We should not preserve this as a public toolkit use case.
+- We should not preserve this as a public engine use case.
 
 Implemented move:
 
@@ -212,9 +212,9 @@ Judgment:
 - The current playback-error report is a workaround, not the target design.
 - Host UI should keep player error UI: stop playback, show the error message,
   and decide how the screen looks.
-- Host UI should not call a toolkit reporting entry point for gallery playback
+- Host UI should not call a engine reporting entry point for gallery playback
   failures.
-- Island/toolkit should own video health validation and any automatic report
+- Island/engine should own video health validation and any automatic report
   submission for gallery media integrity failures.
 - To catch decoder-level corruption before the user opens playback, island needs
   a native media-probe capability; the current sync validators cannot answer
@@ -230,7 +230,7 @@ Implemented move:
 - Have island file an internal automatic report when that background probe marks
   a video invalid.
 - Delete the host `submitGalleryVideoPlaybackBugReport` path rather than
-  replacing it with any toolkit reporting API.
+  replacing it with any engine reporting API.
 - Keep visual error handling in the gallery screen.
 - Separately decide whether island should add a native video probe
   (`MediaMetadataRetriever` / `AVAsset`-style) during gallery sync. That would
@@ -273,7 +273,7 @@ Original behavior:
 - The monitor also tails `adb logcat` for React Native `E2E_METRIC` lines; today
   it primarily consumes `display_store_update` metrics, not raw Cloud V2
   transcript events.
-- Cloud V2 transcript delivery is already inside island/toolkit:
+- Cloud V2 transcript delivery is already inside island/engine:
   `@mentra/cloud-client` receives `stream.transcript`, `CloudClientService`
   re-emits it via `onTranscript`, and `LocalMiniappRuntime` forwards it to
   subscribed local miniapps as `transcription:<lang>`.
@@ -285,7 +285,7 @@ Original ownership:
 
 - The laptop e2e monitor owns captions-test failure detection and report-filing
   policy/triggering.
-- Island/toolkit owns app-runtime report submission once the Android Intent has
+- Island/engine owns app-runtime report submission once the Android Intent has
   entered the app process.
 - Raw Cloud V2 transcript events belong to island's Cloud V2 runtime path.
 - Transcript test logging is an internal/e2e diagnostic concern, not OEM host UI.
@@ -295,7 +295,7 @@ Original ownership:
 
 Judgment:
 
-- This is not an OEM-facing toolkit report API use case.
+- This is not an OEM-facing engine report API use case.
 - It is still an app-runtime automatic-report use case once the Android Intent is
   received: the trigger is external/test-only, but the runtime owns collecting
   diagnostic context, phone logs, glasses notification, and the Cloud V2 call.
@@ -304,7 +304,7 @@ Judgment:
 - Gate the log behind the existing e2e/dev logging switch, or a more specific
   transcript-test switch, so normal builds do not log user speech.
 - The test harness can keep its own alert bookkeeping by reading the existing
-  `CAPTIONS_TESTER_INCIDENT_RESULT` log line emitted after toolkit submission.
+  `CAPTIONS_TESTER_INCIDENT_RESULT` log line emitted after engine submission.
 
 Implemented move:
 
@@ -312,7 +312,7 @@ Implemented move:
   `MantleManager`.
 - Keep the internal Crust broadcast/Android Intent as the test-harness trigger.
 - Add an island-internal `captions_tester_incident` listener started by
-  `toolkit.start()`.
+  `engine.start()`.
 - Have that listener submit an automatic Cloud V2 report through the island
   reports service and emit the existing `CAPTIONS_TESTER_INCIDENT_RESULT` logcat
   marker for the laptop monitor.
@@ -328,7 +328,7 @@ Implemented move:
 
 ## Proposed Public Boundary
 
-Public `toolkit.reports`:
+Public `engine.reports`:
 
 - `submit({ kind: "bug", trigger, report, screenshots? })`
 - `submit({ kind: "feedback", feedback })`
@@ -368,5 +368,5 @@ Cloud V2/core:
 4. Gallery media integrity: keep UI playback errors local; move media health
    validation/reporting into island.
 5. Captions tester laptop report: remove MantleManager report submission, keep
-   the Android Intent trigger, have island/toolkit file the report, and add the
+   the Android Intent trigger, have island/engine file the report, and add the
    Cloud V2 transcript log marker the monitor needs.

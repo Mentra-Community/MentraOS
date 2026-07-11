@@ -1,5 +1,5 @@
 /**
- * session facade — `toolkit.session`: the cloud-v2 live-session surface engine
+ * session facade — `engine.session`: the cloud-v2 live-session surface engine
  * now owns (keystone #5). Exposes the connection status read-model (status +
  * audio transport, projected from the engine-owned cloud-status store) and the
  * liveness flag.

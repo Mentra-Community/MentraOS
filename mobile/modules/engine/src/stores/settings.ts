@@ -786,7 +786,7 @@ const getDefaultSettings = () =>
   )
 
 // Single-flight for loadAllSettings: the host fires it at module load and
-// toolkit.start()'s device-store hydration awaits it — without the memo the
+// engine.start()'s device-store hydration awaits it — without the memo the
 // second caller runs a duplicate full disk load while the first is still in
 // flight. Cleared on failure so a later call can retry.
 let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null

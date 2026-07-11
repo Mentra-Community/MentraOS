@@ -1,5 +1,5 @@
 /**
- * glasses facade — the core `toolkit.glasses.*` surface: connection actions (over
+ * glasses facade — the core `engine.glasses.*` surface: connection actions (over
  * the bluetooth-sdk passthrough), a curated status/info read-model (projected from
  * the engine-owned glasses store), capabilities (from the model table), and the
  * discrete input events. The `wifi` sub-facade is nested here.
@@ -110,7 +110,7 @@ export const glasses = {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
     } catch (error) {
-      console.warn("toolkit.glasses.reconnect failed:", error)
+      console.warn("engine.glasses.reconnect failed:", error)
       return false
     }
     return true
@@ -118,7 +118,7 @@ export const glasses = {
   /** True when no glasses has ever been paired NOR selected (the pairing-identity
    * lifecycle is in its `none` state) — e.g. to route a first-run host into the
    * pairing/onboarding flow. A pending selection is not "first" — the host should
-   * offer finish-pairing (see `toolkit.pairing.identity()`). */
+   * offer finish-pairing (see `engine.pairing.identity()`). */
   isFirstPairing: (): boolean => projectPairingIdentity().kind === "none",
   /**
    * True when the SDK has an actual default DEVICE to reconnect to. Distinct from

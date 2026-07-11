@@ -9,7 +9,7 @@
  * keepalive, the ota_start_ack / mtk_update_complete listeners, and terminal
  * cleanup. The host progress screen is a pure renderer over
  * `snapshot()`/`onSnapshot()` plus the `attach()/detach()/retry()/finish()`
- * commands (exposed as `toolkit.ota.installSession`).
+ * commands (exposed as `engine.ota.installSession`).
  *
  * Behavior contract: everything here was MOVED, not changed — every timer
  * duration (see ./otaInstallPolicy), arbitration rule, and "[OTA_PROGRESS]"
@@ -204,7 +204,7 @@ class OtaInstallCoordinator {
   private storeUnsubscribe: (() => void) | null = null
   private snapshotCheckers = new Set<() => void>()
 
-  // --- public surface (toolkit.ota.installSession) ---
+  // --- public surface (engine.ota.installSession) ---
 
   /**
    * Bind the state machine to a mounted progress screen. Idempotent per

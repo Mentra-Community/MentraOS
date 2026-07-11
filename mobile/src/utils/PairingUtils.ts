@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -17,7 +17,7 @@ export function routePairingKickoffFailure(deviceModel?: string) {
   if (history[history.length - 1] !== "/pairing/loading") return
   // Parity with loading.tsx's handlePairFailure: clear the failed attempt
   // before surfacing the failure (a pre-existing pairing is preserved).
-  void toolkit.pairing.abandonAttempt().catch((cleanupError) => {
+  void engine.pairing.abandonAttempt().catch((cleanupError) => {
     console.warn("Pairing kickoff-failure cleanup failed:", cleanupError)
   })
   replace("/pairing/failure", {error: "errors:pairingCouldNotStart", deviceModel})

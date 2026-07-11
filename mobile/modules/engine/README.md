@@ -9,7 +9,7 @@ with the `react-native` condition pointing at `src/` so Metro, tsc and jest
 resolve live TypeScript source):
 
 - **`@mentra/engine`** (main, `src/index.ts`) — the OEM-facing surface: the
-  `toolkit` namespace (`configure`/`start`/`stop` + typed domain facades),
+  `engine` namespace (`configure`/`start`/`stop` + typed domain facades),
   contract/read-model types, and pure helpers host UI renders with
   (`decideReconnect`, `deriveDisplayState`, the `useApps`-style hooks,
   OTA policy constants, hardware capability tables, `BgTimer`). Judgment rule:
@@ -20,7 +20,7 @@ resolve live TypeScript source):
   `useAppStatusStore`, …) and service singletons (`appRegistry`, `restComms`,
   `cloudClientService`, the gallery cluster, the miniapp engine, …). The
   host's `@/stores/*` shims re-export from here. New host code should use
-  `toolkit.*` instead; `scripts/check-mobile-runtime-boundary.sh` counts every
+  `engine.*` instead; `scripts/check-mobile-runtime-boundary.sh` counts every
   `/internal` import in `mobile/src` (report-only) as the burn-down metric.
 - **`@mentra/engine/devtools`** (`src/devtools.ts`) — debug-only singletons
   (`miniappRunningRegistry`, `devServerBridge`) for the internal dev screens.
@@ -41,7 +41,7 @@ sockets.
 ## Public surface
 
 ```ts
-import {toolkit, decideDevLaunchRoute} from "@mentra/engine"
+import {engine, decideDevLaunchRoute} from "@mentra/engine"
 import {webviewBridge, buildMiniappGlobalsScript} from "@mentra/engine/internal"
 import {miniappRunningRegistry} from "@mentra/engine/devtools"
 ```

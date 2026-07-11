@@ -1,10 +1,10 @@
 /**
- * glasses.settings facade — `toolkit.glasses.settings`: the keyed DEVICE-settings
+ * glasses.settings facade — `engine.glasses.settings`: the keyed DEVICE-settings
  * surface (brightness, head-up angle, dashboard, camera/button, sensing, …). These
  * are the settings the engine store auto-syncs to the glasses over the bluetooth-sdk
  * (`BLUETOOTH_SETTING_KEYS`), so `set()` both persists and pushes to the device.
  *
- * Distinct from `toolkit.settings` (user/app prefs): this is scoped to the
+ * Distinct from `engine.settings` (user/app prefs): this is scoped to the
  * hardware-facing keys, minus the internal sync keys (auth/token) that aren't
  * user-tunable device settings.
  */

@@ -1,6 +1,6 @@
 /**
  * Engine notifications emitter — the engine→host alert channel behind
- * `toolkit.notifications`. Engine-detected conditions the host should surface
+ * `engine.notifications`. Engine-detected conditions the host should surface
  * (miniapp crashloop, version-incompatible miniapp, persistent connection loss)
  * are pushed here; the facade fans them out to host subscribers.
  *

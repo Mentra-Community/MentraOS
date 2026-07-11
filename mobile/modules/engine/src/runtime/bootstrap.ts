@@ -1,5 +1,5 @@
 /**
- * Bootstrap — the toolkit's single front door (`toolkit.configure` / `start` / `stop`).
+ * Bootstrap — the engine's single front door (`engine.configure` / `start` / `stop`).
  *
  * The host hands engine auth + config + analytics in one call; engine owns the
  * runtime construction behind `start()`. Internal services read this holder
@@ -75,7 +75,7 @@ let started = false
  */
 export function configure(opts: IslandConfigureOptions): void {
   if (started) {
-    console.warn("toolkit.configure() called after toolkit.start(); ignored — stop() the runtime before reconfiguring")
+    console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
   options = opts
@@ -85,7 +85,7 @@ export function configure(opts: IslandConfigureOptions): void {
 export async function start(): Promise<void> {
   if (started) return
   if (!options) {
-    throw new Error("toolkit.start() called before toolkit.configure()")
+    throw new Error("engine.start() called before engine.configure()")
   }
   started = true
 }

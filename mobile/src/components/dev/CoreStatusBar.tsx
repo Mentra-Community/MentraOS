@@ -7,7 +7,7 @@ import {useDebugStore} from "@/stores/debug"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {TouchEvent} from "@mentra/bluetooth-sdk"
-import {BgTimer, toolkit} from "@mentra/engine"
+import {BgTimer, engine} from "@mentra/engine"
 
 function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   const {theme} = useAppTheme()
@@ -35,7 +35,7 @@ function cloudClientStatusBg(status: string): string {
 }
 
 export default function CoreStatusBar() {
-  const [runtimeStatus, setRuntimeStatus] = useState(() => toolkit.dev.runtimeStatus())
+  const [runtimeStatus, setRuntimeStatus] = useState(() => engine.dev.runtimeStatus())
   const micDataRecvd = useDebugStore((state) => state.micDataRecvd)
   const [localFallbackActive] = useSetting<boolean>(SETTINGS.local_stt_fallback_active.key)
   const insets = useSaferAreaInsets()
@@ -43,13 +43,13 @@ export default function CoreStatusBar() {
   const cloudClientTransport = cloudClientTransportLabel(runtimeStatus.cloudClientAudioTransport, localFallbackActive)
 
   useEffect(() => {
-    setRuntimeStatus(toolkit.dev.runtimeStatus())
-    return toolkit.dev.onRuntimeStatus(setRuntimeStatus)
+    setRuntimeStatus(engine.dev.runtimeStatus())
+    return engine.dev.onRuntimeStatus(setRuntimeStatus)
   }, [])
 
   const touchEventTimer = useRef<number | null>(null)
   useEffect(() => {
-    let unsub = toolkit.glasses.onTouchGesture((event: TouchEvent) => {
+    let unsub = engine.glasses.onTouchGesture((event: TouchEvent) => {
       setTouchEvent(event)
       BgTimer.clearTimeout(touchEventTimer.current ?? 0)
       touchEventTimer.current = BgTimer.setTimeout(() => {

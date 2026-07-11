@@ -2,7 +2,7 @@
  * Cloud-client runtime status store — moved into engine so engine owns the
  * cloud-v2 runtime status (connection status + audio transport). Re-exported
  * through the host's `@/stores/cloudClientStatus` shim so the app keeps its
- * imports, and surfaced as `toolkit.stores.cloudClientStatus`.
+ * imports, and surfaced as `engine.stores.cloudClientStatus`.
  */
 import {create} from "zustand"
 

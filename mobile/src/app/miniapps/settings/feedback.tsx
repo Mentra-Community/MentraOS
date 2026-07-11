@@ -15,7 +15,7 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {useRegisterCapsule} from "@/stores/capsule"
-import {toolkit} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
@@ -105,7 +105,7 @@ export default function FeedbackPage() {
     // Check if user rated 4-5 stars on feature request
     const shouldPromptAppRating = feedbackType === "feature" && experienceRating !== null && experienceRating >= 4
 
-    // Bug reports and feature requests both go through the toolkit reports surface.
+    // Bug reports and feature requests both go through the engine reports surface.
     if (feedbackType === "bug") {
       const trigger = buildReportTrigger({
         triggerSource: typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen",
@@ -148,7 +148,7 @@ export default function FeedbackPage() {
 
       console.log("Feedback submitted:", JSON.stringify(feedbackPayload, null, 2))
       try {
-        const submitRes = await toolkit.reports.submit({
+        const submitRes = await engine.reports.submit({
           kind: "feedback",
           feedback: feedbackPayload,
         })

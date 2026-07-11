@@ -3,7 +3,7 @@
  * (never localized strings or alerts) when it hits a user-actionable precondition;
  * the host renders its own alert / settings deep-link from the code. This keeps the
  * sync (engine runtime) free of host UI/i18n/navigation — exposed as
- * `toolkit.gallery.onNotice(cb)`.
+ * `engine.gallery.onNotice(cb)`.
  */
 export type GalleryNoticeCode =
   | "glasses_disconnected"

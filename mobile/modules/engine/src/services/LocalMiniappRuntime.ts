@@ -2694,7 +2694,7 @@ class LocalMiniappRuntime {
 
   /**
    * session.glasses.requestWifiSetup — open the phone's glasses Wi-Fi setup
-   * flow. The host owns the actual UI via the `toolkit.configure({ui})` seam;
+   * flow. The host owns the actual UI via the `engine.configure({ui})` seam;
    * this just forwards the request and reports success/failure.
    */
   private async handleRequestWifiSetup(
