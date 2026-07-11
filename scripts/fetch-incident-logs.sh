@@ -165,15 +165,24 @@ ext_for_content_type() {
   esac
 }
 
+# Artifact type/source/filename are report metadata (source and filename are
+# client-supplied free text), so strip anything path-like before they can
+# shape a local filename.
+sanitize_component() {
+  printf '%s' "$1" | tr -cd 'A-Za-z0-9._-' | cut -c1-40
+}
+
 FAILED=0
 INDEX=0
 while IFS=$'\t' read -r ARTIFACT_ID TYPE SOURCE CONTENT_TYPE FILENAME; do
   [ -n "$ARTIFACT_ID" ] || continue
   INDEX=$((INDEX + 1))
   EXT=$(ext_for_content_type "$CONTENT_TYPE")
-  SAFE_NAME=$(printf '%s' "$FILENAME" | tr -cd 'A-Za-z0-9._-' | cut -c1-40)
+  SAFE_TYPE=$(sanitize_component "$TYPE")
+  SAFE_SOURCE=$(sanitize_component "$SOURCE")
+  SAFE_NAME=$(sanitize_component "$FILENAME")
   SAFE_NAME="${SAFE_NAME%.*}"
-  FILE=$(printf '%02d-%s-%s%s.%s' "$INDEX" "$TYPE" "$SOURCE" "${SAFE_NAME:+-$SAFE_NAME}" "$EXT")
+  FILE=$(printf '%02d-%s-%s%s.%s' "$INDEX" "${SAFE_TYPE:-artifact}" "${SAFE_SOURCE:-unknown}" "${SAFE_NAME:+-$SAFE_NAME}" "$EXT")
   BODY="$TMP_DIR/artifact"
   STATUS=$(api_get "/api/admin/reports/$REPORT_ID/artifacts/$ARTIFACT_ID" "$BODY") || STATUS="000"
   if ! printf '%s' "$STATUS" | grep -q '^2'; then
