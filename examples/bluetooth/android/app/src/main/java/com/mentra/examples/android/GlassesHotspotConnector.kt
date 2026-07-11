@@ -15,13 +15,16 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resumeWithException
 
-class GlassesHotspotConnector(context: Context) {
+class GlassesHotspotConnector(
+    context: Context,
+    private val onConnectionLost: (Int) -> Unit,
+) {
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var pendingContinuation: CancellableContinuation<Unit>? = null
 
-    suspend fun connect(ssid: String, password: String) {
+    suspend fun connect(ssid: String, password: String, connectionGeneration: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw IOException("Automatic hotspot connection requires Android 10 or newer.")
         }
@@ -62,7 +65,9 @@ class GlassesHotspotConnector(context: Context) {
                     }
 
                     override fun onLost(network: Network) {
-                        connectivityManager.bindProcessToNetwork(null)
+                        if (callback !== this) return
+                        releaseNetwork()
+                        onConnectionLost(connectionGeneration)
                     }
                 }
                 callback = networkCallback
@@ -81,9 +86,10 @@ class GlassesHotspotConnector(context: Context) {
 
     private fun releaseNetwork() {
         connectivityManager.bindProcessToNetwork(null)
-        callback?.let { current ->
+        val current = callback
+        callback = null
+        current?.let {
             runCatching { connectivityManager.unregisterNetworkCallback(current) }
         }
-        callback = null
     }
 }

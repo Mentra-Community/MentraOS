@@ -112,6 +112,7 @@ let photoIsoCapOptions = [400, 800, 1600]
 let photoIspDigitalGainOptions = [0, 1, 2, 4]
 let photoIspAnalogGainOptions = ["low"]
 let glassesPhotoPollAttempts = 120
+let glassesGalleryFailureThreshold = 3
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
@@ -169,7 +170,7 @@ struct PhotoPreviewDetails {
             previewUrl: previewUrl,
             requestId: requestId,
             source: source,
-            state: state == "preview" ? "preview" : "acknowledged",
+            state: state == "preview" || state == "saved" ? state : "acknowledged",
             timestamp: timestamp,
             uploadUrl: uploadUrl,
             uploadedAt: uploadedAt,
@@ -349,7 +350,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private let glassesHotspotConnector = GlassesHotspotConnector()
     private var galleryConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection?
-    private var hotspotJoinExplanationShown = false
+    private var photoDestinationBeforeGlasses: PhotoDestination = .thisPhone
     private var streamConfigurationChangeInProgress = false
     private var photoCaptureDefaultsSyncGeneration = 0
     private var photoCaptureDefaultsSyncTask: Task<Void, Never>?
@@ -415,7 +416,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
-    @Published private(set) var hotspotJoinPromptSsid: String?
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
     @Published private(set) var micElapsedSeconds = 0
@@ -458,6 +458,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var latestOtaVersionInfoSignature: String?
     private var otaDisplayProgressSessionKey: String?
     private var otaDisplayOverallPercent: Int?
+    private var otaStartingAppIdentity: String?
     private var postOtaCheckInProgress = false
     private var postOtaCheckedSessionKey: String?
     private var scanSession: ScanSession?
@@ -691,6 +692,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             try requireConnected("start OTA")
             try requireGlassesWifi("start OTA updates")
             postOtaCheckedSessionKey = nil
+            otaStartingAppIdentity = otaAppIdentity(glassesValues)
             resetOtaDisplayProgress()
             otaDisplayPercent = nil
             _ = try await mentraBluetoothSdk.startOtaUpdate()
@@ -715,9 +717,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func setPhotoDestination(_ destination: PhotoDestination) {
+    func setPhotoDestination(_ requestedDestination: PhotoDestination) {
+        let destination: PhotoDestination
+        if photoDestination == .glassesStorage, requestedDestination == .thisPhone {
+            destination = photoDestinationBeforeGlasses
+        } else {
+            destination = requestedDestination
+        }
         guard photoDestination != destination else { return }
         let wasGlassesStorage = photoDestination == .glassesStorage
+        if destination == .glassesStorage, !wasGlassesStorage {
+            photoDestinationBeforeGlasses = photoDestination
+        } else if destination != .glassesStorage {
+            photoDestinationBeforeGlasses = destination
+        }
         stopPhonePhotoServer()
         photoDestination = destination
         switch destination {
@@ -734,12 +747,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         guard wasGlassesStorage else { return }
         galleryConnectionGeneration += 1
+        let hotspotSsid = pendingHotspotConnection?.ssid ?? enabledHotspotStatus(glassesValues)?.ssid
         pendingHotspotConnection = nil
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: hotspot off"
-        hotspotJoinPromptSsid = nil
         runAsyncAction("Disable glasses photo hotspot") { [self] in
-            glassesHotspotConnector.disconnect(ssid: galleryHotspotSsidLabel(glassesValues))
+            if let hotspotSsid {
+                glassesHotspotConnector.disconnect(ssid: hotspotSsid)
+            }
             if hotspotEnabled && glassesConnected {
                 _ = try await mentraBluetoothSdk.setHotspotState(enabled: false)
             }
@@ -747,16 +762,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func prepareGlassesPhotoPreview() {
+        galleryConnectionGeneration += 1
+        if let ssid = pendingHotspotConnection?.ssid ?? enabledHotspotStatus(glassesValues)?.ssid {
+            glassesHotspotConnector.disconnect(ssid: ssid)
+        }
         runAsyncAction("Connect to glasses hotspot") { [self] in
             try await prepareGlassesPhotoPreviewConnection()
-        }
-    }
-
-    func confirmHotspotJoin() {
-        hotspotJoinExplanationShown = true
-        hotspotJoinPromptSsid = nil
-        runAsyncAction("Join glasses hotspot") { [self] in
-            try await connectPendingGlassesHotspot()
         }
     }
 
@@ -767,7 +778,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cameraStatus = "Camera: preparing glasses hotspot"
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: starting glasses hotspot"
-        hotspotJoinPromptSsid = nil
 
         let hotspot: (ssid: String, password: String, localIp: String)
         if let current = enabledHotspotStatus(glassesValues) {
@@ -787,15 +797,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             baseUrl: "http://\(hotspot.localIp):8089"
         )
         pendingHotspotConnection = pending
-        if await waitForGalleryServer(pending.baseUrl, attempts: 3, delayMs: 400) {
+        let alreadyReady = await waitForGalleryServer(pending.baseUrl, attempts: 3, delayMs: 400)
+        guard generation == galleryConnectionGeneration else { return }
+        if alreadyReady {
             markGalleryServerReady(pending.baseUrl)
-            return
-        }
-        if !hotspotJoinExplanationShown {
-            cameraStatus = "Camera: approve the glasses hotspot connection"
-            galleryServerReachable = false
-            galleryServerStatus = "Gallery server: approval required for \(pending.ssid)"
-            hotspotJoinPromptSsid = pending.ssid
             return
         }
         try await connectPendingGlassesHotspot()
@@ -813,7 +818,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         do {
             try await glassesHotspotConnector.connect(ssid: pending.ssid, password: pending.password)
             guard generation == galleryConnectionGeneration else { return }
-            guard await waitForGalleryServer(pending.baseUrl, attempts: 20, delayMs: 500) else {
+            let ready = await waitForGalleryServer(pending.baseUrl, attempts: 20, delayMs: 500)
+            guard generation == galleryConnectionGeneration else { return }
+            guard ready else {
                 throw ExampleActionError(message: "Could not reach the glasses gallery after connecting.")
             }
             markGalleryServerReady(pending.baseUrl)
@@ -842,7 +849,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cameraStatus = "Camera: ready to save and preview from glasses"
         galleryServerReachable = true
         galleryServerStatus = "Gallery server: ready at \(baseUrl)"
-        hotspotJoinPromptSsid = nil
         append(tag: "LIVE", text: "gallery server ready \(baseUrl)")
     }
 
@@ -1168,6 +1174,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             throw error
         }
         handlePhotoResponse(responseEvent)
+        switch responseEvent.response {
+        case .success:
+            break
+        case let .error(_, errorCode, errorMessage, _):
+            activePhotoRequestId = nil
+            throw ExampleActionError(message: errorCode ?? errorMessage)
+        }
         cameraStatus = "Camera: photo saved on glasses; loading preview"
         photoPreviewDetails = photoPreviewDetails.map { $0.withState("saved") }
         Task { @MainActor [weak self] in
@@ -1232,17 +1245,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         requestId: String,
         generation: Int
     ) async throws {
-        guard let baseUrl = pendingHotspotConnection?.baseUrl
-                ?? galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled),
+        guard let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled)
+                ?? pendingHotspotConnection?.baseUrl,
               galleryServerReachable == true else {
             throw ExampleActionError(message: "The glasses hotspot is not ready for preview downloads.")
         }
+        let galleryGeneration = galleryConnectionGeneration
 
         galleryServerStatus = "Gallery server: finding \(requestId)"
+        var consecutiveFailures = 0
         for attempt in 0 ..< glassesPhotoPollAttempts {
-            guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+            guard activePhotoRequestId == requestId,
+                  pollGeneration == generation,
+                  galleryConnectionGeneration == galleryGeneration else { return }
             do {
                 let photo = try await findGalleryPhoto(baseUrl: baseUrl, requestId: requestId)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
+                consecutiveFailures = 0
                 galleryServerReachable = true
                 galleryServerStatus = "Gallery server: connected; finding \(requestId)"
                 guard let photo else {
@@ -1264,6 +1283,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 request.cachePolicy = .reloadIgnoringLocalCacheData
                 request.timeoutInterval = 30
                 let (data, response) = try await URLSession.shared.data(for: request)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
                 guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
                     let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                     throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
@@ -1293,11 +1313,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "LIVE", text: "glasses photo downloaded \(photo.name)")
                 return
             } catch {
+                guard galleryConnectionGeneration == galleryGeneration else { return }
+                consecutiveFailures += 1
+                let transportUnavailable = consecutiveFailures >= glassesGalleryFailureThreshold
                 if attempt == 0 || attempt % 10 == 9 {
-                    galleryServerReachable = false
-                    galleryServerStatus = "Gallery server: not reachable. Join \(galleryHotspotSsidLabel(glassesValues))."
-                    cameraStatus = "Camera: join \(galleryHotspotSsidLabel(glassesValues)) to load the saved photo"
+                    galleryServerReachable = transportUnavailable ? false : galleryServerReachable
+                    galleryServerStatus = transportUnavailable
+                        ? "Gallery server: \(error.localizedDescription)"
+                        : "Gallery server: connected; waiting for \(requestId)"
+                    cameraStatus = transportUnavailable
+                        ? "Camera: reconnect to the glasses hotspot to load the saved photo"
+                        : "Camera: photo saved on glasses; waiting for preview"
                     append(tag: "LIVE", text: "waiting for glasses photo \(requestId): \(error.localizedDescription)")
+                } else if transportUnavailable, galleryServerReachable != false {
+                    galleryServerReachable = false
+                    galleryServerStatus = "Gallery server: \(error.localizedDescription)"
+                    cameraStatus = "Camera: reconnect to the glasses hotspot to load the saved photo"
                 }
             }
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -2174,6 +2205,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             applyOtaStatus(event)
         case let .versionInfo(event):
             latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+            let installedIdentity = otaAppIdentity(event)
+            if let installedIdentity,
+               let otaStartingAppIdentity,
+               installedIdentity != otaStartingAppIdentity,
+               otaStatus?.status == "in_progress",
+               otaStatus?.phase == "install" {
+                self.otaStartingAppIdentity = nil
+                resetOtaDisplayProgress()
+                autoOtaCheckedConnectionKey = nil
+                otaStatus = nil
+                otaDisplayPercent = nil
+                otaStatusMessage = "OTA installed; checking for additional updates"
+                otaUpdateAvailable = false
+                append(tag: "LIVE", text: "OTA install restarted ASG client as \(installedIdentity)")
+            }
             maybeAutoCheckOta()
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
@@ -2191,6 +2237,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
             return updateAvailable
         }
+        otaStartingAppIdentity = nil
         resetOtaDisplayProgress()
         if updateAvailable {
             otaStatus = nil
@@ -2211,6 +2258,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func applyOtaStatus(_ event: OtaStatusEvent) {
         guard isDisplayableOtaStatus(event) else {
+            otaStartingAppIdentity = nil
             resetOtaDisplayProgress()
             otaStatus = nil
             otaDisplayPercent = nil
@@ -2223,6 +2271,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
+            otaStartingAppIdentity = nil
             otaUpdateAvailable = false
         }
         append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
@@ -2682,7 +2731,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pendingHotspotConnection = nil
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
-        hotspotJoinPromptSsid = nil
+        otaStartingAppIdentity = nil
         resetOtaDisplayProgress()
         otaStatus = nil
         otaDisplayPercent = nil
@@ -3269,6 +3318,22 @@ func otaVersionInfoSignature(_ event: VersionInfoResult) -> String {
     .filter { !$0.isEmpty }
     .joined(separator: "|")
     return key.isEmpty ? "version-unknown" : key
+}
+
+func otaAppIdentity(_ status: GlassesRuntimeState?) -> String? {
+    guard let device = connectedGlassesInfo(status) else { return nil }
+    let key = [device.buildNumber, device.appVersion]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: "|")
+    return key.isEmpty ? nil : key
+}
+
+func otaAppIdentity(_ event: VersionInfoResult) -> String? {
+    let key = [event.buildNumber, event.appVersion]
+        .filter { !$0.isEmpty }
+        .joined(separator: "|")
+    return key.isEmpty ? nil : key
 }
 
 func otaSessionKey(_ status: OtaStatusEvent) -> String {

@@ -18,11 +18,9 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -149,18 +147,6 @@ fun CameraScreen(controller: MentraExampleController) {
             state.activeAction == "Capture & upload" ||
                 state.activeAction == "Capture scan photo" -> captureMode = CameraCaptureMode.PHOTO
         }
-    }
-    state.hotspotJoinPromptSsid?.let { ssid ->
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Connect to Glasses") },
-            text = { Text("When prompted, tap Connect to connect to \"$ssid\".") },
-            confirmButton = {
-                TextButton(onClick = controller::confirmHotspotJoin) {
-                    Text("OK")
-                }
-            },
-        )
     }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Camera")

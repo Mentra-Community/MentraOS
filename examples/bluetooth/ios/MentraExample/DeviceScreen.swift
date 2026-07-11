@@ -325,36 +325,40 @@ struct DeviceScreen: View {
 
     private var otaCard: some View {
         let updateRequired = model.otaUpdateAvailable && model.otaStatus == nil
+        let installing = isOtaInstalling(model: model)
         return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top) {
                 HStack(alignment: .center, spacing: 10) {
                     if updateRequired {
                         ZStack {
-                            Circle().fill(AppColor.red)
+                            RoundedRectangle(cornerRadius: 7).fill(AppColor.amber.opacity(0.10))
                             Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.white)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(AppColor.amber)
                         }
-                        .frame(width: 34, height: 34)
+                        .frame(width: 30, height: 30)
                     }
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(updateRequired ? "ACTION NEEDED" : "OTA")
-                            .font(.system(size: 10, weight: updateRequired ? .heavy : .semibold).monospaced())
-                            .tracking(1.1)
-                            .foregroundColor(updateRequired ? AppColor.red : AppColor.muted)
+                        Text(updateRequired ? "OTA UPDATE" : "OTA")
+                            .font(.system(size: 10, weight: .semibold).monospaced())
+                            .foregroundColor(updateRequired ? Color(hex: 0x9A5A00) : AppColor.muted)
                         Text(otaCardTitle(model: model))
-                            .font(.system(size: updateRequired ? 19 : 15, weight: updateRequired ? .heavy : .bold))
-                            .foregroundColor(AppColor.inkAlt)
+                            .font(.system(size: updateRequired ? 16 : 15, weight: .bold))
+                            .foregroundColor(AppColor.ink)
                     }
                 }
                 Spacer()
-                if let status = model.otaStatus {
+                if installing {
+                    ProgressView()
+                        .tint(AppColor.greenPrimary)
+                        .controlSize(.small)
+                } else if let status = model.otaStatus {
                     Text("\(otaDisplayPercent(model: model, status: status))%")
-                        .font(.system(size: 20, weight: .heavy))
+                        .font(.system(size: 15, weight: .bold).monospacedDigit())
                         .foregroundColor(AppColor.greenInk)
                 }
             }
-            if let status = model.otaStatus {
+            if let status = model.otaStatus, !installing {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         Capsule().fill(AppColor.greenInk.opacity(0.08))
@@ -363,12 +367,11 @@ struct DeviceScreen: View {
                             .frame(width: geometry.size.width * CGFloat(min(max(otaDisplayPercent(model: model, status: status), 0), 100)) / 100.0)
                     }
                 }
-                .frame(height: 6)
+                .frame(height: 4)
             }
             Text(otaCardDetail(model: model))
-                .font(.system(size: updateRequired ? 13 : 12, weight: updateRequired ? .bold : .medium))
-                .foregroundColor(updateRequired ? Color(hex: 0x5F201B) : AppColor.muted)
-                .lineSpacing(updateRequired ? 2 : 0)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
             if updateRequired {
                 Button(action: model.startOtaUpdate) {
@@ -376,29 +379,22 @@ struct DeviceScreen: View {
                         Image(systemName: "arrow.down.to.line")
                             .font(.system(size: 15, weight: .bold))
                         Text(canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
-                            .font(.system(size: 14, weight: .heavy))
+                            .font(.system(size: 13, weight: .bold))
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 48)
-                    .background(canStartOta(model: model) ? AppColor.red : Color(hex: 0x5F201B).opacity(0.36))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .frame(minHeight: 42)
+                    .background(canStartOta(model: model) ? AppColor.greenInk : AppColor.muted.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canStartOta(model: model))
             }
         }
         .padding(14)
-        .background(
-            LinearGradient(
-                colors: updateRequired ? [Color(hex: 0xFFF5DF), Color(hex: 0xFFE6E1)] : [.white, .white],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(updateRequired ? AppColor.red.opacity(0.34) : Color.white.opacity(0.7), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: (updateRequired ? AppColor.red : Color(hex: 0x0F2A1D)).opacity(updateRequired ? 0.18 : 0.06), radius: updateRequired ? 22 : 18, x: 0, y: updateRequired ? 8 : 6)
+        .background(updateRequired ? Color(hex: 0xFFFCF5) : .white)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(updateRequired ? AppColor.amber.opacity(0.32) : AppColor.ink.opacity(0.08), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -449,11 +445,14 @@ private func isOtaInProgress(model: BluetoothViewModel) -> Bool {
 
 @MainActor
 private func otaStatusLine(model: BluetoothViewModel) -> String {
+    if isOtaInstalling(model: model) {
+        return "installing update"
+    }
     if let status = model.otaStatus {
         return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(otaDisplayPercent(model: model, status: status))%"
     }
     if model.otaUpdateAvailable {
-        return "Update required"
+        return "Firmware update available"
     }
     if let message = model.otaStatusMessage {
         return message
@@ -471,11 +470,14 @@ private func otaCardTitle(model: BluetoothViewModel) -> String {
     if model.otaStatus?.status == "failed" {
         return "Update failed"
     }
+    if isOtaInstalling(model: model) {
+        return "Installing update"
+    }
     if let status = model.otaStatus, isOtaInProgress(model: model) {
         return "Updating \(status.stepType.isEmpty ? "firmware" : status.stepType)"
     }
     if model.otaUpdateAvailable {
-        return "Update required"
+        return "Firmware update available"
     }
     return "OTA status"
 }
@@ -485,13 +487,21 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     if let error = model.otaStatus?.errorMessage {
         return error
     }
+    if isOtaInstalling(model: model) {
+        return "The glasses client may restart to finish installation."
+    }
     if let status = model.otaStatus {
         return "\(status.phase.isEmpty ? "status" : status.phase) · step \(status.currentStep)/\(status.totalSteps)"
     }
     if model.otaUpdateAvailable {
-        return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
+        return "A newer firmware version is available for these glasses."
     }
     return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
+}
+
+@MainActor
+private func isOtaInstalling(model: BluetoothViewModel) -> Bool {
+    model.otaStatus?.status == "in_progress" && model.otaStatus?.phase == "install"
 }
 
 @MainActor
