@@ -1145,19 +1145,25 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.galleryServerReachable != true) {
             throw IllegalStateException("The glasses hotspot is not ready for preview downloads.")
         }
+        val galleryGeneration = galleryConnectionGeneration
 
         val localFile = File(appContext.cacheDir, "mentra-gallery-$requestId.jpg")
         state = state.copy(galleryServerStatus = "Gallery server: finding $requestId")
         var consecutiveFailures = 0
 
         repeat(GLASSES_PHOTO_POLL_ATTEMPTS) { attempt ->
-            if (activePhotoRequestId != requestId || pollGeneration != generation) {
+            if (
+                activePhotoRequestId != requestId ||
+                pollGeneration != generation ||
+                galleryConnectionGeneration != galleryGeneration
+            ) {
                 return
             }
             try {
                 val photo = withContext(Dispatchers.IO) {
                     findGalleryPhoto(baseUrl, requestId)
                 }
+                if (galleryConnectionGeneration != galleryGeneration) return
                 consecutiveFailures = 0
                 state = state.copy(
                     galleryServerReachable = true,
@@ -1174,6 +1180,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 val contentType = withContext(Dispatchers.IO) {
                     downloadGalleryFile(remoteUrl, localFile)
                 }
+                if (galleryConnectionGeneration != galleryGeneration) return
                 val dimensions = imageDimensions(localFile)
                 val previewUri = Uri.fromFile(localFile).toString()
                 activePhotoRequestId = null
@@ -1196,6 +1203,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 addEvent("LIVE", "glasses photo downloaded ${photo.name}")
                 return
             } catch (error: Throwable) {
+                if (galleryConnectionGeneration != galleryGeneration) return
                 consecutiveFailures += 1
                 val transportUnavailable = consecutiveFailures >= GLASSES_GALLERY_FAILURE_THRESHOLD
                 if (attempt == 0 || attempt % 10 == 9) {

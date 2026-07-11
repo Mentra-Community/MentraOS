@@ -1277,13 +1277,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
               galleryServerReachable == true else {
             throw ExampleActionError(message: "The glasses hotspot is not ready for preview downloads.")
         }
+        let galleryGeneration = galleryConnectionGeneration
 
         galleryServerStatus = "Gallery server: finding \(requestId)"
         var consecutiveFailures = 0
         for attempt in 0 ..< glassesPhotoPollAttempts {
-            guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
+            guard activePhotoRequestId == requestId,
+                  pollGeneration == generation,
+                  galleryConnectionGeneration == galleryGeneration else { return }
             do {
                 let photo = try await findGalleryPhoto(baseUrl: baseUrl, requestId: requestId)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
                 consecutiveFailures = 0
                 galleryServerReachable = true
                 galleryServerStatus = "Gallery server: connected; finding \(requestId)"
@@ -1306,6 +1310,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 request.cachePolicy = .reloadIgnoringLocalCacheData
                 request.timeoutInterval = 30
                 let (data, response) = try await URLSession.shared.data(for: request)
+                guard galleryConnectionGeneration == galleryGeneration else { return }
                 guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
                     let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                     throw ExampleActionError(message: "Gallery server returned HTTP \(statusCode).")
@@ -1335,6 +1340,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "LIVE", text: "glasses photo downloaded \(photo.name)")
                 return
             } catch {
+                guard galleryConnectionGeneration == galleryGeneration else { return }
                 consecutiveFailures += 1
                 let transportUnavailable = consecutiveFailures >= glassesGalleryFailureThreshold
                 if attempt == 0 || attempt % 10 == 9 {

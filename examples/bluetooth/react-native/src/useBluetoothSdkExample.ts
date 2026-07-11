@@ -2467,6 +2467,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (!baseUrl || galleryServerReachableRef.current !== true) {
       throw new Error('The glasses hotspot is not ready for preview downloads.');
     }
+    const galleryGeneration = galleryConnectionGenerationRef.current;
 
     const localFile = new File(Paths.cache, `mentra-gallery-${requestId}.jpg`);
     setGalleryServerStatus(`Gallery server: finding ${requestId}`);
@@ -2475,7 +2476,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     for (let attempt = 0; attempt < GLASSES_PHOTO_POLL_ATTEMPTS; attempt += 1) {
       if (
         activePhotoRequestIdRef.current !== requestId ||
-        pollGenerationRef.current !== generation
+        pollGenerationRef.current !== generation ||
+        galleryConnectionGenerationRef.current !== galleryGeneration
       ) {
         return;
       }
@@ -2485,6 +2487,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           {cache: 'no-store', headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'}},
           3000,
         );
+        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
         if (!galleryResponse.ok) {
           throw new Error(`Gallery server returned HTTP ${galleryResponse.status}.`);
         }
@@ -2499,6 +2502,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             }>;
           };
         };
+        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
         const photo = gallery.data?.photos?.find((item) => item.request_id === requestId);
         consecutiveFailures = 0;
         setGalleryServerReachable(true);
@@ -2513,6 +2517,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           remoteUrl.searchParams.set('file', fileName);
         }
         const downloaded = await File.downloadFileAsync(remoteUrl.toString(), localFile, {idempotent: true});
+        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
         const deliveredAt = Date.now();
         setPhotoPreviewUrl(downloaded.uri);
         setPhotoStatus(null);
@@ -2538,6 +2543,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('LIVE', `glasses photo downloaded ${fileName}`);
         return;
       } catch (error) {
+        if (galleryConnectionGenerationRef.current !== galleryGeneration) return;
         consecutiveFailures += 1;
         const transportUnavailable =
           consecutiveFailures >= GLASSES_GALLERY_FAILURE_THRESHOLD;
