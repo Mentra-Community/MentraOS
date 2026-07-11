@@ -216,6 +216,7 @@ const val CAMERA_WARM_UP_DURATION_MS = 30_000
 const val CAMERA_WARM_UP_REFRESH_MS = 20_000L
 const val CAMERA_WARM_UP_DISCONNECTED_RETRY_MS = 2_000L
 const val GLASSES_PHOTO_POLL_ATTEMPTS = 120
+const val GLASSES_GALLERY_FAILURE_THRESHOLD = 3
 val photoAeExposureDivisorOptions = listOf(2, 3, 5)
 val photoIsoCapOptions = listOf(400, 800, 1600)
 val photoIspDigitalGainOptions = listOf(0, 1, 2, 4)
@@ -321,8 +322,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
-    private val glassesHotspotConnector = GlassesHotspotConnector(appContext) {
-        scope.launch { handleGlassesHotspotConnectionLost() }
+    private val glassesHotspotConnector = GlassesHotspotConnector(appContext) { connectionGeneration ->
+        scope.launch { handleGlassesHotspotConnectionLost(connectionGeneration) }
     }
     private val photoUploadServer = LocalPhotoUploadServer(
         appContext,
@@ -689,7 +690,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         try {
             withContext(Dispatchers.IO) {
-                glassesHotspotConnector.connect(pending.ssid, pending.password)
+                glassesHotspotConnector.connect(pending.ssid, pending.password, generation)
             }
             if (generation != galleryConnectionGeneration) return
             val ready = waitForGalleryServer(pending.baseUrl, attempts = 20, delayMs = 500)
@@ -727,7 +728,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "gallery server ready $baseUrl")
     }
 
-    private fun handleGlassesHotspotConnectionLost() {
+    private fun handleGlassesHotspotConnectionLost(connectionGeneration: Int) {
+        if (connectionGeneration != galleryConnectionGeneration) return
         galleryConnectionGeneration += 1
         pendingHotspotConnection = null
         if (state.photoDestination != PhotoDestination.GLASSES_STORAGE) return
@@ -1146,6 +1148,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
         val localFile = File(appContext.cacheDir, "mentra-gallery-$requestId.jpg")
         state = state.copy(galleryServerStatus = "Gallery server: finding $requestId")
+        var consecutiveFailures = 0
 
         repeat(GLASSES_PHOTO_POLL_ATTEMPTS) { attempt ->
             if (activePhotoRequestId != requestId || pollGeneration != generation) {
@@ -1155,6 +1158,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 val photo = withContext(Dispatchers.IO) {
                     findGalleryPhoto(baseUrl, requestId)
                 }
+                consecutiveFailures = 0
                 state = state.copy(
                     galleryServerReachable = true,
                     galleryServerStatus = "Gallery server: connected; finding $requestId",
@@ -1192,12 +1196,29 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 addEvent("LIVE", "glasses photo downloaded ${photo.name}")
                 return
             } catch (error: Throwable) {
+                consecutiveFailures += 1
+                val transportUnavailable = consecutiveFailures >= GLASSES_GALLERY_FAILURE_THRESHOLD
                 if (attempt == 0 || attempt % 10 == 9) {
                     state = state.copy(
-                        cameraStatus = "Camera: photo saved on glasses; waiting for preview",
-                        galleryServerStatus = "Gallery server: connected; waiting for $requestId",
+                        cameraStatus = if (transportUnavailable) {
+                            "Camera: reconnect to the glasses hotspot to load the saved photo"
+                        } else {
+                            "Camera: photo saved on glasses; waiting for preview"
+                        },
+                        galleryServerReachable = if (transportUnavailable) false else state.galleryServerReachable,
+                        galleryServerStatus = if (transportUnavailable) {
+                            "Gallery server: ${error.message ?: "not reachable"}"
+                        } else {
+                            "Gallery server: connected; waiting for $requestId"
+                        },
                     )
                     addEvent("LIVE", "waiting for glasses photo $requestId: ${error.message}")
+                } else if (transportUnavailable && state.galleryServerReachable != false) {
+                    state = state.copy(
+                        cameraStatus = "Camera: reconnect to the glasses hotspot to load the saved photo",
+                        galleryServerReachable = false,
+                        galleryServerStatus = "Gallery server: ${error.message ?: "not reachable"}",
+                    )
                 }
             }
             delay(1_000)

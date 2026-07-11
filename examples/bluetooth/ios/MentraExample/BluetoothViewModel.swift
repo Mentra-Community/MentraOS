@@ -112,6 +112,7 @@ let photoIsoCapOptions = [400, 800, 1600]
 let photoIspDigitalGainOptions = [0, 1, 2, 4]
 let photoIspAnalogGainOptions = ["low"]
 let glassesPhotoPollAttempts = 120
+let glassesGalleryFailureThreshold = 3
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
@@ -1278,10 +1279,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         galleryServerStatus = "Gallery server: finding \(requestId)"
+        var consecutiveFailures = 0
         for attempt in 0 ..< glassesPhotoPollAttempts {
             guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
             do {
                 let photo = try await findGalleryPhoto(baseUrl: baseUrl, requestId: requestId)
+                consecutiveFailures = 0
                 galleryServerReachable = true
                 galleryServerStatus = "Gallery server: connected; finding \(requestId)"
                 guard let photo else {
@@ -1332,10 +1335,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "LIVE", text: "glasses photo downloaded \(photo.name)")
                 return
             } catch {
+                consecutiveFailures += 1
+                let transportUnavailable = consecutiveFailures >= glassesGalleryFailureThreshold
                 if attempt == 0 || attempt % 10 == 9 {
-                    galleryServerStatus = "Gallery server: connected; waiting for \(requestId)"
-                    cameraStatus = "Camera: photo saved on glasses; waiting for preview"
+                    galleryServerReachable = transportUnavailable ? false : galleryServerReachable
+                    galleryServerStatus = transportUnavailable
+                        ? "Gallery server: \(error.localizedDescription)"
+                        : "Gallery server: connected; waiting for \(requestId)"
+                    cameraStatus = transportUnavailable
+                        ? "Camera: reconnect to the glasses hotspot to load the saved photo"
+                        : "Camera: photo saved on glasses; waiting for preview"
                     append(tag: "LIVE", text: "waiting for glasses photo \(requestId): \(error.localizedDescription)")
+                } else if transportUnavailable, galleryServerReachable != false {
+                    galleryServerReachable = false
+                    galleryServerStatus = "Gallery server: \(error.localizedDescription)"
+                    cameraStatus = "Camera: reconnect to the glasses hotspot to load the saved photo"
                 }
             }
             try? await Task.sleep(nanoseconds: 1_000_000_000)

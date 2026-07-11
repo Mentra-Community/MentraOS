@@ -17,14 +17,14 @@ import kotlin.coroutines.resumeWithException
 
 class GlassesHotspotConnector(
     context: Context,
-    private val onConnectionLost: () -> Unit,
+    private val onConnectionLost: (Int) -> Unit,
 ) {
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var pendingContinuation: CancellableContinuation<Unit>? = null
 
-    suspend fun connect(ssid: String, password: String) {
+    suspend fun connect(ssid: String, password: String, connectionGeneration: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw IOException("Automatic hotspot connection requires Android 10 or newer.")
         }
@@ -67,7 +67,7 @@ class GlassesHotspotConnector(
                     override fun onLost(network: Network) {
                         if (callback !== this) return
                         releaseNetwork()
-                        onConnectionLost()
+                        onConnectionLost(connectionGeneration)
                     }
                 }
                 callback = networkCallback

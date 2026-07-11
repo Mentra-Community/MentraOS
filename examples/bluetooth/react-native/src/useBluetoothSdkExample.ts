@@ -548,6 +548,7 @@ export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkEx
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
 const GLASSES_PHOTO_POLL_ATTEMPTS = 120;
+const GLASSES_GALLERY_FAILURE_THRESHOLD = 3;
 const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 export const PHOTO_BLE_FALLBACK_QUALITY_WARNING =
@@ -2469,6 +2470,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
     const localFile = new File(Paths.cache, `mentra-gallery-${requestId}.jpg`);
     setGalleryServerStatus(`Gallery server: finding ${requestId}`);
+    let consecutiveFailures = 0;
 
     for (let attempt = 0; attempt < GLASSES_PHOTO_POLL_ATTEMPTS; attempt += 1) {
       if (
@@ -2498,6 +2500,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           };
         };
         const photo = gallery.data?.photos?.find((item) => item.request_id === requestId);
+        consecutiveFailures = 0;
         setGalleryServerReachable(true);
         if (!photo?.name) {
           setGalleryServerStatus(`Gallery server: connected; finding ${requestId}`);
@@ -2535,14 +2538,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('LIVE', `glasses photo downloaded ${fileName}`);
         return;
       } catch (error) {
+        consecutiveFailures += 1;
+        const transportUnavailable =
+          consecutiveFailures >= GLASSES_GALLERY_FAILURE_THRESHOLD;
         if (attempt === 0 || attempt % 10 === 9) {
           setGalleryServerStatus(
-            `Gallery server: connected; waiting for ${requestId}.`,
+            transportUnavailable
+              ? `Gallery server: ${formatError(error)}`
+              : `Gallery server: connected; waiting for ${requestId}.`,
           );
           setCameraStatus(
-            'Camera: photo saved on glasses; waiting for preview',
+            transportUnavailable
+              ? 'Camera: reconnect to the glasses hotspot to load the saved photo'
+              : 'Camera: photo saved on glasses; waiting for preview',
           );
           addEvent('LIVE', `waiting for glasses photo ${requestId}: ${formatError(error)}`);
+        }
+        if (transportUnavailable) {
+          setGalleryServerReachable(false);
         }
       }
       await delay(1000);
