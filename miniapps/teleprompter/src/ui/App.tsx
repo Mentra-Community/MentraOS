@@ -1,5 +1,5 @@
-import {useState} from "react"
-import {useSafeArea} from "@mentra/miniapp/ui"
+import {useEffect, useState} from "react"
+import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav, type Tab} from "./components/BottomNav"
 import {Header} from "./components/Header"
@@ -18,7 +18,14 @@ import {HEADER_FROM, HEADER_TO} from "./lib/theme"
  */
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>("script")
+  const scheme = useColorScheme()
   const {insets} = useSafeArea()
+
+  // Mirror the host-reported color scheme onto <html> so `.dark` CSS variable
+  // overrides and Tailwind `dark:` variants activate together.
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", scheme === "dark")
+  }, [scheme])
   const {developerMode, holdHandlers} = useDeveloperMode()
   const tp = useTeleprompter()
 
@@ -32,13 +39,13 @@ export function App() {
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <div className="min-h-0 flex-1 bg-zinc-100 flex flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 bg-zinc-100 dark:bg-zinc-950 flex flex-col overflow-hidden">
         <Header connected={tp.connected} />
 
         <div className="flex-1 min-h-0 overflow-hidden">
           {!tp.settings ? (
             <div className="flex items-center justify-center h-full">
-              <p className="text-zinc-400 text-sm">Loading…</p>
+              <p className="text-zinc-400 dark:text-zinc-500 text-sm">Loading…</p>
             </div>
           ) : activeTab === "settings" ? (
             <SettingsView

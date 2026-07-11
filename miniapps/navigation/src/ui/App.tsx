@@ -1,4 +1,5 @@
 import {useEffect, useState} from "react"
+import {useColorScheme} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
 import {RouterProvider, useRouter} from "@/ui/router"
@@ -46,6 +47,13 @@ function Pages() {
 }
 
 export default function App() {
+  // Follow the host-reported color scheme (window.MentraOS.colorScheme) by
+  // toggling the `.dark` class on <html>, which drives the `dark:` variants.
+  const scheme = useColorScheme()
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", scheme === "dark")
+  }, [scheme])
+
   // Kick off Mapbox GL JS init as soon as the tree mounts. getMapbox() is
   // the singleton initialiser — first call resolves the token and sets
   // mapboxgl.accessToken; subsequent calls are no-ops. NavMap awaits the

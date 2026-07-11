@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` utilities apply when `.dark` is set on <html>
+   (toggled at the App root from the host-reported color scheme). */
+@custom-variant dark (&:is(.dark *));
+
 html,
 body,
 #root {
@@ -13,4 +17,14 @@ body,
 
 body {
   -webkit-font-smoothing: antialiased;
+}
+
+/* Dark palette. `.dark` lands on <html> (documentElement), so `.dark` itself
+   covers html; the descendant selectors cover body/#root. Purely additive —
+   light mode above is untouched. */
+.dark,
+.dark body,
+.dark #root {
+  background: #0b0b0d;
+  color: #fafafa;
 }

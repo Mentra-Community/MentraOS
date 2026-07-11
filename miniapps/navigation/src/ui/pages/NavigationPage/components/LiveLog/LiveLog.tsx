@@ -30,7 +30,7 @@ export function LiveLog({
               {statusText(status)}
             </div>
             {maneuver && maneuver.distanceMeters >= 0 ? (
-              <div className="text-[12px] font-mono text-neutral-700 bg-neutral-100 px-2 py-1 rounded ml-auto">
+              <div className="text-[12px] font-mono text-neutral-700 dark:text-zinc-200 bg-neutral-100 dark:bg-zinc-800 px-2 py-1 rounded ml-auto">
                 {formatDistance(maneuver.distanceMeters, unitSystem)}
               </div>
             ) : null}
@@ -42,26 +42,26 @@ export function LiveLog({
               primary={fmt.headline(maneuver)}
             />
           ) : (
-            <div className="text-[13px] text-neutral-500 italic mb-2">
+            <div className="text-[13px] text-neutral-500 dark:text-zinc-400 italic mb-2">
               {status === "rerouting" ? "Rebuilding route…" : "Starting navigation…"}
             </div>
           )}
         </>
       ) : null}
 
-      <h2 className="text-[14px] font-bold tracking-wide text-neutral-800 mt-4 mb-2">
+      <h2 className="text-[14px] font-bold tracking-wide text-neutral-800 dark:text-zinc-200 mt-4 mb-2">
         Live updates {running ? "•" : ""}{" "}
-        <span className="font-mono text-[12px] text-neutral-500 font-normal">({log.length})</span>
+        <span className="font-mono text-[12px] text-neutral-500 dark:text-zinc-400 font-normal">({log.length})</span>
       </h2>
-      <div className="bg-white border border-neutral-200 rounded-xl p-2 max-h-72 overflow-y-auto">
+      <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-2 max-h-72 overflow-y-auto">
         {log.length === 0 ? (
-          <div className="text-[13px] text-neutral-500 italic px-2 py-1">(no events yet)</div>
+          <div className="text-[13px] text-neutral-500 dark:text-zinc-400 italic px-2 py-1">(no events yet)</div>
         ) : (
           log.map((e) => (
             <div
               key={e.id}
-              className="flex gap-2 font-mono text-[12px] text-neutral-700 px-1 py-0.5 border-b border-neutral-100 last:border-0">
-              <span className="text-neutral-400 shrink-0">{new Date(e.ts).toLocaleTimeString()}</span>
+              className="flex gap-2 font-mono text-[12px] text-neutral-700 dark:text-zinc-200 px-1 py-0.5 border-b border-neutral-100 dark:border-zinc-800 last:border-0">
+              <span className="text-neutral-400 dark:text-zinc-500 shrink-0">{new Date(e.ts).toLocaleTimeString()}</span>
               <span>{e.line}</span>
             </div>
           ))
@@ -85,13 +85,13 @@ function ManeuverPill({glyph, primary}: {glyph: string; primary: string}) {
 function statusPillClasses(s: NavStatus): string {
   switch (s) {
     case "navigating":
-      return "bg-blue-100 text-blue-800"
+      return "bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-300"
     case "rerouting":
-      return "bg-amber-100 text-amber-900"
+      return "bg-amber-100 dark:bg-amber-500/20 text-amber-900 dark:text-amber-300"
     case "arrived":
-      return "bg-emerald-100 text-emerald-900"
+      return "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-900 dark:text-emerald-300"
     default:
-      return "bg-neutral-100 text-neutral-700"
+      return "bg-neutral-100 dark:bg-zinc-800 text-neutral-700 dark:text-zinc-200"
   }
 }
 

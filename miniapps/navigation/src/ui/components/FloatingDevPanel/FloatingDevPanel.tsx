@@ -157,7 +157,7 @@ export function FloatingDevPanel({
         rootRef.current = el
       }}
       style={{position: "fixed", left: pos.x, top: pos.y}}
-      className="[font-synthesis:none] antialiased z-9999 w-88 max-w-[calc(100vw-1rem)] max-h-[50vh] rounded-[22px] overflow-clip [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000073_0px_18px_50px] bg-[#FFFFFFA8] border border-solid border-[#FFFFFF99] flex flex-col">
+      className="[font-synthesis:none] antialiased z-9999 w-88 max-w-[calc(100vw-1rem)] max-h-[50vh] rounded-[22px] overflow-clip [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000073_0px_18px_50px] bg-[#FFFFFFA8] dark:bg-[#161619E6] border border-solid border-[#FFFFFF99] dark:border-[#FFFFFF1A] flex flex-col">
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

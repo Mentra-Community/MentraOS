@@ -690,11 +690,25 @@ export type StreamResolvedConfig = {
   }
 }
 
+/** Live encoder telemetry, when the glasses emit it (no firmware does yet). */
+export type StreamLiveStats = {
+  /** Current encoded video bitrate in bits per second. */
+  bitrate?: number
+  /** Current encode frame rate. */
+  fps?: number
+  droppedFrames?: number
+  /** Seconds since the stream started. */
+  duration?: number
+  /** Device temperature in °C, if the hardware reports it. */
+  temperatureC?: number
+}
+
 type StreamStatusCommon = {
   type: "stream_status"
   streamId?: string
   timestamp?: number
   resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 
 export type StreamStatusEvent =
