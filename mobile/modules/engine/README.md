@@ -2,6 +2,12 @@
 
 Mentra Engine — the on-device miniapp library.
 
+## Installation
+
+```sh
+npm install @mentra/engine
+```
+
 ## Entry points
 
 The package exposes three entry points (declared in `package.json` `exports`,

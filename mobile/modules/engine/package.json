@@ -25,6 +25,13 @@
     "./src/*": null,
     "./package.json": "./package.json"
   },
+  "files": [
+    "build",
+    "README.md",
+    "src",
+    "!src/**/__tests__",
+    "!src/**/*.test.ts"
+  ],
   "scripts": {
     "build": "expo-module build",
     "clean": "expo-module clean",
@@ -41,13 +48,21 @@
     "Engine",
     "miniapp"
   ],
-  "repository": "https://github.com/Mentra-Community/MentraOS",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/engine"
+  },
   "bugs": {
     "url": "https://github.com/Mentra-Community/MentraOS/issues"
   },
   "author": "Mentra Community",
   "license": "MIT",
-  "homepage": "https://github.com/Mentra-Community/MentraOS#readme",
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/main/mobile/modules/engine#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@types/semver": "^7.7.1",
     "buffer": "^6.0.3",
