@@ -63,7 +63,7 @@ export function App() {
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <div className="min-h-0 flex-1 bg-zinc-100 flex flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 bg-zinc-100 dark:bg-zinc-950 flex flex-col overflow-hidden">
         <Header
           connected={connected}
           accentColor={presentation.accentColor}
@@ -206,7 +206,9 @@ function CloudStatusFooter({
   return (
     <div
       className={`w-full px-5 py-2 border-t flex items-center justify-between gap-3 ${
-        dark ? "bg-zinc-900 border-zinc-800 text-white" : "bg-white/90 border-zinc-200 text-zinc-800"
+        dark
+          ? "bg-zinc-900 border-zinc-800 text-white"
+          : "bg-white/90 dark:bg-zinc-900/90 border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200"
       }`}>
       <div className="flex items-center gap-2 min-w-0">
         <span
@@ -215,7 +217,9 @@ function CloudStatusFooter({
         />
         <span className="text-sm font-semibold truncate">{label}</span>
       </div>
-      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500"}`}>{detail}</span>
+      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
+        {detail}
+      </span>
     </div>
   )
 }

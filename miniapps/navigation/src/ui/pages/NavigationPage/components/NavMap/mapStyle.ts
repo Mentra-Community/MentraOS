@@ -13,3 +13,14 @@
  * a top-down nav map than the 3D-leaning `standard`.
  */
 export const MAPBOX_STYLE_URL = "mapbox://styles/mapbox/streets-v12"
+
+/**
+ * Dark-scheme counterpart. `dark-v11` is the stock dark basemap; swap for a
+ * Studio style if a branded dark look is authored later.
+ */
+export const MAPBOX_DARK_STYLE_URL = "mapbox://styles/mapbox/dark-v11"
+
+/** Basemap for the given host color scheme. */
+export function mapboxStyleUrl(scheme: "light" | "dark"): string {
+  return scheme === "dark" ? MAPBOX_DARK_STYLE_URL : MAPBOX_STYLE_URL
+}
