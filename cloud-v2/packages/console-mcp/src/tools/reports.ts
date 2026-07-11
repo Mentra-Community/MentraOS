@@ -235,9 +235,15 @@ export function compactReportRow(r: ReportSummary): Record<string, unknown> {
 
 function deriveSummary(r: ReportSummary): string | null {
   if (r.kind === "feedback") {
+    // submitReport normalizes string feedback to {message}; fall back to the
+    // raw object for structured feedback payloads.
     if (typeof r.feedback === "string") return truncate(r.feedback, SUMMARY_MAX_CHARS);
     if (r.feedback && typeof r.feedback === "object") {
-      return truncate(JSON.stringify(r.feedback), SUMMARY_MAX_CHARS);
+      const message = (r.feedback as Record<string, unknown>).message;
+      return truncate(
+        typeof message === "string" ? message : JSON.stringify(r.feedback),
+        SUMMARY_MAX_CHARS,
+      );
     }
     return null;
   }
