@@ -1768,7 +1768,6 @@ function photoDetailsSummary(details: PhotoPreviewDetails | null) {
 
 type DetailRow = {label: string; value: string};
 type DetailRowTone = 'default' | 'warning';
-const GLASSES_TO_PHONE_CLOCK_OFFSET_MS = 0;
 
 function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (!details) {
@@ -1796,7 +1795,6 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   }
   if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
   if (details.fileName) rows.push({label: 'Glasses filename', value: details.fileName});
-  addPhotoClockAdjustmentRow(rows, details.timeline);
   addPhotoTimelineRows(rows, details.timeline);
   if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
   if (details.width && details.height) rows.push({label: 'Dimensions', value: `${details.width} x ${details.height}`});
@@ -1985,20 +1983,9 @@ function addPhotoTimelineRows(rows: DetailRow[], timeline: PhotoPreviewDetails['
   for (const event of timeline) {
     rows.push({
       label: photoTimelineLabel(event),
-      value: formatPhotoTimelineTimestamp(photoTimelineDisplayTimestamp(event), startTimestamp),
+      value: formatPhotoTimelineTimestamp(event.timestamp, startTimestamp),
     });
   }
-}
-
-function addPhotoClockAdjustmentRow(rows: DetailRow[], timeline: PhotoPreviewDetails['timeline']) {
-  const hasDeviceTimestamp = timeline?.some((event) => event.deviceTimestamp != null);
-  if (!hasDeviceTimestamp) {
-    return;
-  }
-  rows.push({
-    label: 'Clock adjustment',
-    value: `Glasses timestamps +${formatOffsetSeconds(GLASSES_TO_PHONE_CLOCK_OFFSET_MS)} to phone clock`,
-  });
 }
 
 function photoTimelineStart(timeline: PhotoPreviewDetails['timeline']) {
@@ -2006,13 +1993,7 @@ function photoTimelineStart(timeline: PhotoPreviewDetails['timeline']) {
   if (requestEvent) {
     return requestEvent.timestamp;
   }
-  return timeline?.[0] ? photoTimelineDisplayTimestamp(timeline[0]) : undefined;
-}
-
-function photoTimelineDisplayTimestamp(event: NonNullable<PhotoPreviewDetails['timeline']>[number]) {
-  return event.deviceTimestamp != null
-    ? event.deviceTimestamp + GLASSES_TO_PHONE_CLOCK_OFFSET_MS
-    : event.timestamp;
+  return timeline?.[0]?.timestamp;
 }
 
 function photoTimelineLabel(event: NonNullable<PhotoPreviewDetails['timeline']>[number]) {
@@ -2052,10 +2033,6 @@ function formatTimelineDelta(deltaMs: number) {
     return `${sign}${Math.round(absoluteMs)}ms`;
   }
   return `${sign}${(absoluteMs / 1000).toFixed(3)}s`;
-}
-
-function formatOffsetSeconds(ms: number) {
-  return `${(Math.abs(ms) / 1000).toFixed(3)}s`;
 }
 
 function formatFovEstimate(fov: NonNullable<PhotoPreviewDetails['estimatedFov']>) {
