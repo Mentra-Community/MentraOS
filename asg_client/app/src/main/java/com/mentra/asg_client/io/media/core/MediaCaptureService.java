@@ -1621,6 +1621,11 @@ public class MediaCaptureService {
                     }
 
                     @Override
+                    public void onPhotoError(String errorMessage) {
+                        onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                    }
+
+                    @Override
                     public void onPhotoError(CameraOperationError error) {
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(
@@ -1770,6 +1775,11 @@ public class MediaCaptureService {
 
                             sendLocalSaveSuccessResponse(requestId, captureId);
                             sendGalleryStatusUpdate();
+                        }
+
+                        @Override
+                        public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
                         }
 
                         @Override
@@ -2076,6 +2086,11 @@ public class MediaCaptureService {
                                 sendPhotoSuccessResponse(requestId, "");
                                 releasePhotoJob(requestId);
                             }
+                        }
+
+                        @Override
+                        public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
                         }
 
                         @Override
@@ -3860,6 +3875,11 @@ public class MediaCaptureService {
                         }
 
                         @Override
+                        public void onPhotoError(String errorMessage) {
+                            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+                        }
+
+                        @Override
                         public void onPhotoError(CameraOperationError error) {
                             releasePhotoJob(requestId);
 
@@ -4382,6 +4402,11 @@ public class MediaCaptureService {
                     @Override
                     public void onCameraStopped() {
                         sendCameraStatus(requestId, "stopped", null);
+                    }
+
+                    @Override
+                    public void onCameraError(String errorMessage) {
+                        onCameraError(CameraOperationError.warmUpFailed(errorMessage));
                     }
 
                     @Override

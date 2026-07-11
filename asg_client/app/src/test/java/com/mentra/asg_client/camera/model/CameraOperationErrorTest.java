@@ -3,7 +3,10 @@ package com.mentra.asg_client.camera.model;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.hardware.camera2.CameraDevice;
+import com.mentra.asg_client.camera.CameraNeoService;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
+import org.json.JSONObject;
 
 public class CameraOperationErrorTest {
 
@@ -66,5 +69,58 @@ public class CameraOperationErrorTest {
 
         assertThat(error.code()).isEqualTo("CAMERA_DEVICE_ERROR");
         assertThat(error.message()).contains("Android code 99");
+    }
+
+    @Test
+    public void photoCallback_typedErrorDelegatesToLegacyStringContract() {
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
+        CameraNeoService.PhotoCaptureCallback callback =
+                new CameraNeoService.PhotoCaptureCallback() {
+                    @Override
+                    public void onPhotoCaptured(
+                            String filePath, JSONObject captureMetadata) {}
+
+                    @Override
+                    public void onPhotoError(String errorMessage) {
+                        receivedMessage.set(errorMessage);
+                    }
+                };
+
+        callback.onPhotoError(
+                CameraOperationError.fromCameraDeviceError(
+                        CameraDevice.StateCallback.ERROR_CAMERA_DEVICE));
+
+        assertThat(receivedMessage.get())
+                .isEqualTo(
+                        "Camera hardware was not ready. Wait a few seconds and try again.");
+    }
+
+    @Test
+    public void warmUpCallback_typedErrorDelegatesToLegacyStringContract() {
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
+        CameraNeoService.CameraWarmUpCallback callback =
+                new CameraNeoService.CameraWarmUpCallback() {
+                    @Override
+                    public void onWarming() {}
+
+                    @Override
+                    public void onCameraReady() {}
+
+                    @Override
+                    public void onCameraStopped() {}
+
+                    @Override
+                    public void onCameraError(String errorMessage) {
+                        receivedMessage.set(errorMessage);
+                    }
+                };
+
+        callback.onCameraError(
+                CameraOperationError.fromCameraDeviceError(
+                        CameraDevice.StateCallback.ERROR_CAMERA_SERVICE));
+
+        assertThat(receivedMessage.get())
+                .isEqualTo(
+                        "Camera service failed. Restart the glasses if the problem continues.");
     }
 }

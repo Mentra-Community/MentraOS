@@ -21,7 +21,6 @@ import java.util.concurrent.Executors;
 
 import com.mentra.asg_client.io.media.upload.PhotoUploadService;
 import com.mentra.asg_client.camera.CameraNeoService;
-import com.mentra.asg_client.camera.model.CameraOperationError;
 
 /**
  * Manages a queue of photos to be uploaded to AugmentOS Cloud.
@@ -132,8 +131,8 @@ public class PhotoQueueManager {
                     }
                     
                     @Override
-                    public void onPhotoError(CameraOperationError error) {
-                        callback.onPhotoError(error.message());
+                    public void onPhotoError(String errorMessage) {
+                        callback.onPhotoError(errorMessage);
                     }
                 }
         );

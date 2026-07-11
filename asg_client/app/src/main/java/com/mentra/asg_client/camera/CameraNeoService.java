@@ -169,10 +169,10 @@ public class CameraNeoService extends LifecycleService {
 
         void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
 
-        void onPhotoError(CameraOperationError error);
+        void onPhotoError(String errorMessage);
 
-        default void onPhotoError(String errorMessage) {
-            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+        default void onPhotoError(CameraOperationError error) {
+            onPhotoError(error.message());
         }
     }
 
@@ -191,10 +191,10 @@ public class CameraNeoService extends LifecycleService {
         void onCameraStopped();
 
         /** Warm-up failed (open/configure failure). */
-        void onCameraError(CameraOperationError error);
+        void onCameraError(String errorMessage);
 
-        default void onCameraError(String errorMessage) {
-            onCameraError(CameraOperationError.warmUpFailed(errorMessage));
+        default void onCameraError(CameraOperationError error) {
+            onCameraError(error.message());
         }
 
         /**
