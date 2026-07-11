@@ -161,13 +161,19 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
     },
   );
 
+  // The repo script still targets V1 incidents, so oversized/binary payloads
+  // get a ready-to-run curl against the same admin API this server uses.
+  const downloadHint = (reportId: string, artifactId: string, fileName: string | null) =>
+    `curl -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" -o "${fileName || artifactId}" ` +
+    `"${config.coreUrl}/api/admin/reports/${reportId}/artifacts/${artifactId}"`;
+
   server.registerTool(
     "report_get_artifact",
     {
       description:
         "Fetch one artifact payload by artifactId (art_..., listed by report_get). Screenshots return " +
         "as inline images, JSON/text inline as text; anything else (or oversized payloads) returns " +
-        "metadata plus a hint to download via scripts/fetch-incident-logs.sh.",
+        "metadata plus a curl command to download it.",
       inputSchema: {
         reportId: z.string(),
         artifactId: z.string(),
@@ -181,12 +187,12 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
       const header = `${artifactId} (${meta ? describeArtifact(meta) : payload.contentType}${
         payload.fileName ? `, ${payload.fileName}` : ""
       }, ${payload.bytes.byteLength} bytes)`;
+      const download = downloadHint(report.reportId, artifactId, payload.fileName);
 
       if (payload.contentType.startsWith("image/")) {
         if (payload.bytes.byteLength > IMAGE_ARTIFACT_MAX_BYTES) {
           return textContent(
-            `${header} exceeds the ${IMAGE_ARTIFACT_MAX_BYTES}-byte inline image cap — ` +
-              `download it with: ./scripts/fetch-incident-logs.sh ${report.reportId}`,
+            `${header} exceeds the ${IMAGE_ARTIFACT_MAX_BYTES}-byte inline image cap — download it with:\n${download}`,
           );
         }
         return {
@@ -205,15 +211,14 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
         const text = new TextDecoder().decode(payload.bytes);
         const body =
           text.length > TEXT_ARTIFACT_MAX_CHARS
-            ? `${text.slice(0, TEXT_ARTIFACT_MAX_CHARS)}\n\n... truncated at ${TEXT_ARTIFACT_MAX_CHARS} chars ` +
-              `(full download: ./scripts/fetch-incident-logs.sh ${report.reportId})`
+            ? `${text.slice(0, TEXT_ARTIFACT_MAX_CHARS)}\n\n... truncated at ${TEXT_ARTIFACT_MAX_CHARS} chars. ` +
+              `Full download:\n${download}`
             : text;
         return textContent(`${header}\n${body}`);
       }
 
       return textContent(
-        `${header} has binary content type "${payload.contentType}" — ` +
-          `download it with: ./scripts/fetch-incident-logs.sh ${report.reportId}`,
+        `${header} has binary content type "${payload.contentType}" — download it with:\n${download}`,
       );
     },
   );

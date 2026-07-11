@@ -82,6 +82,20 @@ describe("resolveReport", () => {
     expect(report.reportId).toBe(OTHER_ID);
   });
 
+  test("canonicalizes a lowercased full id before the exact lookup", async () => {
+    const { client, calls } = mockClient({ known: [FULL_ID] });
+    const { report } = await resolveReport(client, FULL_ID.toLowerCase());
+    expect(report.reportId).toBe(FULL_ID);
+    expect(calls.getReport[0]).toBe(FULL_ID);
+    expect(calls.listReports).toHaveLength(0);
+  });
+
+  test("matches lowercase and mixed-case prefixes", async () => {
+    const { client } = mockClient({ known: [FULL_ID, OTHER_ID] });
+    expect((await resolveReport(client, "rep_01arz")).report.reportId).toBe(FULL_ID);
+    expect((await resolveReport(client, "01Bx5z")).report.reportId).toBe(OTHER_ID);
+  });
+
   test("rejects an ambiguous prefix, naming the matches", async () => {
     const { client } = mockClient({ known: [FULL_ID, OTHER_ID] });
     await expect(resolveReport(client, "01")).rejects.toThrow(/Ambiguous.*rep_01ARZ/);

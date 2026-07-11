@@ -6,10 +6,20 @@ import type {
 import { ApiRequestError } from "../http/errors";
 
 /** Full report ids are `rep_` + 26-char ULID. */
-const FULL_REPORT_ID = /^rep_[0-9A-HJKMNP-TV-Z]{26}$/i;
+const FULL_REPORT_ID = /^rep_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 const SCAN_PAGE_SIZE = 200;
 const SCAN_MAX_PAGES = 3;
+
+/**
+ * Stored ids are `rep_` + an uppercase ULID; pastes arrive in any case
+ * (URLs and chat clients lowercase them). Rebuild the canonical form so
+ * both the exact lookup and the prefix comparisons match storage.
+ */
+function canonicalizeReportId(id: string): string {
+  const match = /^(rep_)?(.*)$/i.exec(id.trim());
+  return `${match?.[1] ? "rep_" : ""}${(match?.[2] ?? "").toUpperCase()}`;
+}
 
 /**
  * Fetch a report by full id or short prefix (with or without the `rep_`
@@ -22,7 +32,7 @@ export async function resolveReport(
   client: AdminReportsClient,
   id: string,
 ): Promise<{ report: ReportDetail; assets: ReportAsset[] }> {
-  const query = id.trim();
+  const query = canonicalizeReportId(id);
   try {
     return await client.getReport(query);
   } catch (error) {
@@ -53,6 +63,9 @@ export async function resolveReport(
     if (reports.length < SCAN_PAGE_SIZE || !oldest?.createdAt) {
       break;
     }
+    // The list API filters strictly before this timestamp, so rows sharing
+    // the boundary millisecond can be skipped between pages. Accepted for
+    // this best-effort scan; the miss path tells the user to pass a full id.
     before = oldest.createdAt;
   }
 
