@@ -29,6 +29,24 @@ public class AvifExifStripperTest {
         assertThat(jpeg.length).isGreaterThan(100);
     }
 
+    @Test
+    public void stripForDecode_handlesMonochromeAvifFromGlasses() throws Exception {
+        // Monochrome (YUV400) AVIF with an Exif item, as produced by the glasses'
+        // grayscale BLE pipeline (libheif 1.17.6 + AOM, encodeAvifMono + EXIF).
+        byte[] withExif =
+                java.nio.file.Files.readAllBytes(
+                        new File("src/test/resources/avif_mono_with_exif.avif").toPath());
+        assertThat(BlePhotoUploadService.containsExifMarkerInBytes(withExif)).isTrue();
+        int originalMarkerCount = countExifMarkers(withExif);
+
+        byte[] stripped = AvifExifStripper.stripForDecode(withExif);
+        assertThat(stripped.length).isLessThan(withExif.length);
+        assertThat(countExifMarkers(stripped)).isLessThan(originalMarkerCount);
+
+        byte[] jpeg = BlePhotoUploadService.convertToJpegPreservingExif(withExif);
+        assertThat(jpeg.length).isGreaterThan(100);
+    }
+
     private static int countExifMarkers(byte[] data) {
         byte[] marker = new byte[] {'E', 'x', 'i', 'f', 0, 0};
         int count = 0;
