@@ -106,7 +106,7 @@ struct DeviceScreen: View {
     private var statRow: some View {
         let currentWifi = connectedWifiStatus(model.glassesValues)
         return HStack(spacing: 10) {
-            StatTile(label: "FIRMWARE", value: firmwareLabel(model.glassesValues), sub: firmwareSubLabel(model.glassesValues), subColor: AppColor.greenAccent)
+            StatTile(label: "FIRMWARE", value: firmwareCardLabel(model: model), sub: firmwareCardSubLabel(model: model), subColor: AppColor.greenAccent)
             StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: currentWifi?.localIp ?? "unknown", subColor: AppColor.muted, bold: true)
             StatTile(label: "RSSI", value: rssiLabel(model.glassesValues), sub: rssiUpdatedLabel(model.glassesValues), subColor: AppColor.greenAccent, bold: true)
         }
@@ -288,6 +288,11 @@ struct DeviceScreen: View {
                     HStack(spacing: 6) { Circle().fill(AppColor.greenPrimary).frame(width: 6, height: 6); Text(connectionLabel(model.glassesValues)).font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.greenInk) }
                 ))
                 StatusKVRow(label: "DEVICE", value: deviceLabel(model.glassesValues), mono: true)
+                if shouldShowMentraLiveVersions(model.glassesValues) {
+                    StatusKVRow(label: "ASG CLIENT", value: versionLabel(model.mentraLiveVersions.appVersion), mono: true)
+                    StatusKVRow(label: "MTK", value: versionLabel(model.mentraLiveVersions.mtkFirmwareVersion), mono: true)
+                    StatusKVRow(label: "BES", value: versionLabel(model.mentraLiveVersions.besFirmwareVersion), mono: true)
+                }
                 StatusKVRow(label: "BATTERY", custom: AnyView(
                     HStack(spacing: 8) {
                         Text(batteryLabel(model.glassesValues)).font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.inkAlt)

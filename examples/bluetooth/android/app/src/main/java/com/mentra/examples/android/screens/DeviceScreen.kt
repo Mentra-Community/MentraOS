@@ -43,8 +43,8 @@ import com.mentra.examples.android.connectedWifiStatus
 import com.mentra.examples.android.deviceModelLabel
 import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.discoveredDeviceKey
-import com.mentra.examples.android.firmwareLabel
-import com.mentra.examples.android.firmwareSubLabel
+import com.mentra.examples.android.firmwareCardLabel
+import com.mentra.examples.android.firmwareCardSubLabel
 import com.mentra.examples.android.hasSavedConnectionTarget
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.isGlassesWifiConnected
@@ -54,8 +54,10 @@ import com.mentra.examples.android.rssiUpdatedLabel
 import com.mentra.examples.android.savedConnectionTargetDetail
 import com.mentra.examples.android.savedConnectionTargetName
 import com.mentra.examples.android.scanModelOptions
+import com.mentra.examples.android.shouldShowMentraLiveVersions
 import com.mentra.examples.android.supportsDisplay
 import com.mentra.examples.android.targetDeviceDetail
+import com.mentra.examples.android.versionLabel
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
@@ -128,7 +130,7 @@ fun DeviceScreen(controller: MentraExampleController) {
 
             // Stat row
             Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
+                StatTile("FIRMWARE", firmwareCardLabel(state), firmwareCardSubLabel(state), AppColor.greenAccent, Modifier.weight(1f))
                 StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
                 StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
             }
@@ -231,6 +233,11 @@ fun DeviceScreen(controller: MentraExampleController) {
                     }
                 }
                 StatusKVRow("DEVICE", value = currentDeviceName, mono = true)
+                if (shouldShowMentraLiveVersions(glasses)) {
+                    StatusKVRow("ASG CLIENT", value = versionLabel(state.mentraLiveVersions.appVersion), mono = true)
+                    StatusKVRow("MTK", value = versionLabel(state.mentraLiveVersions.mtkFirmwareVersion), mono = true)
+                    StatusKVRow("BES", value = versionLabel(state.mentraLiveVersions.besFirmwareVersion), mono = true)
+                }
                 StatusKVRow("BATTERY") {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(batteryLabel(glasses), color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

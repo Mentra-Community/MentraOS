@@ -156,6 +156,12 @@ data class VideoPreviewDetails(
     val uploadedAt: String? = null,
 )
 
+data class MentraLiveVersions(
+    val appVersion: String? = null,
+    val besFirmwareVersion: String? = null,
+    val mtkFirmwareVersion: String? = null,
+)
+
 private data class RgbLedPattern(
     val action: RgbLedAction,
     val color: RgbLedColor?,
@@ -243,6 +249,7 @@ data class MentraExampleState(
     val ledMode: String = "Off",
     val lastMicBytes: Int = 0,
     val lastMicDurationSeconds: Int? = null,
+    val mentraLiveVersions: MentraLiveVersions = MentraLiveVersions(),
     val micElapsedSeconds: Int = 0,
     val micPlaybackHint: String? = null,
     val micPlaying: Boolean = false,
@@ -363,6 +370,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var cameraWarmUpJob: Job? = null
     private var autoOtaCheckedConnectionKey: String? = null
     private var autoOtaCheckInProgress = false
+    private var latestVersionInfo: VersionInfoResult? = null
     private var latestOtaVersionInfoSignature: String? = null
     private val photoCaptureDefaultsSyncMutex = Mutex()
     private var photoCaptureDefaultsSyncGeneration = 0
@@ -445,6 +453,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             discoveredDevices = initialState.scan.devices,
             galleryModeEnabled = galleryModeEnabled(initialState.sdk),
             hotspotEnabled = enabledHotspotStatus(initialState.glasses) != null,
+            mentraLiveVersions = resolveMentraLiveVersions(initialState.glasses, latestVersionInfo),
             phoneAudioRoute = currentAudioOutputRouteLabel(),
             streamProtocol = savedStreamProtocol ?: state.streamProtocol,
             streamUrl = savedCloudUrls.streamUrl
@@ -454,6 +463,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         registerAudioStateObservers()
         refreshAudioSystemState()
+        if (isMentraLiveRuntime(state.glassesStatus)) {
+            refreshMentraLiveVersionInfo()
+        }
         if (savedDefaultDevice != null) {
             autoConnectDefaultOnStartup()
         }
@@ -2133,14 +2145,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onGlassesChanged(glasses: GlassesRuntimeState) {
         val wasConnected = isGlassesConnected()
+        if (!glasses.connected || !wasConnected) {
+            latestVersionInfo = null
+        }
         state = state.copy(
             glassesStatus = glasses,
             hotspotEnabled = enabledHotspotStatus(glasses) != null,
+            mentraLiveVersions = resolveMentraLiveVersions(glasses, latestVersionInfo),
         )
+        val shouldRefreshVersions = !wasConnected && isMentraLiveRuntime(glasses)
         if (!glasses.connected) {
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
+            refreshMentraLiveVersionInfo()
             // Re-apply scan preset after reconnect so button captures stay in sync.
             if (state.scanMode) {
                 pushScanButtonPreset()
@@ -2149,7 +2167,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 prepareGlassesPhotoPreview()
             }
         }
-        maybeAutoCheckOta()
+        if (!shouldRefreshVersions) {
+            maybeAutoCheckOta()
+        }
         addEvent("STORE", summarize(glasses))
     }
 
@@ -2434,7 +2454,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onVersionInfo(event: VersionInfoResult) {
-        latestOtaVersionInfoSignature = event.otaVersionInfoSignature()
+        applyVersionInfo(event)
         val installedIdentity = event.otaAppIdentity()
         val currentOtaStatus = state.otaStatus
         if (
@@ -2456,6 +2476,38 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             addEvent("LIVE", "OTA install restarted ASG client as $installedIdentity")
         }
         maybeAutoCheckOta()
+    }
+
+    private fun applyVersionInfo(event: VersionInfoResult) {
+        if (!isGlassesConnected(state.glassesStatus)) {
+            return
+        }
+        latestVersionInfo = event
+        latestOtaVersionInfoSignature = event.otaVersionInfoSignature()
+        state = state.copy(
+            mentraLiveVersions = resolveMentraLiveVersions(state.glassesStatus, event),
+        )
+    }
+
+    private fun refreshMentraLiveVersionInfo() {
+        if (!isMentraLiveRuntime(state.glassesStatus)) {
+            return
+        }
+        val connectionKey = otaConnectionKey(state.glassesStatus)
+        scope.launch {
+            try {
+                val payload = withContext(Dispatchers.IO) { mentraBluetoothSdk.requestVersionInfo() }
+                if (isMentraLiveRuntime(state.glassesStatus) && otaConnectionKey(state.glassesStatus) == connectionKey) {
+                    applyVersionInfo(payload)
+                    maybeAutoCheckOta()
+                }
+            } catch (error: Exception) {
+                if (isMentraLiveRuntime(state.glassesStatus) && otaConnectionKey(state.glassesStatus) == connectionKey) {
+                    addEvent("LIVE", "version info refresh failed: ${error.message ?: "request failed"}")
+                    maybeAutoCheckOta()
+                }
+            }
+        }
     }
 
     private fun handleOtaCheckResult(updateAvailable: Boolean): Boolean {
@@ -2546,6 +2598,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected(glasses)) {
             autoOtaCheckedConnectionKey = null
             autoOtaCheckInProgress = false
+            latestVersionInfo = null
             latestOtaVersionInfoSignature = null
             postOtaCheckInProgress = false
             postOtaCheckedSessionKey = null
@@ -3027,6 +3080,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         pendingHotspotConnection = null
         glassesHotspotConnector.disconnect()
         otaStartingAppIdentity = null
+        latestVersionInfo = null
         resetOtaDisplayProgress()
         if (hadPhotoRequest) {
             pollGeneration += 1
@@ -3045,6 +3099,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
+            mentraLiveVersions = MentraLiveVersions(),
             otaStatus = null,
             otaDisplayPercent = null,
             otaStatusMessage = null,
@@ -4057,6 +4112,59 @@ fun VersionInfoResult.otaAppIdentity(): String? =
         .filter { it.isNotBlank() }
         .joinToString("|")
         .ifBlank { null }
+
+private fun versionValue(value: String?): String? =
+    value?.trim()?.takeIf { it.isNotEmpty() }
+
+fun resolveMentraLiveVersions(
+    status: GlassesRuntimeState?,
+    versionInfo: VersionInfoResult?,
+): MentraLiveVersions {
+    if (!isGlassesConnected(status)) {
+        return MentraLiveVersions()
+    }
+    return MentraLiveVersions(
+        appVersion = versionValue(versionInfo?.appVersion)
+            ?: versionValue(connectedGlassesInfo(status)?.appVersion)
+            ?: versionValue(status?.firmware?.appVersion),
+        besFirmwareVersion = versionValue(versionInfo?.besFirmwareVersion)
+            ?: if (status?.firmware?.source?.name == "BES") versionValue(status?.firmware?.version) else null,
+        mtkFirmwareVersion = versionValue(versionInfo?.mtkFirmwareVersion)
+            ?: if (status?.firmware?.source?.name == "MTK") versionValue(status?.firmware?.version) else null,
+    )
+}
+
+fun isMentraLiveRuntime(status: GlassesRuntimeState?): Boolean {
+    if (!isGlassesConnected(status)) {
+        return false
+    }
+    val device = connectedGlassesInfo(status)
+    val model = listOfNotNull(
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
+    ).joinToString(" ").lowercase()
+    return device?.deviceModel == DeviceModel.MENTRA_LIVE || "mentra live" in model
+}
+
+fun shouldShowMentraLiveVersions(status: GlassesRuntimeState?): Boolean =
+    isMentraLiveRuntime(status)
+
+fun versionLabel(version: String?): String =
+    version ?: "Unknown"
+
+fun firmwareCardLabel(state: MentraExampleState): String {
+    if (shouldShowMentraLiveVersions(state.glassesStatus) && state.mentraLiveVersions.appVersion != null) {
+        return state.mentraLiveVersions.appVersion
+    }
+    return firmwareLabel(state.glassesStatus)
+}
+
+fun firmwareCardSubLabel(state: MentraExampleState): String {
+    if (shouldShowMentraLiveVersions(state.glassesStatus) && state.mentraLiveVersions.appVersion != null) {
+        return "ASG client"
+    }
+    return firmwareSubLabel(state.glassesStatus)
+}
 
 fun deviceLabel(status: GlassesRuntimeState?): String =
     connectedGlassesInfo(status)?.bluetoothName
