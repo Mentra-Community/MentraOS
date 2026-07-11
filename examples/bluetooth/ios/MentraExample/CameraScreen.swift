@@ -190,18 +190,6 @@ struct CameraScreen: View {
         }
         .background(AppColor.bg)
         .scrollDismissesKeyboard(.interactively)
-        .alert(
-            "Connect to Glasses",
-            isPresented: Binding(
-                get: { model.hotspotJoinPromptSsid != nil },
-                set: { _ in }
-            )
-        ) {
-            Button("OK", action: model.confirmHotspotJoin)
-            Button("Not now", role: .cancel, action: model.dismissHotspotJoin)
-        } message: {
-            Text("When prompted, tap Join to connect to \"\(model.hotspotJoinPromptSsid ?? "the glasses hotspot")\".")
-        }
         .onChange(of: model.activeAction) { action in
             if action == "Capture & upload" || action == "Capture scan photo" {
                 captureMode = .photo

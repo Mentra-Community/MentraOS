@@ -350,7 +350,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private let glassesHotspotConnector = GlassesHotspotConnector()
     private var galleryConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection?
-    private var hotspotJoinExplanationShown = false
     private var photoDestinationBeforeGlasses: PhotoDestination = .thisPhone
     private var streamConfigurationChangeInProgress = false
     private var photoCaptureDefaultsSyncGeneration = 0
@@ -417,7 +416,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
-    @Published private(set) var hotspotJoinPromptSsid: String?
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
     @Published private(set) var micElapsedSeconds = 0
@@ -753,7 +751,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pendingHotspotConnection = nil
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: hotspot off"
-        hotspotJoinPromptSsid = nil
         runAsyncAction("Disable glasses photo hotspot") { [self] in
             if let hotspotSsid {
                 glassesHotspotConnector.disconnect(ssid: hotspotSsid)
@@ -774,21 +771,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func confirmHotspotJoin() {
-        hotspotJoinExplanationShown = true
-        hotspotJoinPromptSsid = nil
-        runAsyncAction("Join glasses hotspot") { [self] in
-            try await connectPendingGlassesHotspot()
-        }
-    }
-
-    func dismissHotspotJoin() {
-        hotspotJoinPromptSsid = nil
-        galleryServerReachable = false
-        galleryServerStatus = "Gallery server: connection required"
-        cameraStatus = "Camera: connect to the glasses hotspot to enable capture"
-    }
-
     private func prepareGlassesPhotoPreviewConnection() async throws {
         try requireConnected("prepare saved-photo previews")
         galleryConnectionGeneration += 1
@@ -796,7 +778,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cameraStatus = "Camera: preparing glasses hotspot"
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: starting glasses hotspot"
-        hotspotJoinPromptSsid = nil
 
         let hotspot: (ssid: String, password: String, localIp: String)
         if let current = enabledHotspotStatus(glassesValues) {
@@ -820,13 +801,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard generation == galleryConnectionGeneration else { return }
         if alreadyReady {
             markGalleryServerReady(pending.baseUrl)
-            return
-        }
-        if !hotspotJoinExplanationShown {
-            cameraStatus = "Camera: approve the glasses hotspot connection"
-            galleryServerReachable = false
-            galleryServerStatus = "Gallery server: approval required for \(pending.ssid)"
-            hotspotJoinPromptSsid = pending.ssid
             return
         }
         try await connectPendingGlassesHotspot()
@@ -875,7 +849,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cameraStatus = "Camera: ready to save and preview from glasses"
         galleryServerReachable = true
         galleryServerStatus = "Gallery server: ready at \(baseUrl)"
-        hotspotJoinPromptSsid = nil
         append(tag: "LIVE", text: "gallery server ready \(baseUrl)")
     }
 
@@ -2758,7 +2731,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pendingHotspotConnection = nil
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
-        hotspotJoinPromptSsid = nil
         otaStartingAppIdentity = nil
         resetOtaDisplayProgress()
         otaStatus = nil

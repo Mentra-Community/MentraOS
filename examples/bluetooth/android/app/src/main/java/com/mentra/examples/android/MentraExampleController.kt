@@ -234,7 +234,6 @@ data class MentraExampleState(
     val galleryModeEnabled: Boolean = false,
     val galleryServerReachable: Boolean? = null,
     val galleryServerStatus: String = "Gallery server: enable hotspot to check",
-    val hotspotJoinPromptSsid: String? = null,
     val glassesStatus: GlassesRuntimeState? = null,
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
@@ -336,7 +335,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var pollGeneration = 0
     private var galleryConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection? = null
-    private var hotspotJoinExplanationShown = false
     private var photoDestinationBeforeGlasses = PhotoDestination.THIS_PHONE
     private var videoPollGeneration = 0
     private var directPhotoTimeoutJob: Job? = null
@@ -605,7 +603,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(
             galleryServerReachable = null,
             galleryServerStatus = "Gallery server: hotspot off",
-            hotspotJoinPromptSsid = null,
         )
         runAction("Disable glasses photo hotspot") {
             glassesHotspotConnector.disconnect()
@@ -621,23 +618,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         prepareGlassesPhotoPreviewConnection()
     }
 
-    fun confirmHotspotJoin() {
-        hotspotJoinExplanationShown = true
-        state = state.copy(hotspotJoinPromptSsid = null)
-        runAction("Join glasses hotspot") {
-            connectPendingGlassesHotspot()
-        }
-    }
-
-    fun dismissHotspotJoin() {
-        state = state.copy(
-            galleryServerReachable = false,
-            galleryServerStatus = "Gallery server: connection required",
-            hotspotJoinPromptSsid = null,
-            cameraStatus = "Camera: connect to the glasses hotspot to enable capture",
-        )
-    }
-
     private suspend fun prepareGlassesPhotoPreviewConnection() {
         requireConnected("prepare saved-photo previews")
         val generation = ++galleryConnectionGeneration
@@ -645,7 +625,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             cameraStatus = "Camera: preparing glasses hotspot",
             galleryServerReachable = null,
             galleryServerStatus = "Gallery server: starting glasses hotspot",
-            hotspotJoinPromptSsid = null,
         )
         val existing = enabledHotspotStatus(state.glassesStatus)
         val hotspot = existing ?: withContext(Dispatchers.IO) {
@@ -663,15 +642,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (generation != galleryConnectionGeneration) return
         if (alreadyReady) {
             markGalleryServerReady(pending.baseUrl)
-            return
-        }
-        if (!hotspotJoinExplanationShown) {
-            state = state.copy(
-                cameraStatus = "Camera: approve the glasses hotspot connection",
-                galleryServerReachable = false,
-                galleryServerStatus = "Gallery server: approval required for ${pending.ssid}",
-                hotspotJoinPromptSsid = pending.ssid,
-            )
             return
         }
         connectPendingGlassesHotspot()
@@ -723,7 +693,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             cameraStatus = "Camera: ready to save and preview from glasses",
             galleryServerReachable = true,
             galleryServerStatus = "Gallery server: ready at $baseUrl",
-            hotspotJoinPromptSsid = null,
         )
         addEvent("LIVE", "gallery server ready $baseUrl")
     }
@@ -3071,7 +3040,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesVolumeStatus = "Glasses volume: not connected",
             galleryServerReachable = null,
             galleryServerStatus = "Gallery server: connect glasses first",
-            hotspotJoinPromptSsid = null,
             streamRequested = false,
             streamPreviewReady = false,
             streamStartedAt = null,

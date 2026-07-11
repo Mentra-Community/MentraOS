@@ -1,7 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {Alert, Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
+import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
 import WifiManager from 'react-native-wifi-reborn';
 import BluetoothSdk, {
   DeviceModels,
@@ -697,7 +697,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const galleryServerReachableRef = useRef<boolean | null>(null);
   const galleryBaseUrlRef = useRef<string | null>(null);
   const galleryHotspotSsidRef = useRef<string | null>(null);
-  const hotspotJoinExplanationShownRef = useRef(false);
   const scanModeRef = useRef(false);
   const photoCaptureDefaultsSyncGenerationRef = useRef(0);
   const photoCaptureDefaultsSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -3123,12 +3122,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         return;
       }
 
-      if (!hotspotJoinExplanationShownRef.current) {
-        await showHotspotJoinExplanation(hotspot.ssid);
-        hotspotJoinExplanationShownRef.current = true;
-      }
-      if (generation !== galleryConnectionGenerationRef.current) return;
-
       setGalleryServerStatus(`Gallery server: connecting to ${hotspot.ssid}`);
       setCameraStatus(`Camera: connecting to ${hotspot.ssid}`);
       let connectionError: unknown = null;
@@ -4690,19 +4683,6 @@ async function waitForGalleryServer(baseUrl: string, attempts: number, delayMs: 
     }
   }
   return false;
-}
-
-function showHotspotJoinExplanation(ssid: string) {
-  return new Promise<void>((resolve) => {
-    Alert.alert(
-      'Connect to Glasses',
-      Platform.OS === 'ios'
-        ? `When prompted, tap "Join" to connect to "${ssid}".`
-        : `When prompted, tap "Connect" to connect to "${ssid}".`,
-      [{text: 'OK', onPress: () => resolve()}],
-      {cancelable: false},
-    );
-  });
 }
 
 async function disconnectGlassesHotspotWifi(ssid: string) {
