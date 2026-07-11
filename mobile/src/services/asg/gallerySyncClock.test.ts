@@ -3,7 +3,7 @@ import {
   CLOCK_SKEW_TOLERANCE_MS,
   detectClockSkew,
   isSyncManifestEmpty,
-} from "../../../modules/island/src/services/gallerySyncClock"
+} from "../../../modules/engine/src/services/gallerySyncClock"
 
 describe("gallerySyncClock", () => {
   const phoneNow = 1_700_000_000_000

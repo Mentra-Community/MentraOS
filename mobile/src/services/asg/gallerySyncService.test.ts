@@ -1,17 +1,17 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
-// gallerySyncService + its asg cluster moved into @mentra/island; this CI-gated jest
+// gallerySyncService + its asg cluster moved into @mentra/engine; this CI-gated jest
 // test stays in the host tree and imports them by relative path so it keeps running
 // (island's own test runner is bit-rotted). The stores + GlobalEventEmitter come
-// through the host shims, which the @mentra/island jest mock resolves to the SAME
+// through the host shims, which the @mentra/engine jest mock resolves to the SAME
 // real island instances the service uses — so store writes here are visible to it.
-import {asgCameraApi} from "../../../modules/island/src/services/asg/asgCameraApi"
-import {gallerySyncNotifications} from "../../../modules/island/src/services/asg/gallerySyncNotifications"
-import {localStorageService} from "../../../modules/island/src/services/asg/localStorageService"
-import {mediaProcessingQueue} from "../../../modules/island/src/services/asg/mediaProcessingQueue"
-import {gallerySyncService} from "../../../modules/island/src/services/asg/gallerySyncService"
-import {useGallerySyncStore} from "../../../modules/island/src/stores/gallerySync"
-import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
+import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
+import {gallerySyncNotifications} from "../../../modules/engine/src/services/asg/gallerySyncNotifications"
+import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
+import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
+import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
+import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 
@@ -56,9 +56,9 @@ jest.mock("crust", () => ({
 // Feature permissions now flow through the island permissions facade (was
 // @/utils/PermissionsUtils.checkFeaturePermissions/requestFeaturePermissions). The
 // connectivity gate (checkConnectivityRequirementsUI) + alert/navigation seams moved
-// host-side (GalleryScreen renders them off toolkit.gallery.onNotice), so they're no
+// host-side (GalleryScreen renders them off engine.gallery.onNotice), so they're no
 // longer mocked here.
-jest.mock("../../../modules/island/src/facades/permissions", () => ({
+jest.mock("../../../modules/engine/src/facades/permissions", () => ({
   permissions: {
     check: jest.fn(() => Promise.resolve(true)),
     request: jest.fn(() => Promise.resolve(true)),
@@ -67,20 +67,20 @@ jest.mock("../../../modules/island/src/facades/permissions", () => ({
   PermissionFeatures: {LOCATION: "location"},
 }))
 
-jest.mock("../../../modules/island/src/utils/permissions/MediaLibraryPermissions", () => ({
+jest.mock("../../../modules/engine/src/utils/permissions/MediaLibraryPermissions", () => ({
   MediaLibraryPermissions: {
     checkPermission: jest.fn(() => Promise.resolve(true)),
     requestPermission: jest.fn(() => Promise.resolve(true)),
   },
 }))
 
-jest.mock("../../../modules/island/src/services/asg/gallerySettingsService", () => ({
+jest.mock("../../../modules/engine/src/services/asg/gallerySettingsService", () => ({
   gallerySettingsService: {
     getAutoSaveToCameraRoll: jest.fn(() => Promise.resolve(false)),
   },
 }))
 
-jest.mock("../../../modules/island/src/services/asg/gallerySyncNotifications", () => ({
+jest.mock("../../../modules/engine/src/services/asg/gallerySyncNotifications", () => ({
   gallerySyncNotifications: {
     requestPermissions: jest.fn(() => Promise.resolve()),
     showSyncError: jest.fn(),
@@ -89,7 +89,7 @@ jest.mock("../../../modules/island/src/services/asg/gallerySyncNotifications", (
   },
 }))
 
-jest.mock("../../../modules/island/src/services/asg/localStorageService", () => ({
+jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => ({
   localStorageService: {
     getSyncQueue: jest.fn(() => Promise.resolve(null)),
     hasResumableSyncQueue: jest.fn(() => Promise.resolve(false)),
@@ -101,7 +101,7 @@ jest.mock("../../../modules/island/src/services/asg/localStorageService", () => 
   },
 }))
 
-jest.mock("../../../modules/island/src/services/asg/mediaProcessingQueue", () => ({
+jest.mock("../../../modules/engine/src/services/asg/mediaProcessingQueue", () => ({
   mediaProcessingQueue: {
     reset: jest.fn(),
     enqueue: jest.fn(),
@@ -110,7 +110,7 @@ jest.mock("../../../modules/island/src/services/asg/mediaProcessingQueue", () =>
   },
 }))
 
-jest.mock("../../../modules/island/src/services/asg/asgCameraApi", () => ({
+jest.mock("../../../modules/engine/src/services/asg/asgCameraApi", () => ({
   asgCameraApi: {
     setServer: jest.fn(),
     syncWithServer: jest.fn(),

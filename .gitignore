@@ -406,3 +406,6 @@ Mentra-Zephyr-Glasses-Client/
 
 # Navigation miniapp build output
 miniapps/navigation/build/
+
+# Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
+incident-logs/

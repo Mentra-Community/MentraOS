@@ -9,10 +9,10 @@ import {AppsGrid} from "@/components/home/AppsGrid"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
-import {BgTimer, toolkit, useRefresh} from "@mentra/island"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {BgTimer, engine, useRefresh} from "@mentra/engine"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {appSwitcherProgress} from "@/stores/appSwitcher"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
 import AppSwitcher from "@/components/home/AppSwitcher"
 import {GlassesStatus, ControllerStatus} from "@/components/home/DeviceStatus"
@@ -25,11 +25,11 @@ import {BlurTargetView, BlurView} from "expo-blur"
 export default function Homepage() {
   const refreshApps = useRefresh()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
-  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
   const glassesConnected =
-    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
-  const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
+  const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const hasAttemptedInitialConnect = useRef(false)
   const swipeProgress = appSwitcherProgress
   const insets = useSaferAreaInsets()

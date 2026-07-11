@@ -5,10 +5,10 @@ import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {toolkit} from "@mentra/island"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {engine} from "@mentra/engine"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -17,9 +17,9 @@ export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [backendUrl] = useSetting(SETTINGS.backend_url.key)
-  const audioTransport = useToolkitSnapshot(toolkit.session.status, (onChange) =>
-    toolkit.session.onStatus(onChange),
+  const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
+    engine.session.onStatus(onChange),
   ).audioTransport
 
   const pressCount = useRef(0)
@@ -75,7 +75,7 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `backend_url: ${backendUrl}`,
+      `cloud_core_url: ${coreUrl || "(default)"}`,
       `audio: ${audioTransport}`,
     ]
 
@@ -135,7 +135,7 @@ export const VersionInfo = () => {
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${backendUrl}`} />
+            <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

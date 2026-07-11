@@ -1,7 +1,7 @@
 import {
   buildCloudV2TranscriptMetric,
   logCloudV2TranscriptMetric,
-} from "../../../modules/island/src/services/CloudTranscriptE2EMetrics"
+} from "../../../modules/engine/src/services/CloudTranscriptE2EMetrics"
 import type {TranscriptionData} from "@mentra/cloud-runtime/protocol"
 
 const transcript: TranscriptionData = {

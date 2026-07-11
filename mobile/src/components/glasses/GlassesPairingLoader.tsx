@@ -3,7 +3,7 @@ import {View, Animated, Easing, Image} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useSetting, SETTINGS} from "@mentra/island"
+import {useSetting, SETTINGS} from "@mentra/engine"
 import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
 
 import {getModelSpecificTips} from "@/components/glasses/GlassesTroubleshootingModal"

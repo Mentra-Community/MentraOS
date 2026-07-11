@@ -4,13 +4,13 @@ import {useRoute} from "@react-navigation/native"
 
 import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
 import {useCallback, useEffect, useRef, useState} from "react"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 export default function PairingSuccessScreen() {
   const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
@@ -40,7 +40,7 @@ export default function PairingSuccessScreen() {
       return []
     }
     // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
-    let bluetoothClassicConnected = await toolkit.pairing.waitForBluetoothClassic({timeoutMs: 1000})
+    let bluetoothClassicConnected = await engine.pairing.waitForBluetoothClassic({timeoutMs: 1000})
     // Android pairs Bluetooth Classic at the native stack level, so that screen is never needed there.
     if (Platform.OS === "android") {
       bluetoothClassicConnected = true

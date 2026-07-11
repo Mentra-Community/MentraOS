@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View} from "react-native"
@@ -31,7 +31,7 @@ export default function PairingFailureScreen() {
 
   const handleRetry = () => {
     // Clears the failed attempt; a pre-existing pairing (re-pair) is preserved.
-    void toolkit.pairing.abandonAttempt().catch((error) => {
+    void engine.pairing.abandonAttempt().catch((error) => {
       console.warn("Pairing retry cleanup failed:", error)
     })
     clearHistoryAndGoHome()

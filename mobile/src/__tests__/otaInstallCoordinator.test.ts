@@ -2,7 +2,7 @@
  * Characterization tests for the island OtaInstallCoordinator (WP 8B) — the OTA
  * install state machine moved verbatim out of mobile/src/app/ota/progress.tsx.
  *
- * Imports the real island sources by path (not via "@mentra/island", which jest
+ * Imports the real island sources by path (not via "@mentra/engine", which jest
  * mocks) so the actual watchdog/retry/arbitration logic runs under the mobile
  * jest runner; the bluetooth SDK stays the shared jest.setup mock. Inputs are
  * driven by mutating the real island glasses store and emitting on island's
@@ -10,7 +10,7 @@
  */
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {otaInstallCoordinator} from "../../modules/island/src/services/OtaInstallCoordinator"
+import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
 import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -27,14 +27,14 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
-} from "../../modules/island/src/services/otaInstallPolicy"
+} from "../../modules/engine/src/services/otaInstallPolicy"
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
   otaStatusFromNormalized,
-} from "../../modules/island/src/services/otaLegacyMapping"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import GlobalEventEmitter from "../../modules/island/src/utils/GlobalEventEmitter"
+} from "../../modules/engine/src/services/otaLegacyMapping"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
 
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
 

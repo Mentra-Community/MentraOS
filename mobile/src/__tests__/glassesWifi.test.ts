@@ -1,9 +1,9 @@
-// Imports the real glasses.wifi facade by path (not via "@mentra/island", which
+// Imports the real glasses.wifi facade by path (not via "@mentra/engine", which
 // jest mocks) so the actual delegation runs under the mobile jest CI runner.
 // @mentra/bluetooth-sdk is globally mocked in jest.setup.js — the facade calls it.
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {glassesWifi} from "../../modules/island/src/facades/glassesWifi"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
+import {glassesWifi} from "../../modules/engine/src/facades/glassesWifi"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 
 describe("glassesWifi facade", () => {
   beforeEach(() => {

@@ -16,6 +16,7 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
+import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -570,7 +571,7 @@ public final class PhotoSession {
             @Nullable PhotoCaptureSettings captureSettings,
             long durationMs,
             Runnable onReady,
-            java.util.function.Consumer<String> onError) {
+            java.util.function.Consumer<CameraOperationError> onError) {
         synchronized (hooks.serviceLock()) {
             // Serialize warm-ups: the camera is a single shared resource. If a capture is in flight,
             // or another warm-up is still opening, reject with a retryable busy error rather than
@@ -586,7 +587,7 @@ public final class PhotoSession {
                                 + shotState
                                 + ")");
                 if (onError != null) {
-                    onError.accept("camera_busy");
+                    onError.accept(CameraOperationError.cameraBusy());
                 }
                 return;
             }
@@ -657,20 +658,27 @@ public final class PhotoSession {
         }
     }
 
-    private void failWarmUp(String errorMessage) {
+    private void failWarmUp(CameraOperationError error) {
         WarmUpRequest req = warmUpRequest;
         warmUpRequest = null;
         clearActiveCapture();
         if (req != null && req.onError != null) {
-            hooks.executor().execute(() -> req.onError.accept(errorMessage));
+            hooks.executor().execute(() -> req.onError.accept(error));
         }
     }
 
     private void failWarmUpOrPhoto(String errorMessage) {
+        failWarmUpOrPhoto(
+                warmUpRequest != null
+                        ? CameraOperationError.warmUpFailed(errorMessage)
+                        : CameraOperationError.captureFailed(errorMessage));
+    }
+
+    private void failWarmUpOrPhoto(CameraOperationError error) {
         if (warmUpRequest != null) {
-            failWarmUp(errorMessage);
+            failWarmUp(error);
         } else {
-            notifyPhotoError(errorMessage);
+            notifyPhotoError(error);
         }
     }
 
@@ -1007,11 +1015,15 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoError(String errorMessage) {
+        notifyPhotoError(CameraOperationError.captureFailed(errorMessage));
+    }
+
+    private void notifyPhotoError(CameraOperationError error) {
         resetCaptureMetadataState();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
+            hooks.executor().execute(() -> callback.onPhotoError(error));
         }
     }
 
@@ -1175,7 +1187,9 @@ public final class PhotoSession {
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error starting preview with AE monitoring", e);
             if (warmUpRequest != null) {
-                failWarmUp("Error starting preview: " + e.getMessage());
+                failWarmUp(
+                        CameraOperationError.warmUpFailed(
+                                "Error starting preview: " + e.getMessage()));
             } else {
                 notifyPhotoError("Error starting preview: " + e.getMessage());
             }
@@ -1743,11 +1757,19 @@ public final class PhotoSession {
 
     /** Called from {@link CameraNeoService} when setup/open/session errors occur before capture. */
     public void notifyHostPhotoError(String errorMessage) {
+        notifyHostPhotoError(
+                warmUpRequest != null
+                        ? CameraOperationError.warmUpFailed(errorMessage)
+                        : CameraOperationError.captureFailed(errorMessage));
+    }
+
+    /** Called when setup/open/session code has classified the failure. */
+    public void notifyHostPhotoError(CameraOperationError error) {
         if (warmUpRequest != null) {
-            failWarmUp(errorMessage);
+            failWarmUp(error);
             return;
         }
-        notifyPhotoError(errorMessage);
+        notifyPhotoError(error);
     }
 
     public int previewJpegQuality() {
@@ -1761,7 +1783,7 @@ public final class PhotoSession {
         @Nullable final PhotoCaptureSettings captureSettings;
         final long durationMs;
         @Nullable final Runnable onReady;
-        @Nullable final java.util.function.Consumer<String> onError;
+        @Nullable final java.util.function.Consumer<CameraOperationError> onError;
 
         WarmUpRequest(
                 @Nullable String size,
@@ -1769,7 +1791,7 @@ public final class PhotoSession {
                 @Nullable PhotoCaptureSettings captureSettings,
                 long durationMs,
                 @Nullable Runnable onReady,
-                @Nullable java.util.function.Consumer<String> onError) {
+                @Nullable java.util.function.Consumer<CameraOperationError> onError) {
             this.size = size;
             this.exposureTimeNs = exposureTimeNs;
             this.captureSettings = captureSettings;

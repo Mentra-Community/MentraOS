@@ -1,4 +1,4 @@
-import type {OtaProgress, OtaProgressStatus} from "@mentra/island"
+import type {OtaProgress, OtaProgressStatus} from "@mentra/engine"
 import {View, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
