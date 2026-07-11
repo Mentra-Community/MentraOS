@@ -127,7 +127,6 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
       buildBranch: process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch",
       buildTime: process.env.EXPO_PUBLIC_BUILD_TIME || "time",
       buildUser: process.env.EXPO_PUBLIC_BUILD_USER || "user",
-      backendUrlOverride: process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE || undefined,
     },
     phone: {
       deviceName: Constants.deviceName || "deviceName",

@@ -2,7 +2,6 @@
  * dev facade — `engine.dev`: developer/debug surface over engine-owned state.
  * Backend/cloud URL overrides read+write the engine settings store; the cloud
  * URL setters reconnect the engine-owned cloud client onto the new endpoints;
- * `minimumClientVersion` hits the engine RestComms.
  *
  * NOTE: the dev-time endpoint *resolution* (Metro-host auto-detect, env defaults)
  * still lives host-side in `@/services/cloudClient` during the migration; this
@@ -16,7 +15,6 @@ import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
-import restComms from "../services/RestComms"
 import {getConfigValues} from "../runtime/bootstrap"
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
@@ -86,14 +84,6 @@ function projectRuntimeStatus() {
 export type DevRuntimeStatusSnapshot = ReturnType<typeof projectRuntimeStatus>
 
 export const dev = {
-  /** The backend's required/recommended client version. */
-  minimumClientVersion: () => restComms.getMinimumClientVersion(),
-
-  /** The configured backend (core REST) URL override, if any. */
-  backendUrl: (): string | undefined => useSettingsStore.getState().getSetting(SETTINGS.backend_url.key),
-  /** Override the backend (core REST) URL. */
-  setBackendUrl: (url: string) => useSettingsStore.getState().setSetting(SETTINGS.backend_url.key, url),
-
   /** The cloud-v2 core/runtime URL overrides. */
   cloudUrls: (): {core?: string; runtime?: string} => {
     const s = useSettingsStore.getState()
@@ -117,9 +107,6 @@ export const dev = {
       cloudClientService.reconnect(resolved)
     }
   },
-
-  /** The saved backend URLs (the dev URL-switcher list). */
-  savedUrls: (): string[] => useSettingsStore.getState().getSetting(SETTINGS.saved_backend_urls.key) ?? [],
 
   /** Tear down + rebuild the live cloud client (the dev "reconnect" button). */
   reconnectCloud: (): void => applyCloudUrlReconnect(),

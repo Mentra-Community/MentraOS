@@ -37,7 +37,6 @@ export interface TtsSynthesisResult {
 export const ISLAND_SETTINGS_KEYS = {
   localSttFallbackActive: "local_stt_fallback_active",
   defaultWearable: "default_wearable",
-  backendUrl: "backend_url",
   coreToken: "core_token",
   cameraFov: "camera_fov",
 } as const

@@ -82,7 +82,6 @@
     "@sentry/react-native": "~7.11.0",
     "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.4.18",
-    "@supabase/supabase-js": "2.106.0",
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",

@@ -2,7 +2,6 @@ import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
-import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
@@ -16,8 +15,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {navigationService} from "@mentra/engine/internal"
-import ws from "@/services/WebSocketManager"
-import socketComms from "@/services/SocketComms"
 import showAlert from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
@@ -210,16 +207,6 @@ export default function DebugSettingsScreen() {
               }}
             />
 
-            <RouteButton
-              label="Clear Websocket"
-              subtitle="Clear the Websocket"
-              onPress={async () => {
-                await ws.cleanup()
-                await socketComms.cleanup()
-                await new Promise((resolve) => setTimeout(resolve, 3000))
-                await socketComms.restartConnection()
-              }}
-            />
           </Group>
 
           <Group title="Test Errors">
@@ -268,7 +255,6 @@ export default function DebugSettingsScreen() {
             />
           </Group>
 
-          <BackendUrl />
 
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />

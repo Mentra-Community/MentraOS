@@ -42,16 +42,6 @@ jest.mock("@/utils/AlertUtils", () => ({
   default: jest.fn(),
 }))
 
-jest.mock("@/services/RestComms", () => ({
-  __esModule: true,
-  default: {
-    writeUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
-}))
-
 jest.mock("@/i18n", () => ({
   translate: jest.fn((key: string, vars?: Record<string, string>) => {
     if (vars?.model) {
