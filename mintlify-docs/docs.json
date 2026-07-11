@@ -122,6 +122,7 @@
             "icon": "bluetooth",
             "pages": [
               "mentra-live/overview",
+              "mentra-live/software-update",
               "mentra-live/ai-ide-integration",
               "mentra-live/quickstart",
               "mentra-live/examples"

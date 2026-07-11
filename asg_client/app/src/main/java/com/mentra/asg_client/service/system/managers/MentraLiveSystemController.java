@@ -88,10 +88,10 @@ public class MentraLiveSystemController implements ISystemController {
             Log.w(TAG, "Error reading system OTA version property", e);
         }
         if (ver == null || ver.length() < 8) {
-            // Bare-date default inherited from K900 vendor code; real firmware reports
-            // "MentraLive_YYYYMMDD", so this value matches no manifest entry.
-            ver = "20241130";
-            Log.d(TAG, "System OTA version not available, using default: " + ver);
+            // Report unknown honestly instead of the bare-date sentinel K900 vendor code
+            // used ("20241130") - the phone treats an empty version as "no MTK update".
+            Log.w(TAG, "System OTA version unavailable (property missing or malformed: '" + ver + "')");
+            return "";
         }
         return ver;
     }

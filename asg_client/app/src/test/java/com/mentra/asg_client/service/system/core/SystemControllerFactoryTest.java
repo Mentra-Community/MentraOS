@@ -37,6 +37,6 @@ public class SystemControllerFactoryTest {
         ISystemController controller = SystemControllerFactory.get(context);
 
         assertThat(controller).isInstanceOf(NoOpSystemController.class);
-        assertThat(controller.getSystemOtaVersion()).isEqualTo("20241130");
+        assertThat(controller.getSystemOtaVersion()).isEmpty();
     }
 }
