@@ -31,6 +31,7 @@ import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import org.json.JSONObject;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
+import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -168,7 +169,11 @@ public class CameraNeoService extends LifecycleService {
 
         void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
 
-        void onPhotoError(String errorMessage);
+        void onPhotoError(CameraOperationError error);
+
+        default void onPhotoError(String errorMessage) {
+            onPhotoError(CameraOperationError.captureFailed(errorMessage));
+        }
     }
 
     /** Callback for {@code camera_warm_up} lifecycle (no capture). */
@@ -186,7 +191,11 @@ public class CameraNeoService extends LifecycleService {
         void onCameraStopped();
 
         /** Warm-up failed (open/configure failure). */
-        void onCameraError(String errorMessage);
+        void onCameraError(CameraOperationError error);
+
+        default void onCameraError(String errorMessage) {
+            onCameraError(CameraOperationError.warmUpFailed(errorMessage));
+        }
 
         /**
          * The phone-side request this warm-up belongs to, or {@code null} if none. Used to keep at
@@ -760,7 +769,7 @@ public class CameraNeoService extends LifecycleService {
         // at the entry gate could race a capture that starts before setupWarmUp runs, letting the
         // phone see `warming` immediately followed by `error` (camera_busy).
         if (rejectBusy != null) {
-            rejectBusy.onCameraError("camera_busy");
+            rejectBusy.onCameraError(CameraOperationError.cameraBusy());
         }
     }
 
@@ -953,14 +962,14 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /** Fail every in-flight warm-up (open/configure failure). */
-    private void fireWarmError(String errorMessage) {
+    private void fireWarmError(CameraOperationError error) {
         final List<CameraWarmUpCallback> failed;
         synchronized (SERVICE_LOCK) {
             failed = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
         }
         for (CameraWarmUpCallback callback : failed) {
-            callback.onCameraError(errorMessage);
+            callback.onCameraError(error);
         }
     }
 
@@ -1261,15 +1270,22 @@ public class CameraNeoService extends LifecycleService {
 
             @Override
             public void onError(@NonNull CameraDevice camera, int error) {
-                Log.e(TAG, "Camera device error: " + error);
+                CameraOperationError cameraError =
+                        CameraOperationError.fromCameraDeviceError(error);
+                Log.e(
+                        TAG,
+                        "Camera open failed: "
+                                + cameraError.code()
+                                + " (Android code "
+                                + error
+                                + ")");
                 cameraCoordinator.releaseOpenCloseLock();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
-                    notifyVideoError(
-                            videoSession.currentVideoId(), "Camera device error: " + error);
+                    notifyVideoError(videoSession.currentVideoId(), cameraError.message());
                 } else {
-                    photoSession.notifyHostPhotoError("Camera device error: " + error);
+                    photoSession.notifyHostPhotoError(cameraError);
                 }
                 stopSelf();
             }
