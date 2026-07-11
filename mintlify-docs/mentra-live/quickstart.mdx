@@ -10,13 +10,17 @@ This quickstart shows the shortest path from package install to connecting to Me
 Use a physical phone for Bluetooth testing. Simulators and emulators are useful for UI and compile checks, but they do not provide the real Bluetooth path.
 </Warning>
 
+<Warning>
+This quickstart uses Bluetooth SDK `0.1.19`. Before testing SDK features, [install the matching Mentra Live `0.1.19` glasses software](/mentra-live/software-update). Every SDK release requires the Mentra Live software release with the same version number.
+</Warning>
+
 ## Step 1: Install The SDK
 
 <Tabs>
   <Tab title="React Native / Expo">
 
 ```bash
-bun add @mentra/bluetooth-sdk
+bun add @mentra/bluetooth-sdk@0.1.19
 bunx expo install expo-build-properties
 ```
 
@@ -349,6 +353,9 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Update Mentra Live" icon="download" href="/mentra-live/software-update">
+    Match the glasses software release to your SDK version.
+  </Card>
   <Card title="Run Example Apps" icon="mobile" href="/mentra-live/examples">
     Start from complete Android, iOS, and React Native examples.
   </Card>
