@@ -213,7 +213,6 @@ export type PhotoCaptureMetadataDetails = {
 export type PhotoTimelineEvent = {
   source: 'request' | 'photo_status' | 'photo_response';
   status?: string;
-  deviceTimestamp?: number;
   timestamp: number;
 };
 export type PhotoPreviewDetails = {
@@ -2184,7 +2183,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const bleTransferStatus =
       payload.status === 'ready_for_transfer' || payload.status === 'transferring';
     const statusPhoneTimestamp = Date.now();
-    const statusDeviceTimestamp = payload.timestamp ?? statusPhoneTimestamp;
     setPhotoPreviewDetails((current) => {
       const bleFallbackUsed =
         current?.bleFallbackUsed || payload.status === 'ble_fallback_compression';
@@ -2204,11 +2202,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
               ? 'Action button'
             : current?.source ?? currentPhotoSource(photoDestinationRef.current),
         state: current?.state === 'preview' ? 'preview' : 'acknowledged',
-        timestamp: statusDeviceTimestamp,
+        timestamp: statusPhoneTimestamp,
         timeline: appendPhotoTimeline(current?.timeline, {
           source: 'photo_status',
           status: payload.status,
-          deviceTimestamp: payload.timestamp,
           timestamp: statusPhoneTimestamp,
         }),
         resolvedConfig: payload.resolvedConfig ?? current?.resolvedConfig,
@@ -2229,11 +2226,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         requestId: payload.requestId,
         source: current?.source ?? currentPhotoSource(photoDestinationRef.current),
         state: 'error',
-        timestamp: statusDeviceTimestamp,
+        timestamp: statusPhoneTimestamp,
         timeline: current?.timeline ?? [{
           source: 'photo_status',
           status: payload.status,
-          deviceTimestamp: payload.timestamp,
           timestamp: statusPhoneTimestamp,
         }],
       }));
@@ -2441,10 +2437,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       source,
       state: current?.state === 'preview' || previewUrl ? 'preview' : 'acknowledged',
       timestamp: responseDeviceTimestamp,
-      timeline: appendPhotoResponseTimeline(current?.timeline, {
-        deviceTimestamp: response.timestamp,
-        timestamp: responsePhoneTimestamp,
-      }),
+      timeline: appendPhotoResponseTimeline(current?.timeline, {timestamp: responsePhoneTimestamp}),
       uploadUrl: response.uploadUrl,
     }));
     if (previewUrl) {
@@ -4780,18 +4773,17 @@ function appendPhotoTimeline(
     (entry) =>
       entry.source === event.source &&
       entry.status === event.status &&
-      (entry.deviceTimestamp ?? entry.timestamp) === (event.deviceTimestamp ?? event.timestamp),
+      entry.timestamp === event.timestamp,
   );
   return duplicate ? entries : [...entries, event];
 }
 
 function appendPhotoResponseTimeline(
   timeline: PhotoTimelineEvent[] | undefined,
-  event: Pick<PhotoTimelineEvent, 'deviceTimestamp' | 'timestamp'>,
+  event: Pick<PhotoTimelineEvent, 'timestamp'>,
 ) {
   return appendPhotoTimeline(timeline, {
     source: 'photo_response',
-    deviceTimestamp: event.deviceTimestamp,
     timestamp: event.timestamp,
   });
 }
