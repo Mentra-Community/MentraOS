@@ -43,6 +43,13 @@ const WAV_SOFTWARE = "Mentra Recorder"
 const FLUSH_BYTES = 48 * 1024
 /** Throttle UI status pushes to ~5/sec (keyed off captured audio ms, not a timer). */
 const PROGRESS_MS = 200
+/**
+ * Keep accepting PCM briefly after the user taps stop. Glasses audio crosses
+ * BLE and two JS/native bridges, so the newest frames can still be in flight
+ * when the UI command reaches this controller. Unsubscribing immediately drops
+ * that tail even though it was spoken before the tap.
+ */
+const STOP_TAIL_DRAIN_MS = 1500
 
 export class RecorderController {
   private started = false
@@ -87,7 +94,10 @@ export class RecorderController {
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
 
-  constructor(private readonly session: MiniappSession) {}
+  constructor(
+    private readonly session: MiniappSession,
+    private readonly stopTailDrainMs = STOP_TAIL_DRAIN_MS,
+  ) {}
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -187,6 +197,9 @@ export class RecorderController {
 
   private async startRecording(): Promise<void> {
     if (this.recordingId || this.finalizing) return
+    // Recording and playback are mutually exclusive. Stop synchronously before
+    // opening the writer so no old clip keeps playing over the new capture.
+    this.stopPlay()
     try {
       // One timestamp drives the filename, the display title, and the WAV's
       // ICRD date tag so they all agree.
@@ -412,7 +425,10 @@ export class RecorderController {
     // (pcmBytes/sampleRate/buffers) while we flush + write the header.
     this.finalizing = true
     try {
-      // Stop the feeds first so no more chunks/transcript arrive, then finalize.
+      // Audio spoken just before the tap may still be crossing BLE/native
+      // bridges. Keep the subscriptions alive for a short tail-drain window so
+      // those frames land before we freeze and finalize the WAV.
+      await delay(this.stopTailDrainMs)
       try {
         this.micUnsub?.()
       } catch {
@@ -766,4 +782,8 @@ function fmtClock(ms: number): string {
   const m = Math.floor(s / 60)
   const r = s % 60
   return `${m}:${r.toString().padStart(2, "0")}`
+}
+
+function delay(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
 }
