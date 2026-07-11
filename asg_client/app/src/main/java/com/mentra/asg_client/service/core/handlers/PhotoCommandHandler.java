@@ -286,6 +286,35 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
+            // ARCHIVAL CAPTURE: a save-only request (no upload target) has no delivery leg —
+            // no webhook upload, no BLE transfer — so there is nothing for the single-flight
+            // photo-job gate to protect. Route it down the button-photo path: camera-queue
+            // serialized, no CAMERA_BUSY, so SDK callers can burst-save to the gallery and
+            // pull the files later over WiFi sync (each stamped with its requestId).
+            // transferMethod is deliberately not consulted: it is always "auto" in practice
+            // and the phone app always supplies a webhookUrl, so this shape is only ever
+            // produced by direct BT-SDK callers that want exactly this behavior.
+            if (save && webhookUrl.isEmpty()) {
+                Log.i(
+                        TAG,
+                        "PHOTO PIPELINE [ASG 3/3] Local-save capture (no upload target)"
+                                + " requestId="
+                                + requestId);
+                boolean accepted =
+                        captureService.takePhotoForLocalSave(
+                                photoFilePath,
+                                requestId,
+                                size,
+                                flash,
+                                sound,
+                                exposureTimeNs,
+                                iso,
+                                captureSettings);
+                logCommandResult(
+                        "take_photo", accepted, accepted ? null : "Local-save capture rejected");
+                return accepted;
+            }
+
             // COOLDOWN CHECK: Reject photo requests if BLE transfer is in progress
             if (captureService.isBleTransferInProgress()) {
                 Log.w(

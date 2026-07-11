@@ -860,7 +860,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     }
 
     /** Check if WiFi tethering is currently active */
-    private boolean isWifiTetheringActive() {
+    protected boolean isWifiTetheringActive() {
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);

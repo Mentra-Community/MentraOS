@@ -14,6 +14,16 @@ public interface ICommunicationManager {
      * @param isConnected WiFi connection status
      */
     void sendWifiStatusOverBle(boolean isConnected);
+
+    /**
+     * Send WiFi status over Bluetooth with a failure reason. The error is included in the
+     * wifi_status message so the phone can show why a provisioning attempt failed instead
+     * of silently reporting "not connected".
+     *
+     * @param isConnected WiFi connection status
+     * @param error Failure reason (e.g. "connect_timeout"), or null when not applicable
+     */
+    void sendWifiStatusOverBle(boolean isConnected, String error);
     
     /**
      * Send battery status over Bluetooth

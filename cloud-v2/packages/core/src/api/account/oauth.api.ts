@@ -33,12 +33,17 @@ function s256(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
 }
 
-function publicOrigin(c: AppContext): string {
-  return (
-    c.req.header("x-mentra-public-origin") ??
-    process.env.CORE_PUBLIC_URL ??
-    new URL(c.req.url).origin
-  );
+/** Exported for tests. */
+export function publicOrigin(c: AppContext): string {
+  const proxied = c.req.header("x-mentra-public-origin");
+  if (proxied) return proxied;
+  // TLS terminates at the ingress, so the pod sees plain http. ingress-nginx
+  // sets x-forwarded-proto itself (overwriting any client-supplied value) and
+  // preserves Host, so the derived origin is the real public one — no per-env
+  // config. GoTrue's redirect allowlist stays the fail-closed backstop.
+  const url = new URL(c.req.url);
+  const proto = c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "");
+  return `${proto}://${url.host}`;
 }
 
 /** Start: persist {state, app challenge} + a core<->GoTrue verifier, redirect
