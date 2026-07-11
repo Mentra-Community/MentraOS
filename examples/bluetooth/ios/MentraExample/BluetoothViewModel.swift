@@ -11,6 +11,12 @@ struct ExampleEvent: Identifiable {
     let text: String
 }
 
+struct MentraLiveVersions {
+    var appVersion: String?
+    var besFirmwareVersion: String?
+    var mtkFirmwareVersion: String?
+}
+
 struct ExampleActionError: LocalizedError {
     let message: String
     var errorDescription: String? {
@@ -432,6 +438,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var otaUpdateAvailable = false
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
+    @Published private(set) var mentraLiveVersions = MentraLiveVersions()
     @Published var rawJsonExpanded = false
 
     private let micSampleRate = 16000
@@ -455,6 +462,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var lastDirectStreamFrameStatusRefresh = Date.distantPast
     private var autoOtaCheckedConnectionKey: String?
     private var autoOtaCheckInProgress = false
+    private var latestVersionInfo: VersionInfoResult?
     private var latestOtaVersionInfoSignature: String?
     private var otaDisplayProgressSessionKey: String?
     private var otaDisplayOverallPercent: Int?
@@ -533,8 +541,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         glassesValues = mentraBluetoothSdk.glasses
         hotspotEnabled = enabledHotspotStatus(glassesValues) != nil
+        mentraLiveVersions = resolveMentraLiveVersions(glassesValues, versionInfo: latestVersionInfo)
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
         applySdkState(mentraBluetoothSdk.sdkState)
+        if isMentraLiveRuntime(glassesValues) {
+            refreshMentraLiveVersionInfo()
+        }
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         } else if let value = savedCloudUrls.webhookUrl {
@@ -2135,11 +2147,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
         let wasConnected = glassesConnected
+        if !glasses.connected || !wasConnected {
+            latestVersionInfo = nil
+        }
         glassesValues = glasses
         hotspotEnabled = enabledHotspotStatus(glasses) != nil
+        mentraLiveVersions = resolveMentraLiveVersions(glasses, versionInfo: latestVersionInfo)
+        let shouldRefreshVersions = !wasConnected && isMentraLiveRuntime(glasses)
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
         } else if !wasConnected {
+            refreshMentraLiveVersionInfo()
             // Re-apply scan preset on reconnect so button captures stay in sync.
             if scanMode {
                 pushScanButtonPreset()
@@ -2149,7 +2167,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
-        maybeAutoCheckOta()
+        if !shouldRefreshVersions {
+            maybeAutoCheckOta()
+        }
         append(tag: "STORE", text: summarize(glasses))
     }
 
@@ -2204,7 +2224,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case let .otaStatus(event):
             applyOtaStatus(event)
         case let .versionInfo(event):
-            latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+            applyVersionInfo(event)
             let installedIdentity = otaAppIdentity(event)
             if let installedIdentity,
                let otaStartingAppIdentity,
@@ -2230,6 +2250,31 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func checkForOtaUpdateResult() async throws -> Bool {
         handleOtaCheckResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+    }
+
+    private func applyVersionInfo(_ event: VersionInfoResult) {
+        guard glassesConnected else { return }
+        latestVersionInfo = event
+        latestOtaVersionInfoSignature = otaVersionInfoSignature(event)
+        mentraLiveVersions = resolveMentraLiveVersions(glassesValues, versionInfo: event)
+    }
+
+    private func refreshMentraLiveVersionInfo() {
+        guard isMentraLiveRuntime(glassesValues) else { return }
+        let connectionKey = otaConnectionKey(glassesValues)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let payload = try await mentraBluetoothSdk.requestVersionInfo()
+                guard isMentraLiveRuntime(glassesValues), otaConnectionKey(glassesValues) == connectionKey else { return }
+                applyVersionInfo(payload)
+                maybeAutoCheckOta()
+            } catch {
+                guard isMentraLiveRuntime(glassesValues), otaConnectionKey(glassesValues) == connectionKey else { return }
+                append(tag: "LIVE", text: "version info refresh failed: \(error.localizedDescription)")
+                maybeAutoCheckOta()
+            }
+        }
     }
 
     private func handleOtaCheckResult(_ updateAvailable: Bool) -> Bool {
@@ -2344,6 +2389,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard glassesConnected else {
             autoOtaCheckedConnectionKey = nil
             autoOtaCheckInProgress = false
+            latestVersionInfo = nil
             latestOtaVersionInfoSignature = nil
             postOtaCheckInProgress = false
             postOtaCheckedSessionKey = nil
@@ -2732,6 +2778,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
         otaStartingAppIdentity = nil
+        latestVersionInfo = nil
+        mentraLiveVersions = MentraLiveVersions()
         resetOtaDisplayProgress()
         otaStatus = nil
         otaDisplayPercent = nil
@@ -3334,6 +3382,67 @@ func otaAppIdentity(_ event: VersionInfoResult) -> String? {
         .filter { !$0.isEmpty }
         .joined(separator: "|")
     return key.isEmpty ? nil : key
+}
+
+func versionValue(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return nil
+    }
+    return trimmed
+}
+
+func resolveMentraLiveVersions(_ status: GlassesRuntimeState?, versionInfo: VersionInfoResult?) -> MentraLiveVersions {
+    guard isGlassesConnected(status) else {
+        return MentraLiveVersions()
+    }
+    return MentraLiveVersions(
+        appVersion: versionValue(versionInfo?.appVersion)
+            ?? versionValue(connectedGlassesInfo(status)?.appVersion)
+            ?? versionValue(status?.firmware?.appVersion),
+        besFirmwareVersion: versionValue(versionInfo?.besFirmwareVersion)
+            ?? (status?.firmware?.source == .bes ? versionValue(status?.firmware?.version) : nil),
+        mtkFirmwareVersion: versionValue(versionInfo?.mtkFirmwareVersion)
+            ?? (status?.firmware?.source == .mtk ? versionValue(status?.firmware?.version) : nil)
+    )
+}
+
+func isMentraLiveRuntime(_ status: GlassesRuntimeState?) -> Bool {
+    guard isGlassesConnected(status) else {
+        return false
+    }
+    let device = connectedGlassesInfo(status)
+    let model = [
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+    return device?.deviceModel == .mentraLive || model.contains("mentra live")
+}
+
+func shouldShowMentraLiveVersions(_ status: GlassesRuntimeState?) -> Bool {
+    isMentraLiveRuntime(status)
+}
+
+func versionLabel(_ version: String?) -> String {
+    version ?? "Unknown"
+}
+
+@MainActor
+func firmwareCardLabel(model: BluetoothViewModel) -> String {
+    if shouldShowMentraLiveVersions(model.glassesValues), let appVersion = model.mentraLiveVersions.appVersion {
+        return appVersion
+    }
+    return firmwareLabel(model.glassesValues)
+}
+
+@MainActor
+func firmwareCardSubLabel(model: BluetoothViewModel) -> String {
+    if shouldShowMentraLiveVersions(model.glassesValues), model.mentraLiveVersions.appVersion != nil {
+        return "ASG client"
+    }
+    return firmwareSubLabel(model.glassesValues)
 }
 
 func otaSessionKey(_ status: OtaStatusEvent) -> String {
