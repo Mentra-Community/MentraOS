@@ -67,6 +67,15 @@ public class BesWireFormat {
     // (BES >= 17.26.7.6 then acks every 8th pack instead of each one).
     public static final int FILE_FLAG_PUSH_BATCH_ACK = 0x0001;
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
+
+    /**
+     * Convert a BES file-transfer response index to the sender's zero-based packet index.
+     * Success responses are cumulative and carry the next expected index. Failure responses
+     * already carry the exact packet index BES needs retransmitted.
+     */
+    public static int fileAckPacketIndex(int state, int responseIndex) {
+        return state == 1 ? responseIndex - 1 : responseIndex;
+    }
     public static final int LENGTH_FILE_START = 2;
 
     /**
