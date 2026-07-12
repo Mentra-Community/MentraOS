@@ -81,9 +81,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // 32 window). Firmware >= 17.26.7.6 has an 8KB RX buffer and acks every 8th pack
     // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
-    // 17.26.7.7 firmware: 3.4KB UART RX ring (the HAL rejects single-descriptor
-    // DMA arms over 4095B and 7.7 armed the whole ring at once), acks every 4th
-    // pack - window 8 fits the ring and stays above the batch interval.
+    // Firmware >=17.26.7.14 keeps its 12KB circular DMA receiver armed across
+    // timeout boundaries. A 16-pack window keeps two complete eight-pack ACK
+    // batches in flight while remaining well inside the BES receive ring.
     private static final int FILE_PUSH_WINDOW_BATCHED = 8;
     private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
     // 17.26.7.8 firmware: 12KB UART RX ring (arms are margin-sized so the ring is
@@ -116,13 +116,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final boolean BIG_PACKS_ENABLED = false;
 
     /**
-     * Batched acks are DISABLED pending the same firmware burst-loss fix: with the
-     * window-12 blast the BES deterministically loses one early pack (pack 1 at 400B,
-     * pack 0 at 800B) and the reject/rewind interplay collapses throughput (~11KB/s,
-     * frequent packet_timeout aborts). Per-pack acks at window 3 are the
-     * hardware-validated 45-50KB/s configuration.
+     * Firmware 17.26.7.14 keeps circular UART DMA armed across receive timeouts, removing the
+     * re-arm gap that dropped early packets during push bursts. Use conservative 400-byte UART
+     * packets with a two-batch window; 800-byte packets remain independently
+     * disabled until this mode passes hardware stress testing.
      */
-    private static final boolean BATCHED_ACKS_ENABLED = false;
+    private static final boolean BATCHED_ACKS_ENABLED = true;
 
     private int effectiveUartPackSize() {
         if (BIG_PACKS_ENABLED
