@@ -18,6 +18,12 @@ class G1TextSanitizerTest {
     }
 
     @Test
+    fun `expands Latin letters that do not decompose into combining marks`() {
+        assertThat(sanitizeG1DisplayText("Øresund Łódź Æsir Œuvre Straße Ðingvellir Þingvellir"))
+            .isEqualTo("Oresund Lodz AEsir OEuvre Strasse Dingvellir THingvellir")
+    }
+
+    @Test
     fun `leaves text without diacritics unchanged`() {
         assertThat(sanitizeG1DisplayText("Hello, world! 123"))
             .isEqualTo("Hello, world! 123")

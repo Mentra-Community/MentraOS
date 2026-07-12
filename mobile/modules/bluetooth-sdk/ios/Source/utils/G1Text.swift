@@ -27,9 +27,27 @@ class G1Text {
     /// Converts text to the base Latin glyphs available in G1 firmware.
     /// Newer glasses bypass this G1-only transport and keep the original text.
     static func sanitizeForDisplay(_ text: String) -> String {
-        return text
-            .replacingOccurrences(of: "Đ", with: "D")
-            .replacingOccurrences(of: "đ", with: "d")
+        let expanded = text.reduce(into: "") { result, character in
+            switch character {
+            case "Đ", "Ð": result.append("D")
+            case "đ", "ð": result.append("d")
+            case "Ł": result.append("L")
+            case "ł": result.append("l")
+            case "Ø": result.append("O")
+            case "ø": result.append("o")
+            case "Æ": result.append("AE")
+            case "æ": result.append("ae")
+            case "Œ": result.append("OE")
+            case "œ": result.append("oe")
+            case "ẞ": result.append("SS")
+            case "ß": result.append("ss")
+            case "Þ": result.append("TH")
+            case "þ": result.append("th")
+            default: result.append(character)
+            }
+        }
+
+        return expanded
             .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
     }
 
