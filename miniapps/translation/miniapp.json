@@ -40,7 +40,7 @@
         "properties": {
           "targetLanguage": {
             "type": "string",
-            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi'). Omit to keep the user's saved target language."
+            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi', 'vi'). Omit to keep the user's saved target language."
           }
         }
       }

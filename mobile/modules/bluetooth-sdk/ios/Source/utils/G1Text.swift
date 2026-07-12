@@ -24,6 +24,15 @@ class G1Text {
 
     init() {}
 
+    /// Converts text to the base Latin glyphs available in G1 firmware.
+    /// Newer glasses bypass this G1-only transport and keep the original text.
+    static func sanitizeForDisplay(_ text: String) -> String {
+        return text
+            .replacingOccurrences(of: "Đ", with: "D")
+            .replacingOccurrences(of: "đ", with: "d")
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
     // MARK: - Text Wall Methods
 
     //    func displayTextWall(_ text: String) {
@@ -72,7 +81,9 @@ class G1Text {
     func chunkTextForTransmission(_ text: String) -> [[UInt8]] {
         // Handle empty or whitespace-only text by sending at least a space
         // This ensures the display gets updated/cleared properly
-        let textToSend = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? " " : text
+        let textToSend = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? " "
+            : G1Text.sanitizeForDisplay(text)
         guard let textData = textToSend.data(using: .utf8) else { return [] }
         let textBytes = [UInt8](textData)
         let totalChunks = Int(ceil(Double(textBytes.count) / Double(G1Text.MAX_CHUNK_SIZE)))
