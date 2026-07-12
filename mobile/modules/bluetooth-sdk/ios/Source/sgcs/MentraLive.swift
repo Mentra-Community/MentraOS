@@ -515,7 +515,9 @@ private enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    static let FILE_PACK_SIZE = 400 // Max data size per packet
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    static let FILE_PACK_SIZE = 800
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2
@@ -1260,6 +1262,7 @@ class MentraLive: NSObject, SGCManager {
             wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
+            peerFilePayloadV2 = false
             BleJsonCompact.resetSession()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
@@ -1444,6 +1447,7 @@ class MentraLive: NSObject, SGCManager {
     // v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
     private var peerWireCapsBinary = false
+    private var peerFilePayloadV2 = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -3103,6 +3107,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        advertiseFilePayloadCapabilityToBes()
         openL2capFileChannel()
         sendBleMtuConfig()
 
@@ -4995,6 +5000,7 @@ class MentraLive: NSObject, SGCManager {
         wireHandshakeQueued = false
         peerK900Le = false
         peerWireCapsBinary = false
+        peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
         closeL2capFileChannel()
 
@@ -5098,6 +5104,20 @@ extension MentraLive {
         }
         if caps.keys.contains("binary") {
             peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        }
+        if caps.keys.contains("file_payload_v2") {
+            peerFilePayloadV2 = (caps["file_payload_v2"] as? Bool) == true
+        }
+    }
+
+    private func advertiseFilePayloadCapabilityToBes() {
+        guard peerFilePayloadV2 else { return }
+        let body = "{\"max\":\(K900ProtocolUtils.FILE_PACK_SIZE)}"
+        let command: [String: Any] = ["C": "cs_file_payload", "B": body]
+        if sendRawK900Command(command) {
+            Bridge.log(
+                "LIVE: 📦 Advertised file payload ceiling \(K900ProtocolUtils.FILE_PACK_SIZE) to BES"
+            )
         }
     }
 

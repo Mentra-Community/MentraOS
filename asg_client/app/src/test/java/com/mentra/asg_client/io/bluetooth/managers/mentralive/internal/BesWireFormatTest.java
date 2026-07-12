@@ -110,14 +110,26 @@ public class BesWireFormatTest {
 
     @Test
     public void setFilePackSizeFromMtu_clampsToValidRange() {
-        BesWireFormat.setFilePackSizeFromMtu(23);
+        BesWireFormat.setFilePackSizeFromMtu(23, true);
         assertThat(BesWireFormat.getFilePackSize()).isEqualTo(BesWireFormat.FILE_PACK_SIZE_MIN);
 
-        BesWireFormat.setFilePackSizeFromMtu(512);
-        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(BesWireFormat.FILE_PACK_SIZE_DEFAULT);
+        BesWireFormat.setFilePackSizeFromMtu(509, true);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(474);
 
-        BesWireFormat.setFilePackSizeFromMtu(200);
+        BesWireFormat.setFilePackSizeFromMtu(509, false);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(400);
+
+        BesWireFormat.setFilePackSizeFromMtu(200, true);
         assertThat(BesWireFormat.getFilePackSize()).isEqualTo(165);
+    }
+
+    @Test
+    public void setFilePackSize_clampsToNegotiatedMaximum() {
+        BesWireFormat.setFilePackSize(832);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(800);
+
+        BesWireFormat.setFilePackSize(640);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(640);
     }
 
     @Test

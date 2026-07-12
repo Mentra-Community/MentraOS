@@ -50,22 +50,21 @@ public class BesWireFormat {
             new AtomicInteger(PROTOCOL_VERSION_V1);
     private static final AtomicInteger NEXT_BINARY_MSG_ID = new AtomicInteger(1);
 
-    // File transfer constants
-    // 400 matches the BES firmware's hardcoded FILE_PACK_SIZE (432-byte notifications
-    // incl. 32B overhead + 3B ATT). Phones with MTU >= 435 get full-size packs; smaller
-    // MTUs still negotiate down via set_ble_mtu -> setFilePackSizeFromMtu.
-    public static final int FILE_PACK_SIZE_MAX = 400;
-    // Max data bytes per UART file pack. Firmware >= 17.26.7.8 accepts 800B UART
-    // packs and splits them into standard 400B BLE frames itself, so the phone
-    // wire format (and MTU budget) is unaffected; the win is halved framing and
-    // ack overhead on the UART leg, which is the throughput bottleneck.
-    public static final int FILE_UART_PACK_SIZE_MAX = 800;
-    public static final int FILE_PACK_SIZE_DEFAULT =
-            FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
+    // File transfer constants. Legacy peers use 400-byte payloads. Firmware that advertises
+    // wire_caps.file_payload_v2 can use all 474 data bytes available at ATT MTU 509, or a larger
+    // payload selected from the actual CoC transmit MTU.
+    public static final int FILE_PACK_SIZE_LEGACY = 400;
+    public static final int FILE_PACK_SIZE_GATT_MAX = 474;
+    public static final int FILE_PACK_SIZE_COC_MAX = 800;
+    public static final int FILE_PACK_SIZE_MAX = FILE_PACK_SIZE_COC_MAX;
+    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_LEGACY;
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
     // File frame flags bit 0: sender streams push-mode and accepts batched acks
     // (BES >= 17.26.7.6 then acks every 8th pack instead of each one).
     public static final int FILE_FLAG_PUSH_BATCH_ACK = 0x0001;
+    // Bit 1 declares that fileSize and packet indices use this transfer's packSize instead of the
+    // OEM's hardcoded 400-byte packet-count convention.
+    public static final int FILE_FLAG_DYNAMIC_PAYLOAD = 0x0002;
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
 
     /**
@@ -93,21 +92,39 @@ public class BesWireFormat {
      *
      * @param mtu The negotiated BLE MTU from the phone
      */
-    public static void setFilePackSizeFromMtu(int mtu) {
+    public static void setFilePackSizeFromMtu(int mtu, boolean dynamicPayloadSupported) {
         // MTU - 3 (ATT header) - 32 (protocol overhead) = max data size
         int newPackSize = mtu - 3 - 32;
 
         // Clamp to valid range
         if (newPackSize < FILE_PACK_SIZE_MIN) {
             newPackSize = FILE_PACK_SIZE_MIN;
-        } else if (newPackSize > FILE_PACK_SIZE_MAX) {
-            newPackSize = FILE_PACK_SIZE_MAX;
+        }
+        int maximum =
+                dynamicPayloadSupported ? FILE_PACK_SIZE_GATT_MAX : FILE_PACK_SIZE_LEGACY;
+        if (newPackSize > maximum) {
+            newPackSize = maximum;
         }
 
         filePackSize = newPackSize;
         Log.i(
                 "BesWireFormat",
-                "📦 File pack size set to " + filePackSize + " bytes (MTU=" + mtu + ")");
+                "📦 File pack size set to "
+                        + filePackSize
+                        + " bytes (MTU="
+                        + mtu
+                        + ", dynamic="
+                        + dynamicPayloadSupported
+                        + ")");
+    }
+
+    /** Select an explicitly negotiated payload, clamped to the protocol ceiling. */
+    public static void setFilePackSize(int payloadSize) {
+        filePackSize =
+                Math.max(
+                        FILE_PACK_SIZE_MIN,
+                        Math.min(payloadSize, FILE_PACK_SIZE_COC_MAX));
+        Log.i("BesWireFormat", "📦 File pack size set to " + filePackSize + " bytes");
     }
 
     /** Reset file pack size to default safe BLE payload size. */
@@ -903,7 +920,7 @@ public class BesWireFormat {
             String fileName,
             int flags,
             byte fileType) {
-        if (fileData == null || packSize > FILE_UART_PACK_SIZE_MAX) {
+        if (fileData == null || packSize > FILE_PACK_SIZE_MAX) {
             return null;
         }
 
