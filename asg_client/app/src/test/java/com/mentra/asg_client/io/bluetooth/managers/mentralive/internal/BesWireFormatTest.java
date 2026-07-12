@@ -121,6 +121,12 @@ public class BesWireFormatTest {
     }
 
     @Test
+    public void fileAckPacketIndex_usesAsymmetricBesSemantics() {
+        assertThat(BesWireFormat.fileAckPacketIndex(1, 16)).isEqualTo(15);
+        assertThat(BesWireFormat.fileAckPacketIndex(0, 16)).isEqualTo(16);
+    }
+
+    @Test
     public void packJsonCommand_wrapsWithCField() {
         byte[] packed = BesWireFormat.packJsonCommand("{\"type\":\"ping\"}");
 

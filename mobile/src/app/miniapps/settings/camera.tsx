@@ -29,7 +29,7 @@ const PHOTO_SIZE_OPTIONS = [
   {key: "low" as PhotoSize, label: "Low (960×720)"},
   {key: "medium" as PhotoSize, label: "Medium (1440×1088)"},
   {key: "high" as PhotoSize, label: "High (3264×2448)"},
-  {key: "max" as PhotoSize, label: "Max (camera maximum)"},
+  {key: "max" as PhotoSize, label: "Max (4032×3024)"},
 ]
 
 function normalizeButtonPhotoSize(value?: string): PhotoSize {
@@ -54,9 +54,9 @@ const VIDEO_RESOLUTION_OPTIONS = [
 ]
 
 const VIDEO_FPS_OPTIONS = [
-  {key: "30" as VideoFps, label: "30 fps", subtitle: "Smoothest motion"},
-  {key: "15" as VideoFps, label: "15 fps", subtitle: "Cooler, smaller files"},
-  {key: "5" as VideoFps, label: "5 fps", subtitle: "Coolest — best for long recordings"},
+  {key: "30" as VideoFps, label: "30 fps"},
+  {key: "15" as VideoFps, label: "15 fps"},
+  {key: "5" as VideoFps, label: "5 fps"},
 ]
 
 const MAX_RECORDING_TIME_OPTIONS = [
@@ -246,10 +246,7 @@ export default function CameraSettingsScreen() {
 
         <View style={themed($section)}>
           <Text style={themed($sectionTitle)}>Action Button Video Frame Rate</Text>
-          <Text style={themed($sectionSubtitle)}>
-            Lower frame rates keep the glasses cooler and produce smaller files — ideal for long recordings where smooth
-            motion isn&apos;t needed.
-          </Text>
+          <Text style={themed($sectionSubtitle)}>Choose how many frames are captured per second.</Text>
           <OptionList options={VIDEO_FPS_OPTIONS} selected={videoFps} onSelect={handleVideoFpsChange} />
         </View>
 
