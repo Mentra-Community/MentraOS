@@ -12,7 +12,7 @@
 # Options:
 #   -o, --out DIR    Output directory (default: ./incident-logs/<reportId>)
 #   --json           Print the raw report JSON to stdout, skip artifact downloads
-#   --env ENV        prod | staging | dev (default: prod)
+#   --env ENV        prod | staging | dev (default: auto-discover)
 #   --kind KIND      (--list) bug | feedback | automatic
 #   --status STATUS  (--list) collecting | ready | closed
 #   --limit N        (--list) max reports to return (1-200, default 50)
@@ -22,7 +22,8 @@
 #                       key (msk_...) whose synthetic email is allowlisted in
 #                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
 #                       an admin user.
-#   MENTRA_CORE_URL     (optional) Core API base URL; overrides --env.
+#   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
+#                       and overrides --env.
 
 set -euo pipefail
 
@@ -40,7 +41,8 @@ command -v jq >/dev/null || { err "jq is required (brew install jq)"; exit 1; }
 REPORT_ID=""
 OUT_DIR=""
 MODE="fetch"
-ENV_NAME="prod"
+ENV_NAME=""
+ENV_EXPLICIT=0
 LIST_KIND=""
 LIST_STATUS=""
 LIST_LIMIT=""
@@ -50,7 +52,7 @@ while [ $# -gt 0 ]; do
     --list) MODE="list" ;;
     --json) MODE="json" ;;
     -o|--out) OUT_DIR="${2:?--out requires a directory}"; shift ;;
-    --env) ENV_NAME="${2:?--env requires prod|staging|dev}"; shift ;;
+    --env) ENV_NAME="${2:?--env requires prod|staging|dev}"; ENV_EXPLICIT=1; shift ;;
     --kind) LIST_KIND="${2:?--kind requires a value}"; shift ;;
     --status) LIST_STATUS="${2:?--status requires a value}"; shift ;;
     --limit) LIST_LIMIT="${2:?--limit requires a number}"; shift ;;
@@ -64,14 +66,39 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-case "$ENV_NAME" in
-  prod) DEFAULT_CORE_URL="https://core.mentraglass.com" ;;
-  staging) DEFAULT_CORE_URL="https://core.staging.us-west-2.mentraglass.com" ;;
-  dev) DEFAULT_CORE_URL="https://core.dev.us-west-2.mentraglass.com" ;;
-  *) err "--env must be prod, staging, or dev (got: $ENV_NAME)"; exit 1 ;;
-esac
-CORE_URL="${MENTRA_CORE_URL:-$DEFAULT_CORE_URL}"
-CORE_URL="${CORE_URL%/}"
+if [ "$ENV_EXPLICIT" -eq 1 ]; then
+  case "$ENV_NAME" in
+    prod|staging|dev) ;;
+    *) err "--env must be prod, staging, or dev (got: $ENV_NAME)"; exit 1 ;;
+  esac
+fi
+
+core_url_for_env() {
+  case "$1" in
+    prod) echo "https://core.mentraglass.com" ;;
+    staging) echo "https://core.staging.us-west-2.mentraglass.com" ;;
+    dev) echo "https://core.dev.us-west-2.mentraglass.com" ;;
+    *) return 1 ;;
+  esac
+}
+
+CANDIDATE_NAMES=()
+CANDIDATE_URLS=()
+if [ -n "${MENTRA_CORE_URL:-}" ]; then
+  CANDIDATE_NAMES+=("custom")
+  CANDIDATE_URLS+=("${MENTRA_CORE_URL%/}")
+elif [ "$ENV_EXPLICIT" -eq 1 ]; then
+  CANDIDATE_NAMES+=("$ENV_NAME")
+  CANDIDATE_URLS+=("$(core_url_for_env "$ENV_NAME")")
+else
+  for candidate_env in prod dev staging; do
+    CANDIDATE_NAMES+=("$candidate_env")
+    CANDIDATE_URLS+=("$(core_url_for_env "$candidate_env")")
+  done
+fi
+
+CORE_URL=""
+SELECTED_ENV=""
 
 if [ "$MODE" != "list" ] && [ -z "$REPORT_ID" ]; then
   usage
@@ -114,6 +141,38 @@ fail_for_status() {
   exit 1
 }
 
+# discover_get PATH OUTFILE WHAT
+#
+# Uses a single backend when --env or MENTRA_CORE_URL is explicit. Otherwise,
+# tries each Cloud V2 environment until the request succeeds. This matters for
+# environment-pinned msk_<env>_* API keys and report ids whose origin is not
+# known when copied from a notification.
+discover_get() {
+  local path="$1" body="$2" what="$3"
+  local i status attempts=""
+
+  for ((i = 0; i < ${#CANDIDATE_URLS[@]}; i++)); do
+    CORE_URL="${CANDIDATE_URLS[$i]}"
+    SELECTED_ENV="${CANDIDATE_NAMES[$i]}"
+    note "Trying $SELECTED_ENV reports backend: $CORE_URL"
+    STATUS=$(api_get "$path" "$body") || STATUS="000"
+    status="$STATUS"
+    if printf '%s' "$status" | grep -q '^2'; then
+      note "Using reports backend: $SELECTED_ENV ($CORE_URL)"
+      return 0
+    fi
+
+    attempts="${attempts}${attempts:+, }$SELECTED_ENV=HTTP $status"
+    if [ "${#CANDIDATE_URLS[@]}" -eq 1 ]; then
+      fail_for_status "$status" "$body" "$what"
+    fi
+  done
+
+  err "could not fetch $what from any reports backend ($attempts)"
+  if [ -s "$body" ]; then jq . "$body" >&2 2>/dev/null || cat "$body" >&2; fi
+  exit 1
+}
+
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -123,18 +182,16 @@ if [ "$MODE" = "list" ]; then
   [ -n "$LIST_STATUS" ] && QUERY="$QUERY&status=$LIST_STATUS"
   [ -n "$LIST_LIMIT" ] && QUERY="$QUERY&limit=$LIST_LIMIT"
   QUERY="${QUERY#&}"
-  note "Listing reports from $CORE_URL${QUERY:+ ($QUERY)}"
+  note "Listing reports${QUERY:+ ($QUERY)}"
   BODY="$TMP_DIR/list.json"
-  STATUS=$(api_get "/api/admin/reports${QUERY:+?$QUERY}" "$BODY")
-  fail_for_status "$STATUS" "$BODY" "report list"
+  discover_get "/api/admin/reports${QUERY:+?$QUERY}" "$BODY" "report list"
   jq . "$BODY"
   exit 0
 fi
 
-note "Fetching report $REPORT_ID from $CORE_URL"
+note "Fetching report $REPORT_ID"
 DETAIL="$TMP_DIR/detail.json"
-STATUS=$(api_get "/api/admin/reports/$REPORT_ID" "$DETAIL")
-fail_for_status "$STATUS" "$DETAIL" "report $REPORT_ID"
+discover_get "/api/admin/reports/$REPORT_ID" "$DETAIL" "report $REPORT_ID"
 
 if [ "$MODE" = "json" ]; then
   jq . "$DETAIL"

@@ -1,5 +1,6 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {parse} from "exifr"
+import {Buffer} from "@craftzdog/react-native-buffer"
+import {parse} from "exifr/dist/lite.esm.js"
 
 import {PhotoInfo} from "@/types/asg"
 
@@ -34,8 +35,7 @@ export async function loadMediaMetadata(photo: PhotoInfo): Promise<LoadedMediaMe
 
   try {
     const base64 = await RNFS.readFile(path, "base64")
-    const mimeType = photo.mime_type?.startsWith("image/") ? photo.mime_type : "image/jpeg"
-    const exif = await parse(`data:${mimeType};base64,${base64}`)
+    const exif = await parse(Buffer.from(base64, "base64"))
     return {actualSize, exif: exif && typeof exif === "object" ? (exif as Record<string, unknown>) : null}
   } catch (error) {
     // A valid image often has no EXIF block. Keep the core file details usable
