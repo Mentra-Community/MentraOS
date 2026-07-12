@@ -534,6 +534,12 @@ class MentraBluetoothSdk private constructor(
         performSettingsCommand(
             setting = "button_video_recording",
             updateStore = { _ ->
+                DeviceStore.set(
+                    ObservableStore.BLUETOOTH_CATEGORY,
+                    "button_video_settings",
+                    mapOf("width" to defaults.width, "height" to defaults.height, "fps" to defaults.fps),
+                )
+                // Keep legacy cache keys readable for older internal callers during migration.
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", defaults.width)
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", defaults.height)
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", defaults.fps)

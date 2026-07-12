@@ -7,6 +7,10 @@ declare module "bzip2" {
   export default bzip2
 }
 
+declare module "exifr/dist/lite.esm.js" {
+  export {parse} from "exifr"
+}
+
 declare module "tar-js" {
   export interface TarEntry {
     name: string

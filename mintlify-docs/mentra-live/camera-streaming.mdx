@@ -304,6 +304,63 @@ Use `setGalleryModeEnabled(false)` when you want the action button to report eve
 
 Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
 
+### Gallery Photo Request IDs
+
+In gallery mode, photos are saved on the glasses instead of being uploaded to a webhook. Because nothing is uploaded, there is no response that returns the `requestId`. Instead, read the `requestId` from `photo_status` events. Action-button captures set `resolvedConfig.source` to `"button"`, so you can filter for them. When your own app starts the capture, you set the `requestId` yourself by passing it to `requestPhoto({requestId, save: true, webhookUrl: null})`.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.resolvedConfig?.source === 'button') {
+    console.log('gallery photo requestId', event.requestId);
+  }
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onPhotoStatus(event: PhotoStatusEvent) {
+    if (event.resolvedConfig?.source == "button") {
+        Log.d("Mentra", "gallery photo requestId: ${event.requestId}")
+    }
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .photoStatus(status) = event,
+       status.resolvedConfig?.source == "button" {
+        print("gallery photo requestId: \(status.requestId)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+To find the saved photo file, connect to the glasses Wi-Fi hotspot and request the gallery list. Each photo includes `request_id`, `name`, `url`, `mime_type`, and `size`. Match on `request_id` to find your capture:
+
+```ts
+const gallery = await fetch(`${galleryBaseUrl}/api/gallery?limit=100`).then((res) => res.json());
+const savedPhoto = gallery.data.photos.find((p) => p.request_id === requestId);
+console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
+```
+
+<Warning>
+  The gallery server is only reachable over the glasses Wi-Fi hotspot. Connect the phone to that hotspot before querying `/api/gallery`.
+</Warning>
+
+### Action-Button Photo Defaults
+
 `setPhotoCaptureDefaults(...)` controls action-button photo defaults. Omitted fields leave the existing defaults unchanged. Pass `resetCaptureTuning: true` to restore the optional tuning fields to standard capture behavior; this does not change photo size unless you also pass `size`. If you include other fields in the same call, those fields become the new defaults after the reset.
 
 | Default field | Behavior |
