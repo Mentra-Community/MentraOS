@@ -125,8 +125,8 @@ public class BesWireFormatTest {
 
     @Test
     public void setFilePackSize_clampsToNegotiatedMaximum() {
-        BesWireFormat.setFilePackSize(1000);
-        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(970);
+        BesWireFormat.setFilePackSize(832);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(800);
 
         BesWireFormat.setFilePackSize(640);
         assertThat(BesWireFormat.getFilePackSize()).isEqualTo(640);

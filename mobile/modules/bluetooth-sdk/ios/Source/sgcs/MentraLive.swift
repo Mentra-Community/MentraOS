@@ -515,10 +515,9 @@ enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    // Negotiated file protocol ceiling. With the observed 251-byte CoC MPS, a 970-byte payload
-    // plus K900 and SDU framing fills exactly four MPS segments. Legacy/GATT transfers remain
-    // smaller; larger frames require file_payload_v2 negotiation and an open CoC channel.
-    static let FILE_PACK_SIZE = 970
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    static let FILE_PACK_SIZE = 800
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2
