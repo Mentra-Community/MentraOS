@@ -1164,6 +1164,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             if ("coc".equals(transport)
                     && besWireCapsFilePayloadV2
                     && phoneSupportsFilePayloadV2) {
+                if (fileTransportCoc
+                        && currentFileTransfer != null
+                        && currentFileTransfer.packSize > payloadSize) {
+                    Log.w(TAG, "CoC MTU shrank during a large-payload transfer; aborting safely");
+                    notifyTransferFailedToPhone("coc_mtu_changed");
+                    comManager.setFastMode(false);
+                    currentFileTransfer = null;
+                    pendingPackets.clear();
+                }
                 BesWireFormat.setFilePackSize(payloadSize);
                 fileTransportCoc = true;
             } else {
