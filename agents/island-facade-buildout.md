@@ -52,11 +52,10 @@ adapter-injection pattern (#2), not a trivial move:
 These are real per-domain efforts, each its own careful commit.
 
 ## Docs (keep current as we go)
-Each shipped domain is documented in the OEM docs at `docs/glasses-oems/engine.mdx`
+Each shipped domain is documented in the OEM docs at `mintlify-docs/glasses-oems/engine.mdx`
 (Mintlify). When a facade lands, add its surface there in the same commit. The page is
-written but **not yet nav-linked in `docs/docs.json`** — it's an unreleased Phase-1
-API, so publishing to the live OEM site is gated until release (one-line nav add when
-greenlit).
+nav-linked in `mintlify-docs/docs.json`; keep the public surface and its preview status
+current as the engine evolves.
 
 ## Verification per commit
 `npx tsc --noEmit -p .` (resolves `@mentra/engine`→src, validates the real code) +
