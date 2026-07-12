@@ -263,6 +263,11 @@ class DeviceStore {
         case ("bluetooth", "camera_fov"):
             DeviceManager.shared.sgc?.sendCameraFovSetting()
 
+        case ("bluetooth", "button_video_settings"):
+            DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
+
+        // Legacy scalar keys remain supported for older hosts. New code should write the
+        // canonical button_video_settings object so width/height/fps update atomically.
         case ("bluetooth", "button_video_width"), ("bluetooth", "button_video_height"),
              ("bluetooth", "button_video_fps"):
             DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
