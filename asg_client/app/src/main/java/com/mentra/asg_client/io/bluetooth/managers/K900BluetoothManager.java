@@ -91,7 +91,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // batches in flight while remaining well inside the BES receive ring.
     private static final int FILE_PUSH_WINDOW_BATCHED = 8;
     private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
-    // Negotiated 800-byte CoC payloads use 832-byte UART frames. Keep exactly one complete
+    // Negotiated 970-byte CoC payloads use 1002-byte UART frames. Keep exactly one complete
     // eight-packet cumulative-ACK batch in flight. Sending a partial second batch before the
     // first ACK repeatedly overran the BES parser on hardware and triggered 150 ms retries.
     private static final int FILE_PUSH_WINDOW_BIG_PACKS = 8;
