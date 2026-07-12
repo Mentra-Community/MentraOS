@@ -12,7 +12,7 @@ final class MentraLiveL2capChannel: NSObject, StreamDelegate {
     private static let maxBufferSize = 64 * 1024
     private static let frameHeaderSize = 5
     private static let frameOverhead = 32
-    private static let maxFilePayloadSize = 400
+    private static let maxFilePayloadSize = K900ProtocolUtils.FILE_PACK_SIZE
 
     private let channel: CBL2CAPChannel
     private let onFileFrame: (Data) -> Void

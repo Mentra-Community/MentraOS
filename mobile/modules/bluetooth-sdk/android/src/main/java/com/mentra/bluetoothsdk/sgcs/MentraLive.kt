@@ -218,6 +218,7 @@ class MentraLive : SGCManager() {
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
     private var peerWireCapsBinary = false
+    private var peerFilePayloadV2 = false
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -785,6 +786,7 @@ class MentraLive : SGCManager() {
                 wireHandshakeQueued = false
                 peerK900Le = false
                 peerWireCapsBinary = false
+                peerFilePayloadV2 = false
                 BleJsonCompact.resetSession()
             }
             return
@@ -819,6 +821,7 @@ class MentraLive : SGCManager() {
             wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
+            peerFilePayloadV2 = false
             BleJsonCompact.resetSession()
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
@@ -3501,6 +3504,7 @@ class MentraLive : SGCManager() {
 
                 // Stop the readiness check loop since we got confirmation
                 stopReadinessCheckLoop()
+                advertiseFilePayloadCapabilityToBes()
 
                 // Try to open the L2CAP CoC fast path for file transfers. No-op when the
                 // firmware doesn't support it — GATT notifications remain the default path.
@@ -7162,6 +7166,32 @@ class MentraLive : SGCManager() {
         }
         if (caps.has("binary")) {
             peerWireCapsBinary = caps.optBoolean("binary", false)
+        }
+        if (caps.has("file_payload_v2")) {
+            peerFilePayloadV2 = caps.optBoolean("file_payload_v2", false)
+        }
+    }
+
+    private fun advertiseFilePayloadCapabilityToBes() {
+        if (!peerFilePayloadV2) return
+        try {
+            val command = JSONObject()
+            command.put("C", "cs_file_payload")
+            command.put("B", "{\"max\":" + K900ProtocolUtils.FILE_PACK_SIZE + "}")
+            val packed =
+                    K900ProtocolUtils.packDataToK900(
+                            command.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            queueData(packed)
+            Bridge.log(
+                    "LIVE: 📦 Advertised file payload ceiling " +
+                            K900ProtocolUtils.FILE_PACK_SIZE +
+                            " to BES"
+            )
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to advertise file payload capability", e)
         }
     }
 
