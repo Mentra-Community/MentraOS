@@ -495,7 +495,7 @@ extension Data {
     }
 }
 
-private enum K900ProtocolUtils {
+enum K900ProtocolUtils {
     // Protocol constants
     static let CMD_START_CODE: [UInt8] = [0x23, 0x23] // ##
     static let CMD_END_CODE: [UInt8] = [0x24, 0x24] // $$
